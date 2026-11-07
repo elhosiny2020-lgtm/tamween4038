@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    font-family: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  body {
+    font-weight: 700;
+    color: #0f172a;
+    background-color: #f8fafc;
+  }
+
+  input, select, textarea, button {
+    font-weight: 700;
+  }
+}
+
+/* Enlarged bold numbers */
+.num-enlarged {
+  font-size: 0.95rem !important;
+  font-weight: 900 !important;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.01em;
+}
+
+/* Stat card large numbers */
+.stat-num {
+  font-size: 1.65rem !important;
+  font-weight: 900 !important;
+  line-height: 1.2;
+}
+
+/* Professional row highlight */
+tr.row-selected {
+  background-color: #fef3c7 !important;
+  box-shadow: inset 0 0 0 2px #d97706, 0 4px 6px -1px rgba(217, 119, 6, 0.2) !important;
+  font-weight: 900 !important;
+}
+
+tr.row-selected td {
+  background-color: #fef3c7 !important;
+  color: #78350f !important;
+  border-top-color: #d97706 !important;
+  border-bottom-color: #d97706 !important;
+}
+
+/* Print Styles for A4 Landscape & Full Print Isolation */
+@media print {
+  @page {
+    size: A4 landscape !important;
+    margin: 4mm !important;
+  }
+
+  html, body {
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  .no-print,
+  body.has-print-modal #root > div > header,
+  body.has-print-modal #root > div > main,
+  body.has-print-modal #root > div > footer,
+  body.has-print-modal #root > div > .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* When printing from ReportModal */
+  body.has-print-modal .report-modal-overlay {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+    backdrop-filter: none !important;
+  }
+
+  body.has-print-modal .report-modal-dialog {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+
+  body.has-print-modal .report-scroll-wrapper {
+    overflow: visible !important;
+    max-height: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+  }
+
+  body.has-print-modal .report-zoom-wrapper {
+    zoom: 1 !important;
+    min-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* High-density landscape table printing across full A4 sheet */
+  .report-table-compact {
+    width: 100% !important;
+    max-width: 100% !important;
+    font-size: 6.8pt !important;
+    border-collapse: collapse !important;
+    table-layout: fixed !important;
+    margin: 0 !important;
+  }
+
+  .report-table-compact th,
+  .report-table-compact td {
+    border: 0.5pt solid #000000 !important;
+    padding: 2px 1px !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    line-height: 1.15 !important;
+    white-space: normal !important;
+    text-align: center !important;
+  }
+
+  .report-table-compact th {
+    background-color: #f1f5f9 !important;
+    color: #000000 !important;
+    font-weight: 900 !important;
+  }
+
+  table {
+    page-break-inside: auto;
+    width: 100% !important;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
