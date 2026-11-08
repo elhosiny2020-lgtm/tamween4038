@@ -9,6 +9,7 @@ interface LoginModalProps {
   users: AppUser[];
   onLoginSuccess: (user: AppUser) => void;
   onRegisterUser: (newUser: AppUser) => void;
+  logoutReason?: string | null;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
@@ -16,6 +17,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   users,
   onLoginSuccess,
   onRegisterUser,
+  logoutReason,
 }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState('');
@@ -185,6 +187,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
           {/* Form Body */}
           <div className="p-6">
+            {logoutReason && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-950 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs">
+                <Lock className="w-4 h-4 flex-shrink-0 text-amber-700 icon-float" />
+                <span>{logoutReason}</span>
+              </div>
+            )}
+
             {errorMsg && (
               <div className="mb-4 p-3 bg-red-50 border border-red-300 text-red-800 rounded-xl text-xs font-bold flex items-center gap-2 animate-shake shadow-xs">
                 <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-600" />

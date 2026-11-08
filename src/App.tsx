@@ -13,8 +13,21 @@ import {
   persistFullState,
   saveSessionUser,
   saveBackupToPartition,
+  mergeAutoSaveOntoCurrent,
+  autoDiscoverAndMergeAllDatabases,
   factoryReset
 } from './storage';
+import {
+  DEFAULT_SYSTEM_CONFIG,
+  DEFAULT_VILLAGES_HIERARCHY,
+  DEFAULT_ISSUING_ENTITIES,
+  DEFAULT_VIOLATION_TYPES,
+  DEFAULT_ACTIVITY_STATUSES,
+  DEFAULT_COLUMN_TITLES,
+  INITIAL_BAKERIES,
+  INITIAL_DEBTS,
+  INITIAL_USERS
+} from './defaultData';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
 import { HeaderCustomizerModal } from './components/HeaderCustomizerModal';
@@ -29,6 +42,15 @@ import { UsersManagerModal } from './components/UsersManagerModal';
 import { ActivityStatusModal } from './components/ActivityStatusModal';
 import { WeeklyInstallmentsModal } from './components/WeeklyInstallmentsModal';
 import { AuditModal } from './components/AuditModal';
+import { BakeryAnalyticsCharts } from './components/BakeryAnalyticsCharts';
+import {
+  downloadUpdatedAppHtml,
+  downloadAppLauncherHtml,
+  downloadMinistryDesktopShortcut,
+  downloadWindowsDesktopInstallerBat,
+  openStandaloneAppInNewTab
+} from './utils/htmlExporter';
+import { usePWAInstall } from './hooks/usePWAInstall';
 
 import {
   Store,
@@ -40,6 +62,7 @@ import {
   HardDrive,
   Users,
   LogOut,
+  Download,
   Plus,
   Search,
   Filter,
@@ -53,14 +76,28 @@ import {
   Columns3,
   Calendar,
   Check,
-  ChevronDown
+  ChevronDown,
+  Layers,
+  ExternalLink,
+  Lock,
+  X
 } from 'lucide-react';
 
 export default function App() {
+  const { isInstallable, install } = usePWAInstall();
   const [appState, setAppState] = useState<AppState | null>(null);
   const [activeTab, setActiveTab] = useState<'bakeries' | 'debts'>('bakeries');
   const [saveTimestamp, setSaveTimestamp] = useState<string>('');
   const [isSavingPulse, setIsSavingPulse] = useState(false);
+
+  // Success Toast Notification on every data edit/save
+  interface SaveToastInfo {
+    id: number;
+    message: string;
+    timestamp: string;
+  }
+  const [saveToast, setSaveToast] = useState<SaveToastInfo | null>(null);
+  const [logoutReason, setLogoutReason] = useState<string | null>(null);
 
   // Search & Filter state for main Bakery table
   const [searchTerm, setSearchTerm] = useState('');
@@ -102,24 +139,88 @@ export default function App() {
     });
   };
 
-  // Initial State Loading
+  // Initial State Loading with 350ms failsafe timeout
   useEffect(() => {
-    loadInitialState().then((state) => {
-      setAppState(state);
-      setSaveTimestamp(getArabicTimestamp());
-    });
+    let hasLoaded = false;
+
+    // Failsafe timer: if storage loading takes longer than 350ms, open app immediately with preloaded or defaults!
+    const failsafe = setTimeout(() => {
+      if (!hasLoaded) {
+        hasLoaded = true;
+        const preloaded = typeof window !== 'undefined'
+          ? (window as unknown as { PRELOADED_TAMWEEN_STATE?: Partial<AppState> }).PRELOADED_TAMWEEN_STATE
+          : undefined;
+        setAppState({
+          bakeries: preloaded?.bakeries ?? INITIAL_BAKERIES,
+          debts: preloaded?.debts ?? INITIAL_DEBTS,
+          villages: preloaded?.villages ?? DEFAULT_VILLAGES_HIERARCHY,
+          issuingEntities: preloaded?.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
+          violationTypes: preloaded?.violationTypes ?? DEFAULT_VIOLATION_TYPES,
+          activityStatuses: preloaded?.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
+          columnTitles: preloaded?.columnTitles ?? DEFAULT_COLUMN_TITLES,
+          systemConfig: preloaded?.systemConfig ?? DEFAULT_SYSTEM_CONFIG,
+          users: preloaded?.users ?? INITIAL_USERS,
+          currentUser: null,
+        });
+        setSaveTimestamp(getArabicTimestamp());
+      }
+    }, 350);
+
+    loadInitialState()
+      .then((state) => {
+        if (!hasLoaded) {
+          hasLoaded = true;
+          clearTimeout(failsafe);
+          setAppState(state);
+          setSaveTimestamp(getArabicTimestamp());
+        }
+      })
+      .catch((err) => {
+        if (!hasLoaded) {
+          hasLoaded = true;
+          clearTimeout(failsafe);
+          console.error('loadInitialState catch:', err);
+          setAppState({
+            bakeries: INITIAL_BAKERIES,
+            debts: INITIAL_DEBTS,
+            villages: DEFAULT_VILLAGES_HIERARCHY,
+            issuingEntities: DEFAULT_ISSUING_ENTITIES,
+            violationTypes: DEFAULT_VIOLATION_TYPES,
+            activityStatuses: DEFAULT_ACTIVITY_STATUSES,
+            columnTitles: DEFAULT_COLUMN_TITLES,
+            systemConfig: DEFAULT_SYSTEM_CONFIG,
+            users: INITIAL_USERS,
+            currentUser: null,
+          });
+          setSaveTimestamp(getArabicTimestamp());
+        }
+      });
+
+    return () => clearTimeout(failsafe);
   }, []);
 
-  // Save helper that updates storage, timestamp, and visual green pulse
-  const triggerSave = useCallback((newState: AppState) => {
+  // Save helper that updates storage, timestamp, visual pulse, and displays success toast
+  const triggerSave = useCallback((newState: AppState, toastMessage?: string) => {
     setAppState(newState);
     setIsSavingPulse(true);
     const ts = getArabicTimestamp();
     setSaveTimestamp(ts);
+    const msg = toastMessage || 'تم حفظ وتأمين كافة البيانات بنجاح';
+    setSaveToast({ id: Date.now(), message: msg, timestamp: ts });
     persistFullState(newState).then(() => {
       setTimeout(() => setIsSavingPulse(false), 900);
     });
   }, []);
+
+  // Auto-dismiss save toast after 3.8 seconds
+  useEffect(() => {
+    if (saveToast) {
+      const timer = setTimeout(() => {
+        setSaveToast(null);
+      }, 3800);
+      return () => clearTimeout(timer);
+    }
+  }, [saveToast]);
 
   // Periodic 15-second heartbeat saving check
   useEffect(() => {
@@ -230,6 +331,46 @@ export default function App() {
     };
   }, [appState, bakeryRemainingDebtsMap]);
 
+  // Handle Logout (Terminates session safely without resetting data)
+  const handleLogout = useCallback((reason?: string) => {
+    saveSessionUser(null);
+    setLogoutReason(reason || null);
+    setAppState((prev) => (prev ? { ...prev, currentUser: null } : null));
+  }, []);
+
+  // Auto-logout when user leaves the computer / idle for 15 minutes or closes browser
+  useEffect(() => {
+    if (!appState?.currentUser) return;
+
+    let idleTimeout: ReturnType<typeof setTimeout>;
+    const IDLE_LIMIT_MS = 15 * 60 * 1000; // 15 minutes of inactivity
+
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimeout);
+      idleTimeout = setTimeout(() => {
+        handleLogout('تم قفل الشاشة وتسجيل الخروج التلقائي لحماية سرية البيانات لعدم وجود نشاط على الكمبيوتر.');
+      }, IDLE_LIMIT_MS);
+    };
+
+    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach((evt) => window.addEventListener(evt, resetIdleTimer, { passive: true }));
+    resetIdleTimer();
+
+    // Auto-logout when leaving the computer (closing tab / window or navigating away)
+    const handlePageExit = () => {
+      saveSessionUser(null);
+    };
+    window.addEventListener('pagehide', handlePageExit);
+    window.addEventListener('beforeunload', handlePageExit);
+
+    return () => {
+      clearTimeout(idleTimeout);
+      activityEvents.forEach((evt) => window.removeEventListener(evt, resetIdleTimer));
+      window.removeEventListener('pagehide', handlePageExit);
+      window.removeEventListener('beforeunload', handlePageExit);
+    };
+  }, [appState?.currentUser, handleLogout]);
+
   if (!appState) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white font-sans">
@@ -248,23 +389,19 @@ export default function App() {
       <LoginModal
         systemConfig={appState.systemConfig}
         users={appState.users}
+        logoutReason={logoutReason}
         onLoginSuccess={(user) => {
+          setLogoutReason(null);
           saveSessionUser(user);
           setAppState((prev) => (prev ? { ...prev, currentUser: user } : null));
         }}
         onRegisterUser={(newUser) => {
           const updatedUsers = [...appState.users, newUser];
-          triggerSave({ ...appState, users: updatedUsers });
+          triggerSave({ ...appState, users: updatedUsers }, 'تم تسجيل وحفظ المستخدم الجديد بنجاح');
         }}
       />
     );
   }
-
-  // Handle Logout (Terminates session safely without resetting data)
-  const handleLogout = () => {
-    saveSessionUser(null);
-    setAppState((prev) => (prev ? { ...prev, currentUser: null } : null));
-  };
 
   // Handlers for Bakery
   const handleSaveBakery = (bakery: Bakery) => {
@@ -276,13 +413,16 @@ export default function App() {
     } else {
       updated = [bakery, ...appState.bakeries];
     }
-    triggerSave({ ...appState, bakeries: updated });
+    triggerSave(
+      { ...appState, bakeries: updated },
+      existingIndex >= 0 ? `تم حفظ وتعديل بيانات مخبز (${bakery.bakeryOwnerName}) بنجاح` : `تم إضافة وحفظ بيانات مخبز (${bakery.bakeryOwnerName}) بنجاح`
+    );
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
     if (confirm(`هل أنت متأكد من حذف المخبز الخاص بـ "${ownerName}" نهائياً من المنظومة؟`)) {
       const updated = appState.bakeries.filter((b) => b.id !== bakeryId);
-      triggerSave({ ...appState, bakeries: updated });
+      triggerSave({ ...appState, bakeries: updated }, `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات بنجاح`);
     }
   };
 
@@ -296,12 +436,15 @@ export default function App() {
     } else {
       updated = [debt, ...appState.debts];
     }
-    triggerSave({ ...appState, debts: updated });
+    triggerSave(
+      { ...appState, debts: updated },
+      existingIndex >= 0 ? 'تم تعديل وحفظ قيد المديونية بنجاح' : 'تم إضافة وتسجيل قيد المديونية بنجاح'
+    );
   };
 
   const handleDeleteDebt = (debtId: string) => {
     const updated = appState.debts.filter((d) => d.id !== debtId);
-    triggerSave({ ...appState, debts: updated });
+    triggerSave({ ...appState, debts: updated }, 'تم حذف قيد المديونية وتحديث قاعدة البيانات بنجاح');
   };
 
   // Quick 1-click partition save
@@ -468,20 +611,26 @@ export default function App() {
               <span>تم الحفظ تلقائياً بنجاح ({saveTimestamp})</span>
             </div>
 
-            {/* User Badge */}
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 bg-slate-800/60 border border-slate-700 rounded-lg text-xs font-bold text-amber-100">
-              <span>{appState.currentUser.fullName}</span>
-            </div>
+            {/* User Badge with Lock on Computer Exit */}
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-slate-800/80 border border-slate-700 rounded-lg text-xs font-bold text-amber-100 shadow-inner">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{appState.currentUser.fullName}</span>
+                <span className="text-[10px] text-amber-300 bg-amber-950/80 px-1.5 py-0.2 rounded border border-amber-600/30">
+                  {appState.currentUser.role === 'admin' ? 'مدير' : appState.currentUser.role === 'auditor' ? 'مراجع' : 'مفتش'}
+                </span>
+              </div>
 
-            {/* Logout Button */}
-            <button
-              onClick={handleLogout}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-700/80 hover:bg-red-700 text-white rounded-lg text-xs font-black shadow-sm transition active:scale-95 cursor-pointer"
-              title="تسجيل الخروج الآمن وإنهاء الجلسة"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>خروج</span>
-            </button>
+              {/* Lock & Logout on leaving computer */}
+              <button
+                onClick={() => handleLogout()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-red-700 to-rose-800 hover:from-red-800 hover:to-rose-900 text-white rounded-lg text-xs font-black shadow-sm transition active:scale-95 cursor-pointer border border-red-500/50"
+                title="قفل الشاشة وتسجيل الخروج الآمن عند مغادرة الكمبيوتر"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-300 icon-animated" />
+                <span>قفل وخروج</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -607,6 +756,74 @@ export default function App() {
               >
                 <HardDrive className="w-3.5 h-3.5 text-slate-300" />
                 <span>النسخ والاستعادة</span>
+              </button>
+
+              {/* Quick Smart Upsert / Merge with Current Device Database */}
+              <button
+                onClick={async () => {
+                  if (appState) {
+                    const res = await autoDiscoverAndMergeAllDatabases(appState);
+                    if (res.success && res.newState) {
+                      setAppState(res.newState);
+                      if (window.confirm(`${res.message}\n\nهل ترغب في تحميل نسخة HTML جديدة محدثة الآن لفتحها مباشرة على أي جهاز؟`)) {
+                        await downloadUpdatedAppHtml(res.newState);
+                      }
+                    } else {
+                      alert(res.message);
+                    }
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 hover:from-amber-500 hover:to-orange-500 text-white rounded-lg text-xs font-black shadow-md transition active:scale-95 cursor-pointer border border-amber-400/60"
+                title="تحديث المخابز القائمة وإضافة غير المتوفر فقط من كافة النسخ المحفوظة"
+              >
+                <Layers className="w-3.5 h-3.5 text-amber-200 icon-animated" />
+                <span>تحديث ودمج البيانات</span>
+              </button>
+
+              {/* Download Updated Standalone App HTML (Fixed to open directly without browser block) */}
+              <button
+                onClick={async () => {
+                  if (appState) {
+                    setSaveToast({ id: Date.now(), message: 'جاري تجهيز وتنزيل ملف المنظومة المحدث...', timestamp: getArabicTimestamp() });
+                    const res = await downloadUpdatedAppHtml(appState);
+                    setSaveToast({ id: Date.now(), message: res.message, timestamp: getArabicTimestamp() });
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 via-teal-700 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-lg text-xs font-black shadow-md transition active:scale-95 cursor-pointer border border-emerald-400/60"
+                title="تحميل نسخة جديدة من المنظومة (HTML) تحتوي على كافة التعديلات وتفتح مباشرة على أي جهاز بدون إنترنت"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-200 icon-animated" />
+                <span>تحميل التطبيق المحدث (HTML)</span>
+              </button>
+
+              {/* Download / Install Desktop App with Ministry Emblem (User Request) */}
+              <button
+                onClick={async () => {
+                  if (isInstallable) {
+                    const ok = await install();
+                    if (ok) {
+                      setSaveToast({ id: Date.now(), message: 'تم تثبيت منظومة وزارة التموين بنجاح كأيقونة تطبيق رسمي على سطح المكتب!', timestamp: getArabicTimestamp() });
+                      return;
+                    }
+                  }
+                  const res = downloadWindowsDesktopInstallerBat();
+                  setSaveToast({ id: Date.now(), message: res.message, timestamp: getArabicTimestamp() });
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 via-yellow-600 to-amber-600 hover:from-amber-400 hover:to-yellow-500 text-slate-950 rounded-lg text-xs font-black shadow-md transition active:scale-95 cursor-pointer border border-amber-300"
+                title="تثبيت التطبيق على سطح المكتب بشعار الوزارة لفتح البرنامج مباشرة بنقرة واحدة"
+              >
+                <img src="/favicon.svg" alt="شعار الوزارة" className="w-4 h-4 icon-float drop-shadow-sm" />
+                <span>{isInstallable ? 'تثبيت التطبيق على سطح المكتب' : 'تحميل أيقونة سطح المكتب'}</span>
+              </button>
+
+              {/* Quick direct open in new browser window */}
+              <button
+                onClick={openStandaloneAppInNewTab}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg text-xs font-black transition border border-amber-500/40"
+                title="فتح صفحة البرنامج مباشرة في نافذة جديدة"
+              >
+                <ExternalLink className="w-3.5 h-3.5 icon-animated" />
+                <span>فتح صفحة البرنامج</span>
               </button>
 
               <button
@@ -740,9 +957,11 @@ export default function App() {
                 <span className="stat-num text-white block">
                   {bakeryStats.totalDebts.toLocaleString()}
                 </span>
-                <span className="text-[10px] text-rose-200 font-black">ج.م على المخابز</span>
               </div>
             </div>
+
+            {/* Interactive Recharts Analytics Section */}
+            <BakeryAnalyticsCharts bakeries={appState.bakeries} debts={appState.debts} villages={appState.villages} />
 
             {/* Toolbar: Search, Filters, Column Headers Customizer */}
             <div className="bg-white border-2 border-slate-200 rounded-xl p-3.5 shadow-sm space-y-3 no-print">
@@ -766,7 +985,7 @@ export default function App() {
                     onClick={() => setIsColumnModalOpen(true)}
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-600 hover:to-amber-800 text-slate-950 font-black rounded-lg text-xs shadow-md border border-amber-300 transition cursor-pointer"
                   >
-                    <Columns3 className="w-4 h-4 text-slate-950" />
+                    <Columns3 className="w-4 h-4 text-slate-950 icon-animated" />
                     <span>تعديل رؤوس الخانات</span>
                   </button>
 
@@ -776,7 +995,7 @@ export default function App() {
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-100 hover:from-emerald-100 hover:to-teal-200 text-emerald-950 font-black rounded-lg text-xs border border-emerald-300 shadow-xs transition cursor-pointer"
                     title="تعديل وإضافة وتخصيص حالات نشاط المخابز"
                   >
-                    <Settings className="w-4 h-4 text-emerald-700" />
+                    <Settings className="w-4 h-4 text-emerald-700 icon-spin-hover" />
                     <span>أنشطة المخابز ({appState.activityStatuses.length})</span>
                   </button>
 
@@ -788,7 +1007,7 @@ export default function App() {
                     }}
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-amber-700 to-amber-900 hover:from-amber-800 hover:to-amber-950 text-white rounded-lg text-xs font-black shadow-md transition cursor-pointer"
                   >
-                    <Plus className="w-4 h-4 text-amber-200" />
+                    <Plus className="w-4 h-4 text-amber-200 icon-animated" />
                     <span>إضافة مخبز جديد</span>
                   </button>
 
@@ -797,7 +1016,7 @@ export default function App() {
                     onClick={handleExportBakeryCSV}
                     className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-black shadow-sm transition cursor-pointer"
                   >
-                    <FileSpreadsheet className="w-4 h-4" />
+                    <FileSpreadsheet className="w-4 h-4 icon-animated" />
                     <span>تصدير Excel</span>
                   </button>
 
@@ -806,7 +1025,7 @@ export default function App() {
                     onClick={() => setIsReportModalOpen(true)}
                     className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-black shadow-sm transition cursor-pointer"
                   >
-                    <Printer className="w-4 h-4 text-amber-300" />
+                    <Printer className="w-4 h-4 text-amber-300 icon-animated" />
                     <span>كشف الطباعة A4</span>
                   </button>
                 </div>
@@ -1321,7 +1540,9 @@ export default function App() {
           isOpen={isColumnModalOpen}
           onClose={() => setIsColumnModalOpen(false)}
           titles={appState.columnTitles}
-          onSaveTitles={(updatedTitles) => triggerSave({ ...appState, columnTitles: updatedTitles })}
+          onSaveTitles={(updatedTitles) =>
+            triggerSave({ ...appState, columnTitles: updatedTitles }, 'تم حفظ وتحديث مسميات رؤوس الخانات بنجاح')
+          }
         />
       )}
 
@@ -1370,7 +1591,7 @@ export default function App() {
           statuses={appState.activityStatuses}
           bakeries={appState.bakeries}
           onSaveStatuses={(updatedStatuses) =>
-            triggerSave({ ...appState, activityStatuses: updatedStatuses })
+            triggerSave({ ...appState, activityStatuses: updatedStatuses }, 'تم حفظ وتحديث حالات نشاط المخابز بنجاح')
           }
         />
       )}
@@ -1381,7 +1602,9 @@ export default function App() {
           isOpen={isHeaderModalOpen}
           onClose={() => setIsHeaderModalOpen(false)}
           config={appState.systemConfig}
-          onSaveConfig={(updatedConfig) => triggerSave({ ...appState, systemConfig: updatedConfig })}
+          onSaveConfig={(updatedConfig) =>
+            triggerSave({ ...appState, systemConfig: updatedConfig }, 'تم حفظ وتحديث ترويسة وهوية المنظومة بنجاح')
+          }
         />
       )}
 
@@ -1391,7 +1614,9 @@ export default function App() {
           isOpen={isVillageModalOpen}
           onClose={() => setIsVillageModalOpen(false)}
           villages={appState.villages}
-          onSaveVillages={(updatedVillages) => triggerSave({ ...appState, villages: updatedVillages })}
+          onSaveVillages={(updatedVillages) =>
+            triggerSave({ ...appState, villages: updatedVillages }, 'تم حفظ وتحديث القرى والوحدات المحلية بنجاح')
+          }
         />
       )}
 
@@ -1415,7 +1640,7 @@ export default function App() {
           isOpen={isBackupModalOpen}
           onClose={() => setIsBackupModalOpen(false)}
           currentState={appState}
-          onRestoreState={(restored) => triggerSave(restored)}
+          onRestoreState={(restored) => triggerSave(restored, 'تم استعادة وتطبيق قاعدة البيانات بنجاح')}
           onFactoryReset={async () => {
             await factoryReset();
           }}
@@ -1429,10 +1654,12 @@ export default function App() {
           onClose={() => setIsUsersModalOpen(false)}
           users={appState.users}
           currentUser={appState.currentUser}
-          onAddUser={(newUser) => triggerSave({ ...appState, users: [...appState.users, newUser] })}
+          onAddUser={(newUser) =>
+            triggerSave({ ...appState, users: [...appState.users, newUser] }, 'تم إضافة وحفظ المستخدم الجديد بنجاح')
+          }
           onDeleteUser={(userId) => {
             const updatedUsers = appState.users.filter((u) => u.id !== userId);
-            triggerSave({ ...appState, users: updatedUsers });
+            triggerSave({ ...appState, users: updatedUsers }, 'تم حذف المستخدم وتحديث القائمة بنجاح');
           }}
         />
       )}
@@ -1446,6 +1673,32 @@ export default function App() {
           debts={appState.debts}
           systemConfig={appState.systemConfig}
         />
+      )}
+
+      {/* Real-time Floating Save Success Toast Notification */}
+      {saveToast && (
+        <div className="fixed bottom-6 right-6 z-[9999] max-w-md animate-in slide-in-from-bottom-5 duration-200">
+          <div className="bg-gradient-to-r from-slate-950 via-emerald-950 to-slate-900 text-white border-2 border-emerald-400 rounded-2xl p-4 shadow-2xl flex items-center gap-3 backdrop-blur-md ring-4 ring-emerald-500/20">
+            <div className="p-2 bg-emerald-500/20 rounded-xl border border-emerald-400/50 text-emerald-300 shrink-0">
+              <CheckCircle2 className="w-6 h-6 animate-pulse" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-xs font-black text-emerald-300">تم الحفظ بنجاح وتأمين البيانات</h4>
+                <span className="text-[10px] text-slate-400 font-mono">{saveToast.timestamp}</span>
+              </div>
+              <p className="text-xs font-bold text-slate-100 mt-0.5 leading-snug">
+                {saveToast.message}
+              </p>
+            </div>
+            <button
+              onClick={() => setSaveToast(null)}
+              className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
