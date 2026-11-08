@@ -367,8 +367,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
               <h3 className="text-base font-black">
                 {bakeryToEdit ? 'تعديل بيانات المخبز التمويني' : 'تسجيل وإضافة مخبز تمويني جديد'}
               </h3>
-              <p className="text-[11px] text-amber-100 font-bold">
-                إدارة تموين مركز المحلة الكبرى - قاعدة بيانات المخابز
+              <p className="text-[11px] text-amber-100 font-bold flex items-center gap-1.5 mt-0.5">
+                <span className="text-black font-black bg-amber-400 px-2 py-0.2 rounded text-[10px]">
+                  إدارة تموين مركز المحلة الكبرى
+                </span>
+                <span>- قاعدة بيانات المخابز والمديونيات</span>
               </p>
             </div>
           </div>

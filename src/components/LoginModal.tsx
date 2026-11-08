@@ -135,16 +135,18 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </div>
             </div>
 
-            <h2 className="text-xs font-black text-amber-300 tracking-wider mb-1">
-              جمهورية مصر العربية • وزارة التموين والتجارة الداخلية
-            </h2>
+            <div className="inline-block bg-amber-400 px-3 py-0.5 rounded-full shadow-sm mb-1.5 border border-amber-300">
+              <h2 className="text-xs font-black text-black tracking-wider">
+                جمهورية مصر العربية • وزارة التموين والتجارة الداخلية
+              </h2>
+            </div>
             <h1 className="text-base font-black text-white leading-snug">
               {systemConfig.governorateTitle}
             </h1>
             <p className="text-xs text-amber-100 font-bold mt-0.5">
               {systemConfig.directorateTitle}
             </p>
-            <div className="inline-block mt-2 px-3.5 py-1 bg-amber-500/20 border border-amber-400/50 rounded-full text-xs font-black text-amber-200 shadow-inner">
+            <div className="inline-block mt-2 px-3.5 py-1 bg-amber-400 border border-amber-300 rounded-full text-xs font-black text-black shadow-sm">
               {systemConfig.administrationTitle}
             </div>
           </div>
@@ -160,12 +162,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               }}
               className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 !isRegistering
-                  ? 'bg-amber-600 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  ? 'bg-amber-400 text-black font-black shadow-md border border-amber-300'
+                  : 'text-black hover:text-black hover:bg-slate-200/80'
               }`}
             >
-              <LogIn className="w-4 h-4" />
-              تسجيل الدخول
+              <LogIn className="w-4 h-4 text-black" />
+              <span className="text-black font-black">تسجيل الدخول</span>
             </button>
             <button
               type="button"
@@ -270,10 +272,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
                 <button
                   type="submit"
-                  className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-amber-600 via-amber-700 to-amber-800 hover:from-amber-700 hover:to-amber-900 text-white rounded-xl text-xs font-black shadow-lg shadow-amber-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
+                  className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-500 text-black rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-amber-300"
                 >
-                  <KeyRound className="w-4 h-4 text-amber-200" />
-                  تسجيل الدخول والبدء في العمل
+                  <KeyRound className="w-4 h-4 text-black stroke-[2.5]" />
+                  <span className="text-black font-black text-sm">تسجيل الدخول والبدء في العمل</span>
                 </button>
               </form>
             ) : (

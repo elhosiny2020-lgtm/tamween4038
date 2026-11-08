@@ -113,8 +113,8 @@ const COLOR_PROPERTIES = [
 ];
 
 /**
- * Sanitizes a cloned Document (used inside html2canvas's onclone callback)
- * by rewriting stylesheets and inlining resolved RGB styles on all elements.
+ * Sanitizes a cloned Document by rewriting stylesheets and inlining resolved RGB styles 
+ * on all elements within the print-container specifically to improve performance.
  */
 export function sanitizeClonedDocumentForPdf(clonedDoc: Document): void {
   // 1. Sanitize all <style> elements in the cloned document
@@ -125,33 +125,23 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document): void {
     }
   });
 
-  // 2. Walk every element in the cloned document and inline RGB values for any property using oklch/oklab/color()
-  const win = clonedDoc.defaultView || window;
-  const allElements: HTMLElement[] = [
-    clonedDoc.documentElement as HTMLElement,
-    clonedDoc.body as HTMLElement,
-    ...Array.from(clonedDoc.querySelectorAll<HTMLElement>('*')),
-  ].filter(Boolean);
+  // 2. Sanitize only elements with inline style attributes containing modern color functions (avoids 50,000 layout reflows)
+  const printContainer = clonedDoc.querySelector('.print-container');
+  if (!printContainer) return;
 
-  allElements.forEach((el) => {
-    if (!el || !el.style) return;
-    const computed = win.getComputedStyle(el);
-
-    for (const prop of COLOR_PROPERTIES) {
-      const val = computed.getPropertyValue(prop);
-      if (!val) continue;
-      const lower = val.toLowerCase();
-      if (
-        lower.includes('oklch') ||
-        lower.includes('oklab') ||
-        lower.includes('lch(') ||
-        lower.includes('lab(') ||
-        lower.includes('color(') ||
-        lower.includes('color-mix(')
-      ) {
-        const cleanVal = sanitizeCssValue(val);
-        el.style.setProperty(prop, cleanVal, 'important');
-      }
+  const styledElements = Array.from(printContainer.querySelectorAll<HTMLElement>('[style]'));
+  styledElements.forEach((el) => {
+    const styleAttr = el.getAttribute('style');
+    if (
+      styleAttr &&
+      (styleAttr.includes('oklch') ||
+        styleAttr.includes('oklab') ||
+        styleAttr.includes('lch(') ||
+        styleAttr.includes('lab(') ||
+        styleAttr.includes('color(') ||
+        styleAttr.includes('color-mix('))
+    ) {
+      el.setAttribute('style', sanitizeCssValue(styleAttr));
     }
   });
 }

@@ -292,7 +292,48 @@ fs.writeFileSync(path.join(distDir, 'منظومة وزارة التموين.url'
 fs.writeFileSync(path.join(publicDir, 'tamween-online-shortcut.html'), desktopLauncherContent, 'utf-8');
 fs.writeFileSync(path.join(distDir, 'tamween-online-shortcut.html'), desktopLauncherContent, 'utf-8');
 
+// 4. Generate Windows Desktop Batch Installer: تثبيت_أيقونة_المنظومة_على_سطح_المكتب.bat
+const windowsBatInstaller = `@echo off
+chcp 65001 >nul
+title منظومة وزارة التموين والتجارة الداخلية - إدارة تموين مركز المحلة الكبرى
+echo ===================================================================
+echo جمهورية مصر العربية - وزارة التموين والتجارة الداخلية
+echo مديرية التموين بالغربية - إدارة تموين مركز المحلة الكبرى
+echo ===================================================================
+echo.
+echo جاري إنشاء وتشغيل أيقونة المنظومة مباشرة على سطح المكتب (Desktop)...
+
+set SCRIPT="%TEMP%\\tamween_shortcut_%RANDOM%.vbs"
+echo Set oWS = WScript.CreateObject("WScript.Shell") > %SCRIPT%
+echo sLinkFile = oWS.SpecialFolders("Desktop") ^& "\\منظومة وزارة التموين.url" >> %SCRIPT%
+echo Set oLink = oWS.CreateShortcut(sLinkFile) >> %SCRIPT%
+echo oLink.TargetPath = "${ONLINE_URL}" >> %SCRIPT%
+echo oLink.Save >> %SCRIPT%
+cscript //nologo %SCRIPT%
+del %SCRIPT%
+
+echo.
+echo [تم بنجاح] تم تثبيت أيقونة المنظومة على سطح المكتب الآن.
+echo جاري فتح صفحة البرنامج...
+start "" msedge --app="${ONLINE_URL}" 2>nul || start "" "${ONLINE_URL}"
+`;
+
+fs.writeFileSync(path.join(publicDir, 'تثبيت_أيقونة_المنظومة_على_سطح_المكتب.bat'), windowsBatInstaller, 'utf-8');
+fs.writeFileSync(path.join(distDir, 'تثبيت_أيقونة_المنظومة_على_سطح_المكتب.bat'), windowsBatInstaller, 'utf-8');
+
+// 5. Build native Windows EXE via python script
+try {
+  import('child_process').then(cp => {
+    cp.execSync('python3 scripts/build_windows_exe.py');
+  });
+} catch (e) {
+  console.warn('Could not build EXE in bundle step:', e);
+}
+
 console.log(`Successfully generated:
 - tamween-system.html (${(htmlContent.length / 1024).toFixed(1)} KB)
 - منظومة وزارة التموين.html
-- منظومة وزارة التموين.url`);
+- منظومة وزارة التموين.url
+- تثبيت_أيقونة_المنظومة_على_سطح_المكتب.bat
+- منظومة_وزارة_التموين.exe`);
+

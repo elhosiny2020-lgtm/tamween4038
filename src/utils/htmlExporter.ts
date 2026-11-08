@@ -466,6 +466,38 @@ WshShell.Run "${currentUrl}", 1, False
 }
 
 /**
+ * Directly downloads the authentic Windows PE executable "منظومة_وزارة_التموين.exe"
+ * which launches the official application with zero console windows.
+ */
+export async function downloadWindowsExeLauncher(): Promise<{ success: boolean; message: string; fileName: string }> {
+  try {
+    const fileName = 'منظومة_وزارة_التموين.exe';
+    const res = await fetch('/' + encodeURIComponent(fileName));
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      return {
+        success: true,
+        message: `تم تحميل ملف تشغيل ويندوز التنفيذي (${fileName}) بنجاح! انقر عليه مرتين لتشغيل المنظومة مباشرة.`,
+        fileName
+      };
+    }
+  } catch (e) {
+    console.warn('Could not fetch .exe file directly, using batch installer fallback', e);
+  }
+
+  // Fallback to the Windows Batch Desktop Installer
+  return downloadWindowsDesktopInstallerBat();
+}
+
+/**
  * Legacy launcher shortcut
  */
 export function downloadAppLauncherHtml(): { success: boolean; message: string } {
@@ -481,3 +513,4 @@ export function openStandaloneAppInNewTab(): void {
     window.open('/tamween-system.html', '_blank');
   }
 }
+

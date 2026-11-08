@@ -7,8 +7,8 @@
 
   body {
     font-weight: 700;
-    color: #0f172a;
-    background-color: #f1f5f9;
+    color: #f8fafc;
+    background-color: #000000;
     overflow-x: hidden;
   }
 
@@ -119,14 +119,14 @@ button:hover .icon-spin-hover {
 
 /* Professional row highlight */
 tr.row-selected {
-  background-color: #fef3c7 !important;
-  box-shadow: inset 0 0 0 2px #d97706, 0 4px 6px -1px rgba(217, 119, 6, 0.2) !important;
+  background-color: rgba(217, 119, 6, 0.28) !important;
+  box-shadow: inset 0 0 0 2px #d97706, 0 4px 6px -1px rgba(217, 119, 6, 0.4) !important;
   font-weight: 900 !important;
 }
 
 tr.row-selected td {
-  background-color: #fef3c7 !important;
-  color: #78350f !important;
+  background-color: rgba(217, 119, 6, 0.22) !important;
+  color: #fef3c7 !important;
   border-top-color: #d97706 !important;
   border-bottom-color: #d97706 !important;
 }
@@ -136,7 +136,25 @@ tbody tr {
   transition: background-color 0.15s ease, transform 0.15s ease;
 }
 tbody tr:hover {
-  background-color: #fefce8;
+  background-color: rgba(245, 158, 11, 0.12);
+}
+
+.btn-glow-gold {
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.35);
+  animation: goldPulse 3s infinite ease-in-out;
+}
+@keyframes goldPulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(245, 158, 11, 0.3); transform: translateY(0); }
+  50% { box-shadow: 0 0 20px rgba(245, 158, 11, 0.6); transform: translateY(-1px); }
+}
+
+.btn-glow-emerald {
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.35);
+  animation: emeraldPulse 3s infinite ease-in-out;
+}
+@keyframes emeraldPulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); transform: translateY(0); }
+  50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.6); transform: translateY(-1px); }
 }
 
 /* Print Styles for A4 Landscape & Full Print Isolation */
@@ -223,25 +241,36 @@ tbody tr:hover {
     overflow: visible !important;
   }
 
-  /* High-density landscape table printing across full A4 sheet */
+  /* High-density landscape table printing across full A4 sheet with high-contrast legibility */
   .report-table-compact {
     width: 100% !important;
     max-width: 100% !important;
-    font-size: 6.8pt !important;
+    font-size: 8.5pt !important;
     border-collapse: collapse !important;
     table-layout: fixed !important;
     margin: 0 !important;
   }
 
+  .report-font-compact {
+    font-size: 7.5pt !important;
+  }
+  .report-font-standard {
+    font-size: 8.5pt !important;
+  }
+  .report-font-large {
+    font-size: 9.5pt !important;
+  }
+
   .report-table-compact th,
   .report-table-compact td {
-    border: 0.5pt solid #000000 !important;
-    padding: 2px 1px !important;
+    border: 1px solid #000000 !important;
+    padding: 3px 2px !important;
     word-break: break-word !important;
     overflow-wrap: break-word !important;
-    line-height: 1.15 !important;
+    line-height: 1.25 !important;
     white-space: normal !important;
     text-align: center !important;
+    vertical-align: middle !important;
   }
 
   .report-table-compact th {

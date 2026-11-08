@@ -15,7 +15,9 @@ import {
   saveBackupToPartition,
   mergeAutoSaveOntoCurrent,
   autoDiscoverAndMergeAllDatabases,
-  factoryReset
+  factoryReset,
+  setupDiskAutoBackup,
+  getActiveDiskBackupInfo
 } from './storage';
 import {
   DEFAULT_SYSTEM_CONFIG,
@@ -48,6 +50,7 @@ import {
   downloadAppLauncherHtml,
   downloadMinistryDesktopShortcut,
   downloadWindowsDesktopInstallerBat,
+  downloadWindowsExeLauncher,
   openStandaloneAppInNewTab
 } from './utils/htmlExporter';
 import { usePWAInstall } from './hooks/usePWAInstall';
@@ -80,7 +83,16 @@ import {
   Layers,
   ExternalLink,
   Lock,
-  X
+  X,
+  LayoutDashboard,
+  Building,
+  Receipt,
+  ChevronLeft,
+  Calculator,
+  Building2,
+  Database,
+  Upload,
+  Globe
 } from 'lucide-react';
 
 export default function App() {
@@ -105,6 +117,10 @@ export default function App() {
   const [selectedUnit, setSelectedUnit] = useState('ALL');
   const [selectedActivity, setSelectedActivity] = useState('ALL');
   const [selectedDebtFilter, setSelectedDebtFilter] = useState<'ALL' | 'HAS_DEBT' | 'NO_DEBT'>('ALL');
+  // License Expiry Timeline Filter (الكل، منتهية بالفعل، تنتهي خلال 30 يوماً، تنتهي خلال 60 يوماً، تنتهي خلال 90 يوماً، سارية لأكثر من 90 يوماً)
+  const [selectedLicenseExpiryFilter, setSelectedLicenseExpiryFilter] = useState<
+    'ALL' | 'EXPIRED' | 'WITHIN_30' | 'WITHIN_60' | 'WITHIN_90' | 'VALID'
+  >('ALL');
 
   // Selected Row for professional highlighting
   const [selectedBakeryRowId, setSelectedBakeryRowId] = useState<string | null>(null);
@@ -205,7 +221,9 @@ export default function App() {
     setIsSavingPulse(true);
     const ts = getArabicTimestamp();
     setSaveTimestamp(ts);
-    const msg = toastMessage || 'تم حفظ وتأمين كافة البيانات بنجاح';
+    const diskInfo = getActiveDiskBackupInfo();
+    const diskSuffix = diskInfo.hasHandle ? ` (وتحديث النسخة الاحتياطية على القرص: ${diskInfo.fileName})` : '';
+    const msg = (toastMessage || 'تم حفظ وتأمين كافة البيانات بنجاح') + diskSuffix;
     setSaveToast({ id: Date.now(), message: msg, timestamp: ts });
     persistFullState(newState).then(() => {
       setTimeout(() => setIsSavingPulse(false), 900);
@@ -272,9 +290,56 @@ export default function App() {
     return Array.from(set);
   }, [appState, selectedVillage]);
 
+  // Precompute count of bakeries expiring across timeline intervals
+  const licenseExpiryCounts = useMemo(() => {
+    if (!appState) return { expired: 0, within30: 0, within60: 0, within90: 0, valid: 0 };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let expired = 0;
+    let within30 = 0;
+    let within60 = 0;
+    let within90 = 0;
+    let valid = 0;
+
+    appState.bakeries.forEach((b) => {
+      const datesToCheck = [
+        b.bakeryLicenseDate,
+        b.commercialRegDate,
+        b.leaseAgreementDate,
+        b.taxCardDate,
+      ].filter(Boolean);
+
+      let minDays = Infinity;
+      datesToCheck.forEach((dStr) => {
+        if (!dStr) return;
+        const d = new Date(dStr);
+        if (!isNaN(d.getTime())) {
+          d.setHours(0, 0, 0, 0);
+          const diffDays = Math.ceil((d.getTime() - today.getTime()) / (1000 * 3600 * 24));
+          if (diffDays < minDays) minDays = diffDays;
+        }
+      });
+
+      if (datesToCheck.length === 0) {
+        valid++;
+      } else {
+        if (minDays < 0) expired++;
+        if (minDays <= 30) within30++;
+        if (minDays <= 60) within60++;
+        if (minDays <= 90) within90++;
+        if (minDays > 90) valid++;
+      }
+    });
+
+    return { expired, within30, within60, within90, valid };
+  }, [appState]);
+
   // Filtered bakeries for main table
   const filteredBakeries = useMemo(() => {
-    if (!appState) return [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     return appState.bakeries.filter((b) => {
       if (selectedVillage !== 'ALL' && b.village !== selectedVillage) return false;
       if (selectedUnit !== 'ALL' && b.localUnit !== selectedUnit) return false;
@@ -283,6 +348,57 @@ export default function App() {
       const debt = bakeryRemainingDebtsMap[b.id] || 0;
       if (selectedDebtFilter === 'HAS_DEBT' && debt <= 0) return false;
       if (selectedDebtFilter === 'NO_DEBT' && debt > 0) return false;
+
+      // Filter by License Expiry timeline
+      if (selectedLicenseExpiryFilter !== 'ALL') {
+        const datesToCheck = [
+          b.bakeryLicenseDate,
+          b.commercialRegDate,
+          b.leaseAgreementDate,
+          b.taxCardDate,
+        ].filter(Boolean);
+
+        // Find the earliest expiration days remaining among all docs
+        let minDaysRemaining = Infinity;
+        datesToCheck.forEach((dStr) => {
+          if (!dStr) return;
+          const d = new Date(dStr);
+          if (!isNaN(d.getTime())) {
+            d.setHours(0, 0, 0, 0);
+            const diffDays = Math.ceil((d.getTime() - today.getTime()) / (1000 * 3600 * 24));
+            if (diffDays < minDaysRemaining) {
+              minDaysRemaining = diffDays;
+            }
+          }
+        });
+
+        if (datesToCheck.length === 0) {
+          // If no dates set, exclude unless viewing all
+          if (selectedLicenseExpiryFilter !== 'VALID') return false;
+        } else {
+          switch (selectedLicenseExpiryFilter) {
+            case 'EXPIRED':
+              if (minDaysRemaining >= 0) return false;
+              break;
+            case 'WITHIN_30':
+              // Either already expired or expires within 30 days
+              if (minDaysRemaining > 30) return false;
+              break;
+            case 'WITHIN_60':
+              // Expires within 60 days
+              if (minDaysRemaining > 60) return false;
+              break;
+            case 'WITHIN_90':
+              // Expires within 90 days
+              if (minDaysRemaining > 90) return false;
+              break;
+            case 'VALID':
+              // Valid for more than 90 days
+              if (minDaysRemaining <= 90) return false;
+              break;
+          }
+        }
+      }
 
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase();
@@ -303,6 +419,7 @@ export default function App() {
     selectedUnit,
     selectedActivity,
     selectedDebtFilter,
+    selectedLicenseExpiryFilter,
     searchTerm,
     bakeryRemainingDebtsMap,
   ]);
@@ -553,9 +670,9 @@ export default function App() {
   const ct = appState.columnTitles;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-100 font-sans selection:bg-amber-200 selection:text-amber-950">
+    <div className="min-h-screen flex flex-col bg-black text-slate-100 font-sans selection:bg-amber-400 selection:text-black">
       {/* 1. Official Governmental Header Bar */}
-      <header className="bg-gradient-to-r from-slate-900 via-amber-950 to-slate-900 text-white shadow-xl border-b-2 border-amber-500/50 relative z-30 no-print">
+      <header className="bg-gradient-to-r from-black via-slate-950 to-black text-white shadow-2xl border-b-2 border-amber-500/40 relative z-30 no-print">
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
           {/* Right: Emblem and Titles */}
           <div className="flex items-center gap-3">
@@ -572,10 +689,13 @@ export default function App() {
             </button>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[11px] font-black text-amber-300 tracking-wider">
-                  جمهورية مصر العربية - وزارة التموين والتجارة الداخلية
+                <span className="text-[11px] font-black text-black bg-amber-400 px-2.5 py-0.5 rounded shadow-sm tracking-wider border border-amber-300">
+                  جمهورية مصر العربية
                 </span>
-                <span className="text-[10px] bg-amber-500/30 text-amber-200 border border-amber-400/30 px-2 py-0.2 rounded-full font-bold">
+                <span className="text-[11px] font-bold text-slate-300">
+                  - وزارة التموين والتجارة الداخلية
+                </span>
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-400/30 px-2 py-0.2 rounded-full font-bold">
                   {appState.systemConfig.governorateTitle}
                 </span>
               </div>
@@ -583,7 +703,7 @@ export default function App() {
                 {appState.systemConfig.directorateTitle}
               </h1>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs font-black text-amber-200">
+                <span className="text-xs font-black text-black bg-amber-400 px-2.5 py-0.5 rounded shadow-sm border border-amber-300">
                   {appState.systemConfig.administrationTitle}
                 </span>
                 <span className="text-[10px] text-slate-300 font-mono">
@@ -633,217 +753,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
-        {/* Top Navigation Tabs & Quick Utilities */}
-        <div className="bg-slate-950/90 border-t border-amber-900/60 px-4">
-          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 py-1.5 text-xs font-black">
-            {/* Main Tabs */}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => {
-                  setActiveTab('bakeries');
-                  setDebtFilterBakeryId(undefined);
-                }}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg transition ${
-                  activeTab === 'bakeries'
-                    ? 'bg-amber-600 text-white shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                <Store className="w-4 h-4" />
-                <span>قاعدة بيانات المخابز</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/30">
-                  {appState.bakeries.length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('debts')}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg transition ${
-                  activeTab === 'debts'
-                    ? 'bg-red-700 text-white shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                <Scale className="w-4 h-4" />
-                <span>المديونيات على أصحاب المخابز</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/30">
-                  {appState.debts.length}
-                </span>
-              </button>
-            </div>
-
-            {/* Utility Modals Shortcuts */}
-            <div className="flex items-center flex-wrap gap-1.5">
-              {/* Expiration Alerts Button with badge */}
-              <button
-                onClick={() => setIsAlertsModalOpen(true)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition ${
-                  alertsList.length > 0
-                    ? 'bg-red-600/90 hover:bg-red-600 text-white animate-pulse'
-                    : 'bg-slate-800 text-slate-300 hover:text-white'
-                }`}
-              >
-                <Bell className="w-3.5 h-3.5 text-amber-300" />
-                <span>التنبيهات التلقائية (15 يوماً)</span>
-                {alertsList.length > 0 && (
-                  <span className="w-5 h-5 rounded-full bg-white text-red-900 font-black text-[10px] flex items-center justify-center">
-                    {alertsList.length}
-                  </span>
-                )}
-              </button>
-
-              {/* Large Debts Installment button (> 20,000 EGP) */}
-              <button
-                onClick={() => {
-                  setSelectedInstallmentBakeryId(undefined);
-                  setIsWeeklyInstallmentsModalOpen(true);
-                }}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition ${
-                  largeDebtsList.length > 0
-                    ? 'bg-gradient-to-r from-amber-600 to-red-700 text-white border border-amber-300/60 shadow-sm animate-pulse'
-                    : 'bg-slate-800 text-slate-300 hover:text-white'
-                }`}
-                title="جدولة مديونيات المخابز التي تتجاوز 20,000 ج.م على دفعات أسبوعية"
-              >
-                <Scale className="w-3.5 h-3.5 text-amber-300" />
-                <span>دفعات أسبوعية (&gt; 20 ألف)</span>
-                {largeDebtsList.length > 0 && (
-                  <span className="w-5 h-5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] flex items-center justify-center">
-                    {largeDebtsList.length}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => setIsVillageModalOpen(true)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition"
-              >
-                <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                <span>القرى والوحدات</span>
-              </button>
-
-              <button
-                onClick={() => setIsReportModalOpen(true)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition"
-              >
-                <FileText className="w-3.5 h-3.5 text-amber-400" />
-                <span>التقارير وكشوف الطباعة A4</span>
-              </button>
-
-              {/* Comprehensive Math & Code Audit Modal Trigger */}
-              <button
-                onClick={() => setIsAuditModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-800 to-teal-900 hover:from-emerald-700 hover:to-teal-800 text-white border border-emerald-400/60 rounded-lg transition shadow-xs cursor-pointer active:scale-95"
-                title="فحص وتدقيق كافة المعادلات الحسابية والرموز البرمجية"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-300" />
-                <span>تدقيق واختبار المعادلات (100% سليم)</span>
-              </button>
-
-              <button
-                onClick={handleQuickPartitionSave}
-                className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg transition"
-                title="فتح نافذة اختيار البارتيشن (C:, D:, USB) وحفظ نسخة فوراً"
-              >
-                <HardDrive className="w-3.5 h-3.5 text-amber-200" />
-                <span>حفظ في البارتيشن (C:, D:)</span>
-              </button>
-
-              <button
-                onClick={() => setIsBackupModalOpen(true)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition"
-              >
-                <HardDrive className="w-3.5 h-3.5 text-slate-300" />
-                <span>النسخ والاستعادة</span>
-              </button>
-
-              {/* Quick Smart Upsert / Merge with Current Device Database */}
-              <button
-                onClick={async () => {
-                  if (appState) {
-                    const res = await autoDiscoverAndMergeAllDatabases(appState);
-                    if (res.success && res.newState) {
-                      setAppState(res.newState);
-                      if (window.confirm(`${res.message}\n\nهل ترغب في تحميل نسخة HTML جديدة محدثة الآن لفتحها مباشرة على أي جهاز؟`)) {
-                        await downloadUpdatedAppHtml(res.newState);
-                      }
-                    } else {
-                      alert(res.message);
-                    }
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 hover:from-amber-500 hover:to-orange-500 text-white rounded-lg text-xs font-black shadow-md transition active:scale-95 cursor-pointer border border-amber-400/60"
-                title="تحديث المخابز القائمة وإضافة غير المتوفر فقط من كافة النسخ المحفوظة"
-              >
-                <Layers className="w-3.5 h-3.5 text-amber-200 icon-animated" />
-                <span>تحديث ودمج البيانات</span>
-              </button>
-
-              {/* Download Updated Standalone App HTML (Fixed to open directly without browser block) */}
-              <button
-                onClick={async () => {
-                  if (appState) {
-                    setSaveToast({ id: Date.now(), message: 'جاري تجهيز وتنزيل ملف المنظومة المحدث...', timestamp: getArabicTimestamp() });
-                    const res = await downloadUpdatedAppHtml(appState);
-                    setSaveToast({ id: Date.now(), message: res.message, timestamp: getArabicTimestamp() });
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 via-teal-700 to-emerald-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-lg text-xs font-black shadow-md transition active:scale-95 cursor-pointer border border-emerald-400/60"
-                title="تحميل نسخة جديدة من المنظومة (HTML) تحتوي على كافة التعديلات وتفتح مباشرة على أي جهاز بدون إنترنت"
-              >
-                <Download className="w-3.5 h-3.5 text-emerald-200 icon-animated" />
-                <span>تحميل التطبيق المحدث (HTML)</span>
-              </button>
-
-              {/* Download / Install Desktop App with Ministry Emblem (User Request) */}
-              <button
-                onClick={async () => {
-                  if (isInstallable) {
-                    const ok = await install();
-                    if (ok) {
-                      setSaveToast({ id: Date.now(), message: 'تم تثبيت منظومة وزارة التموين بنجاح كأيقونة تطبيق رسمي على سطح المكتب!', timestamp: getArabicTimestamp() });
-                      return;
-                    }
-                  }
-                  const res = downloadWindowsDesktopInstallerBat();
-                  setSaveToast({ id: Date.now(), message: res.message, timestamp: getArabicTimestamp() });
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 via-yellow-600 to-amber-600 hover:from-amber-400 hover:to-yellow-500 text-slate-950 rounded-lg text-xs font-black shadow-md transition active:scale-95 cursor-pointer border border-amber-300"
-                title="تثبيت التطبيق على سطح المكتب بشعار الوزارة لفتح البرنامج مباشرة بنقرة واحدة"
-              >
-                <img src="/favicon.svg" alt="شعار الوزارة" className="w-4 h-4 icon-float drop-shadow-sm" />
-                <span>{isInstallable ? 'تثبيت التطبيق على سطح المكتب' : 'تحميل أيقونة سطح المكتب'}</span>
-              </button>
-
-              {/* Quick direct open in new browser window */}
-              <button
-                onClick={openStandaloneAppInNewTab}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg text-xs font-black transition border border-amber-500/40"
-                title="فتح صفحة البرنامج مباشرة في نافذة جديدة"
-              >
-                <ExternalLink className="w-3.5 h-3.5 icon-animated" />
-                <span>فتح صفحة البرنامج</span>
-              </button>
-
-              <button
-                onClick={() => setIsHeaderModalOpen(true)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition"
-                title="تخصيص الهوية والترويسة"
-              >
-                <Settings className="w-3.5 h-3.5" />
-              </button>
-
-              <button
-                onClick={() => setIsUsersModalOpen(true)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition"
-                title="إدارة المستخدمين والمفتشين"
-              >
-                <Users className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
       </header>
 
       {/* 2. Top Urgent Expiration Notification Banner (if any) */}
@@ -889,8 +798,341 @@ export default function App() {
         </div>
       )}
 
-      {/* 3. Main Workspace Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 space-y-4 no-print">
+      {/* 3. Main Workspace with Permanent Right-Side Navigation & Control Column */}
+      <div className="flex-1 w-full max-w-[1920px] mx-auto p-3 sm:p-4 flex flex-col lg:flex-row gap-4 items-start">
+        {/* Right-Side Command & Controls Column (جميع الأزرار على اليمين تحت بعضها بشكل مرتب مع مؤثرات حركية) */}
+        <aside
+          aria-label="لوحة الأزرار والتحكم الرئيسية"
+          className="w-full lg:w-72 xl:w-80 shrink-0 space-y-3.5 no-print"
+        >
+          {/* Permanent Official Directorate & Administration Emblem on the Base (شعار مديرية التموين بالغربية وإدارة تموين مركز المحلة بشكل ثابت وأساسي) */}
+          <div className="bg-slate-900/95 border-2 border-amber-500/50 rounded-2xl p-4 shadow-xl text-center space-y-3 relative overflow-hidden">
+            <div className="absolute -top-10 -right-10 w-28 h-28 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+            <div className="flex flex-col items-center">
+              <div className="w-20 h-20 rounded-full bg-white p-1.5 border-2 border-amber-400 shadow-lg flex items-center justify-center transform hover:scale-105 transition-all duration-300">
+                <img
+                  src={appState.systemConfig.logoBase64}
+                  alt="شعار وزارة التموين والتجارة الداخلية بالغربية"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+
+              <span className="mt-2 text-[11px] font-black text-black bg-amber-400 px-3 py-0.5 rounded shadow-sm border border-amber-300">
+                جمهورية مصر العربية
+              </span>
+
+              <h3 className="mt-1.5 text-xs font-black text-slate-100 leading-snug">
+                {appState.systemConfig.directorateTitle}
+              </h3>
+
+              <div className="mt-1">
+                <span className="text-[11px] font-black text-black bg-amber-400 px-3 py-0.5 rounded shadow-sm border border-amber-300 inline-block">
+                  {appState.systemConfig.administrationTitle}
+                </span>
+              </div>
+
+              <span className="mt-1 text-[9px] text-amber-300/80 font-mono tracking-wider">
+                {appState.systemConfig.englishSubtitle}
+              </span>
+            </div>
+
+            <div className="pt-2 border-t border-slate-800 text-[10px] text-slate-400 flex items-center justify-between">
+              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+                القاعدة متصلة ومؤمنة
+              </span>
+              <span className="font-mono text-slate-300">v3.0</span>
+            </div>
+          </div>
+
+          {/* Primary View & System Actions Navigation Buttons (تحت بعضها بشكل مرتب على اليمين) */}
+          <div className="bg-slate-900/90 border-2 border-slate-800 rounded-2xl p-3 shadow-xl space-y-2">
+            <div className="px-2 py-1 text-[11px] font-black text-amber-400 flex items-center gap-1.5 border-b border-slate-800/80 pb-2">
+              <LayoutDashboard className="w-3.5 h-3.5" />
+              <span>الأقسام الرئيسية والمديونيات</span>
+            </div>
+
+            {/* 1. Bakeries Database Button */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('bakeries')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${
+                activeTab === 'bakeries'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-lg shadow-amber-900/40 border border-amber-300'
+                  : 'bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Building className="w-4 h-4 icon-animated" />
+                <span>قاعدة بيانات المخابز</span>
+              </div>
+              <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono font-black ${
+                activeTab === 'bakeries' ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-slate-300'
+              }`}>
+                {appState.bakeries.length}
+              </span>
+            </button>
+
+            {/* 2. Debts and Penalties Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('debts');
+                setDebtFilterBakeryId(undefined);
+              }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${
+                activeTab === 'debts'
+                  ? 'bg-gradient-to-r from-red-600 to-rose-700 text-white shadow-lg shadow-red-950/50 border border-red-400'
+                  : 'bg-slate-950 hover:bg-slate-800 text-rose-300 border border-red-900/40 hover:border-red-700/60'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Scale className="w-4 h-4 icon-animated" />
+                <span>المديونيات على المخابز</span>
+              </div>
+              <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono font-black ${
+                activeTab === 'debts' ? 'bg-red-950 text-rose-200' : 'bg-slate-800 text-rose-300'
+              }`}>
+                {appState.debts.length}
+              </span>
+            </button>
+
+            {/* 3. Alerts Button */}
+            <button
+              type="button"
+              onClick={() => setIsAlertsModalOpen(true)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 icon-animated" />
+                <span>التنبيهات والمستندات</span>
+              </div>
+              {alertsList.length > 0 && (
+                <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded-full font-bold animate-pulse">
+                  {alertsList.length}
+                </span>
+              )}
+            </button>
+
+            {/* 4. Weekly Installments Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedInstallmentBakeryId(undefined);
+                setIsWeeklyInstallmentsModalOpen(true);
+              }}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-950 hover:bg-slate-800 text-emerald-300 border border-emerald-500/30 hover:border-emerald-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-emerald-400 icon-animated" />
+                <span>الدفعات الأسبوعية</span>
+              </div>
+              {largeDebtsList.length > 0 && (
+                <span className="text-[10px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full font-black">
+                  {largeDebtsList.length}
+                </span>
+              )}
+            </button>
+
+            {/* 5. Printable Reports & A4 Export Button */}
+            <button
+              type="button"
+              onClick={() => setIsReportModalOpen(true)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-950 hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <Printer className="w-4 h-4 text-cyan-400 icon-animated" />
+                <span>التقارير وكشوف الطباعة A4</span>
+              </div>
+              <ChevronLeft className="w-3.5 h-3.5 text-cyan-400" />
+            </button>
+          </div>
+
+          {/* System Tools & Management Stack (أدوات النظام والنسخ الاحتياطي تحت بعضها على اليمين) */}
+          <div className="bg-slate-900/90 border-2 border-slate-800 rounded-2xl p-3 shadow-xl space-y-2">
+            <div className="px-2 py-1 text-[11px] font-black text-slate-300 flex items-center gap-1.5 border-b border-slate-800/80 pb-2">
+              <Settings className="w-3.5 h-3.5 text-amber-400" />
+              <span>إدارة النظام والبيانات</span>
+            </div>
+
+            {/* Quick Add Bakery */}
+            <button
+              type="button"
+              onClick={() => {
+                setBakeryToEdit(null);
+                setIsBakeryModalOpen(true);
+              }}
+              className="w-full flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>إضافة مخبز جديد للقاعدة</span>
+            </button>
+
+            {/* Math Audit */}
+            <button
+              type="button"
+              onClick={() => setIsAuditModalOpen(true)}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-purple-300 border border-purple-500/30 hover:border-purple-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <Calculator className="w-3.5 h-3.5 text-purple-400" />
+              <span>تدقيق واختبار المعادلات</span>
+            </button>
+
+            {/* Villages & Local Units */}
+            <button
+              type="button"
+              onClick={() => setIsVillageModalOpen(true)}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <Building2 className="w-3.5 h-3.5 text-amber-400" />
+              <span>القرى والوحدات المحلية ({appState.villages.length})</span>
+            </button>
+
+            {/* Hard Drive Auto Backup */}
+            <button
+              type="button"
+              onClick={() => setIsBackupModalOpen(true)}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-emerald-300 border border-emerald-500/30 hover:border-emerald-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+              <span>النسخ التلقائي على القرص الصلب</span>
+            </button>
+
+            {/* Quick 1-Click Partition Save */}
+            <button
+              type="button"
+              onClick={handleQuickPartitionSave}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <Database className="w-3.5 h-3.5 text-blue-400" />
+              <span>حفظ فوري في بارتشن D: / E:</span>
+            </button>
+
+            {/* Activity Status Management */}
+            <button
+              type="button"
+              onClick={() => setIsActivityModalOpen(true)}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-emerald-300 border border-emerald-500/30 hover:border-emerald-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <Settings className="w-3.5 h-3.5 text-emerald-400" />
+              <span>أنشطة المخابز ({appState.activityStatuses.length})</span>
+            </button>
+
+            {/* Column Titles Customizer */}
+            <button
+              type="button"
+              onClick={() => setIsColumnModalOpen(true)}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <Columns3 className="w-3.5 h-3.5 text-amber-400" />
+              <span>تعديل رؤوس الخانات</span>
+            </button>
+
+            {/* Download Standalone HTML App */}
+            <button
+              type="button"
+              onClick={async () => {
+                await downloadUpdatedAppHtml(appState);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <Globe className="w-3.5 h-3.5 text-amber-400" />
+              <span>تحميل التطبيق المستقل (HTML)</span>
+            </button>
+
+            {/* Download Windows EXE Launcher */}
+            <button
+              type="button"
+              onClick={async () => {
+                await downloadWindowsExeLauncher();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-md border border-red-400/50 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5 text-white" />
+              <span>تحميل مشغل الويندوز (EXE)</span>
+            </button>
+
+            {/* Open Standalone App in New Tab */}
+            <button
+              type="button"
+              onClick={() => openStandaloneAppInNewTab()}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-blue-300 border border-blue-500/30 hover:border-blue-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+              <span>فتح صفحة البرنامج مستقلة</span>
+            </button>
+
+            {/* Customize Identity & Header */}
+            <button
+              type="button"
+              onClick={() => setIsHeaderModalOpen(true)}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-amber-200 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5 text-amber-400" />
+              <span>تخصيص الهوية والترويسة</span>
+            </button>
+
+            {/* Users & Inspectors Management (Admin Only) */}
+            {appState.currentUser.role === 'admin' && (
+              <button
+                type="button"
+                onClick={() => setIsUsersModalOpen(true)}
+                className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-purple-300 border border-purple-500/30 hover:border-purple-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                <Users className="w-3.5 h-3.5 text-purple-400" />
+                <span>إدارة المستخدمين والمفتشين</span>
+              </button>
+            )}
+          </div>
+        </aside>
+
+        {/* Left-Side Main Data Workspace */}
+        <main className="flex-1 min-w-0 w-full space-y-4">
+          {/* Permanent Base Header Banner with Official Emblem & Supply Directorate Info */}
+          <div className="bg-slate-900/95 border-2 border-slate-800 rounded-2xl p-4 shadow-xl flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-14 h-14 rounded-full bg-white p-1 border-2 border-amber-400 shadow-md flex items-center justify-center shrink-0">
+                <img
+                  src={appState.systemConfig.logoBase64}
+                  alt="شعار وزارة التموين"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-black text-black bg-amber-400 px-2.5 py-0.5 rounded shadow-sm border border-amber-300">
+                    جمهورية مصر العربية
+                  </span>
+                  <span className="text-xs font-bold text-slate-300">
+                    - وزارة التموين والتجارة الداخلية
+                  </span>
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-400/30 px-2 py-0.2 rounded-full font-bold">
+                    {appState.systemConfig.governorateTitle}
+                  </span>
+                </div>
+                <h2 className="text-sm sm:text-base font-black text-white mt-1">
+                  {appState.systemConfig.directorateTitle}
+                </h2>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-xs font-black text-black bg-amber-400 px-2.5 py-0.5 rounded shadow-sm border border-amber-300">
+                    {appState.systemConfig.administrationTitle}
+                  </span>
+                  <span className="text-[11px] text-slate-400 font-bold">
+                    - المنظومة الرقمية الشاملة لإدارة ومتابعة المخابز البلدية والمديونيات
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-black text-amber-300">
+                إجمالي المخابز: {appState.bakeries.length}
+              </span>
+              <span className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-black text-rose-300">
+                سجلات المديونيات: {appState.debts.length}
+              </span>
+            </div>
+          </div>
         {activeTab === 'debts' ? (
           /* DEBTS VIEW */
           <DebtsView
@@ -912,46 +1154,46 @@ export default function App() {
           <div className="space-y-4">
             {/* Quick Stat Cards */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <div className="bg-white border-2 border-slate-200 rounded-xl p-3 text-center shadow-xs">
-                <span className="text-[11px] font-bold text-slate-500 block mb-0.5">
+              <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-lg hover:border-slate-700 transition">
+                <span className="text-[11px] font-bold text-slate-400 block mb-0.5">
                   إجمالي المخابز المسجلة
                 </span>
-                <span className="stat-num text-slate-900 block">{bakeryStats.count}</span>
+                <span className="stat-num text-white block">{bakeryStats.count}</span>
                 <span className="text-[10px] text-slate-400 font-bold">مخبز بلدي</span>
               </div>
 
-              <div className="bg-white border-2 border-amber-200 rounded-xl p-3 text-center shadow-xs">
-                <span className="text-[11px] font-bold text-amber-700 block mb-0.5">
+              <div className="bg-slate-900 border-2 border-amber-900/50 rounded-xl p-3 text-center shadow-lg hover:border-amber-600/50 transition">
+                <span className="text-[11px] font-bold text-amber-400 block mb-0.5">
                   إجمالي الحصة التأمينية
                 </span>
-                <span className="stat-num text-amber-900 block">
+                <span className="stat-num text-amber-300 block">
                   {bakeryStats.totalInsurance.toLocaleString()}
                 </span>
-                <span className="text-[10px] text-amber-600 font-bold">شيكارة يومياً</span>
+                <span className="text-[10px] text-amber-500 font-bold">شيكارة يومياً</span>
               </div>
 
-              <div className="bg-white border-2 border-blue-200 rounded-xl p-3 text-center shadow-xs">
-                <span className="text-[11px] font-bold text-blue-700 block mb-0.5">
+              <div className="bg-slate-900 border-2 border-blue-900/50 rounded-xl p-3 text-center shadow-lg hover:border-blue-600/50 transition">
+                <span className="text-[11px] font-bold text-blue-400 block mb-0.5">
                   إجمالي الحصة الفعلية
                 </span>
-                <span className="stat-num text-blue-900 block">
+                <span className="stat-num text-blue-300 block">
                   {bakeryStats.totalActual.toLocaleString()}
                 </span>
-                <span className="text-[10px] text-blue-600 font-bold">شيكارة يومياً</span>
+                <span className="text-[10px] text-blue-500 font-bold">شيكارة يومياً</span>
               </div>
 
-              <div className="bg-white border-2 border-emerald-200 rounded-xl p-3 text-center shadow-xs">
-                <span className="text-[11px] font-bold text-emerald-700 block mb-0.5">
+              <div className="bg-slate-900 border-2 border-emerald-900/50 rounded-xl p-3 text-center shadow-lg hover:border-emerald-600/50 transition">
+                <span className="text-[11px] font-bold text-emerald-400 block mb-0.5">
                   إجمالي الأرغفة اليومية
                 </span>
-                <span className="stat-num text-emerald-900 block">
+                <span className="stat-num text-emerald-300 block">
                   {bakeryStats.totalLoaves.toLocaleString()}
                 </span>
-                <span className="text-[10px] text-emerald-600 font-bold">رغيف (× 1350)</span>
+                <span className="text-[10px] text-emerald-500 font-bold">رغيف (× 1350)</span>
               </div>
 
-              <div className="col-span-2 md:col-span-1 bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-xl p-3 text-center shadow-md border-2 border-red-500">
-                <span className="text-[11px] font-black text-rose-100 block mb-0.5">
+              <div className="col-span-2 md:col-span-1 bg-gradient-to-br from-red-950 via-red-900 to-black text-white rounded-xl p-3 text-center shadow-xl border-2 border-red-700">
+                <span className="text-[11px] font-black text-rose-200 block mb-0.5">
                   إجمالي المديونيات المتبقية
                 </span>
                 <span className="stat-num text-white block">
@@ -963,85 +1205,89 @@ export default function App() {
             {/* Interactive Recharts Analytics Section */}
             <BakeryAnalyticsCharts bakeries={appState.bakeries} debts={appState.debts} villages={appState.villages} />
 
-            {/* Toolbar: Search, Filters, Column Headers Customizer */}
-            <div className="bg-white border-2 border-slate-200 rounded-xl p-3.5 shadow-sm space-y-3 no-print">
+            {/* Toolbar: Action Buttons on the RIGHT side, Search on the left, Filters */}
+            <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3.5 shadow-xl space-y-3 no-print">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                {/* Search Bar */}
-                <div className="relative flex-1 min-w-[260px]">
-                  <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="بحث باسم صاحب المخبز، رقم الماكينة، القرية، التليفون، الرقم القومي..."
-                    className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 text-right"
-                  />
-                </div>
-
-                {/* Primary Action Buttons */}
-                <div className="flex items-center flex-wrap gap-2">
-                  {/* Golden Modify Column Headers Button */}
-                  <button
-                    onClick={() => setIsColumnModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-600 hover:to-amber-800 text-slate-950 font-black rounded-lg text-xs shadow-md border border-amber-300 transition cursor-pointer"
-                  >
-                    <Columns3 className="w-4 h-4 text-slate-950 icon-animated" />
-                    <span>تعديل رؤوس الخانات</span>
-                  </button>
-
-                  {/* Enhanced Activity Status Management Button */}
-                  <button
-                    onClick={() => setIsActivityModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-100 hover:from-emerald-100 hover:to-teal-200 text-emerald-950 font-black rounded-lg text-xs border border-emerald-300 shadow-xs transition cursor-pointer"
-                    title="تعديل وإضافة وتخصيص حالات نشاط المخابز"
-                  >
-                    <Settings className="w-4 h-4 text-emerald-700 icon-spin-hover" />
-                    <span>أنشطة المخابز ({appState.activityStatuses.length})</span>
-                  </button>
-
-                  {/* Add Bakery Button */}
+                {/* Primary Action Buttons - Placed FIRST on the RIGHT side with smooth animations */}
+                <div className="flex items-center flex-wrap gap-2.5 justify-start">
+                  {/* 1. Add Bakery Button (Glowing Golden with animated icon & pulse) */}
                   <button
                     onClick={() => {
                       setBakeryToEdit(null);
                       setIsBakeryModalOpen(true);
                     }}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-amber-700 to-amber-900 hover:from-amber-800 hover:to-amber-950 text-white rounded-lg text-xs font-black shadow-md transition cursor-pointer"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-amber-900/30 border border-amber-300 transition-all duration-300 hover:scale-105 active:scale-95 cursor-pointer pulse-glow"
+                    title="إضافة مخبز جديد إلى المنظومة"
                   >
-                    <Plus className="w-4 h-4 text-amber-200 icon-animated" />
+                    <Plus className="w-4 h-4 text-slate-950 icon-animated" />
                     <span>إضافة مخبز جديد</span>
                   </button>
 
-                  {/* Export CSV */}
+                  {/* 2. Golden Modify Column Headers Button */}
+                  <button
+                    onClick={() => setIsColumnModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-amber-300 font-black rounded-xl text-xs shadow-md border border-amber-500/40 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    title="تخصيص وتعديل أسماء رؤوس أعمدة وخانات المخبز"
+                  >
+                    <Columns3 className="w-4 h-4 text-amber-400 icon-animated" />
+                    <span>تعديل رؤوس الخانات</span>
+                  </button>
+
+                  {/* 3. Activity Status Management Button */}
+                  <button
+                    onClick={() => setIsActivityModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-950 to-slate-900 hover:from-emerald-900 hover:to-slate-800 text-emerald-300 font-black rounded-xl text-xs border border-emerald-500/40 shadow-sm transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    title="تعديل وإضافة وتخصيص حالات نشاط المخابز"
+                  >
+                    <Settings className="w-4 h-4 text-emerald-400 icon-spin-hover" />
+                    <span>أنشطة المخابز ({appState.activityStatuses.length})</span>
+                  </button>
+
+                  {/* 4. Export CSV */}
                   <button
                     onClick={handleExportBakeryCSV}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-black shadow-sm transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-600 hover:to-emerald-700 text-white rounded-xl text-xs font-black shadow-md border border-emerald-400/50 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    title="تصدير كشف إكسل معتمد بترميز UTF-8 عربي"
                   >
-                    <FileSpreadsheet className="w-4 h-4 icon-animated" />
+                    <FileSpreadsheet className="w-4 h-4 icon-animated text-emerald-200" />
                     <span>تصدير Excel</span>
                   </button>
 
-                  {/* Open Printable Report Center */}
+                  {/* 5. Open Printable Report Center */}
                   <button
                     onClick={() => setIsReportModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-black shadow-sm transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-slate-800 via-amber-950 to-slate-900 hover:from-slate-700 hover:to-amber-900 text-amber-200 rounded-xl text-xs font-black shadow-md border border-amber-500/50 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    title="فتح مركز التقارير وكشوف الطباعة A4 بالعرض ونسب السداد"
                   >
-                    <Printer className="w-4 h-4 text-amber-300 icon-animated" />
+                    <Printer className="w-4 h-4 text-amber-400 icon-animated" />
                     <span>كشف الطباعة A4</span>
                   </button>
+                </div>
+
+                {/* Search Bar placed on the other side */}
+                <div className="relative min-w-[260px] flex-1 max-w-md">
+                  <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 icon-animated" />
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="بحث باسم صاحب المخبز، رقم الماكينة، القرية، التليفون، الرقم القومي..."
+                    className="w-full pr-9 pl-3 py-2 bg-black border border-slate-700 rounded-xl text-xs font-black text-white placeholder-slate-500 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-right transition"
+                  />
                 </div>
               </div>
 
               {/* Dynamic Filtering Dropdowns */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-slate-100 text-xs">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-slate-800 text-xs">
                 <div>
-                  <label className="block text-[11px] font-black text-slate-600 mb-1">القرية</label>
+                  <label className="block text-[11px] font-black text-slate-300 mb-1">القرية</label>
                   <select
                     value={selectedVillage}
                     onChange={(e) => {
                       setSelectedVillage(e.target.value);
                       setSelectedUnit('ALL');
                     }}
-                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                    className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
                   >
                     <option value="ALL">كافة القرى ({appState.villages.length})</option>
                     {appState.villages.map((v) => (
@@ -1053,13 +1299,13 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-black text-slate-600 mb-1">
+                  <label className="block text-[11px] font-black text-slate-300 mb-1">
                     الوحدة المحلية التابعة
                   </label>
                   <select
                     value={selectedUnit}
                     onChange={(e) => setSelectedUnit(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                    className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
                   >
                     <option value="ALL">
                       {selectedVillage === 'ALL'
@@ -1088,11 +1334,11 @@ export default function App() {
 
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-black text-slate-600">نشاط المخبز</label>
+                    <label className="text-[11px] font-black text-slate-300">نشاط المخبز</label>
                     <button
                       type="button"
                       onClick={() => setIsActivityModalOpen(true)}
-                      className="text-[10px] text-amber-700 hover:text-amber-900 font-black flex items-center gap-0.5 cursor-pointer"
+                      className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
                       title="تعديل قائمة أنشطة المخابز"
                     >
                       <Settings className="w-3 h-3" />
@@ -1102,7 +1348,7 @@ export default function App() {
                   <select
                     value={selectedActivity}
                     onChange={(e) => setSelectedActivity(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                    className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
                   >
                     <option value="ALL">كافة حالات النشاط ({appState.bakeries.length} مخبز)</option>
                     {appState.activityStatuses.map((st) => {
@@ -1117,11 +1363,11 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-black text-slate-600 mb-1">موقف المديونية</label>
+                  <label className="block text-[11px] font-black text-slate-300 mb-1">موقف المديونية</label>
                   <select
                     value={selectedDebtFilter}
                     onChange={(e) => setSelectedDebtFilter(e.target.value as 'ALL' | 'HAS_DEBT' | 'NO_DEBT')}
-                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                    className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
                   >
                     <option value="ALL">الكل (مديونيات وخالص)</option>
                     <option value="HAS_DEBT">عليه مديونية متبقية فقط</option>
@@ -1132,24 +1378,40 @@ export default function App() {
             </div>
 
             {/* Main Bakery Table with Grouped Headers and Row Highlight */}
-            <div className="bg-white border-2 border-slate-300 rounded-xl overflow-hidden shadow-sm">
+            <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
               <div className="overflow-x-auto max-h-[700px] relative">
                 <table className="w-full text-center border-collapse text-xs">
                   {/* Super Grouped Headers */}
-                  <thead className="sticky top-0 z-20 bg-slate-900 text-white font-black">
-                    <tr className="border-b border-slate-700">
-                      {/* 1. Basic Info */}
+                  <thead className="sticky top-0 z-20 bg-black text-white font-black">
+                    <tr className="border-b border-slate-800">
+                      {/* Index Column Header */}
                       <th
-                        colSpan={5}
-                        className="py-2.5 px-2 bg-slate-900 border-l border-slate-700 text-amber-300"
+                        rowSpan={2}
+                        className="py-2.5 px-1 bg-black border-l border-slate-800 text-slate-300 w-10 text-center"
+                      >
+                        {ct.index}
+                      </th>
+
+                      {/* Actions Column Header moved to the RIGHT side as requested */}
+                      <th
+                        rowSpan={2}
+                        className="py-2.5 px-2 bg-gradient-to-r from-amber-950 to-slate-900 border-l border-slate-800 text-amber-300 min-w-[105px] no-print text-center"
+                      >
+                        {ct.actions}
+                      </th>
+
+                      {/* 1. Basic Info (Owner Name, Machine, Village, Local Unit) */}
+                      <th
+                        colSpan={4}
+                        className="py-2.5 px-2 bg-black border-l border-slate-800 text-amber-300"
                       >
                         البيانات الأساسية وموقع المخبز
                       </th>
 
-                      {/* 2. Remaining Debt (Added right after Basic Info) */}
+                      {/* 2. Remaining Debt */}
                       <th
                         rowSpan={2}
-                        className="py-2.5 px-2 bg-red-950 border-l border-slate-700 text-rose-200 min-w-[110px]"
+                        className="py-2.5 px-2 bg-red-950 border-l border-slate-800 text-rose-200 min-w-[110px]"
                       >
                         {ct.remainingDebt}
                       </th>
@@ -1157,7 +1419,7 @@ export default function App() {
                       {/* 3. Quotas */}
                       <th
                         colSpan={4}
-                        className="py-2.5 px-2 bg-amber-950 border-l border-slate-700 text-amber-200"
+                        className="py-2.5 px-2 bg-amber-950 border-l border-slate-800 text-amber-200"
                       >
                         الحصص والبيانات التموينية والتأمينية
                       </th>
@@ -1165,15 +1427,15 @@ export default function App() {
                       {/* 4. Demographics & Averages */}
                       <th
                         colSpan={9}
-                        className="py-2.5 px-2 bg-slate-800 border-l border-slate-700 text-blue-200"
+                        className="py-2.5 px-2 bg-slate-900 border-l border-slate-800 text-blue-200"
                       >
                         إحصائيات السكان والمستفيدين والمتوسطات (2023 - 2025)
                       </th>
 
-                      {/* 5. Classification & Operations (Migrated directly before Contact & ID as requested) */}
+                      {/* 5. Classification & Operations */}
                       <th
                         colSpan={5}
-                        className="py-2.5 px-2 bg-emerald-950 border-l border-slate-700 text-emerald-200"
+                        className="py-2.5 px-2 bg-emerald-950 border-l border-slate-800 text-emerald-200"
                       >
                         التصنيف والتشغيل
                       </th>
@@ -1181,7 +1443,7 @@ export default function App() {
                       {/* 6. Contact and Identity */}
                       <th
                         colSpan={2}
-                        className="py-2.5 px-2 bg-indigo-950 border-l border-slate-700 text-indigo-200"
+                        className="py-2.5 px-2 bg-indigo-950 border-l border-slate-800 text-indigo-200"
                       >
                         بيانات الاتصال والهوية
                       </th>
@@ -1189,78 +1451,69 @@ export default function App() {
                       {/* 7. Licenses & Dates */}
                       <th
                         colSpan={4}
-                        className="py-2.5 px-2 bg-slate-900 border-l border-slate-700 text-amber-300"
+                        className="py-2.5 px-2 bg-slate-950 border-l border-slate-800 text-amber-300"
                       >
                         التراخيص والعقود وتواريخ السريان
-                      </th>
-
-                      {/* 8. Actions */}
-                      <th
-                        rowSpan={2}
-                        className="py-2.5 px-2 bg-slate-800 border-l border-slate-700 text-white min-w-[110px] no-print"
-                      >
-                        {ct.actions}
                       </th>
                     </tr>
 
                     {/* Sub Columns Headers */}
-                    <tr className="bg-slate-800 text-[11px] text-slate-200 font-black border-b-2 border-slate-600">
-                      {/* 1. Basic Info */}
-                      <th className="py-2 px-1 border-l border-slate-700 w-10">{ct.index}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[160px]">{ct.bakeryOwnerName}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[95px]">{ct.machineNumber}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">{ct.village}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[95px]">{ct.localUnit}</th>
+                    <tr className="bg-slate-950 text-[11px] text-slate-300 font-black border-b border-slate-800">
+                      {/* Basic Info sub-headers (Index and Actions are rowSpan 2 above) */}
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[160px]">{ct.bakeryOwnerName}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.machineNumber}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.village}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.localUnit}</th>
 
                       {/* 3. Quotas */}
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[95px]">{ct.insuranceQuota}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[95px]">{ct.actualQuota}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[100px]">{ct.insuranceValue}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[95px] bg-amber-900/60 text-white">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.insuranceQuota}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.actualQuota}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[100px]">{ct.insuranceValue}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px] bg-amber-950/80 text-amber-300">
                         {ct.loavesCount}
                       </th>
 
                       {/* 4. Demographics & Averages */}
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">{ct.villagePopulation}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[90px] bg-amber-900/40 text-amber-200">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.villagePopulation}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px] bg-amber-950/50 text-amber-300">
                         {ct.perCapitaAverage}
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">{ct.beneficiaries2023}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[75px]">{ct.avg2023}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">{ct.beneficiaries2024}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[75px]">{ct.avg2024}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">{ct.beneficiaries2025}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[75px]">{ct.avg2025}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[80px] bg-slate-900 text-amber-300">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.beneficiaries2023}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">{ct.avg2023}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.beneficiaries2024}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">{ct.avg2024}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.beneficiaries2025}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">{ct.avg2025}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px] bg-slate-900 text-amber-300">
                         {ct.avgDiff}
                       </th>
 
                       {/* 5. Classification & Operations */}
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">{ct.activityStatus}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[95px]">{ct.breadType}</th>
-                      <th className="py-2 px-1 border-l border-slate-700 min-w-[75px] text-amber-300">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.activityStatus}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.breadType}</th>
+                      <th className="py-2 px-1 border-l border-slate-800 min-w-[75px] text-amber-300">
                         {ct.breadTypeCount}
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">{ct.lineType}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">{ct.fuelType}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.lineType}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.fuelType}</th>
 
                       {/* 6. Contact and Identity */}
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[100px]">{ct.phone}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[120px]">{ct.nationalId}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[100px]">{ct.phone}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[120px]">{ct.nationalId}</th>
 
                       {/* 7. Licenses & Dates */}
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">{ct.commercialRegDate}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">{ct.bakeryLicenseDate}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">{ct.leaseAgreementDate}</th>
-                      <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">{ct.taxCardDate}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.commercialRegDate}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.bakeryLicenseDate}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.leaseAgreementDate}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.taxCardDate}</th>
                     </tr>
                   </thead>
 
                   {/* Table Body */}
-                  <tbody className="divide-y divide-slate-200 font-bold">
+                  <tbody className="divide-y divide-slate-800 font-bold">
                     {filteredBakeries.length === 0 ? (
                       <tr>
-                        <td colSpan={32} className="py-12 text-center text-slate-500 font-black">
+                        <td colSpan={32} className="py-12 text-center text-slate-400 font-black">
                           لا توجد أي مخابز مطابقة لمعايير البحث الحالية
                         </td>
                       </tr>
@@ -1292,23 +1545,53 @@ export default function App() {
                               isSelected
                                 ? 'row-selected'
                                 : index % 2 === 0
-                                ? 'bg-white hover:bg-amber-50/60'
-                                : 'bg-slate-50/70 hover:bg-amber-50/60'
+                                ? 'bg-slate-900/90 hover:bg-slate-800/90'
+                                : 'bg-slate-950 hover:bg-slate-800/90'
                             }`}
                           >
-                            {/* 1. Basic Info */}
-                            <td className="py-2 px-1 border-l border-slate-200 num-enlarged">{index + 1}</td>
-                            <td className="py-2 px-2 border-l border-slate-200 font-black text-slate-900 text-right">
+                            {/* 1. Index & Actions on the RIGHT Side */}
+                            <td className="py-2.5 px-1 border-l border-slate-800 text-slate-400 num-enlarged">{index + 1}</td>
+
+                            {/* Actions Buttons - Now positioned on the RIGHT side of the table */}
+                            <td className="py-2.5 px-2 border-l border-slate-800 no-print">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setBakeryToEdit(b);
+                                    setIsBakeryModalOpen(true);
+                                  }}
+                                  className="p-1.5 hover:bg-amber-950/80 text-amber-400 hover:text-amber-300 border border-transparent hover:border-amber-700/60 rounded-xl transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
+                                  title="تعديل بيانات المخبز"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteBakery(b.id, b.bakeryOwnerName);
+                                  }}
+                                  className="p-1.5 hover:bg-red-950/80 text-red-400 hover:text-red-300 border border-transparent hover:border-red-700/60 rounded-xl transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
+                                  title="حذف المخبز"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+
+                            <td className="py-2.5 px-2 border-l border-slate-800 font-black text-slate-100 text-right">
                               {b.bakeryOwnerName}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black text-slate-900">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-amber-300">
                               {b.machineNumber}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200">{b.village}</td>
-                            <td className="py-2 px-2 border-l border-slate-200 text-slate-600">{b.localUnit}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 text-slate-200">{b.village}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 text-slate-400">{b.localUnit}</td>
 
                             {/* 2. Remaining Debt (Smart Badge) */}
-                            <td className="py-2 px-2 border-l border-slate-300 num-enlarged">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged">
                               {remainingDebt > 0 ? (
                                 <div className="flex flex-col items-center gap-1">
                                   <button
@@ -1317,10 +1600,10 @@ export default function App() {
                                       setDebtFilterBakeryId(b.id);
                                       setActiveTab('debts');
                                     }}
-                                    className={`px-2 py-1 rounded-lg text-xs font-black transition cursor-pointer border ${
+                                    className={`px-2 py-1 rounded-lg text-xs font-black transition-all transform hover:scale-105 active:scale-95 cursor-pointer border ${
                                       remainingDebt > 20000
-                                        ? 'bg-red-600 text-white border-red-700 shadow-sm animate-pulse'
-                                        : 'bg-red-100 hover:bg-red-200 text-red-900 border-red-300'
+                                        ? 'bg-red-600 text-white border-red-500 shadow-md animate-pulse'
+                                        : 'bg-red-950/80 hover:bg-red-900 text-red-200 border-red-700/80'
                                     }`}
                                     title="انقر للانتقال لمديونيات هذا المخبز وتصفيتها"
                                   >
@@ -1334,7 +1617,7 @@ export default function App() {
                                         setSelectedInstallmentBakeryId(b.id);
                                         setIsWeeklyInstallmentsModalOpen(true);
                                       }}
-                                      className="px-1.5 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-400 rounded text-[10px] font-black tracking-tight cursor-pointer shadow-2xs whitespace-nowrap"
+                                      className="px-1.5 py-0.5 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/60 rounded text-[10px] font-black tracking-tight cursor-pointer shadow-2xs whitespace-nowrap transition-transform hover:scale-105"
                                       title="مطلوب دفعات أسبوعية - انقر لعرض جدول وقيم الدفعات"
                                     >
                                       دفعات أسبوعية (&gt; 20 ألف)
@@ -1342,138 +1625,111 @@ export default function App() {
                                   )}
                                 </div>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-[11px] font-black">
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-950/80 text-emerald-300 border border-emerald-700/70 rounded-lg text-[11px] font-black shadow-inner">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                                   خالص (0)
                                 </span>
                               )}
                             </td>
 
                             {/* 3. Quotas */}
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black text-amber-900">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-amber-400">
                               {b.insuranceQuota}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black text-blue-900">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-cyan-300">
                               {b.actualQuota}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                               {b.insuranceValue?.toLocaleString()}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black bg-amber-50 text-amber-950">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-amber-950/30 text-amber-200">
                               {b.loavesCount?.toLocaleString()}
                             </td>
 
                             {/* 4. Demographics & Averages */}
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                               {b.villagePopulation?.toLocaleString()}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black bg-amber-100/50 text-amber-900">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-amber-950/40 text-amber-300">
                               {b.perCapitaAverage}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-600">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-400">
                               {b.beneficiaries2023?.toLocaleString()}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">{b.avg2023}</td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-600">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">{b.avg2023}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-400">
                               {b.beneficiaries2024?.toLocaleString()}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">{b.avg2024}</td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-600">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">{b.avg2024}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-400">
                               {b.beneficiaries2025?.toLocaleString()}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">{b.avg2025}</td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black bg-slate-100 text-slate-900">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">{b.avg2025}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-slate-800 text-amber-300">
                               {b.avgDiff}
                             </td>
 
                             {/* 5. Classification & Operations */}
-                            <td className="py-2 px-2 border-l border-slate-200">
+                            <td className="py-2.5 px-2 border-l border-slate-800">
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-black ${
                                   b.activityStatus === 'شغال'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-red-100 text-red-800'
+                                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
+                                    : 'bg-red-950 text-red-300 border border-red-700/60'
                                 }`}
                               >
                                 {b.activityStatus}
                               </span>
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200">{b.breadType}</td>
-                            <td className="py-2 px-1 border-l border-slate-200 num-enlarged font-black text-amber-900 bg-amber-50">
+                            <td className="py-2.5 px-2 border-l border-slate-800 text-slate-200">{b.breadType}</td>
+                            <td className="py-2.5 px-1 border-l border-slate-800 num-enlarged font-black text-amber-400 bg-amber-950/20">
                               {b.breadTypeCount || 1}
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 text-slate-700">{b.lineType}</td>
-                            <td className="py-2 px-2 border-l border-slate-200 text-slate-700">{b.fuelType}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">{b.lineType}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">{b.fuelType}</td>
 
                             {/* 6. Contact and Identity */}
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-left tracking-wide font-mono">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-left tracking-wide font-mono">
                               <a
                                 href={`tel:${b.phone}`}
                                 onClick={(e) => e.stopPropagation()}
-                                className="text-amber-800 hover:underline"
+                                className="text-amber-400 hover:text-amber-300 hover:underline"
                               >
                                 {b.phone}
                               </a>
                             </td>
-                            <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-left font-mono">
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-left font-mono text-slate-300">
                               {b.nationalId}
                             </td>
 
                             {/* 7. Licenses & Dates */}
                             <td
-                              className={`py-2 px-2 border-l border-slate-200 num-enlarged ${
-                                hasCommWarning ? 'bg-red-100 text-red-900 font-black' : 'text-slate-700'
+                              className={`py-2.5 px-2 border-l border-slate-800 num-enlarged ${
+                                hasCommWarning ? 'bg-red-950/80 text-red-300 font-black border border-red-700' : 'text-slate-300'
                               }`}
                             >
                               {b.commercialRegDate || '-'}
                             </td>
                             <td
-                              className={`py-2 px-2 border-l border-slate-200 num-enlarged ${
-                                hasLicenseWarning ? 'bg-red-100 text-red-900 font-black' : 'text-slate-700'
+                              className={`py-2.5 px-2 border-l border-slate-800 num-enlarged ${
+                                hasLicenseWarning ? 'bg-red-950/80 text-red-300 font-black border border-red-700' : 'text-slate-300'
                               }`}
                             >
                               {b.bakeryLicenseDate || '-'}
                             </td>
                             <td
-                              className={`py-2 px-2 border-l border-slate-200 num-enlarged ${
-                                hasLeaseWarning ? 'bg-red-100 text-red-900 font-black' : 'text-slate-700'
+                              className={`py-2.5 px-2 border-l border-slate-800 num-enlarged ${
+                                hasLeaseWarning ? 'bg-red-950/80 text-red-300 font-black border border-red-700' : 'text-slate-300'
                               }`}
                             >
                               {b.leaseAgreementDate || '-'}
                             </td>
                             <td
-                              className={`py-2 px-2 border-l border-slate-200 num-enlarged ${
-                                hasTaxWarning ? 'bg-red-100 text-red-900 font-black' : 'text-slate-700'
+                              className={`py-2.5 px-2 border-l border-slate-800 num-enlarged ${
+                                hasTaxWarning ? 'bg-red-950/80 text-red-300 font-black border border-red-700' : 'text-slate-300'
                               }`}
                             >
                               {b.taxCardDate || '-'}
-                            </td>
-
-                            {/* 8. Actions */}
-                            <td className="py-2 px-2 no-print">
-                              <div className="flex items-center justify-center gap-1">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setBakeryToEdit(b);
-                                    setIsBakeryModalOpen(true);
-                                  }}
-                                  className="p-1.5 hover:bg-amber-100 text-amber-700 rounded-lg transition"
-                                  title="تعديل بيانات المخبز"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteBakery(b.id, b.bakeryOwnerName);
-                                  }}
-                                  className="p-1.5 hover:bg-red-100 text-red-600 rounded-lg transition"
-                                  title="حذف المخبز"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
                             </td>
                           </tr>
                         );
@@ -1486,9 +1742,64 @@ export default function App() {
           </div>
         )}
       </main>
+      </div>
+
+      {/* Floating Animated Base Quick Actions Dock on the Right Side (شريط الإجراءات السريعة في القاعدة على اليمين) */}
+      <aside aria-label="أزرار القاعدة السريعة" className="fixed bottom-6 right-6 z-40 no-print flex flex-col items-end gap-2.5">
+        <div className="bg-slate-950/95 backdrop-blur-md p-2 rounded-2xl border-2 border-amber-500/40 shadow-[0_10px_35px_rgba(0,0,0,0.85)] flex flex-row items-center gap-2">
+          {/* Quick Add Bakery Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setBakeryToEdit(null);
+              setIsBakeryModalOpen(true);
+            }}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-lg border border-amber-300 transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+            title="إضافة مخبز جديد إلى القاعدة"
+          >
+            <Plus className="w-4 h-4 text-slate-950 stroke-[3] transition-transform duration-300 group-hover:rotate-90" />
+            <span className="hidden sm:inline">إضافة مخبز</span>
+          </button>
+
+          {/* Quick Print A4 / Reports Center */}
+          <button
+            type="button"
+            onClick={() => setIsReportModalOpen(true)}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 hover:border-cyan-400 font-black text-xs rounded-xl shadow-md transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+            title="طباعة كشف المخابز A4 رسمياً وفتح مركز التقارير"
+          >
+            <Printer className="w-4 h-4 text-cyan-400 transition-transform duration-300 group-hover:-translate-y-0.5" />
+            <span className="hidden sm:inline">طباعة الكشف</span>
+          </button>
+
+          {/* Quick Backup to Hard Drive */}
+          <button
+            type="button"
+            onClick={() => setIsBackupModalOpen(true)}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-emerald-500/40 hover:border-emerald-400 font-black text-xs rounded-xl shadow-md transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+            title="حفظ تلقائي للنسخة الاحتياطية على القرص الصلب (Hard Disk)"
+          >
+            <HardDrive className="w-4 h-4 text-emerald-400 transition-transform duration-300 group-hover:scale-110" />
+            <span className="hidden md:inline">النسخ التلقائي</span>
+          </button>
+
+          {/* Quick Download EXE / HTML App */}
+          <button
+            type="button"
+            onClick={async () => {
+              await downloadWindowsExeLauncher();
+            }}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-black text-xs rounded-xl shadow-lg border border-red-400/60 transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+            title="تحميل التطبيق المحدث (تشغيل مباشر مستقل بصيغة EXE / HTML)"
+          >
+            <Download className="w-4 h-4 text-white stroke-[2.5] transition-transform duration-300 group-hover:translate-y-0.5" />
+            <span className="hidden lg:inline">تحميل التطبيق</span>
+          </button>
+        </div>
+      </aside>
 
       {/* 4. Footer with Official Attribution Watermark */}
-      <footer className="bg-slate-900 text-slate-300 border-t border-slate-800 py-4 px-4 text-center text-xs font-bold no-print mt-auto">
+      <footer className="bg-black text-slate-300 border-t border-slate-900 py-4 px-4 text-center text-xs font-bold no-print mt-auto">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
           <p className="text-slate-400">
             {appState.systemConfig.governorateTitle} - {appState.systemConfig.directorateTitle} - {appState.systemConfig.administrationTitle}

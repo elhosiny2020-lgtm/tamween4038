@@ -273,7 +273,7 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                 {/* Official Letterhead */}
                 <div className="border-b-2 border-slate-900 pb-3 flex items-center justify-between">
                   <div className="text-right text-xs font-black text-slate-900 space-y-0.5">
-                    <p>جمهورية مصر العربية</p>
+                    <p className="text-black font-black">جمهورية مصر العربية</p>
                     <p>{systemConfig.governorateTitle}</p>
                     <p>{systemConfig.directorateTitle}</p>
                     <p className="text-amber-800">{systemConfig.administrationTitle}</p>

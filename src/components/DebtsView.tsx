@@ -240,63 +240,63 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
       {/* Top Stat Cards for Debts */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2.5">
-        <div className="bg-white border-2 border-slate-200 rounded-xl p-3 text-center shadow-xs">
-          <span className="text-[11px] font-bold text-slate-500 block mb-0.5">
+        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
+          <span className="text-[11px] font-bold text-slate-400 block mb-0.5">
             إجمالي المخالفات
           </span>
-          <span className="stat-num text-slate-900 block">
+          <span className="stat-num text-white block">
             {stats.totalViolations.toLocaleString()}
           </span>
           <span className="text-[10px] text-slate-400 font-bold">ج.م</span>
         </div>
 
-        <div className="bg-white border-2 border-emerald-200 rounded-xl p-3 text-center shadow-xs">
-          <span className="text-[11px] font-bold text-emerald-700 block mb-0.5">
+        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
+          <span className="text-[11px] font-bold text-emerald-400 block mb-0.5">
             المسدد من المخالفات
           </span>
-          <span className="stat-num text-emerald-800 block">
+          <span className="stat-num text-emerald-300 block">
             {stats.paidViolations.toLocaleString()}
           </span>
-          <span className="text-[10px] text-emerald-600 font-bold">ج.م</span>
+          <span className="text-[10px] text-emerald-500 font-bold">ج.م</span>
         </div>
 
-        <div className="bg-white border-2 border-blue-200 rounded-xl p-3 text-center shadow-xs">
-          <span className="text-[11px] font-bold text-blue-700 block mb-0.5">إجمالي المضاف</span>
-          <span className="stat-num text-blue-800 block">
+        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
+          <span className="text-[11px] font-bold text-cyan-400 block mb-0.5">إجمالي المضاف</span>
+          <span className="stat-num text-cyan-300 block">
             {stats.totalAdded.toLocaleString()}
           </span>
-          <span className="text-[10px] text-blue-600 font-bold">ج.م</span>
+          <span className="text-[10px] text-cyan-500 font-bold">ج.م</span>
         </div>
 
-        <div className="bg-white border-2 border-indigo-200 rounded-xl p-3 text-center shadow-xs">
-          <span className="text-[11px] font-bold text-indigo-700 block mb-0.5">
+        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
+          <span className="text-[11px] font-bold text-indigo-400 block mb-0.5">
             المسدد من المضاف
           </span>
-          <span className="stat-num text-indigo-800 block">
+          <span className="stat-num text-indigo-300 block">
             {stats.paidAdded.toLocaleString()}
           </span>
-          <span className="text-[10px] text-indigo-600 font-bold">ج.م</span>
+          <span className="text-[10px] text-indigo-500 font-bold">ج.م</span>
         </div>
 
-        <div className="bg-white border-2 border-orange-200 rounded-xl p-3 text-center shadow-xs">
-          <span className="text-[11px] font-bold text-orange-700 block mb-0.5">إجمالي التصرف</span>
-          <span className="stat-num text-orange-800 block">
+        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
+          <span className="text-[11px] font-bold text-orange-400 block mb-0.5">إجمالي التصرف</span>
+          <span className="stat-num text-orange-300 block">
             {stats.totalDisposal.toLocaleString()}
           </span>
-          <span className="text-[10px] text-orange-600 font-bold">ج.م</span>
+          <span className="text-[10px] text-orange-500 font-bold">ج.م</span>
         </div>
 
-        <div className="bg-white border-2 border-amber-200 rounded-xl p-3 text-center shadow-xs">
-          <span className="text-[11px] font-bold text-amber-700 block mb-0.5">
+        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
+          <span className="text-[11px] font-bold text-amber-400 block mb-0.5">
             المسدد من التصرف
           </span>
-          <span className="stat-num text-amber-800 block">
+          <span className="stat-num text-amber-300 block">
             {stats.paidDisposal.toLocaleString()}
           </span>
-          <span className="text-[10px] text-amber-600 font-bold">ج.م</span>
+          <span className="text-[10px] text-amber-500 font-bold">ج.م</span>
         </div>
 
-        <div className="col-span-2 md:col-span-4 lg:col-span-1 bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-xl p-3 text-center shadow-md border-2 border-red-500">
+        <div className="col-span-2 md:col-span-4 lg:col-span-1 bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-xl p-3 text-center shadow-lg border-2 border-red-500">
           <span className="text-[11px] font-black text-rose-100 block mb-0.5">
             صافي المتبقي الكلي
           </span>
@@ -308,46 +308,34 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       </div>
 
       {/* Toolbar & Filter Bar */}
-      <div className="bg-white border-2 border-slate-200 rounded-xl p-3.5 shadow-sm space-y-3 no-print">
+      <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-xl space-y-3.5 no-print">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Search Box */}
-          <div className="relative flex-1 min-w-[240px]">
-            <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="بحث باسم صاحب المخبز، رقم الماكينة، رقم الإيصال..."
-              className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 text-right"
-            />
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex items-center gap-2">
+          {/* Action Buttons (Right-aligned in RTL flexbox) */}
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => {
                 setDebtToEdit(null);
                 setIsDebtModalOpen(true);
               }}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-red-700 to-rose-800 hover:from-red-800 hover:to-rose-900 text-white rounded-lg text-xs font-black shadow-md transition cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-md border border-red-400/40 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
             >
-              <Plus className="w-4 h-4 text-rose-200" />
+              <Plus className="w-4 h-4 text-white stroke-[2.5]" />
               تسجيل مديونية / مخالفة جديدة
             </button>
 
             <button
               onClick={() => setIsEntitiesModalOpen(true)}
-              className="inline-flex items-center gap-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-lg text-xs font-bold transition"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-amber-400 rounded-xl text-xs font-bold transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
             >
-              <Building className="w-3.5 h-3.5 text-amber-600" />
-              + الجهة المحررة للمحضر
+              <Building className="w-3.5 h-3.5 text-amber-400" />
+              + الجهة المحررة
             </button>
 
             <button
               onClick={() => setIsViolationsModalOpen(true)}
-              className="inline-flex items-center gap-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-lg text-xs font-bold transition"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-red-400 rounded-xl text-xs font-bold transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
             >
-              <Scale className="w-3.5 h-3.5 text-red-600" />
+              <Scale className="w-3.5 h-3.5 text-red-400" />
               + نوع المخالفة
             </button>
 
@@ -356,41 +344,53 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 setInstallmentBakeryId(undefined);
                 setIsWeeklyInstallmentsOpen(true);
               }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-red-800 to-rose-900 hover:from-red-900 hover:to-black text-white rounded-lg text-xs font-black shadow-md border border-red-500 transition cursor-pointer"
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
             >
-              <DollarSign className="w-4 h-4 text-amber-300" />
+              <DollarSign className="w-4 h-4 text-slate-950 stroke-[2.5]" />
               جدولة الدفعات الأسبوعية (&gt; 20 ألف)
             </button>
 
             <button
               onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-black shadow-sm transition"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-sm border border-emerald-600/50 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
             >
-              <FileSpreadsheet className="w-4 h-4" />
+              <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
               تصدير Excel
             </button>
 
             <button
               onClick={handlePrintDebts}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-black shadow-sm transition"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 hover:border-cyan-400 rounded-xl text-xs font-black shadow-sm transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
             >
-              <Printer className="w-4 h-4 text-amber-300" />
+              <Printer className="w-4 h-4 text-cyan-400" />
               طباعة الكشف A4
             </button>
+          </div>
+
+          {/* Search Box */}
+          <div className="relative flex-1 min-w-[240px]">
+            <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="بحث باسم صاحب المخبز، رقم الماكينة، رقم الإيصال..."
+              className="w-full pr-9 pl-3 py-2 bg-black border border-slate-700 text-slate-100 placeholder:text-slate-500 rounded-xl text-xs font-black focus:ring-2 focus:ring-amber-500 text-right transition"
+            />
           </div>
         </div>
 
         {/* Dropdowns Filter */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 pt-2 border-t border-slate-100 text-xs">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 pt-2 border-t border-slate-800 text-xs">
           <div>
-            <label className="block text-[11px] font-black text-slate-600 mb-1">القرية</label>
+            <label className="block text-[11px] font-black text-slate-400 mb-1">القرية</label>
             <select
               value={selectedVillage}
               onChange={(e) => {
                 setSelectedVillage(e.target.value);
                 setSelectedUnit('ALL');
               }}
-              className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500"
+              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
             >
               <option value="ALL">كافة قرى المركز</option>
               {villages.map((v) => (
@@ -402,13 +402,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-[11px] font-black text-slate-600 mb-1">
+            <label className="block text-[11px] font-black text-slate-400 mb-1">
               الوحدة المحلية التابعة
             </label>
             <select
               value={selectedUnit}
               onChange={(e) => setSelectedUnit(e.target.value)}
-              className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500"
+              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
             >
               <option value="ALL">
                 {selectedVillage === 'ALL'
@@ -434,13 +434,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-[11px] font-black text-slate-600 mb-1">
+            <label className="block text-[11px] font-black text-slate-400 mb-1">
               الجهة المحررة للمحضر
             </label>
             <select
               value={selectedEntity}
               onChange={(e) => setSelectedEntity(e.target.value)}
-              className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500"
+              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
             >
               <option value="ALL">كافة الجهات المحررة</option>
               {issuingEntities.map((e) => (
@@ -452,11 +452,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-[11px] font-black text-slate-600 mb-1">نوع المخالفة</label>
+            <label className="block text-[11px] font-black text-slate-400 mb-1">نوع المخالفة</label>
             <select
               value={selectedViolationType}
               onChange={(e) => setSelectedViolationType(e.target.value)}
-              className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500"
+              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
             >
               <option value="ALL">كافة أنواع المخالفات</option>
               {violationTypes.map((t) => (
@@ -468,11 +468,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-[11px] font-black text-slate-600 mb-1">حالة السداد والجدولة</label>
+            <label className="block text-[11px] font-black text-slate-400 mb-1">حالة السداد والجدولة</label>
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value as 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K')}
-              className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-1 focus:ring-amber-500"
+              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
             >
               <option value="ALL">الكل (المسدد والمتبقي)</option>
               <option value="OVER_20K">مديونيات تتجاوز 20,000 ج.م (تستلزم دفعات)</option>
@@ -487,10 +487,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       <div className="hidden print:block print-container mb-4 text-center border-b-2 border-black pb-3">
         <div className="flex items-center justify-between">
           <div className="text-right">
-            <h4 className="text-xs font-black text-slate-800">جمهورية مصر العربية</h4>
-            <h4 className="text-xs font-black text-slate-800">{systemConfig.governorateTitle}</h4>
-            <h4 className="text-xs font-black text-slate-800">{systemConfig.directorateTitle}</h4>
-            <h4 className="text-xs font-black text-slate-800">{systemConfig.administrationTitle}</h4>
+            <h4 className="text-xs font-black text-black">جمهورية مصر العربية</h4>
+            <h4 className="text-xs font-black text-black">{systemConfig.governorateTitle}</h4>
+            <h4 className="text-xs font-black text-black">{systemConfig.directorateTitle}</h4>
+            <h4 className="text-xs font-black text-black">{systemConfig.administrationTitle}</h4>
           </div>
           <div className="w-16 h-16">
             <img src={systemConfig.logoBase64} alt="شعار" className="w-full h-full object-contain" />
@@ -506,14 +506,31 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       </div>
 
       {/* Grouped Headers Debts Table */}
-      <div className="bg-white border-2 border-slate-300 rounded-xl overflow-hidden shadow-sm">
+      <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
         <div className="overflow-x-auto max-h-[650px] relative">
           <table className="w-full text-center border-collapse text-xs">
             {/* Super Headers */}
             <thead className="sticky top-0 z-20 bg-slate-900 text-white font-black">
               <tr className="border-b border-slate-700">
+                {/* Index Column */}
                 <th
-                  colSpan={5}
+                  rowSpan={2}
+                  className="py-2.5 px-1 bg-black border-l border-slate-700 text-slate-300 w-10 text-center"
+                >
+                  م
+                </th>
+
+                {/* Actions Column moved to the RIGHT side as requested */}
+                <th
+                  rowSpan={2}
+                  className="py-2.5 px-2 bg-gradient-to-r from-amber-950 to-slate-900 border-l border-slate-700 text-amber-300 min-w-[100px] no-print text-center"
+                >
+                  الإجراءات
+                </th>
+
+                {/* 1. Basic Info (Owner Name, Machine, Village, Local Unit) */}
+                <th
+                  colSpan={4}
                   className="py-2.5 px-2 bg-slate-900 border-l border-slate-700 text-amber-300"
                 >
                   1. البيانات الأساسية وموقع المخبز
@@ -554,18 +571,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 >
                   صافي المتبقي على صاحب المخبز
                 </th>
-                <th
-                  rowSpan={2}
-                  className="py-2.5 px-2 bg-slate-800 text-white text-xs font-black no-print min-w-[100px]"
-                >
-                  الإجراءات
-                </th>
               </tr>
 
               {/* Sub Columns Headers */}
               <tr className="bg-slate-800 text-[11px] text-slate-200 font-black border-b-2 border-slate-600">
-                {/* 1. Basic Info */}
-                <th className="py-2 px-1 border-l border-slate-700 w-10">م</th>
+                {/* 1. Basic Info Sub-headers (Index and Actions are rowSpan 2 above) */}
                 <th className="py-2 px-2 border-l border-slate-700 min-w-[150px]">اسم صاحب المخبز</th>
                 <th className="py-2 px-2 border-l border-slate-700 min-w-[90px]">رقم الماكينة</th>
                 <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">القرية</th>
@@ -637,121 +647,151 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                         isSelected
                           ? 'row-selected'
                           : index % 2 === 0
-                          ? 'bg-white hover:bg-amber-50/60'
-                          : 'bg-slate-50/70 hover:bg-amber-50/60'
+                          ? 'bg-slate-900/90 hover:bg-slate-800/90'
+                          : 'bg-slate-950 hover:bg-slate-800/90'
                       }`}
                     >
-                      {/* 1. Basic Info */}
-                      <td className="py-2 px-1 border-l border-slate-200 num-enlarged">{index + 1}</td>
-                      <td className="py-2 px-2 border-l border-slate-200 font-black text-slate-900 text-right">
+                      {/* 1. Basic Info - Index & Actions on the RIGHT side */}
+                      <td className="py-2.5 px-1 border-l border-slate-800 text-slate-400 num-enlarged text-center">{index + 1}</td>
+
+                      {/* Actions Column on the RIGHT side with animated buttons */}
+                      <td className="py-2 px-1.5 border-l border-slate-800 no-print text-center bg-slate-900/40">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDebtToEdit(d);
+                              setIsDebtModalOpen(true);
+                            }}
+                            className="p-1.5 hover:bg-amber-950/80 text-amber-400 hover:text-amber-300 border border-amber-800/40 hover:border-amber-500 rounded-lg transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
+                            title="تعديل المديونية"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
+                                onDeleteDebt(d.id);
+                              }
+                            }}
+                            className="p-1.5 hover:bg-red-950/80 text-red-400 hover:text-red-300 border border-red-800/40 hover:border-red-500 rounded-lg transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
+                            title="حذف القيد"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+
+                      <td className="py-2.5 px-2 border-l border-slate-800 font-black text-slate-100 text-right">
                         {d.bakeryOwnerName}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black text-slate-900">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-amber-300">
                         {d.machineNumber}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200">{d.village}</td>
-                      <td className="py-2 px-2 border-l border-slate-200 text-slate-600">{d.localUnit}</td>
+                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-200">{d.village}</td>
+                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-400">{d.localUnit}</td>
 
                       {/* 2. Violations */}
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                         {d.violationDate || '-'}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 text-xs text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 text-xs text-slate-300">
                         {d.issuingEntity}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 text-xs text-red-900 font-bold">
+                      <td className="py-2.5 px-2 border-l border-slate-800 text-xs text-rose-300 font-bold">
                         {d.violationType}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-red-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-rose-400">
                         {d.violationAmount?.toLocaleString()}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-600">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-400">
                         {d.oldViolations?.toLocaleString()}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black bg-red-50 text-red-900">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-red-950/50 text-red-200">
                         {d.totalViolations?.toLocaleString()}
                       </td>
 
                       {/* 3. Violation Payment */}
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                         {d.violationPaymentDate || '-'}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
                         {d.violationReceiptNumber || '-'}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-200 text-slate-800">
+                      <td className="py-2.5 px-2 border-l border-slate-800">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-200 border border-slate-700">
                           {d.violationPaymentMethod}
                         </span>
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black text-emerald-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-emerald-400">
                         {d.paidViolationAmount?.toLocaleString()}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black bg-emerald-50 text-emerald-900">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-emerald-950/50 text-emerald-200">
                         {d.remainingViolations?.toLocaleString()}
                       </td>
 
                       {/* 4. Added (المضاف) */}
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-blue-800">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-cyan-300">
                         {d.addedAmount?.toLocaleString()}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                         {d.addedPaymentDate || '-'}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
                         {d.addedReceiptNumber || '-'}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-200 text-slate-800">
+                      <td className="py-2.5 px-2 border-l border-slate-800">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-200 border border-slate-700">
                           {d.addedPaymentMethod}
                         </span>
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black text-blue-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-blue-400">
                         {d.paidAddedAmount?.toLocaleString()}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black bg-blue-50 text-blue-900">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-blue-950/50 text-blue-200">
                         {d.remainingAdded?.toLocaleString()}
                       </td>
 
                       {/* 5. Disposal (التصرف) */}
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                         {d.disposalDate || '-'}
                       </td>
-                      <td className="py-2 px-1 border-l border-slate-200 num-enlarged">{d.disposalBags}</td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged">
+                      <td className="py-2.5 px-1 border-l border-slate-800 num-enlarged text-slate-200">{d.disposalBags}</td>
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                         {d.disposalBagPrice?.toLocaleString()}
                       </td>
-                      <td className="py-2 px-1 border-l border-slate-200 num-enlarged text-amber-700">
+                      <td className="py-2.5 px-1 border-l border-slate-800 num-enlarged text-amber-400">
                         {d.disposalMultiplier}x
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black bg-amber-50 text-amber-900">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-amber-950/40 text-amber-200">
                         {d.disposalValue?.toLocaleString()}
                       </td>
 
                       {/* 6. Disposal Payment */}
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                         {d.disposalValue?.toLocaleString()}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                         {d.disposalPaymentDate || '-'}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 text-slate-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
                         {d.disposalReceiptNumber || '-'}
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-200 text-slate-800">
+                      <td className="py-2.5 px-2 border-l border-slate-800">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-200 border border-slate-700">
                           {d.disposalPaymentMethod}
                         </span>
                       </td>
-                      <td className="py-2 px-2 border-l border-slate-200 num-enlarged font-black text-teal-700">
+                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-teal-400">
                         {d.paidDisposalAmount?.toLocaleString()}
                       </td>
 
                       {/* Net Remaining Debt */}
-                      <td className="py-2 px-3 border-l border-slate-300 num-enlarged font-black">
+                      <td className="py-2.5 px-3 border-l border-slate-800 num-enlarged font-black">
                         {d.netRemainingDebt > 0 ? (
                           <div className="space-y-1">
-                            <span className="inline-block px-2.5 py-1 bg-red-100 text-red-800 border border-red-300 rounded-lg">
+                            <span className="inline-block px-2.5 py-1 bg-red-950/80 text-red-200 border border-red-700/80 rounded-lg text-xs font-black shadow-inner">
                               {d.netRemainingDebt.toLocaleString()} ج.م
                             </span>
                             {d.netRemainingDebt > 20000 && (
@@ -761,7 +801,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                   setInstallmentBakeryId(d.bakeryId);
                                   setIsWeeklyInstallmentsOpen(true);
                                 }}
-                                className="block mx-auto text-[10px] bg-red-800 hover:bg-black text-amber-200 px-2 py-0.5 rounded-full font-black animate-pulse cursor-pointer shadow-xs"
+                                className="block mx-auto text-[10px] bg-red-700 hover:bg-red-600 text-white px-2 py-0.5 rounded-md font-black animate-pulse cursor-pointer shadow-sm transition-transform hover:scale-105"
                                 title="مديونية تتجاوز 20,000 ج.م - انقر لجدولة دفعات أسبوعية"
                               >
                                 &gt; 20 ألف (جدول دفعات أسبوعية)
@@ -769,40 +809,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                             )}
                           </div>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-[11px]">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-950/80 text-emerald-300 border border-emerald-700/70 rounded-lg text-[11px] font-black">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                             خالص (0)
                           </span>
                         )}
-                      </td>
-
-                      {/* Actions */}
-                      <td className="py-2 px-2 no-print">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDebtToEdit(d);
-                              setIsDebtModalOpen(true);
-                            }}
-                            className="p-1 hover:bg-amber-100 text-amber-700 rounded transition"
-                            title="تعديل المديونية"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
-                                onDeleteDebt(d.id);
-                              }
-                            }}
-                            className="p-1 hover:bg-red-100 text-red-600 rounded transition"
-                            title="حذف القيد"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
                       </td>
                     </tr>
                   );

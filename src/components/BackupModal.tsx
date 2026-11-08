@@ -14,6 +14,7 @@ import {
   downloadWindowsUrlShortcut,
   downloadWindowsDesktopInstallerBat,
   downloadWindowsVbsLauncher,
+  downloadWindowsExeLauncher,
   openStandaloneAppInNewTab
 } from '../utils/htmlExporter';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -495,6 +496,20 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   <span>البرنامج مثبت بالفعل على هذا الجهاز كتطبيق مستقل.</span>
                 </div>
               )}
+
+              {/* Direct Native EXE Launcher Download */}
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await downloadWindowsExeLauncher();
+                  setStatusMsg({ text: res.message, type: res.success ? 'success' : 'error' });
+                }}
+                className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 via-yellow-600 to-amber-600 hover:from-amber-400 hover:to-yellow-500 text-slate-950 rounded-xl text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition shadow-sm border border-amber-300 active:scale-95"
+                title="تحميل مشغل ويندوز التنفيذي (EXE) مباشرة"
+              >
+                <Download className="w-4 h-4 text-slate-950 icon-animated" />
+                <span>تحميل ملف البرنامج التنفيذي المباشر (منظومة_وزارة_التموين.exe)</span>
+              </button>
 
               {/* Option 2 & 3: Windows Batch Auto-Installer & VBS Silent */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

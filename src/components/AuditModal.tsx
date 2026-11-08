@@ -325,7 +325,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
           <div className="bg-white p-5 rounded-xl border border-slate-300 shadow-xs print-container mt-4">
             <div className="flex items-center justify-between border-b border-slate-300 pb-3 mb-3">
               <div className="text-right text-xs font-black text-slate-800">
-                <p>جمهورية مصر العربية</p>
+                <p className="text-black font-black">جمهورية مصر العربية</p>
                 <p>{systemConfig.governorateTitle}</p>
                 <p>{systemConfig.directorateTitle}</p>
                 <p className="text-amber-800">{systemConfig.administrationTitle}</p>

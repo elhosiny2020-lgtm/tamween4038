@@ -440,6 +440,9 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     localStorage.setItem(KEYS.AUTOSAVE_BACKUP, JSON.stringify(backupSnapshot));
     localStorage.setItem(KEYS.AUTOSAVE_TIMESTAMP, backupSnapshot.timestamp);
     await idbSet(KEYS.AUTOSAVE_BACKUP, backupSnapshot);
+
+    // Continuous auto-backup to selected hard disk file
+    writeStateToDiskBackupFile(backupSnapshot).catch(() => {});
   } catch {
     // Graceful fallback
   }
@@ -527,12 +530,90 @@ export function saveSessionUser(user: AppUser | null): void {
   } catch {}
 }
 
+// Global in-memory reference to user-chosen backup file handle on local hard drive
+let activeDiskBackupHandle: FileSystemFileHandle | null = null;
+let activeDiskBackupFileName: string | null = null;
+
+export function getActiveDiskBackupInfo(): { hasHandle: boolean; fileName: string | null } {
+  return {
+    hasHandle: activeDiskBackupHandle !== null,
+    fileName: activeDiskBackupFileName,
+  };
+}
+
+/**
+ * Lets the user select or create a continuous auto-backup file on their chosen disk (C:, D:, USB).
+ * Once selected, every future modification will write directly to this local file!
+ */
+export async function setupDiskAutoBackup(): Promise<{ success: boolean; fileName?: string; message: string }> {
+  if (typeof window === 'undefined' || !('showSaveFilePicker' in window)) {
+    return {
+      success: false,
+      message: 'متصفحك لا يدعم خاصية الكتابة المباشرة على القرص الصلب. سيتم الحفظ التلقائي في ذاكرة الجهاز وتنزيل ملفات النسخ الاحتياطي.',
+    };
+  }
+
+  try {
+    const handle = await (window as unknown as {
+      showSaveFilePicker: (opts: {
+        suggestedName: string;
+        types: Array<{ description: string; accept: Record<string, string[]> }>;
+      }) => Promise<FileSystemFileHandle>;
+    }).showSaveFilePicker({
+      suggestedName: 'نسخة_احتياطية_دائمة_تموين_المحلة.txt',
+      types: [
+        {
+          description: 'ملف نصي للنسخة الاحتياطية الدائمة (*.txt)',
+          accept: {
+            'text/plain': ['.txt', '.json'],
+          },
+        },
+      ],
+    });
+
+    activeDiskBackupHandle = handle;
+    activeDiskBackupFileName = handle.name;
+    try {
+      localStorage.setItem('TAMWEEN_ACTIVE_BACKUP_FILENAME', handle.name);
+    } catch {}
+
+    return {
+      success: true,
+      fileName: handle.name,
+      message: `تم تفعيل وتعيين ملف الحفظ التلقائي بنجاح على القرص باسم (${handle.name})! سيتم تحديثه تلقائياً عند أي تعديل.`,
+    };
+  } catch (err: unknown) {
+    if ((err as Error).name === 'AbortError') {
+      return { success: false, message: 'تم إلغاء اختيار الملف.' };
+    }
+    return { success: false, message: `تعذر اختيار الملف: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * Automatically writes the latest backup state to the user's chosen local disk file if configured.
+ */
+export async function writeStateToDiskBackupFile(state: object): Promise<boolean> {
+  if (!activeDiskBackupHandle) return false;
+
+  try {
+    const jsonStr = JSON.stringify(state, null, 2);
+    const writable = await activeDiskBackupHandle.createWritable();
+    await writable.write(jsonStr);
+    await writable.close();
+    return true;
+  } catch (err) {
+    console.warn('Could not write to disk backup file handle:', err);
+    return false;
+  }
+}
+
 // Native Partition Picker Save (window.showSaveFilePicker) with Fallback
 export async function saveBackupToPartition(data: object): Promise<{ success: boolean; method: string; message: string }> {
   const jsonStr = JSON.stringify(data, null, 2);
   const now = new Date();
   const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
-  const filename = `نسخة_احتياطية_تموين_مركز_المحلة_${dateStr}.json`;
+  const filename = `نسخة_احتياطية_تموين_مركز_المحلة_${dateStr}.txt`;
 
   // Check if showSaveFilePicker is available
   if ('showSaveFilePicker' in window) {
@@ -546,13 +627,16 @@ export async function saveBackupToPartition(data: object): Promise<{ success: bo
         suggestedName: filename,
         types: [
           {
-            description: 'ملف قاعدة بيانات تموين المحلة الكبرى JSON',
+            description: 'ملف نصي لقاعدة بيانات تموين المحلة الكبرى TXT/JSON',
             accept: {
-              'application/json': ['.json'],
+              'text/plain': ['.txt', '.json'],
             },
           },
         ],
       });
+
+      activeDiskBackupHandle = handle;
+      activeDiskBackupFileName = handle.name;
 
       const writable = await handle.createWritable();
       await writable.write(jsonStr);
@@ -560,7 +644,7 @@ export async function saveBackupToPartition(data: object): Promise<{ success: bo
       return {
         success: true,
         method: 'partition_picker',
-        message: `تم حفظ النسخة الاحتياطية بنجاح في المكان المحدد باسم: ${handle.name}`
+        message: `تم حفظ النسخة الاحتياطية بنجاح في المكان المحدد باسم: ${handle.name} وتم تعيينه للحفظ التلقائي المستمر!`
       };
     } catch (err: unknown) {
       if ((err as Error).name === 'AbortError') {

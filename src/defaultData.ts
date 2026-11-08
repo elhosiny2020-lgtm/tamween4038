@@ -53,7 +53,7 @@ export const DEFAULT_OFFICIAL_LOGO = `data:image/svg+xml;utf8,<svg xmlns="http:/
   </g>
 
   <!-- Text Top & Bottom -->
-  <text x="100" y="28" font-size="9" font-weight="900" text-anchor="middle" fill="%231e3a8a" font-family="sans-serif">جمهورية مصر العربية</text>
+  <text x="100" y="28" font-size="9" font-weight="900" text-anchor="middle" fill="%23000000" font-family="sans-serif">جمهورية مصر العربية</text>
   <text x="100" y="38" font-size="8" font-weight="900" text-anchor="middle" fill="%23b45309" font-family="sans-serif">وزارة التموين والتجارة الداخلية</text>
   <text x="100" y="180" font-size="6.5" font-weight="900" text-anchor="middle" fill="%231e3a8a" font-family="sans-serif">MINISTRY OF SUPPLY AND INTERNAL TRADE</text>
 </svg>`;
