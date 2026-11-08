@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SystemConfig } from '../types';
 import { DEFAULT_SYSTEM_CONFIG, DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { Settings, Upload, RotateCcw, Check, X, Shield } from 'lucide-react';
@@ -22,6 +22,19 @@ export const HeaderCustomizerModal: React.FC<HeaderCustomizerModalProps> = ({
   const [englishSubtitle, setEnglishSubtitle] = useState(config.englishSubtitle);
   const [logoPreview, setLogoPreview] = useState(config.logoBase64);
   const [msg, setMsg] = useState('');
+
+  // Escape key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -74,8 +87,17 @@ export const HeaderCustomizerModal: React.FC<HeaderCustomizerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-600/40 w-full max-w-xl overflow-hidden animate-in fade-in zoom-in-95">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-600/40 w-full max-w-xl overflow-hidden animate-in fade-in zoom-in-95 cursor-default">
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-900 via-amber-900 to-slate-900 p-4 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -83,10 +105,16 @@ export const HeaderCustomizerModal: React.FC<HeaderCustomizerModalProps> = ({
             <h3 className="text-base font-black">تخصيص الهوية الرسمية والترويسة الحكومية</h3>
           </div>
           <button
-            onClick={onClose}
-            className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
+            title="إغلاق النافذة (Escape)"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5 stroke-[2.5]" />
           </button>
         </div>
 

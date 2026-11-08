@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Bakery, DebtRecord, SystemConfig, AppUser } from '../types';
 import {
   AlertTriangle,
@@ -92,6 +92,19 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
     return schedule;
   }, [currentTotalDebt, weeksCount, startDate]);
 
+  // Escape key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handlePrintSchedule = () => {
@@ -99,8 +112,17 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/70 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border-2 border-red-600/50 w-full max-w-5xl my-4 flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/70 backdrop-blur-sm overflow-y-auto cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-red-600/50 w-full max-w-5xl my-4 flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 cursor-default">
         {/* Header (No print) */}
         <div className="bg-gradient-to-r from-red-950 via-slate-900 to-red-950 p-4 text-white flex items-center justify-between no-print shrink-0">
           <div className="flex items-center gap-3">
@@ -121,10 +143,16 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
             </div>
           </div>
           <button
-            onClick={onClose}
-            className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
+            title="إغلاق النافذة (Escape)"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5 stroke-[2.5]" />
           </button>
         </div>
 
@@ -418,10 +446,15 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
           </button>
 
           <button
-            onClick={onClose}
-            className="px-6 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-black transition"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="px-6 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-black transition cursor-pointer"
           >
-            إغلاق
+            إغلاق النافذة (ESC)
           </button>
         </div>
       </div>

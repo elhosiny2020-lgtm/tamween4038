@@ -137,6 +137,14 @@ export const DEFAULT_ACTIVITY_STATUSES: string[] = [
   'تجديد ورفع كفاءة'
 ];
 
+export const DEFAULT_BAKERY_CATEGORIES: string[] = [
+  'مخبز بلدي مدعم',
+  'مخبز بلدي مطور',
+  'مخبز سياحي 72%',
+  'مخبز فينو وأفرنجي',
+  'مخبز طباقي'
+];
+
 export const DEFAULT_COLUMN_TITLES: ColumnTitles = {
   index: 'م',
   bakeryOwnerName: 'اسم صاحب المخبز',
@@ -158,6 +166,7 @@ export const DEFAULT_COLUMN_TITLES: ColumnTitles = {
   avg2025: 'متوسط 2025',
   avgDiff: 'الفرق التراكمي',
   activityStatus: 'نشاط المخبز',
+  bakeryCategory: 'تصنيف المخبز',
   breadType: 'نوع الخبز',
   breadTypeCount: 'عدد نوع الخبز',
   lineType: 'نوع خط الإنتاج',

@@ -117,10 +117,15 @@ export default function App() {
   const [selectedUnit, setSelectedUnit] = useState('ALL');
   const [selectedActivity, setSelectedActivity] = useState('ALL');
   const [selectedDebtFilter, setSelectedDebtFilter] = useState<'ALL' | 'HAS_DEBT' | 'NO_DEBT'>('ALL');
+  // Bakery Category Filter (الكل، بلدي مدعم، سياحي 72%، فينو وأفرنجي، طباقي)
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
   // License Expiry Timeline Filter (الكل، منتهية بالفعل، تنتهي خلال 30 يوماً، تنتهي خلال 60 يوماً، تنتهي خلال 90 يوماً، سارية لأكثر من 90 يوماً)
   const [selectedLicenseExpiryFilter, setSelectedLicenseExpiryFilter] = useState<
     'ALL' | 'EXPIRED' | 'WITHIN_30' | 'WITHIN_60' | 'WITHIN_90' | 'VALID'
   >('ALL');
+
+  // Expected Flour Bag Price (ج.م / شيكارة) for Annual Budget Estimation
+  const [flourBagPrice, setFlourBagPrice] = useState<number>(750);
 
   // Selected Row for professional highlighting
   const [selectedBakeryRowId, setSelectedBakeryRowId] = useState<string | null>(null);
@@ -335,15 +340,36 @@ export default function App() {
     return { expired, within30, within60, within90, valid };
   }, [appState]);
 
+  // Precompute bakery category counts
+  const categoryCounts = useMemo(() => {
+    if (!appState) return { baladi: 0, baladiMotawar: 0, tourist: 0, fino: 0, tabaqi: 0 };
+    let baladi = 0, baladiMotawar = 0, tourist = 0, fino = 0, tabaqi = 0;
+    appState.bakeries.forEach((b) => {
+      const cat = b.bakeryCategory || 'مخبز بلدي مدعم';
+      if (cat.includes('مطور')) baladiMotawar++;
+      else if (cat.includes('سياحي')) tourist++;
+      else if (cat.includes('فينو')) fino++;
+      else if (cat.includes('طباقي')) tabaqi++;
+      else baladi++;
+    });
+    return { baladi, baladiMotawar, tourist, fino, tabaqi };
+  }, [appState]);
+
   // Filtered bakeries for main table
   const filteredBakeries = useMemo(() => {
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    if (!appState) return [];
 
     return appState.bakeries.filter((b) => {
       if (selectedVillage !== 'ALL' && b.village !== selectedVillage) return false;
       if (selectedUnit !== 'ALL' && b.localUnit !== selectedUnit) return false;
       if (selectedActivity !== 'ALL' && b.activityStatus !== selectedActivity) return false;
+
+      // Filter by Bakery Category (تصنيف المخبز)
+      if (selectedCategoryFilter !== 'ALL') {
+        const cat = b.bakeryCategory || 'مخبز بلدي مدعم';
+        if (!cat.includes(selectedCategoryFilter)) return false;
+      }
 
       const debt = bakeryRemainingDebtsMap[b.id] || 0;
       if (selectedDebtFilter === 'HAS_DEBT' && debt <= 0) return false;
@@ -419,6 +445,7 @@ export default function App() {
     selectedUnit,
     selectedActivity,
     selectedDebtFilter,
+    selectedCategoryFilter,
     selectedLicenseExpiryFilter,
     searchTerm,
     bakeryRemainingDebtsMap,
@@ -1153,7 +1180,7 @@ export default function App() {
           /* BAKERIES MAIN VIEW */
           <div className="space-y-4">
             {/* Quick Stat Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-lg hover:border-slate-700 transition">
                 <span className="text-[11px] font-bold text-slate-400 block mb-0.5">
                   إجمالي المخابز المسجلة
@@ -1190,6 +1217,35 @@ export default function App() {
                   {bakeryStats.totalLoaves.toLocaleString()}
                 </span>
                 <span className="text-[10px] text-emerald-500 font-bold">رغيف (× 1350)</span>
+              </div>
+
+              {/* NEW: Expected Annual Flour Budget Stat Card */}
+              <div className="bg-gradient-to-br from-purple-950 via-purple-900 to-slate-950 border-2 border-purple-600/60 rounded-xl p-2.5 text-center shadow-xl hover:border-purple-400 transition relative overflow-hidden group">
+                <div className="flex items-center justify-between gap-1 mb-1 border-b border-purple-500/20 pb-1">
+                  <span className="text-[10px] font-black text-purple-200 truncate">
+                    الميزانية السنوية المتوقعة
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0 bg-purple-950/80 px-1.5 py-0.5 rounded border border-purple-500/40">
+                    <span className="text-[9px] text-purple-300 font-bold">سعر الشيكارة:</span>
+                    <input
+                      type="number"
+                      value={flourBagPrice}
+                      onChange={(e) => setFlourBagPrice(Math.max(1, Number(e.target.value) || 0))}
+                      className="w-12 bg-black/80 text-amber-300 font-black text-[10px] text-center rounded border border-amber-500/50 focus:outline-none focus:border-amber-400 px-0.5"
+                      title="تغيير متوسط سعر شيكارة الدقيق (ج.م)"
+                    />
+                  </div>
+                </div>
+                <div className="stat-num text-purple-200 font-black text-lg block leading-tight">
+                  {((bakeryStats.totalActual * flourBagPrice * 365) / 1000000).toLocaleString('ar-EG', {
+                    maximumFractionDigits: 2,
+                    minimumFractionDigits: 1,
+                  })}{' '}
+                  <span className="text-xs text-amber-300 font-bold">م.ج.م</span>
+                </div>
+                <span className="text-[9.5px] text-purple-300/80 font-bold block mt-0.5 truncate">
+                  سنوياً (× 365 يوم)
+                </span>
               </div>
 
               <div className="col-span-2 md:col-span-1 bg-gradient-to-br from-red-950 via-red-900 to-black text-white rounded-xl p-3 text-center shadow-xl border-2 border-red-700">
@@ -1277,8 +1333,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Dynamic Filtering Dropdowns */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-slate-800 text-xs">
+              {/* Dynamic Filtering Dropdowns Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 pt-2 border-t border-slate-800 text-xs">
                 <div>
                   <label className="block text-[11px] font-black text-slate-300 mb-1">القرية</label>
                   <select
@@ -1333,6 +1389,25 @@ export default function App() {
                 </div>
 
                 <div>
+                  <label className="block text-[11px] font-black text-amber-300 mb-1 flex items-center gap-1">
+                    <Store className="w-3 h-3 text-amber-400" />
+                    <span>تصنيف المخبز</span>
+                  </label>
+                  <select
+                    value={selectedCategoryFilter}
+                    onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-black border border-amber-500/50 rounded-lg font-black text-amber-300 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                  >
+                    <option value="ALL">كافة التصنيفات ({appState.bakeries.length})</option>
+                    <option value="مدعم">🍞 مخبز بلدي مدعم ({categoryCounts.baladi})</option>
+                    <option value="مطور">⚡ مخبز بلدي مطور ({categoryCounts.baladiMotawar})</option>
+                    <option value="سياحي">🍕 مخبز سياحي 72% ({categoryCounts.tourist})</option>
+                    <option value="فينو">🥐 مخبز فينو وأفرنجي ({categoryCounts.fino})</option>
+                    <option value="طباقي">🥖 مخبز طباقي ({categoryCounts.tabaqi})</option>
+                  </select>
+                </div>
+
+                <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-[11px] font-black text-slate-300">نشاط المخبز</label>
                     <button
@@ -1373,6 +1448,211 @@ export default function App() {
                     <option value="HAS_DEBT">عليه مديونية متبقية فقط</option>
                     <option value="NO_DEBT">خالص المديونية (0 ج.م)</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Bakery Category Dashboard Filter Pills Bar (تصفية حية بتصنيف المخبز) */}
+              <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <Store className="w-4 h-4 text-amber-400 animate-pulse" />
+                  <span className="text-xs font-black text-amber-300">
+                    تصفية فورية بحسب تصنيف المخبز:
+                  </span>
+                </div>
+
+                <div className="flex items-center flex-wrap gap-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('ALL')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategoryFilter === 'ALL'
+                        ? 'bg-amber-400 text-black shadow-md border border-amber-300'
+                        : 'bg-black text-slate-300 border border-slate-700 hover:border-slate-500'
+                    }`}
+                  >
+                    <span>كافة التصنيفات</span>
+                    <span className="text-[10px] bg-slate-900 text-amber-300 px-1.5 py-0.2 rounded-full font-mono">
+                      {appState.bakeries.length}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('مدعم')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategoryFilter === 'مدعم'
+                        ? 'bg-amber-500 text-slate-950 shadow-md border border-amber-300'
+                        : 'bg-black text-amber-300 border border-amber-800/60 hover:border-amber-600'
+                    }`}
+                  >
+                    <span>🍞 بلدي مدعم</span>
+                    <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {categoryCounts.baladi}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('مطور')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategoryFilter === 'مطور'
+                        ? 'bg-yellow-500 text-slate-950 shadow-md border border-yellow-300'
+                        : 'bg-black text-yellow-300 border border-yellow-800/60 hover:border-yellow-600'
+                    }`}
+                  >
+                    <span>⚡ بلدي مطور</span>
+                    <span className="text-[10px] bg-yellow-950 text-yellow-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {categoryCounts.baladiMotawar}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('سياحي')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategoryFilter === 'سياحي'
+                        ? 'bg-cyan-500 text-slate-950 shadow-md border border-cyan-300'
+                        : 'bg-black text-cyan-300 border border-cyan-900/60 hover:border-cyan-600'
+                    }`}
+                  >
+                    <span>🍕 سياحي 72%</span>
+                    <span className="text-[10px] bg-cyan-950 text-cyan-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {categoryCounts.tourist}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('فينو')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategoryFilter === 'فينو'
+                        ? 'bg-purple-500 text-white shadow-md border border-purple-300'
+                        : 'bg-black text-purple-300 border border-purple-900/60 hover:border-purple-600'
+                    }`}
+                  >
+                    <span>🥐 فينو وأفرنجي</span>
+                    <span className="text-[10px] bg-purple-950 text-purple-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {categoryCounts.fino}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('طباقي')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedCategoryFilter === 'طباقي'
+                        ? 'bg-emerald-500 text-slate-950 shadow-md border border-emerald-300'
+                        : 'bg-black text-emerald-300 border border-emerald-900/60 hover:border-emerald-600'
+                    }`}
+                  >
+                    <span>🥖 طباقي</span>
+                    <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {categoryCounts.tabaqi}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* License Expiry Timeline Filter Bar (شريط التصفية الزمني لتراخيص وسجلات المخابز مع المؤثرات التفاعلية) */}
+              <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-amber-400 animate-pulse" />
+                  <span className="text-xs font-black text-amber-300">
+                    فلتر الصلاحية وانتهاء التراخيص والعقود:
+                  </span>
+                </div>
+
+                <div className="flex items-center flex-wrap gap-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLicenseExpiryFilter('ALL')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedLicenseExpiryFilter === 'ALL'
+                        ? 'bg-amber-400 text-black shadow-md border border-amber-300'
+                        : 'bg-black text-slate-300 border border-slate-700 hover:border-slate-500'
+                    }`}
+                  >
+                    <span>كافة التراخيص</span>
+                    <span className="text-[10px] bg-slate-900 text-amber-300 px-1.5 py-0.2 rounded-full font-mono">
+                      {appState.bakeries.length}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLicenseExpiryFilter('EXPIRED')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedLicenseExpiryFilter === 'EXPIRED'
+                        ? 'bg-gradient-to-r from-red-600 to-rose-700 text-white shadow-lg border border-red-400 animate-pulse'
+                        : 'bg-black text-rose-300 border border-red-900/50 hover:border-red-600'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-red-400 animate-ping inline-block" />
+                    <span>منتهية بالفعل</span>
+                    <span className="text-[10px] bg-red-950 text-white px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {licenseExpiryCounts.expired}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLicenseExpiryFilter('WITHIN_30')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedLicenseExpiryFilter === 'WITHIN_30'
+                        ? 'bg-amber-500 text-slate-950 shadow-md border border-amber-300'
+                        : 'bg-black text-amber-300 border border-amber-700/50 hover:border-amber-500'
+                    }`}
+                  >
+                    <span>تنتهي خلال 30 يوماً</span>
+                    <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {licenseExpiryCounts.within30}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLicenseExpiryFilter('WITHIN_60')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedLicenseExpiryFilter === 'WITHIN_60'
+                        ? 'bg-orange-500 text-slate-950 shadow-md border border-orange-300'
+                        : 'bg-black text-orange-300 border border-orange-700/50 hover:border-orange-500'
+                    }`}
+                  >
+                    <span>تنتهي خلال 60 يوماً</span>
+                    <span className="text-[10px] bg-orange-950 text-orange-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {licenseExpiryCounts.within60}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLicenseExpiryFilter('WITHIN_90')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedLicenseExpiryFilter === 'WITHIN_90'
+                        ? 'bg-yellow-500 text-slate-950 shadow-md border border-yellow-300'
+                        : 'bg-black text-yellow-300 border border-yellow-700/50 hover:border-yellow-500'
+                    }`}
+                  >
+                    <span>تنتهي خلال 90 يوماً</span>
+                    <span className="text-[10px] bg-yellow-950 text-yellow-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {licenseExpiryCounts.within90}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLicenseExpiryFilter('VALID')}
+                    className={`px-3 py-1 rounded-xl font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                      selectedLicenseExpiryFilter === 'VALID'
+                        ? 'bg-emerald-500 text-slate-950 shadow-md border border-emerald-300'
+                        : 'bg-black text-emerald-300 border border-emerald-700/50 hover:border-emerald-500'
+                    }`}
+                  >
+                    <span>سارية لأكثر من 90 يوماً</span>
+                    <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.2 rounded-full font-mono font-black">
+                      {licenseExpiryCounts.valid}
+                    </span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1434,7 +1714,7 @@ export default function App() {
 
                       {/* 5. Classification & Operations */}
                       <th
-                        colSpan={5}
+                        colSpan={6}
                         className="py-2.5 px-2 bg-emerald-950 border-l border-slate-800 text-emerald-200"
                       >
                         التصنيف والتشغيل
@@ -1490,6 +1770,9 @@ export default function App() {
 
                       {/* 5. Classification & Operations */}
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.activityStatus}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[110px] bg-amber-950/40 text-amber-300">
+                        {ct.bakeryCategory}
+                      </th>
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.breadType}</th>
                       <th className="py-2 px-1 border-l border-slate-800 min-w-[75px] text-amber-300">
                         {ct.breadTypeCount}
@@ -1513,7 +1796,7 @@ export default function App() {
                   <tbody className="divide-y divide-slate-800 font-bold">
                     {filteredBakeries.length === 0 ? (
                       <tr>
-                        <td colSpan={32} className="py-12 text-center text-slate-400 font-black">
+                        <td colSpan={33} className="py-12 text-center text-slate-400 font-black">
                           لا توجد أي مخابز مطابقة لمعايير البحث الحالية
                         </td>
                       </tr>
@@ -1679,6 +1962,23 @@ export default function App() {
                                 }`}
                               >
                                 {b.activityStatus}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-800">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                                  (b.bakeryCategory || 'مخبز بلدي مدعم').includes('مطور')
+                                    ? 'bg-yellow-950 text-yellow-300 border-yellow-600/70 shadow-xs'
+                                    : (b.bakeryCategory || 'مخبز بلدي مدعم').includes('سياحي')
+                                    ? 'bg-cyan-950 text-cyan-300 border-cyan-700/60'
+                                    : (b.bakeryCategory || 'مخبز بلدي مدعم').includes('فينو')
+                                    ? 'bg-purple-950 text-purple-300 border-purple-700/60'
+                                    : (b.bakeryCategory || 'مخبز بلدي مدعم').includes('طباقي')
+                                    ? 'bg-emerald-950 text-emerald-300 border-emerald-700/60'
+                                    : 'bg-amber-950 text-amber-300 border-amber-700/60'
+                                }`}
+                              >
+                                {b.bakeryCategory || 'مخبز بلدي مدعم'}
                               </span>
                             </td>
                             <td className="py-2.5 px-2 border-l border-slate-800 text-slate-200">{b.breadType}</td>

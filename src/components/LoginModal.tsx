@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { AppUser, SystemConfig } from '../types';
 import { ParticleCanvas } from './ParticleCanvas';
 import { CartoonBakeryScene } from './CartoonBakeryScene';
-import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Sparkles, Building2, KeyRound } from 'lucide-react';
+import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Sparkles, Building2, KeyRound, Download, Laptop } from 'lucide-react';
+import { downloadWindowsExeLauncher } from '../utils/htmlExporter';
 
 interface LoginModalProps {
   systemConfig: SystemConfig;
@@ -277,6 +278,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   <KeyRound className="w-4 h-4 text-black stroke-[2.5]" />
                   <span className="text-black font-black text-sm">تسجيل الدخول والبدء في العمل</span>
                 </button>
+
+                {/* Direct Download EXE Application Button (تحميل المنظومة بالكامل على ملف EXE للويندوز) */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await downloadWindowsExeLauncher();
+                    }}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 via-rose-700 to-red-600 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-red-400/80 group"
+                    title="انقر لتحميل ملف تشغيل الويندوز المباشر (EXE) للعمل على الكمبيوتر بدون إنترنت"
+                  >
+                    <Download className="w-4 h-4 text-amber-300 stroke-[2.5] transition-transform duration-300 group-hover:translate-y-0.5" />
+                    <span className="text-white font-black text-xs">تحميل المنظومة بالكامل على ملف (EXE)</span>
+                  </button>
+                </div>
               </form>
             ) : (
               <form onSubmit={handleRegister} className="space-y-3.5" autoComplete="off" noValidate>

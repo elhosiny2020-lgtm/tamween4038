@@ -58,17 +58,25 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       ? 'report-font-compact text-[7.5pt] print:text-[7.5pt]'
       : 'report-font-standard text-[8.5pt] print:text-[8.5pt]';
 
-  // Manage print isolation class on body
+  // Manage print isolation class on body and Escape key listener
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+
     if (isOpen) {
       document.body.classList.add('has-print-modal');
+      window.addEventListener('keydown', handleKeyDown);
     } else {
       document.body.classList.remove('has-print-modal');
     }
     return () => {
       document.body.classList.remove('has-print-modal');
+      window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen]);
+  }, [isOpen, onClose]);
 
   // Available Local units for selected village
   const currentUnits = useMemo(() => {
@@ -842,7 +850,16 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     (activeColumns.taxCardDate ? 1 : 0);
 
   return (
-    <div className="report-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
+    <div
+      className="report-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto cursor-pointer no-print"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
       <style>{`
         @media print {
           .no-print { display: none !important; }
@@ -975,11 +992,16 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             </button>
 
             <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition"
-              title="إغلاق النافذة"
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              className="p-2 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md flex items-center justify-center"
+              title="إغلاق النافذة (Escape)"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5 stroke-[2.5]" />
             </button>
           </div>
         </div>
@@ -2106,10 +2128,16 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             </span>
           </div>
           <button
-            onClick={onClose}
-            className="px-5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-black cursor-pointer transition"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="px-6 py-2 bg-gradient-to-r from-red-700 to-rose-800 hover:from-red-600 hover:to-rose-700 text-white rounded-xl text-xs font-black cursor-pointer transition shadow-lg hover:scale-105 active:scale-95 border border-red-400 flex items-center gap-2"
           >
-            إغلاق النافذة
+            <X className="w-4 h-4 text-rose-200 stroke-[2.5]" />
+            <span>إغلاق النافذة (ESC)</span>
           </button>
         </div>
       </div>

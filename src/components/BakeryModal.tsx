@@ -65,6 +65,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
   // Classification & Operations
   const [activityStatus, setActivityStatus] = useState('شغال');
+  const [bakeryCategory, setBakeryCategory] = useState('مخبز بلدي مدعم');
   const [breadType, setBreadType] = useState('بلدي مدعم ماو');
   const [breadTypeCount, setBreadTypeCount] = useState<number>(1);
   const [lineType, setLineType] = useState('نصف آلي');
@@ -194,6 +195,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setAvgDiff(bakeryToEdit.avgDiff);
 
       setActivityStatus(bakeryToEdit.activityStatus || 'شغال');
+      setBakeryCategory(bakeryToEdit.bakeryCategory || 'مخبز بلدي مدعم');
       setBreadType(bakeryToEdit.breadType || 'بلدي مدعم ماو');
       setBreadTypeCount(bakeryToEdit.breadTypeCount || 1);
       setLineType(bakeryToEdit.lineType || 'نصف آلي');
@@ -234,6 +236,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setAvgDiff((a25 - loaves / 27000).toFixed(3));
 
       setActivityStatus('شغال');
+      setBakeryCategory('مخبز بلدي مدعم');
       setBreadType('بلدي مدعم ماو');
       setBreadTypeCount(1);
       setLineType('نصف آلي');
@@ -337,6 +340,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       avg2025: String(avg2025),
       avgDiff: String(avgDiff),
       activityStatus,
+      bakeryCategory: bakeryCategory.trim() || 'مخبز بلدي مدعم',
       breadType,
       breadTypeCount: Number(breadTypeCount) || 1,
       lineType,
@@ -354,11 +358,33 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     onClose();
   };
 
+  // Listen to Escape key to close modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-600/40 w-full max-w-5xl my-4 overflow-hidden flex flex-col max-h-[92vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-sm overflow-y-auto cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-600/40 w-full max-w-5xl my-4 overflow-hidden flex flex-col max-h-[92vh] cursor-default">
         {/* Modal Top Header */}
         <div className="bg-gradient-to-r from-slate-900 via-amber-900 to-slate-900 p-4 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -383,8 +409,17 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 <span>تم الحفظ التلقائي لكل بيان ({lastAutoSaveTime})</span>
               </div>
             )}
-            <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white cursor-pointer">
-              <X className="w-5 h-5" />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
+              title="إغلاق النافذة (Escape)"
+            >
+              <X className="w-5 h-5 stroke-[2.5]" />
             </button>
           </div>
         </div>
@@ -590,6 +625,21 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                   {activityStatus && !activityStatuses.includes(activityStatus) && (
                     <option value={activityStatus}>{activityStatus}</option>
                   )}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">تصنيف المخبز *</label>
+                <select
+                  value={bakeryCategory}
+                  onChange={(e) => setBakeryCategory(e.target.value)}
+                  className="w-full px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                >
+                  <option value="مخبز بلدي مدعم">مخبز بلدي مدعم</option>
+                  <option value="مخبز بلدي مطور">مخبز بلدي مطور</option>
+                  <option value="مخبز سياحي 72%">مخبز سياحي 72%</option>
+                  <option value="مخبز فينو وأفرنجي">مخبز فينو وأفرنجي</option>
+                  <option value="مخبز طباقي">مخبز طباقي</option>
                 </select>
               </div>
 
@@ -988,10 +1038,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
           <div className="pt-4 border-t border-slate-200 flex items-center justify-between shrink-0">
             <button
               type="button"
-              onClick={onClose}
-              className="px-5 py-2.5 border border-slate-300 rounded-lg text-xs font-black text-slate-700 hover:bg-slate-100 transition"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              className="px-5 py-2.5 border border-slate-300 rounded-lg text-xs font-black text-slate-700 hover:bg-slate-100 transition cursor-pointer"
             >
-              إلغاء
+              إلغاء النافذة (ESC)
             </button>
 
             <button

@@ -1,129 +1,184 @@
 import React, { useState } from 'react';
+import { Sparkles, Utensils, Award } from 'lucide-react';
 
 export const CartoonBakeryScene: React.FC = () => {
   const [bakerWaving, setBakerWaving] = useState(false);
+  const [isOvenGlowing, setIsOvenGlowing] = useState(true);
 
   return (
     <div className="relative w-full max-w-lg mx-auto flex flex-col items-center justify-center select-none py-2">
-      {/* Main Cartoon Stage with The Master Baker (عم عويس) */}
-      <div className="relative w-full h-56 md:h-64 flex items-end justify-center">
-        {/* Floating Cartoon Background Elements (Wheat, stars) */}
+      {/* Background Animated Glowing Ring */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 bg-gradient-to-tr from-amber-500/20 via-red-500/10 to-amber-300/20 rounded-full blur-3xl pointer-events-none animate-pulse" />
+
+      {/* Main Cartoon Stage with The Master Baker (الشيخ عويس - كبير الخبازين) */}
+      <div className="relative w-full h-60 md:h-64 flex items-end justify-center">
+        {/* Floating Cartoon Background Elements */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
-          {/* Animated Cartoon Wheat 1 */}
-          <div className="absolute top-2 left-10 text-2xl animate-pulse opacity-80" style={{ animationDuration: '3s' }}>
+          {/* Wheat Sheaves */}
+          <div className="absolute top-2 left-6 text-3xl animate-bounce opacity-90" style={{ animationDuration: '3.2s' }}>
             🌾
           </div>
-          {/* Animated Cartoon Wheat 2 */}
-          <div className="absolute top-10 right-10 text-2xl animate-pulse opacity-80" style={{ animationDuration: '2.5s' }}>
+          <div className="absolute top-6 right-8 text-3xl animate-bounce opacity-90" style={{ animationDuration: '2.8s' }}>
             🌾
           </div>
-          {/* Cartoon Sparkles */}
-          <div className="absolute top-4 left-1/4 text-amber-300 text-lg animate-ping" style={{ animationDuration: '2s' }}>
+
+          {/* Sparkles */}
+          <div className="absolute top-4 left-1/4 text-amber-300 text-xl animate-ping" style={{ animationDuration: '2.2s' }}>
             ✨
           </div>
-          <div className="absolute top-12 right-1/4 text-amber-300 text-lg animate-ping" style={{ animationDuration: '2.8s' }}>
+          <div className="absolute top-10 right-1/4 text-amber-400 text-xl animate-ping" style={{ animationDuration: '2.6s' }}>
             ⭐
           </div>
-          {/* Floating mini bread */}
-          <div className="absolute top-16 left-16 text-xl animate-bounce opacity-70" style={{ animationDuration: '4s' }}>
+
+          {/* Floating Fresh Bread Loaves */}
+          <div className="absolute top-16 left-12 text-2xl animate-pulse opacity-80" style={{ animationDuration: '4s' }}>
+            🫓
+          </div>
+          <div className="absolute top-20 right-12 text-2xl animate-pulse opacity-80" style={{ animationDuration: '3.5s' }}>
             🥖
           </div>
         </div>
 
-        {/* Center Star: The Smiling Master Baker ("عم عويس الخباز البلدي") */}
+        {/* Center Character: The Master Baker ("الشيخ عويس - الخباز التمويني الماهر") */}
         <div
           onMouseEnter={() => setBakerWaving(true)}
           onMouseLeave={() => setBakerWaving(false)}
-          onClick={() => setBakerWaving(!bakerWaving)}
-          className="relative z-20 cursor-pointer group transform hover:scale-105 transition-transform duration-300"
+          onClick={() => {
+            setBakerWaving(!bakerWaving);
+            setIsOvenGlowing(!isOvenGlowing);
+          }}
+          className="relative z-20 cursor-pointer group transform hover:scale-108 transition-all duration-300"
+          title="انقر لإلقاء التحية على الخباز الماهر وجعل الفرن متوهجاً!"
         >
-          <svg width="160" height="185" viewBox="0 0 160 190" className="drop-shadow-2xl">
-            {/* Steam waves from bread */}
-            <g className="animate-pulse" style={{ animationDuration: '1.5s' }}>
-              <path d="M 120,70 Q 125,55 120,45" fill="none" stroke="#FDE68A" strokeWidth="2.5" strokeLinecap="round" opacity="0.8" />
-              <path d="M 130,68 Q 135,50 130,38" fill="none" stroke="#FDE68A" strokeWidth="2.5" strokeLinecap="round" opacity="0.8" />
+          <svg width="180" height="200" viewBox="0 0 180 200" className="drop-shadow-[0_15px_30px_rgba(0,0,0,0.8)]">
+            {/* Animated Steam Waves Rising from Fresh Baladi Bread */}
+            <g className="animate-pulse" style={{ animationDuration: '1.4s' }}>
+              <path d="M 135,75 Q 140,60 135,48" fill="none" stroke="#FDE68A" strokeWidth="3" strokeLinecap="round" opacity="0.85" />
+              <path d="M 148,72 Q 153,52 148,40" fill="none" stroke="#FDE68A" strokeWidth="3" strokeLinecap="round" opacity="0.85" />
+              <path d="M 122,78 Q 127,62 122,50" fill="none" stroke="#FDE68A" strokeWidth="2.5" strokeLinecap="round" opacity="0.7" />
             </g>
 
-            {/* Baker Body / Apron */}
-            <path d="M 50,110 L 40,180 Q 80,188 120,180 L 110,110 Z" fill="#F8FAFC" stroke="#334155" strokeWidth="3.5" />
-            {/* Red Scarf / Neckerchief */}
-            <path d="M 62,110 Q 80,126 98,110 L 90,102 Q 80,112 70,102 Z" fill="#DC2626" />
-
-            {/* Left Arm holding Peel */}
-            <path d="M 45,115 Q 30,135 60,145" fill="none" stroke="#FED7AA" strokeWidth="12" strokeLinecap="round" />
-
-            {/* Right Arm waving or holding bread */}
+            {/* Glowing Traditional Egyptian Brick Oven in Background */}
             <path
-              d={bakerWaving ? 'M 115,115 Q 140,85 145,65' : 'M 112,118 Q 130,130 115,145'}
+              d="M 20,180 Q 20,100 90,100 Q 160,100 160,180 Z"
+              fill="#1E1B18"
+              stroke="#B45309"
+              strokeWidth="4"
+              opacity="0.4"
+            />
+            <path
+              d="M 45,180 Q 45,130 90,130 Q 135,130 135,180 Z"
+              fill={isOvenGlowing ? 'url(#ovenGlowGradient)' : '#451A03'}
+              stroke="#D97706"
+              strokeWidth="3"
+            />
+
+            {/* SVG Gradients */}
+            <defs>
+              <radialGradient id="ovenGlowGradient" cx="50%" cy="80%" r="60%">
+                <stop offset="0%" stopColor="#F59E0B" stopOpacity="1" />
+                <stop offset="50%" stopColor="#DC2626" stopOpacity="0.85" />
+                <stop offset="100%" stopColor="#451A03" stopOpacity="0.6" />
+              </radialGradient>
+              <linearGradient id="hatGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#FFFFFF" />
+                <stop offset="100%" stopColor="#F1F5F9" />
+              </linearGradient>
+            </defs>
+
+            {/* Baker Body & Crisp White Apron */}
+            <path d="M 55,120 L 42,192 Q 90,200 138,192 L 125,120 Z" fill="#F8FAFC" stroke="#334155" strokeWidth="4" />
+            {/* Egyptian Official Ministry Badge on Apron */}
+            <rect x="80" y="145" width="20" height="24" rx="4" fill="#D97706" stroke="#FEF08A" strokeWidth="1.5" />
+            <circle cx="90" cy="154" r="5" fill="#FEF08A" />
+            <path d="M 86,162 L 94,162" stroke="#FEF08A" strokeWidth="1.5" />
+
+            {/* Red Egyptian Scarf / Neckerchief */}
+            <path d="M 68,118 Q 90,136 112,118 L 102,110 Q 90,122 78,110 Z" fill="#DC2626" stroke="#991B1B" strokeWidth="2" />
+
+            {/* Left Arm holding Wooden Peel */}
+            <path d="M 50,125 Q 32,148 68,158" fill="none" stroke="#FED7AA" strokeWidth="13" strokeLinecap="round" />
+
+            {/* Right Arm Waving or Welcoming */}
+            <path
+              d={bakerWaving ? 'M 130,125 Q 158,92 162,70' : 'M 128,128 Q 148,142 130,158'}
               fill="none"
               stroke="#FED7AA"
-              strokeWidth="12"
+              strokeWidth="13"
               strokeLinecap="round"
               className="transition-all duration-300"
             />
-            {/* Waving Hand */}
+            {/* Waving Hand Sparkle Effect */}
             {bakerWaving && (
-              <circle cx="145" cy="62" r="7" fill="#FED7AA" className="animate-spin" style={{ animationDuration: '0.8s' }} />
+              <circle cx="162" cy="66" r="8" fill="#FDE68A" className="animate-ping" style={{ animationDuration: '0.8s' }} />
             )}
 
-            {/* Wooden Bread Peel (المطرحة) */}
-            <path d="M 30,150 L 135,130" stroke="#78350F" strokeWidth="6" strokeLinecap="round" />
-            <ellipse cx="125" cy="132" rx="20" ry="12" fill="#D97706" stroke="#92400E" strokeWidth="2.5" />
+            {/* Wooden Bread Peel (المطرحة الخشبية) */}
+            <path d="M 32,165 L 152,142" stroke="#78350F" strokeWidth="7" strokeLinecap="round" />
+            <ellipse cx="140" cy="144" rx="23" ry="14" fill="#D97706" stroke="#92400E" strokeWidth="3" />
 
-            {/* Hot Baladi Bread Loaf on Peel */}
-            <ellipse cx="125" cy="128" rx="16" ry="9" fill="#FBBF24" stroke="#B45309" strokeWidth="2" />
-            <path d="M 115,126 Q 125,122 135,126" stroke="#92400E" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-            {/* Sesame seeds on loaf */}
-            <circle cx="122" cy="127" r="0.8" fill="#FFF" />
-            <circle cx="127" cy="126" r="0.8" fill="#FFF" />
-            <circle cx="131" cy="128" r="0.8" fill="#FFF" />
+            {/* Fresh Piping Hot Egyptian Baladi Loaf on Peel */}
+            <ellipse cx="140" cy="140" rx="19" ry="10" fill="#FBBF24" stroke="#B45309" strokeWidth="2.5" />
+            <path d="M 128,138 Q 140,133 152,138" stroke="#92400E" strokeWidth="2" fill="none" strokeLinecap="round" />
+            {/* Sesame & Wheat Bran Texture on Bread */}
+            <circle cx="135" cy="139" r="1" fill="#FFFFFF" />
+            <circle cx="141" cy="137" r="1" fill="#FFFFFF" />
+            <circle cx="146" cy="140" r="1" fill="#FFFFFF" />
+            <circle cx="138" cy="142" r="1" fill="#92400E" />
 
-            {/* Head */}
-            <circle cx="80" cy="85" r="28" fill="#FED7AA" stroke="#78350F" strokeWidth="3" />
-            {/* Rosy Cheeks */}
-            <circle cx="63" cy="94" r="6" fill="#FCA5A5" opacity="0.9" />
-            <circle cx="97" cy="94" r="6" fill="#FCA5A5" opacity="0.9" />
+            {/* Chef's Face */}
+            <circle cx="90" cy="92" r="30" fill="#FED7AA" stroke="#78350F" strokeWidth="3.5" />
+            {/* Cheerful Rosy Cheeks */}
+            <circle cx="71" cy="102" r="7" fill="#FCA5A5" opacity="0.9" />
+            <circle cx="109" cy="102" r="7" fill="#FCA5A5" opacity="0.9" />
 
-            {/* Cute Big Cartoon Eyes */}
-            <ellipse cx="68" cy="80" rx="5" ry="7" fill="#1E293B" />
-            <circle cx="70" cy="78" r="2.2" fill="#FFFFFF" />
-            <circle cx="66" cy="83" r="1.2" fill="#FFFFFF" />
+            {/* Cute Cartoon Eyes with Highlights */}
+            <ellipse cx="76" cy="87" rx="6" ry="8" fill="#1E293B" />
+            <circle cx="78" cy="84" r="2.5" fill="#FFFFFF" />
+            <circle cx="74" cy="89" r="1.5" fill="#FFFFFF" />
 
-            <ellipse cx="92" cy="80" rx="5" ry="7" fill="#1E293B" />
-            <circle cx="94" cy="78" r="2.2" fill="#FFFFFF" />
-            <circle cx="90" cy="83" r="1.2" fill="#FFFFFF" />
+            <ellipse cx="104" cy="87" rx="6" ry="8" fill="#1E293B" />
+            <circle cx="106" cy="84" r="2.5" fill="#FFFFFF" />
+            <circle cx="102" cy="89" r="1.5" fill="#FFFFFF" />
 
             {/* Friendly Eyebrows */}
-            <path d="M 62,70 Q 68,66 74,70" fill="none" stroke="#78350F" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M 86,70 Q 92,66 98,70" fill="none" stroke="#78350F" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M 70,76 Q 77,72 84,76" fill="none" stroke="#78350F" strokeWidth="3" strokeLinecap="round" />
+            <path d="M 96,76 Q 103,72 110,76" fill="none" stroke="#78350F" strokeWidth="3" strokeLinecap="round" />
 
-            {/* Cute Egyptian Mustache */}
+            {/* Signature Egyptian Master Moustache */}
             <path
-              d="M 65,95 Q 74,90 80,95 Q 86,90 95,95 Q 88,102 80,98 Q 72,102 65,95 Z"
+              d="M 73,103 Q 83,97 90,103 Q 97,97 107,103 Q 99,111 90,107 Q 81,111 73,103 Z"
               fill="#78350F"
             />
 
-            {/* Big Cheerful Smile */}
-            <path d="M 72,100 Q 80,109 88,100" fill="none" stroke="#1E293B" strokeWidth="2.5" strokeLinecap="round" />
+            {/* Big Smile */}
+            <path d="M 81,109 Q 90,119 99,109" fill="none" stroke="#1E293B" strokeWidth="3" strokeLinecap="round" />
 
-            {/* Tall Baker Chef Hat (طاقية الخباز البيضاء) */}
-            <g className="animate-bounce" style={{ animationDuration: '3s' }}>
+            {/* Tall White Master Chef / Baker Hat */}
+            <g className="animate-bounce" style={{ animationDuration: '3.5s' }}>
               <path
-                d="M 52,65 Q 40,35 60,25 Q 80,10 100,25 Q 120,35 108,65 Z"
-                fill="#FFFFFF"
+                d="M 58,72 Q 42,38 66,26 Q 90,8 114,26 Q 138,38 122,72 Z"
+                fill="url(#hatGradient)"
                 stroke="#334155"
-                strokeWidth="3"
+                strokeWidth="3.5"
               />
               {/* Hat Creases */}
-              <path d="M 68,62 Q 65,35 75,25" fill="none" stroke="#E2E8F0" strokeWidth="2" strokeLinecap="round" />
-              <path d="M 82,60 Q 83,30 87,22" fill="none" stroke="#E2E8F0" strokeWidth="2" strokeLinecap="round" />
-              <path d="M 94,62 Q 97,35 95,26" fill="none" stroke="#E2E8F0" strokeWidth="2" strokeLinecap="round" />
-              {/* Hat Band with Egyptian Golden Eagle pin */}
-              <rect x="52" y="60" width="56" height="8" rx="2" fill="#D97706" />
-              <circle cx="80" cy="64" r="3" fill="#FDE68A" />
+              <path d="M 76,68 Q 72,38 83,28" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round" />
+              <path d="M 92,66 Q 93,32 97,24" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round" />
+              <path d="M 106,68 Q 109,38 107,28" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round" />
+              {/* Golden Hat Band with Eagle Emblem */}
+              <rect x="58" y="66" width="64" height="9" rx="2.5" fill="#D97706" />
+              <circle cx="90" cy="70.5" r="3.5" fill="#FEF08A" stroke="#B45309" strokeWidth="1" />
             </g>
           </svg>
         </div>
+      </div>
+
+      {/* Interactive Title Tag */}
+      <div className="mt-3 flex items-center gap-2 bg-gradient-to-r from-amber-950/90 via-slate-900 to-amber-950/90 border border-amber-500/50 px-4 py-1.5 rounded-full text-xs font-black text-amber-300 shadow-xl backdrop-blur-md">
+        <Sparkles className="w-4 h-4 text-amber-400 animate-spin" style={{ animationDuration: '4s' }} />
+        <span>المنظومة الرقمية للمخابز البلدية المدعمة</span>
+        <Award className="w-4 h-4 text-amber-400" />
       </div>
     </div>
   );

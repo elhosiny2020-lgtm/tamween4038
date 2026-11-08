@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Bakery, DebtRecord, VillageHierarchy, SystemConfig } from '../types';
 import { PAYMENT_METHODS } from '../defaultData';
 import {
@@ -1235,9 +1235,33 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
     onSave(record);
   };
 
+  // Escape key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border-2 border-red-600/40 w-full max-w-5xl my-4 overflow-hidden flex flex-col max-h-[92vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-sm overflow-y-auto cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-red-600/40 w-full max-w-5xl my-4 overflow-hidden flex flex-col max-h-[92vh] cursor-default">
         {/* Modal Top Header */}
         <div className="bg-gradient-to-r from-red-950 via-slate-900 to-amber-950 p-4 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -1258,8 +1282,17 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                 <span>تم الحفظ التلقائي لكل بيان ({lastAutoSaveTime})</span>
               </div>
             )}
-            <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white cursor-pointer">
-              <X className="w-5 h-5" />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
+              title="إغلاق النافذة (Escape)"
+            >
+              <X className="w-5 h-5 stroke-[2.5]" />
             </button>
           </div>
         </div>
@@ -1657,10 +1690,14 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
           <div className="pt-4 border-t border-slate-200 flex items-center justify-between shrink-0">
             <button
               type="button"
-              onClick={onClose}
-              className="px-5 py-2.5 border border-slate-300 rounded-lg text-xs font-black text-slate-700 hover:bg-slate-100 transition"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              className="px-5 py-2.5 border border-slate-300 rounded-lg text-xs font-black text-slate-700 hover:bg-slate-100 transition cursor-pointer"
             >
-              إلغاء
+              إلغاء النافذة (ESC)
             </button>
 
             <button

@@ -8,6 +8,7 @@ import {
 } from './types';
 import {
   DEFAULT_SYSTEM_CONFIG,
+  DEFAULT_OFFICIAL_LOGO,
   DEFAULT_VILLAGES_HIERARCHY,
   DEFAULT_ISSUING_ENTITIES,
   DEFAULT_VIOLATION_TYPES,
@@ -321,6 +322,9 @@ export async function loadInitialState(): Promise<AppState> {
     activityStatuses = activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
     columnTitles = columnTitles ?? DEFAULT_COLUMN_TITLES;
     systemConfig = systemConfig ?? DEFAULT_SYSTEM_CONFIG;
+    if (!systemConfig.logoBase64 || systemConfig.logoBase64.length < 50) {
+      systemConfig.logoBase64 = DEFAULT_OFFICIAL_LOGO;
+    }
     users = users ?? INITIAL_USERS;
 
     // Sanitize 'شوال' to 'شيكارة'

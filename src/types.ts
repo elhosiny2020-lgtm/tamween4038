@@ -25,6 +25,7 @@ export interface Bakery {
 
   // التصنيف والتشغيل
   activityStatus: string; // نشاط المخبز (شغال، متوقف كلي، متوقف جزئي، ملغى، إلخ)
+  bakeryCategory?: string; // تصنيف المخبز (مخبز بلدي مدعم، مخبز بلدي مطور، مخبز سياحي 72%، مخبز فينو وأفرنجي، مخبز طباقي)
   breadType: string; // نوع الخبز (بلدي مدعم ماو، بلدي مجر، خبز آلي، طباقي)
   breadTypeCount: number; // عدد نوع الخبز (افتراضي 1)
   lineType: string; // نوع خط الإنتاج (نصف آلي، آلي كامل، يدوي)
@@ -121,6 +122,7 @@ export interface ColumnTitles {
   avg2025: string;
   avgDiff: string;
   activityStatus: string;
+  bakeryCategory: string;
   breadType: string;
   breadTypeCount: string;
   lineType: string;

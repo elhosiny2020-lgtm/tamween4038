@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { VillageHierarchy } from '../types';
 import { MapPin, Plus, Trash2, X, Check } from 'lucide-react';
 
@@ -19,6 +19,19 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
   const [newVillageName, setNewVillageName] = useState('');
   const [newUnitNames, setNewUnitNames] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState('');
+
+  // Escape key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -81,8 +94,17 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-600/40 w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-600/40 w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden cursor-default">
         {/* Modal Header */}
         <div className="bg-gradient-to-r from-slate-900 via-amber-900 to-slate-900 p-4 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -92,8 +114,17 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
               <p className="text-[11px] text-amber-100 font-bold">ربط المخابز والتقارير ديناميكياً بكل قرية ووحداتها</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white cursor-pointer">
-            <X className="w-5 h-5" />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
+            title="إغلاق النافذة (Escape)"
+          >
+            <X className="w-5 h-5 stroke-[2.5]" />
           </button>
         </div>
 
@@ -200,10 +231,15 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
         {/* Footer */}
         <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
           <button
-            onClick={onClose}
-            className="px-6 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-black shadow-md transition"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="px-6 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-black shadow-md transition cursor-pointer"
           >
-            إغلاق وحفظ
+            إغلاق النافذة (ESC)
           </button>
         </div>
       </div>

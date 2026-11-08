@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AppState,
   saveBackupToPartition,
@@ -61,6 +61,19 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const formattedAutoSaveTime = autoSaveInfo?.timestamp
     ? new Date(autoSaveInfo.timestamp).toLocaleString('ar-EG')
     : null;
+
+  // Escape key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -232,8 +245,17 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl shadow-2xl border-2 border-amber-500/40 w-full max-w-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-200 cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-3xl shadow-2xl border-2 border-amber-500/40 w-full max-w-2xl overflow-hidden flex flex-col max-h-[92vh] cursor-default">
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 p-4.5 text-white flex items-center justify-between shrink-0 border-b-2 border-amber-500/30">
           <div className="flex items-center gap-3">
@@ -253,10 +275,16 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
-            className="p-1.5 rounded-xl hover:bg-white/10 text-slate-300 hover:text-white transition cursor-pointer"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
+            title="إغلاق النافذة (Escape)"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5 stroke-[2.5]" />
           </button>
         </div>
 
@@ -622,10 +650,15 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             منظومة إدارة تموين مركز المحلة الكبرى &bull; إصلاح وتحديث شامل
           </span>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
             className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black shadow-xs cursor-pointer transition"
           >
-            إغلاق
+            إغلاق النافذة (ESC)
           </button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ColumnTitles } from '../types';
 import { Columns3, Check, X, Save } from 'lucide-react';
 
@@ -17,6 +17,19 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
 }) => {
   const [formData, setFormData] = useState<ColumnTitles>({ ...titles });
   const [msg, setMsg] = useState('');
+
+  // Escape key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -74,8 +87,17 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-500 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-500 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden cursor-default">
         {/* Header */}
         <div className="bg-gradient-to-r from-amber-700 via-amber-800 to-amber-950 p-4 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -87,8 +109,17 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white">
-            <X className="w-5 h-5" />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
+            title="إغلاق النافذة (Escape)"
+          >
+            <X className="w-5 h-5 stroke-[2.5]" />
           </button>
         </div>
 
@@ -125,10 +156,14 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
           <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-2 sticky bottom-0 bg-white">
             <button
               type="button"
-              onClick={onClose}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
               className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-black text-slate-700 hover:bg-slate-100 transition cursor-pointer"
             >
-              إلغاء
+              إلغاء النافذة (ESC)
             </button>
             <button
               type="submit"

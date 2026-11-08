@@ -61,10 +61,17 @@ export const AuditModal: React.FC<AuditModalProps> = ({
   };
 
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
     if (isOpen) {
       executeAudit();
+      window.addEventListener('keydown', handleKeyDown);
     }
-  }, [isOpen, bakeries, debts]);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, bakeries, debts, onClose]);
 
   // Categorize checks
   const categorizedDetails = useMemo(() => {
@@ -82,8 +89,17 @@ export const AuditModal: React.FC<AuditModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border-2 border-emerald-600/40 w-full max-w-5xl my-4 flex flex-col max-h-[94vh] overflow-hidden animate-in fade-in zoom-in-95">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm overflow-y-auto cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-emerald-600/40 w-full max-w-5xl my-4 flex flex-col max-h-[94vh] overflow-hidden animate-in fade-in zoom-in-95 cursor-default">
         {/* Top Header Bar */}
         <div className="bg-gradient-to-r from-slate-950 via-emerald-950 to-slate-950 p-4 text-white flex flex-wrap items-center justify-between gap-3 shrink-0 no-print border-b border-emerald-700/50">
           <div className="flex items-center gap-3">
@@ -109,6 +125,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={executeAudit}
               disabled={isAuditing}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-black shadow-sm transition active:scale-95 cursor-pointer"
@@ -119,6 +136,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
             </button>
 
             <button
+              type="button"
               onClick={() => window.print()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-black transition cursor-pointer"
             >
@@ -127,10 +145,16 @@ export const AuditModal: React.FC<AuditModalProps> = ({
             </button>
 
             <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white cursor-pointer"
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
+              title="إغلاق النافذة (Escape)"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5 stroke-[2.5]" />
             </button>
           </div>
         </div>
@@ -373,10 +397,15 @@ export const AuditModal: React.FC<AuditModalProps> = ({
             <span>كافة المعادلات والدوال الحسابية تعمل بكفاءة تامة وتخضع للمراجعة الآلية المستمرة.</span>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
             className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-black cursor-pointer shadow-xs transition"
           >
-            إغلاق التقرير
+            إغلاق التقرير (ESC)
           </button>
         </div>
       </div>

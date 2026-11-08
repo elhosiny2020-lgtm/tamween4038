@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bakery, DebtRecord, ExpirationAlertItem } from '../types';
 import {
   Bell,
@@ -77,6 +77,19 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'docs' | 'debts'>('docs');
 
+  // Escape key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const alerts = getExpirationAlerts(bakeries);
@@ -94,8 +107,17 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl border-2 border-red-500 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-pointer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-red-500 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 cursor-default">
         {/* Header */}
         <div className="bg-gradient-to-r from-red-900 via-rose-900 to-slate-900 p-4 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -111,8 +133,17 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white">
-            <X className="w-5 h-5" />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="p-1.5 rounded-xl bg-red-800/80 hover:bg-red-600 text-white transition cursor-pointer border border-red-400/50"
+            title="إغلاق النافذة (Escape)"
+          >
+            <X className="w-5 h-5 stroke-[2.5]" />
           </button>
         </div>
 
@@ -357,10 +388,15 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
         {/* Footer */}
         <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
           <button
-            onClick={onClose}
-            className="px-6 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-black transition"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+            className="px-6 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black transition cursor-pointer"
           >
-            إغلاق
+            إغلاق النافذة (ESC)
           </button>
         </div>
       </div>
