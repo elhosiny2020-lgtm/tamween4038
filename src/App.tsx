@@ -45,6 +45,7 @@ import { ActivityStatusModal } from './components/ActivityStatusModal';
 import { WeeklyInstallmentsModal } from './components/WeeklyInstallmentsModal';
 import { AuditModal } from './components/AuditModal';
 import { BakeryAnalyticsCharts } from './components/BakeryAnalyticsCharts';
+import { AnnualBudgetFrequencyModal } from './components/AnnualBudgetFrequencyModal';
 import {
   downloadUpdatedAppHtml,
   downloadAppLauncherHtml,
@@ -148,6 +149,7 @@ export default function App() {
   const [isWeeklyInstallmentsModalOpen, setIsWeeklyInstallmentsModalOpen] = useState(false);
   const [selectedInstallmentBakeryId, setSelectedInstallmentBakeryId] = useState<string | undefined>(undefined);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [isBudgetFrequencyModalOpen, setIsBudgetFrequencyModalOpen] = useState(false);
 
   // Format current Arabic clock timestamp
   const getArabicTimestamp = () => {
@@ -1246,6 +1248,17 @@ export default function App() {
                 <span className="text-[9.5px] text-purple-300/80 font-bold block mt-0.5 truncate">
                   سنوياً (× 365 يوم)
                 </span>
+                
+                {/* NEW: Button to open Annual Frequency Breakdown Tool */}
+                <button
+                  type="button"
+                  onClick={() => setIsBudgetFrequencyModalOpen(true)}
+                  className="mt-1.5 w-full py-1 px-2 bg-gradient-to-r from-purple-600 via-purple-500 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-[10px] font-black shadow-md transition flex items-center justify-center gap-1 cursor-pointer border border-purple-300/50 hover:scale-102 active:scale-95"
+                  title="عرض جدول التكرار السنوي وتوزيع الميزانية التقديرية على الأشهر الـ 12 بشكل تفاعلي"
+                >
+                  <Calendar className="w-3 h-3 text-amber-300" />
+                  <span>جدول التكرار السنوي 📅</span>
+                </button>
               </div>
 
               <div className="col-span-2 md:col-span-1 bg-gradient-to-br from-red-950 via-red-900 to-black text-white rounded-xl p-3 text-center shadow-xl border-2 border-red-700">
@@ -1820,12 +1833,16 @@ export default function App() {
                         const hasLeaseWarning = checkExpiry(b.leaseAgreementDate);
                         const hasTaxWarning = checkExpiry(b.taxCardDate);
 
+                        const isHighDebtOver50K = remainingDebt >= 50000;
+
                         return (
                           <tr
                             key={b.id}
                             onClick={() => setSelectedBakeryRowId(b.id)}
-                            className={`cursor-pointer transition-colors ${
-                              isSelected
+                            className={`cursor-pointer transition-all duration-300 ${
+                              isHighDebtOver50K
+                                ? 'bg-gradient-to-r from-red-950 via-red-900 to-rose-950 border-2 border-red-500 animate-pulse text-white shadow-2xl font-black'
+                                : isSelected
                                 ? 'row-selected'
                                 : index % 2 === 0
                                 ? 'bg-slate-900/90 hover:bg-slate-800/90'
@@ -1866,6 +1883,11 @@ export default function App() {
 
                             <td className="py-2.5 px-2 border-l border-slate-800 font-black text-slate-100 text-right">
                               {b.bakeryOwnerName}
+                              {isHighDebtOver50K && (
+                                <span className="block text-[10px] text-amber-300 font-black">
+                                  🚨 مديونية تنبيه عاجل (&gt; 50,000 ج.م)
+                                </span>
+                              )}
                             </td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-amber-300">
                               {b.machineNumber}
@@ -1884,7 +1906,9 @@ export default function App() {
                                       setActiveTab('debts');
                                     }}
                                     className={`px-2 py-1 rounded-lg text-xs font-black transition-all transform hover:scale-105 active:scale-95 cursor-pointer border ${
-                                      remainingDebt > 20000
+                                      remainingDebt >= 50000
+                                        ? 'bg-red-600 text-white border-yellow-300 shadow-xl animate-pulse font-mono font-black text-sm'
+                                        : remainingDebt > 20000
                                         ? 'bg-red-600 text-white border-red-500 shadow-md animate-pulse'
                                         : 'bg-red-950/80 hover:bg-red-900 text-red-200 border-red-700/80'
                                     }`}
@@ -1892,7 +1916,12 @@ export default function App() {
                                   >
                                     {remainingDebt.toLocaleString()} ج.م
                                   </button>
-                                  {remainingDebt > 20000 && (
+                                  {remainingDebt >= 50000 && (
+                                    <span className="px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-black animate-bounce shadow-md border border-amber-300 tracking-tight">
+                                      🚨 مديونية حادة (&gt; 50 ألف)
+                                    </span>
+                                  )}
+                                  {remainingDebt > 20000 && remainingDebt < 50000 && (
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -2124,6 +2153,7 @@ export default function App() {
           bakeryToEdit={bakeryToEdit}
           villages={appState.villages}
           activityStatuses={appState.activityStatuses}
+          currentUser={appState.currentUser}
           onAddActivityStatus={(newStatus) => {
             if (!appState.activityStatuses.includes(newStatus)) {
               triggerSave({
@@ -2282,6 +2312,18 @@ export default function App() {
           onClose={() => setIsAuditModalOpen(false)}
           bakeries={appState.bakeries}
           debts={appState.debts}
+          systemConfig={appState.systemConfig}
+        />
+      )}
+
+      {/* 10. Interactive Annual Budget Frequency & 12-Month Breakdown Modal */}
+      {isBudgetFrequencyModalOpen && (
+        <AnnualBudgetFrequencyModal
+          isOpen={isBudgetFrequencyModalOpen}
+          onClose={() => setIsBudgetFrequencyModalOpen(false)}
+          bakeries={appState.bakeries}
+          flourBagPrice={flourBagPrice}
+          onUpdateFlourBagPrice={(price) => setFlourBagPrice(price)}
           systemConfig={appState.systemConfig}
         />
       )}

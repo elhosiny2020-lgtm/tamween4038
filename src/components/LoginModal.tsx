@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AppUser, SystemConfig } from '../types';
+import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { ParticleCanvas } from './ParticleCanvas';
 import { CartoonBakeryScene } from './CartoonBakeryScene';
 import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Sparkles, Building2, KeyRound, Download, Laptop } from 'lucide-react';
@@ -105,15 +106,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
       {/* Main Container */}
       <div className="relative z-10 w-full max-w-5xl mx-auto flex flex-col lg:flex-row items-center justify-center gap-6 lg:gap-10 my-4">
-        {/* Animated Cartoon Characters Scene (Clean: No speech bubbles or floating banners) */}
+        {/* Official Ministry Emblem Shield Section */}
         <div className="w-full lg:w-1/2 flex flex-col items-center justify-center">
-          <div className="text-center mb-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-500/20 border border-amber-400/40 rounded-full text-xs font-black text-amber-300">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              المنظومة التموينية الرقمية المتكاملة
-            </span>
-          </div>
-
           <CartoonBakeryScene />
         </div>
 
@@ -125,8 +119,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <div className="relative">
                 <div className="w-20 h-20 rounded-2xl bg-white p-2 shadow-xl border-2 border-amber-400 flex items-center justify-center transform hover:scale-105 transition-transform duration-300">
                   <img
-                    src={systemConfig.logoBase64}
-                    alt="شعار وزارة التموين"
+                    src={systemConfig.logoBase64 || DEFAULT_OFFICIAL_LOGO}
+                    alt="شعار وزارة التموين والتجارة الداخلية"
                     className="w-full h-full object-contain"
                   />
                 </div>

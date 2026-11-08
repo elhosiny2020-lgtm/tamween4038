@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bakery, DebtRecord, VillageHierarchy, SystemConfig } from '../types';
 import { PAYMENT_METHODS } from '../defaultData';
+import { BakeryDebtsPieChart } from './BakeryDebtsPieChart';
 import {
   FileSpreadsheet,
   Printer,
@@ -16,10 +17,12 @@ import {
   Save,
   Building,
   RotateCcw,
-  Scale
+  Scale,
+  Calculator
 } from 'lucide-react';
 
 import { WeeklyInstallmentsModal } from './WeeklyInstallmentsModal';
+import { SupplyFinesCalculatorModal } from './SupplyFinesCalculatorModal';
 
 interface DebtsViewProps {
   bakeries: Bakery[];
@@ -64,6 +67,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [isEntitiesModalOpen, setIsEntitiesModalOpen] = useState(false);
   const [isViolationsModalOpen, setIsViolationsModalOpen] = useState(false);
   const [isWeeklyInstallmentsOpen, setIsWeeklyInstallmentsOpen] = useState(false);
+  const [isCalculatorModalOpen, setIsCalculatorModalOpen] = useState(false);
   const [installmentBakeryId, setInstallmentBakeryId] = useState<string | undefined>(undefined);
 
   // Row highlight state
@@ -303,9 +307,20 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           <span className="stat-num text-white block">
             {stats.netRemainingTotal.toLocaleString()}
           </span>
-          <span className="text-[10px] text-rose-200 font-black">ج.م مستحق</span>
         </div>
       </div>
+
+      {/* NEW: Interactive Bakery Debts Pie Chart Analysis Component */}
+      <BakeryDebtsPieChart
+        bakeries={bakeries}
+        debts={debts}
+        onSelectBakeryFilter={(bakeryId) => {
+          const found = bakeries.find((b) => b.id === bakeryId);
+          if (found) {
+            setSearchTerm(found.bakeryOwnerName);
+          }
+        }}
+      />
 
       {/* Toolbar & Filter Bar */}
       <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-xl space-y-3.5 no-print">
@@ -321,6 +336,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             >
               <Plus className="w-4 h-4 text-white stroke-[2.5]" />
               تسجيل مديونية / مخالفة جديدة
+            </button>
+
+            <button
+              onClick={() => setIsCalculatorModalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
+            >
+              <Calculator className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+              حاسبة الغرامات التموينية
             </button>
 
             <button
@@ -995,6 +1018,56 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           debts={debts}
           systemConfig={systemConfig}
           initialBakeryId={installmentBakeryId}
+        />
+      )}
+
+      {/* Modal 5: Supply Fines & Penalties Calculator */}
+      {isCalculatorModalOpen && (
+        <SupplyFinesCalculatorModal
+          isOpen={isCalculatorModalOpen}
+          onClose={() => setIsCalculatorModalOpen(false)}
+          bakeries={bakeries}
+          onApplyFineToDebt={(prefilled) => {
+            const draftDebt: DebtRecord = {
+              id: `fine-${Date.now()}`,
+              bakeryId: prefilled.bakeryId,
+              bakeryOwnerName: prefilled.bakeryOwnerName,
+              machineNumber: prefilled.machineNumber,
+              village: prefilled.village,
+              localUnit: prefilled.localUnit,
+              violationDate: new Date().toISOString().split('T')[0],
+              issuingEntity: issuingEntities[0] || 'إدارة التموين',
+              violationType: prefilled.violationType,
+              violationAmount: prefilled.violationAmount,
+              oldViolations: 0,
+              totalViolations: prefilled.violationAmount,
+              violationPaymentDate: '',
+              violationReceiptNumber: '',
+              violationPaymentMethod: 'نقدي',
+              paidViolationAmount: 0,
+              remainingViolations: prefilled.violationAmount,
+              addedAmount: 0,
+              addedPaymentDate: '',
+              addedReceiptNumber: '',
+              addedPaymentMethod: 'نقدي',
+              paidAddedAmount: 0,
+              remainingAdded: 0,
+              disposalDate: '',
+              disposalBags: 0,
+              disposalBagPrice: 850,
+              disposalMultiplier: 1,
+              disposalValue: 0,
+              disposalPaymentDate: '',
+              disposalReceiptNumber: '',
+              disposalPaymentMethod: 'نقدي',
+              paidDisposalAmount: 0,
+              remainingDisposal: 0,
+              netRemainingDebt: prefilled.violationAmount,
+              notes: prefilled.notes,
+            };
+            setDebtToEdit(draftDebt);
+            setIsDebtModalOpen(true);
+          }}
         />
       )}
     </div>

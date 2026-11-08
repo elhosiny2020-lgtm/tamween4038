@@ -1,3 +1,13 @@
+export interface BakeryActivityLogItem {
+  id: string;
+  timestamp: string;
+  username: string;
+  userFullName: string;
+  userRole: string;
+  action: string;
+  details?: string;
+}
+
 export interface Bakery {
   id: string;
   // البيانات الأساسية وموقع المخبز
@@ -42,6 +52,9 @@ export interface Bakery {
   leaseAgreementDate: string; // تاريخ عقد الإيجار
 
   notes?: string;
+
+  // سجل النشاط والتعديلات التاريخية للمخبز
+  activityLog?: BakeryActivityLogItem[];
 }
 
 export interface DebtRecord {

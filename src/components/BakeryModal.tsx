@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bakery, VillageHierarchy } from '../types';
+import { Bakery, VillageHierarchy, AppUser, BakeryActivityLogItem } from '../types';
 import {
   X,
   Calculator,
@@ -11,7 +11,11 @@ import {
   Hash,
   Phone,
   CreditCard,
-  FileText
+  FileText,
+  History,
+  UserCheck,
+  Clock,
+  ShieldCheck
 } from 'lucide-react';
 
 interface BakeryModalProps {
@@ -20,6 +24,7 @@ interface BakeryModalProps {
   bakeryToEdit?: Bakery | null;
   villages: VillageHierarchy[];
   activityStatuses?: string[];
+  currentUser?: AppUser | null;
   onSave: (bakery: Bakery) => void;
   onAddActivityStatus?: (status: string) => void;
   onAddLocalUnit?: (village: string, unit: string) => void;
@@ -31,6 +36,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   bakeryToEdit,
   villages,
   activityStatuses = ['شغال', 'متوقف جزئي', 'متوقف كلي', 'ملغى'],
+  currentUser,
   onSave,
   onAddActivityStatus,
   onAddLocalUnit,
@@ -320,6 +326,31 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     e.preventDefault();
     if (!validate()) return;
 
+    const userInfo = currentUser || { username: 'مفتش التموين', fullName: 'مفتش التموين', role: 'inspector' };
+    const roleLabel = userInfo.role === 'admin' ? 'مدير إداري' : userInfo.role === 'auditor' ? 'مراجع مالي' : 'مفتش رقابة';
+
+    const newLogItem: BakeryActivityLogItem = {
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toLocaleString('ar-EG', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      }),
+      username: userInfo.username,
+      userFullName: userInfo.fullName,
+      userRole: roleLabel,
+      action: bakeryToEdit ? 'تعديل وتحديث بيانات المخبز' : 'إنشاء وتسجيل المخبز لأول مرة',
+      details: bakeryToEdit
+        ? `الحصة الفعلية: ${actualQuota} شكارة | النشاط: ${activityStatus} | التصنيف: ${bakeryCategory}`
+        : `تسجيل جديد لصاحب المخبز (${ownerName.trim()}) بالحصة التأمينية ${insuranceQuota} شكارة`,
+    };
+
+    const existingLogs = bakeryToEdit?.activityLog || [];
+    const updatedLogs = [newLogItem, ...existingLogs];
+
     const bakery: Bakery = {
       id: bakeryToEdit ? bakeryToEdit.id : `b-${Date.now()}`,
       bakeryOwnerName: ownerName.trim(),
@@ -352,6 +383,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       bakeryLicenseDate,
       leaseAgreementDate,
       notes: notes.trim(),
+      activityLog: updatedLogs,
     };
 
     onSave(bakery);
@@ -1020,7 +1052,60 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             </div>
           </div>
 
-          {/* Section 7: Notes */}
+          {/* Section 7: Activity Log (سجل النشاط والتعديلات التاريخية لزيادة الأمان والرقابة) */}
+          <div className="border border-slate-300 rounded-xl p-4 bg-slate-900 text-white space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-amber-400" />
+                <h4 className="text-xs font-black text-amber-300">
+                  7. سجل النشاط والتعديلات الأخيرة على المخبز (Activity Log)
+                </h4>
+              </div>
+              <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-mono font-bold">
+                {bakeryToEdit?.activityLog?.length || 0} عملية مسجلة
+              </span>
+            </div>
+
+            {(!bakeryToEdit?.activityLog || bakeryToEdit.activityLog.length === 0) ? (
+              <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl text-[11px] text-slate-400 text-center font-bold">
+                لا توجد تعديلات سابقة مسجلة على هذا المخبز (سيتم تسجيل أول عملية تلقائياً فور الحفظ).
+              </div>
+            ) : (
+              <div className="max-h-44 overflow-y-auto space-y-2 pr-1">
+                {bakeryToEdit.activityLog.map((log) => (
+                  <div
+                    key={log.id}
+                    className="p-2.5 bg-slate-950/90 border border-slate-800 hover:border-amber-500/50 rounded-xl text-xs space-y-1 transition"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <UserCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span className="font-black text-slate-100">{log.userFullName}</span>
+                        <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30 font-bold">
+                          {log.userRole}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono">
+                        <Clock className="w-3 h-3 text-slate-500" />
+                        <span>{log.timestamp}</span>
+                      </div>
+                    </div>
+                    <div className="text-[11px] font-black text-emerald-400 flex items-center gap-1">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>{log.action}</span>
+                    </div>
+                    {log.details && (
+                      <p className="text-[10px] text-slate-300 font-bold bg-slate-900/60 p-1.5 rounded border border-slate-800/80 leading-relaxed">
+                        {log.details}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Section 8: Notes */}
           <div>
             <label className="block text-xs font-black text-slate-700 mb-1">
               ملاحظات إضافية وقيد التفتيش
