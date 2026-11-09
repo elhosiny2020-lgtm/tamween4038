@@ -22,6 +22,7 @@ interface BakeryModalProps {
   isOpen: boolean;
   onClose: () => void;
   bakeryToEdit?: Bakery | null;
+  existingBakeries?: Bakery[];
   villages: VillageHierarchy[];
   activityStatuses?: string[];
   currentUser?: AppUser | null;
@@ -34,6 +35,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   isOpen,
   onClose,
   bakeryToEdit,
+  existingBakeries = [],
   villages,
   activityStatuses = ['شغال', 'متوقف جزئي', 'متوقف كلي', 'ملغى'],
   currentUser,
@@ -41,6 +43,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   onAddActivityStatus,
   onAddLocalUnit,
 }) => {
+  const isReadOnly = currentUser?.role === 'viewer';
   // Inline quick adds
   const [showAddUnitInput, setShowAddUnitInput] = useState(false);
   const [newUnitInput, setNewUnitInput] = useState('');
@@ -298,25 +301,94 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const validate = () => {
     const newErrors: Record<string, string> = {};
 
-    if (!ownerName.trim()) {
-      newErrors.ownerName = 'اسم صاحب المخبز مطلوب';
+    // 1. Owner Name
+    const cleanOwnerName = ownerName.trim();
+    if (!cleanOwnerName) {
+      newErrors.ownerName = 'اسم صاحب المخبز مطلوب ولا يمكن تركه فارغاً';
+    } else if (cleanOwnerName.length < 3) {
+      newErrors.ownerName = 'اسم صاحب المخبز قصير جداً (يرجى إدخال الاسم الثلاثي أو الرباعي)';
     }
 
-    if (!machineNumber.trim()) {
-      newErrors.machineNumber = 'رقم الماكينة مطلوب';
+    // 2. Duplicate Machine Number Check
+    const cleanMachine = machineNumber.trim();
+    if (!cleanMachine) {
+      newErrors.machineNumber = 'رقم الماكينة (POS) مطلوب ولا يمكن تركه فارغاً';
+    } else {
+      const duplicateBakery = (existingBakeries || []).find(
+        (b) =>
+          b.machineNumber.trim().toLowerCase() === cleanMachine.toLowerCase() &&
+          (!bakeryToEdit || b.id !== bakeryToEdit.id)
+      );
+      if (duplicateBakery) {
+        newErrors.machineNumber = `رقم الماكينة (${cleanMachine}) مكرر ومسجل بالفعل لمخبز باسم "${duplicateBakery.bakeryOwnerName}" بقرية (${duplicateBakery.village})`;
+      }
     }
 
-    // Strict 11-digit phone check
+    // 3. Strict 11-digit Phone Check
     const cleanPhone = phone.trim().replace(/\D/g, '');
-    if (cleanPhone.length !== 11) {
-      newErrors.phone = 'ضع رقم تليفون صحيح (يجب أن يتكون من 11 رقماً بالضبط)';
+    if (!phone.trim()) {
+      newErrors.phone = 'رقم الهاتف المحمول مطلوب للتواصل الفوري';
+    } else if (cleanPhone.length !== 11) {
+      newErrors.phone = `رقم الهاتف غير صحيح! يتكون حالياً من (${cleanPhone.length}) أرقام بدلاً من 11 رقماً بالضبط`;
+    } else if (!cleanPhone.startsWith('01')) {
+      newErrors.phone = 'رقم الهاتف المحمول يجب أن يبدأ بـ (01)';
     }
 
-    // Strict 14-digit National ID check
+    // 4. Strict 14-digit National ID Check
     const cleanNid = nationalId.trim().replace(/\D/g, '');
-    if (cleanNid.length !== 14) {
-      newErrors.nationalId = 'ضع رقم قومي صحيح (يجب أن يتكون من 14 رقماً بالضبط)';
+    if (!nationalId.trim()) {
+      newErrors.nationalId = 'الرقم القومي لصاحب المخبز مطلوب';
+    } else if (cleanNid.length !== 14) {
+      newErrors.nationalId = `الرقم القومي غير صحيح! يتكون حالياً من (${cleanNid.length}) أرقام بدلاً من 14 رقماً بالضبط`;
     }
+
+    // 5. Quotas & Numeric Values Validation
+    if (insuranceQuota <= 0) {
+      newErrors.insuranceQuota = 'الحصة التأمينية يجب أن تكون قيمة موجبة أكبر من الصفر (شكارة)';
+    }
+    if (actualQuota < 0) {
+      newErrors.actualQuota = 'الحصة الفعلية لا يمكن أن تكون قيمة سالبة';
+    }
+    if (insuranceValue < 0) {
+      newErrors.insuranceValue = 'القيمة التأمينية بالجنيه لا يمكن أن تكون قيمة سالبة';
+    }
+    if (loavesCount <= 0) {
+      newErrors.loavesCount = 'عدد الأرغفة اليومية يجب أن يكون رقماً موجباً أكبر من الصفر';
+    }
+    if (villagePopulation <= 0) {
+      newErrors.villagePopulation = 'عدد سكان القرية يجب أن يكون رقماً موجباً أكبر من الصفر';
+    }
+    if (beneficiaries2023 < 0) {
+      newErrors.beneficiaries2023 = 'عدد مستفيدي 2023 لا يمكن أن يكون سالباً';
+    }
+    if (beneficiaries2024 < 0) {
+      newErrors.beneficiaries2024 = 'عدد مستفيدي 2024 لا يمكن أن يكون سالباً';
+    }
+    if (beneficiaries2025 < 0) {
+      newErrors.beneficiaries2025 = 'عدد مستفيدي 2025 لا يمكن أن يكون سالباً';
+    }
+
+    // 6. Dates Validation
+    const validateDate = (dStr: string, fieldName: string, label: string) => {
+      if (!dStr) {
+        newErrors[fieldName] = `تاريخ انتهاء ${label} مطلوب`;
+        return;
+      }
+      const d = new Date(dStr);
+      if (isNaN(d.getTime())) {
+        newErrors[fieldName] = `تاريخ ${label} غير صالح، يرجى اختيار تاريخ صحيح من النتيجة`;
+      } else {
+        const year = d.getFullYear();
+        if (year < 1980 || year > 2100) {
+          newErrors[fieldName] = `تاريخ ${label} غير منطقي (السنة يجب أن تكون بين 1980 و 2100)`;
+        }
+      }
+    };
+
+    validateDate(commercialRegDate, 'commercialRegDate', 'السجل التجاري');
+    validateDate(bakeryLicenseDate, 'bakeryLicenseDate', 'رخصة المخبز');
+    validateDate(leaseAgreementDate, 'leaseAgreementDate', 'عقد الإيجار');
+    validateDate(taxCardDate, 'taxCardDate', 'البطاقة الضريبية');
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -324,6 +396,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isReadOnly) return;
     if (!validate()) return;
 
     const userInfo = currentUser || { username: 'مفتش التموين', fullName: 'مفتش التموين', role: 'inspector' };
@@ -456,8 +529,35 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
           </div>
         </div>
 
+        {/* Read-Only Viewer Notice Banner */}
+        {isReadOnly && (
+          <div className="bg-amber-50 border-b-2 border-amber-300 p-3 flex items-center justify-between text-amber-950 font-bold text-xs shrink-0">
+            <span className="flex items-center gap-2">
+              <span className="text-base">👁️</span>
+              <span><strong>وضع المشاهدة فقط:</strong> تم تسجيل دخولك بحساب قارئ/مشاهد. يمكنك معاينة وتدقيق كافة البيانات دون صلاحية الحفظ أو التعديل.</span>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-amber-200 border border-amber-300 text-[10px] font-black">
+              صلاحية قراءة فقط
+            </span>
+          </div>
+        )}
+
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="overflow-y-auto p-5 space-y-5 flex-1">
+          {/* Top Validation Error Banner */}
+          {Object.keys(errors).length > 0 && (
+            <div className="bg-red-950/90 border-2 border-red-500 p-4 rounded-xl text-white shadow-2xl space-y-2 animate-in fade-in">
+              <div className="flex items-center gap-2 text-rose-300 font-black text-xs border-b border-red-800 pb-2">
+                <AlertCircle className="w-5 h-5 text-red-400 animate-bounce" />
+                <span>تنبيه أخطاء في التحقق من البيانات المدخلة ({Object.keys(errors).length} خطأ يمنع الحفظ):</span>
+              </div>
+              <ul className="list-disc list-inside text-xs font-bold text-red-200 space-y-1">
+                {Object.entries(errors).map(([key, msg]) => (
+                  <li key={key}>{msg}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {/* Quick Recalculate Toolbar */}
           <div className="bg-amber-50 border-2 border-amber-200 p-3 rounded-xl flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-amber-900">
@@ -814,7 +914,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  الحصة التأمينية (بالشيكارة)
+                  الحصة التأمينية (بالشيكارة) *
                 </label>
                 <input
                   type="number"
@@ -824,46 +924,91 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                     const q = parseFloat(e.target.value) || 0;
                     setInsuranceQuota(q);
                     calculateAllAverages(q);
+                    if (q > 0) setErrors((prev) => ({ ...prev, insuranceQuota: '' }));
                   }}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
+                    errors.insuranceQuota ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
+                  }`}
                 />
+                {errors.insuranceQuota && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.insuranceQuota}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  الحصة الفعلية (بالشيكارة)
+                  الحصة الفعلية (بالشيكارة) *
                 </label>
                 <input
                   type="number"
                   step="0.5"
                   value={actualQuota}
-                  onChange={(e) => setActualQuota(parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  onChange={(e) => {
+                    const q = parseFloat(e.target.value) || 0;
+                    setActualQuota(q);
+                    if (q >= 0) setErrors((prev) => ({ ...prev, actualQuota: '' }));
+                  }}
+                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
+                    errors.actualQuota ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
+                  }`}
                 />
+                {errors.actualQuota && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.actualQuota}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  القيمة التأمينية (بالجنيه)
+                  القيمة التأمينية (بالجنيه) *
                 </label>
                 <input
                   type="number"
                   value={insuranceValue}
-                  onChange={(e) => setInsuranceValue(parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value) || 0;
+                    setInsuranceValue(v);
+                    if (v >= 0) setErrors((prev) => ({ ...prev, insuranceValue: '' }));
+                  }}
+                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
+                    errors.insuranceValue ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
+                  }`}
                 />
+                {errors.insuranceValue && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.insuranceValue}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  عدد الأرغفة اليومية (الحصة × 1350)
+                  عدد الأرغفة اليومية (الحصة × 1350) *
                 </label>
                 <input
                   type="number"
                   value={loavesCount}
-                  onChange={(e) => setLoavesCount(Number(e.target.value) || 0)}
-                  className="w-full px-3 py-2 bg-amber-50 border-2 border-amber-400 rounded-lg text-xs font-black text-amber-950 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  onChange={(e) => {
+                    const l = Number(e.target.value) || 0;
+                    setLoavesCount(l);
+                    if (l > 0) setErrors((prev) => ({ ...prev, loavesCount: '' }));
+                  }}
+                  className={`w-full px-3 py-2 border-2 rounded-lg text-xs font-black num-enlarged text-center ${
+                    errors.loavesCount ? 'border-red-500 bg-red-50 text-red-900' : 'border-amber-400 bg-amber-50 text-amber-950'
+                  }`}
                 />
+                {errors.loavesCount && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.loavesCount}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -1004,50 +1149,94 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  تاريخ السجل التجاري
+                  تاريخ السجل التجاري *
                 </label>
                 <input
                   type="date"
                   value={commercialRegDate}
-                  onChange={(e) => setCommercialRegDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged"
+                  onChange={(e) => {
+                    setCommercialRegDate(e.target.value);
+                    if (e.target.value) setErrors((prev) => ({ ...prev, commercialRegDate: '' }));
+                  }}
+                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged ${
+                    errors.commercialRegDate ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
+                  }`}
                 />
+                {errors.commercialRegDate && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.commercialRegDate}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  تاريخ رخصة المخبز
+                  تاريخ رخصة المخبز *
                 </label>
                 <input
                   type="date"
                   value={bakeryLicenseDate}
-                  onChange={(e) => setBakeryLicenseDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged"
+                  onChange={(e) => {
+                    setBakeryLicenseDate(e.target.value);
+                    if (e.target.value) setErrors((prev) => ({ ...prev, bakeryLicenseDate: '' }));
+                  }}
+                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged ${
+                    errors.bakeryLicenseDate ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
+                  }`}
                 />
+                {errors.bakeryLicenseDate && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.bakeryLicenseDate}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  تاريخ عقد الإيجار
+                  تاريخ عقد الإيجار *
                 </label>
                 <input
                   type="date"
                   value={leaseAgreementDate}
-                  onChange={(e) => setLeaseAgreementDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged"
+                  onChange={(e) => {
+                    setLeaseAgreementDate(e.target.value);
+                    if (e.target.value) setErrors((prev) => ({ ...prev, leaseAgreementDate: '' }));
+                  }}
+                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged ${
+                    errors.leaseAgreementDate ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
+                  }`}
                 />
+                {errors.leaseAgreementDate && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.leaseAgreementDate}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  تاريخ البطاقة الضريبية
+                  تاريخ البطاقة الضريبية *
                 </label>
                 <input
                   type="date"
                   value={taxCardDate}
-                  onChange={(e) => setTaxCardDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged"
+                  onChange={(e) => {
+                    setTaxCardDate(e.target.value);
+                    if (e.target.value) setErrors((prev) => ({ ...prev, taxCardDate: '' }));
+                  }}
+                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged ${
+                    errors.taxCardDate ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
+                  }`}
                 />
+                {errors.taxCardDate && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.taxCardDate}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -1133,13 +1322,20 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
               إلغاء النافذة (ESC)
             </button>
 
-            <button
-              type="submit"
-              className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-amber-700 to-amber-900 hover:from-amber-800 hover:to-amber-950 text-white rounded-lg text-xs font-black shadow-lg shadow-amber-800/30 transition cursor-pointer"
-            >
-              <Save className="w-4 h-4 text-amber-200" />
-              {bakeryToEdit ? 'حفظ وتحديث بيانات المخبز' : 'تسجيل المخبز الجديد'}
-            </button>
+            {isReadOnly ? (
+              <span className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-slate-200 border border-slate-300 text-slate-700 rounded-lg text-xs font-bold">
+                <span>👁️</span>
+                <span>وضع المشاهدة فقط (غير مصرح بالتعديل أو الحفظ)</span>
+              </span>
+            ) : (
+              <button
+                type="submit"
+                className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-amber-700 to-amber-900 hover:from-amber-800 hover:to-amber-950 text-white rounded-lg text-xs font-black shadow-lg shadow-amber-800/30 transition cursor-pointer"
+              >
+                <Save className="w-4 h-4 text-amber-200" />
+                {bakeryToEdit ? 'حفظ وتحديث بيانات المخبز' : 'تسجيل المخبز الجديد'}
+              </button>
+            )}
           </div>
         </form>
       </div>

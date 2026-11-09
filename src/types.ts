@@ -149,12 +149,23 @@ export interface ColumnTitles {
   actions: string;
 }
 
+export interface DailyAlertConfig {
+  enabled: boolean;
+  alertTime: string; // e.g. "09:00"
+  notifyBrowser: boolean;
+  notifySound: boolean;
+  targetDocs: string[]; // e.g. ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate']
+  daysThreshold: number; // 0 = expired already, 15 = within 15 days, 30 = within 30 days
+  lastAlertDate?: string; // YYYY-MM-DD
+}
+
 export interface SystemConfig {
   governorateTitle: string;
   directorateTitle: string;
   administrationTitle: string;
   englishSubtitle: string;
   logoBase64: string;
+  dailyAlertConfig?: DailyAlertConfig;
 }
 
 export interface AppUser {
@@ -162,8 +173,8 @@ export interface AppUser {
   username: string;
   fullName: string;
   password?: string;
-  role: 'admin' | 'inspector' | 'auditor';
-  createdAt: string;
+  role: 'admin' | 'inspector' | 'auditor' | 'viewer';
+  createdAt?: string;
 }
 
 export interface ExpirationAlertItem {
@@ -198,4 +209,26 @@ export interface LargeDebtAlertItem {
   weeksCount: number;
   weeklyAmount: number;
   installments: WeeklyInstallmentItem[];
+}
+
+export interface HighDebtAlertNotification {
+  id: string;
+  bakeryId: string;
+  bakeryOwnerName: string;
+  machineNumber: string;
+  village: string;
+  debtAmount: number;
+  editedBy: string;
+  editorRole: string;
+  timestamp: string;
+  actionType: 'ADD_DEBT' | 'EDIT_DEBT' | 'HIGH_DEBT_SURGE';
+  isRead: boolean;
+  notes?: string;
+}
+
+export interface CustomBackupConfig {
+  destinationType: 'GOOGLE_DRIVE' | 'LOCAL_NETWORK' | 'CUSTOM_FOLDER';
+  customPath: string;
+  autoSyncEnabled: boolean;
+  lastBackupTime?: string;
 }

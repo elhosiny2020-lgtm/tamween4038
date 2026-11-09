@@ -18,6 +18,7 @@ interface AlertsModalProps {
   debts?: DebtRecord[];
   onOpenBakeryEdit: (bakeryId: string) => void;
   onOpenWeeklyInstallments?: (bakeryId?: string) => void;
+  onOpenDailySettings?: () => void;
 }
 
 export function getExpirationAlerts(bakeries: Bakery[]): ExpirationAlertItem[] {
@@ -74,6 +75,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
   debts = [],
   onOpenBakeryEdit,
   onOpenWeeklyInstallments,
+  onOpenDailySettings,
 }) => {
   const [activeTab, setActiveTab] = useState<'docs' | 'debts'>('docs');
 
@@ -133,18 +135,32 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onClose();
-            }}
-            className="p-1.5 rounded-xl bg-red-800/80 hover:bg-red-600 text-white transition cursor-pointer border border-red-400/50"
-            title="إغلاق النافذة (Escape)"
-          >
-            <X className="w-5 h-5 stroke-[2.5]" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenDailySettings && (
+              <button
+                type="button"
+                onClick={onOpenDailySettings}
+                className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 border border-amber-400/50 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                title="ضبط وتعيين وقت التنبيه اليومي التلقائي لتراخيص المخابز"
+              >
+                <Clock className="w-4 h-4 text-amber-300" />
+                <span>إعدادات التنبيه اليومي ⏰</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              className="p-1.5 rounded-xl bg-red-800/80 hover:bg-red-600 text-white transition cursor-pointer border border-red-400/50"
+              title="إغلاق النافذة (Escape)"
+            >
+              <X className="w-5 h-5 stroke-[2.5]" />
+            </button>
+          </div>
         </div>
 
         {/* Tab Controls */}

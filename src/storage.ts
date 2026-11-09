@@ -173,7 +173,10 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
     issuingEntities: Array.from(new Set([...base.issuingEntities, ...(incoming.issuingEntities || [])])),
     violationTypes: Array.from(new Set([...base.violationTypes, ...(incoming.violationTypes || [])])),
     activityStatuses: Array.from(new Set([...base.activityStatuses, ...(incoming.activityStatuses || [])])),
-    systemConfig: incoming.systemConfig || base.systemConfig,
+    systemConfig: {
+      ...(incoming.systemConfig || base.systemConfig),
+      logoBase64: DEFAULT_OFFICIAL_LOGO,
+    },
     columnTitles: incoming.columnTitles || base.columnTitles,
   };
 }
@@ -321,10 +324,9 @@ export async function loadInitialState(): Promise<AppState> {
     violationTypes = violationTypes ?? DEFAULT_VIOLATION_TYPES;
     activityStatuses = activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
     columnTitles = columnTitles ?? DEFAULT_COLUMN_TITLES;
-    systemConfig = systemConfig ?? DEFAULT_SYSTEM_CONFIG;
-    if (!systemConfig.logoBase64 || systemConfig.logoBase64.length < 50) {
-      systemConfig.logoBase64 = DEFAULT_OFFICIAL_LOGO;
-    }
+    systemConfig = systemConfig ? { ...systemConfig } : { ...DEFAULT_SYSTEM_CONFIG };
+    // Permanently lock and maintain official Egyptian Ministry logo from GitHub in database
+    systemConfig.logoBase64 = DEFAULT_OFFICIAL_LOGO;
     users = users ?? INITIAL_USERS;
 
     // Sanitize 'شوال' to 'شيكارة'
@@ -397,6 +399,12 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     users
   } = state;
 
+  // Guarantee official Egyptian Ministry logo from GitHub is permanently locked in saved config
+  const lockedConfig: SystemConfig = {
+    ...(systemConfig || DEFAULT_SYSTEM_CONFIG),
+    logoBase64: DEFAULT_OFFICIAL_LOGO,
+  };
+
   // LocalStorage
   try {
     localStorage.setItem(KEYS.BAKERIES, JSON.stringify(bakeries));
@@ -406,7 +414,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     localStorage.setItem(KEYS.VIOLATIONS, JSON.stringify(violationTypes));
     localStorage.setItem(KEYS.ACTIVITY_STATUSES, JSON.stringify(activityStatuses));
     localStorage.setItem(KEYS.COLUMNS, JSON.stringify(columnTitles));
-    localStorage.setItem(KEYS.CONFIG, JSON.stringify(systemConfig));
+    localStorage.setItem(KEYS.CONFIG, JSON.stringify(lockedConfig));
     localStorage.setItem(KEYS.USERS, JSON.stringify(users));
   } catch (err) {
     console.warn('LocalStorage quota limit reached, relying primarily on IndexedDB', err);
@@ -421,7 +429,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     idbSet(KEYS.VIOLATIONS, violationTypes),
     idbSet(KEYS.ACTIVITY_STATUSES, activityStatuses),
     idbSet(KEYS.COLUMNS, columnTitles),
-    idbSet(KEYS.CONFIG, systemConfig),
+    idbSet(KEYS.CONFIG, lockedConfig),
     idbSet(KEYS.USERS, users)
   ]);
 
@@ -437,7 +445,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
         violationTypes,
         activityStatuses,
         columnTitles,
-        systemConfig,
+        systemConfig: lockedConfig,
         users,
       }
     };

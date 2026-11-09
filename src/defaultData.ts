@@ -1,69 +1,23 @@
 import { Bakery, DebtRecord, VillageHierarchy, ColumnTitles, SystemConfig, AppUser } from './types';
+import { UPLOADED_OFFICIAL_LOGO } from './uploadedLogo';
 
-export const DEFAULT_OFFICIAL_LOGO = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
-  <defs>
-    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="%23d97706" />
-      <stop offset="50%" stop-color="%23b45309" />
-      <stop offset="100%" stop-color="%2378350f" />
-    </linearGradient>
-    <linearGradient id="shield" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="%231e3a8a" />
-      <stop offset="100%" stop-color="%230f172a" />
-    </linearGradient>
-  </defs>
-  <!-- Outer Ring with Stars -->
-  <circle cx="100" cy="100" r="95" fill="%23ffffff" stroke="%23b45309" stroke-width="4"/>
-  <circle cx="100" cy="100" r="88" fill="none" stroke="%23b45309" stroke-width="1.5" stroke-dasharray="3,3"/>
-  
-  <!-- Central Shield -->
-  <path d="M60 45 L140 45 L140 100 C140 140 100 165 100 165 C100 165 60 140 60 100 Z" fill="url(%23shield)" stroke="%23d97706" stroke-width="3"/>
-
-  <!-- Wheat Sheaves (سنابل القمح التموينية) on Sides -->
-  <g fill="%23d97706">
-    <path d="M40 130 Q30 90 50 65 Q45 85 45 120 Z"/>
-    <circle cx="45" cy="75" r="4"/>
-    <circle cx="40" cy="90" r="4.5"/>
-    <circle cx="38" cy="108" r="4.5"/>
-    <circle cx="42" cy="125" r="4"/>
-    
-    <path d="M160 130 Q170 90 150 65 Q155 85 155 120 Z"/>
-    <circle cx="155" cy="75" r="4"/>
-    <circle cx="160" cy="90" r="4.5"/>
-    <circle cx="162" cy="108" r="4.5"/>
-    <circle cx="158" cy="125" r="4"/>
-  </g>
-
-  <!-- Egyptian Eagle Emblem in Gold -->
-  <g fill="url(%23gold)" stroke="%2378350f" stroke-width="1">
-    <!-- Wings -->
-    <path d="M100 60 C80 50 65 65 70 85 C75 75 85 70 100 78 C115 70 125 75 130 85 C135 65 120 50 100 60 Z"/>
-    <!-- Body & Chest -->
-    <path d="M92 78 L108 78 L112 125 L100 135 L88 125 Z" fill="%23ffffff" stroke="%23d97706" stroke-width="2"/>
-    <!-- Egyptian Flag Colors inside eagle chest -->
-    <rect x="94" y="85" width="12" height="10" fill="%23ce1126"/>
-    <rect x="94" y="95" width="12" height="10" fill="%23ffffff"/>
-    <rect x="94" y="105" width="12" height="10" fill="%23000000"/>
-    <!-- Head -->
-    <path d="M100 52 C95 52 92 56 94 62 L106 62 C108 56 105 52 100 52 Z"/>
-    <!-- Beak -->
-    <path d="M106 58 L112 60 L106 62 Z" fill="%23d97706"/>
-    <!-- Claws holding scroll -->
-    <rect x="85" y="133" width="30" height="7" rx="3" fill="%23d97706"/>
-  </g>
-
-  <!-- Text Top & Bottom -->
-  <text x="100" y="28" font-size="9" font-weight="900" text-anchor="middle" fill="%23000000" font-family="sans-serif">جمهورية مصر العربية</text>
-  <text x="100" y="38" font-size="8" font-weight="900" text-anchor="middle" fill="%23b45309" font-family="sans-serif">وزارة التموين والتجارة الداخلية</text>
-  <text x="100" y="180" font-size="6.5" font-weight="900" text-anchor="middle" fill="%231e3a8a" font-family="sans-serif">MINISTRY OF SUPPLY AND INTERNAL TRADE</text>
-</svg>`;
+export const DEFAULT_OFFICIAL_LOGO = UPLOADED_OFFICIAL_LOGO;
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   governorateTitle: 'محافظة الغربية',
   directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
   administrationTitle: 'إدارة تموين مركز المحلة الكبرى',
   englishSubtitle: 'MINISTRY OF SUPPLY AND INTERNAL TRADE',
-  logoBase64: DEFAULT_OFFICIAL_LOGO
+  logoBase64: DEFAULT_OFFICIAL_LOGO,
+  dailyAlertConfig: {
+    enabled: true,
+    alertTime: '09:00',
+    notifyBrowser: true,
+    notifySound: true,
+    targetDocs: ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate'],
+    daysThreshold: 0,
+    lastAlertDate: ''
+  }
 };
 
 export const DEFAULT_VILLAGES_HIERARCHY: VillageHierarchy[] = [
@@ -122,10 +76,12 @@ export const DEFAULT_VIOLATION_TYPES: string[] = [
 ];
 
 export const PAYMENT_METHODS: string[] = [
-  'كاش',
+  'نقدي (كاش)',
   'فودافون كاش',
-  'انستاباي',
-  'سداد إلكتروني'
+  'انستاباي (InstaPay)',
+  'سداد إلكتروني عبر الماكينة (POS)',
+  'تحويل بنكي / حوالة بريدية',
+  'شيك إلكتروني مقبول الدفع'
 ];
 
 export const DEFAULT_ACTIVITY_STATUSES: string[] = [
@@ -475,5 +431,13 @@ export const INITIAL_USERS: AppUser[] = [
     password: '123',
     role: 'inspector',
     createdAt: '2026-02-15'
+  },
+  {
+    id: 'u-3',
+    username: 'viewer',
+    fullName: 'مشاهد / قارئ فقط (عرض وتصفح بدون تعديلات)',
+    password: '123',
+    role: 'viewer',
+    createdAt: '2026-03-01'
   }
 ];

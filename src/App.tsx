@@ -5,7 +5,8 @@ import {
   VillageHierarchy,
   ColumnTitles,
   SystemConfig,
-  AppUser
+  AppUser,
+  DailyAlertConfig
 } from './types';
 import {
   AppState,
@@ -45,7 +46,13 @@ import { ActivityStatusModal } from './components/ActivityStatusModal';
 import { WeeklyInstallmentsModal } from './components/WeeklyInstallmentsModal';
 import { AuditModal } from './components/AuditModal';
 import { BakeryAnalyticsCharts } from './components/BakeryAnalyticsCharts';
+import { BakeryDebtsPieChart } from './components/BakeryDebtsPieChart';
+import { LocalUnitsSummaryModal } from './components/LocalUnitsSummaryModal';
+import { DailyAlertSettingsModal } from './components/DailyAlertSettingsModal';
+import { DailyAlertNotificationModal } from './components/DailyAlertNotificationModal';
 import { AnnualBudgetFrequencyModal } from './components/AnnualBudgetFrequencyModal';
+import { AdminNotificationsDrawer } from './components/AdminNotificationsDrawer';
+import { HighDebtAlertNotification } from './types';
 import {
   downloadUpdatedAppHtml,
   downloadAppLauncherHtml,
@@ -55,6 +62,7 @@ import {
   openStandaloneAppInNewTab
 } from './utils/htmlExporter';
 import { usePWAInstall } from './hooks/usePWAInstall';
+import { hasPermission, getRoleNameArabic } from './permissions';
 
 import {
   Store,
@@ -93,13 +101,70 @@ import {
   Building2,
   Database,
   Upload,
-  Globe
+  Globe,
+  BarChart3,
+  PieChart,
+  Table
 } from 'lucide-react';
+
+const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
+  index: 'الرقم المسلسل للمخبز في السجل العام للإدارة',
+  actions: 'أزرار التعديل الفوري لبيانات المخبز وحذف المخبز نهائياً من القاعدة',
+  bakeryOwnerName: 'الاسم الثلاثي أو الرباعي لصاحب المخبز أو المرخص له بالتشغيل',
+  machineNumber: 'رقم ماكينة صرف الخبز الذكية المسجلة بوزارة التموين',
+  village: 'القرية الرئيسية المقام بها المخبز التابعة لمركز المحلة الكبرى',
+  localUnit: 'الوحدة المحلية الإدارية المشرفة على نطاق المخبز',
+  remainingDebt: 'إجمالي المديونيات والغرامات والفرق المالي المتبقي على المخبز بالجنيه المصري',
+  insuranceQuota: 'الحصة التأمينية المقررة للمخبز من الدقيق بالشكائر يومياً',
+  actualQuota: 'الحصة الفعلية المنصرفة للمخبز بناءً على متوسطات المبيعات',
+  insuranceValue: 'إجمالي القيمة المالية للحصة التأمينية بالجنيه المصري',
+  loavesCount: 'عدد الأرغفة المنتجة بناءً على حصة الدقيق (معدل 1250 رغيف/شكارة)',
+  villagePopulation: 'عدد السكان المستهدفين بالقرية المخدومة من قبل المخبز',
+  perCapitaAverage: 'متوسط نصيب الفرد بالجرام يومياً من حصة الخبز بالقرية',
+  beneficiaries2023: 'عدد البطاقات والمستفيدين المسجلين لعام 2023',
+  avg2023: 'متوسط الصرف اليومي للمستفيدين لعام 2023',
+  beneficiaries2024: 'عدد البطاقات والمستفيدين المسجلين لعام 2024',
+  avg2024: 'متوسط الصرف اليومي للمستفيدين لعام 2024',
+  beneficiaries2025: 'عدد البطاقات والمستفيدين المسجلين لعام 2025',
+  avg2025: 'متوسط الصرف اليومي المستهدف لعام 2025',
+  avgDiff: 'معدل التغير والتطور السنوي في متوسط الصرف بين الأعوام',
+  activityStatus: 'حالة تشغيل المخبز الحالية (يعمل، متوقف، ميعاد تصفية، مغلق بقرار)',
+  bakeryCategory: 'التصنيف الفني للمخبز (بلدي مدعم، بلدي مطور، سياحي 72%، فينو وأفرنجي، طباقي)',
+  breadType: 'نوع الخبز المنتجة (ماكينة، آلي، نصف آلي، بلدي طري، طابونة)',
+  breadTypeCount: 'عدد خطوط السير والمجموعات الإنتاجية بالمخبز',
+  lineType: 'نوع خط الإنتاج (ميكانيكي كامل، نصف آلي، يدوي)',
+  fuelType: 'نوع الوقود المستخدم في الأفران (سولار، غاز طبيعي، مازوت)',
+  phone: 'رقم هاتف صاحب المخبز أو المدير المسؤول للتواصل الفوري',
+  nationalId: 'الرقم القومي (14 رقم) لصاحب المخبز المسجل بالبطاقة الشخصية',
+  commercialRegDate: 'تاريخ انتهاء السجل التجاري المنظم لنشاط المخبز',
+  bakeryLicenseDate: 'تاريخ انتهاء رخصة المخبز الصادرة من مجلس المدينة/المركز',
+  leaseAgreementDate: 'تاريخ انتهاء عقد الإيجار أو الملكية لمقر المخبز',
+  taxCardDate: 'تاريخ انتهاء البطاقة الضريبية ومتابعة الموقف الضريبي',
+};
+
+const ThHeaderTooltip: React.FC<{ label: string; tooltipKey: string; className?: string }> = ({
+  label,
+  tooltipKey,
+  className = '',
+}) => {
+  const tooltipText = BAKERY_COLUMN_TOOLTIPS[tooltipKey];
+  return (
+    <div className={`group relative inline-flex items-center gap-1 justify-center cursor-help ${className}`}>
+      <span>{label}</span>
+      {tooltipText && (
+        <div className="absolute bottom-full mb-1.5 hidden group-hover:block z-50 w-52 p-2 bg-slate-950 text-amber-300 text-[10px] font-bold rounded-xl shadow-2xl border border-amber-500/60 text-center pointer-events-none transition-all leading-tight">
+          {tooltipText}
+          <div className="w-2 h-2 bg-slate-950 border-r border-b border-amber-500/60 rotate-45 absolute -bottom-1 left-1/2 -translate-x-1/2" />
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function App() {
   const { isInstallable, install } = usePWAInstall();
   const [appState, setAppState] = useState<AppState | null>(null);
-  const [activeTab, setActiveTab] = useState<'bakeries' | 'debts'>('bakeries');
+  const [activeTab, setActiveTab] = useState<'charts' | 'bakeries' | 'debts'>('bakeries');
   const [saveTimestamp, setSaveTimestamp] = useState<string>('');
   const [isSavingPulse, setIsSavingPulse] = useState(false);
 
@@ -150,6 +215,69 @@ export default function App() {
   const [selectedInstallmentBakeryId, setSelectedInstallmentBakeryId] = useState<string | undefined>(undefined);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isBudgetFrequencyModalOpen, setIsBudgetFrequencyModalOpen] = useState(false);
+  const [isLocalUnitsModalOpen, setIsLocalUnitsModalOpen] = useState(false);
+  const [isDailySettingsModalOpen, setIsDailySettingsModalOpen] = useState(false);
+  const [dailyNotificationData, setDailyNotificationData] = useState<{
+    isOpen: boolean;
+    alertTime: string;
+    expiredBakeries: { bakery: Bakery; docName: string; expiryDate: string; daysDiff: number }[];
+  }>({
+    isOpen: false,
+    alertTime: '09:00',
+    expiredBakeries: [],
+  });
+  const [isAdminDrawerOpen, setIsAdminDrawerOpen] = useState(false);
+
+  // High Debt Notifications State for Admin Manager Control
+  const [highDebtNotifications, setHighDebtNotifications] = useState<HighDebtAlertNotification[]>(() => {
+    try {
+      const saved = localStorage.getItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Helper to append a high debt notification for managers
+  const addHighDebtNotification = useCallback(
+    (
+      bakeryId: string,
+      bakeryOwnerName: string,
+      machineNumber: string,
+      village: string,
+      debtAmount: number,
+      actionType: 'ADD_DEBT' | 'EDIT_DEBT' | 'HIGH_DEBT_SURGE'
+    ) => {
+      const newNotif: HighDebtAlertNotification = {
+        id: `notif-${Date.now()}`,
+        bakeryId,
+        bakeryOwnerName,
+        machineNumber,
+        village,
+        debtAmount,
+        editedBy: appState?.currentUser?.fullName || 'مستخدم منظومة',
+        editorRole: getRoleNameArabic(appState?.currentUser?.role || 'inspector'),
+        timestamp: new Date().toLocaleTimeString('ar-EG', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        }),
+        actionType,
+        isRead: false,
+      };
+      setHighDebtNotifications((prev) => {
+        const updated = [newNotif, ...prev];
+        try {
+          localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
+        } catch {
+          // fallback
+        }
+        return updated;
+      });
+    },
+    [appState?.currentUser]
+  );
 
   // Format current Arabic clock timestamp
   const getArabicTimestamp = () => {
@@ -256,6 +384,118 @@ export default function App() {
     }, 15000);
     return () => clearInterval(interval);
   }, [appState]);
+
+  // Automated Daily License Expiry Alert Check Loop (Checks every 30 seconds)
+  useEffect(() => {
+    if (!appState) return;
+    const dailyConfig = appState.systemConfig?.dailyAlertConfig;
+    if (!dailyConfig || dailyConfig.enabled === false) return;
+
+    const checkDailyAlert = () => {
+      const now = new Date();
+      const currentHour = String(now.getHours()).padStart(2, '0');
+      const currentMinute = String(now.getMinutes()).padStart(2, '0');
+      const currentTimeStr = `${currentHour}:${currentMinute}`;
+      const todayDateStr = now.toISOString().split('T')[0];
+
+      // Check if current time matches scheduled alert time and hasn't fired today
+      if (currentTimeStr === dailyConfig.alertTime && dailyConfig.lastAlertDate !== todayDateStr) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const targetDocs = dailyConfig.targetDocs && dailyConfig.targetDocs.length > 0
+          ? dailyConfig.targetDocs
+          : ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate'];
+        const threshold = dailyConfig.daysThreshold ?? 0;
+
+        const docLabels: Record<string, string> = {
+          bakeryLicenseDate: 'رخصة تشغيل المخبز التمويني',
+          commercialRegDate: 'السجل التجاري',
+          leaseAgreementDate: 'عقد الإيجار / الملكية',
+          taxCardDate: 'البطاقة الضريبية',
+        };
+
+        const matches: { bakery: Bakery; docName: string; expiryDate: string; daysDiff: number }[] = [];
+
+        appState.bakeries.forEach((b) => {
+          targetDocs.forEach((docKey) => {
+            const dateStr = (b as any)[docKey];
+            if (!dateStr || !String(dateStr).trim()) return;
+            const d = new Date(String(dateStr).trim());
+            if (isNaN(d.getTime())) return;
+            d.setHours(0, 0, 0, 0);
+
+            const diffDays = Math.ceil((d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays <= threshold) {
+              matches.push({
+                bakery: b,
+                docName: docLabels[docKey] || docKey,
+                expiryDate: dateStr,
+                daysDiff: diffDays,
+              });
+            }
+          });
+        });
+
+        if (matches.length > 0) {
+          setDailyNotificationData({
+            isOpen: true,
+            alertTime: dailyConfig.alertTime,
+            expiredBakeries: matches,
+          });
+
+          // Web Notification API
+          if (dailyConfig.notifyBrowser && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification('🔔 إخطار إداري يومي - تموين المحلة الكبرى', {
+                body: `تذكير يومي (${dailyConfig.alertTime}): يوجد عدد (${matches.length}) مخابز منتهية التراخيص تتطلب المتابعة الفورية.`,
+                icon: '/favicon.ico',
+              });
+            } catch {
+              // fallback
+            }
+          }
+
+          // Mark today as alerted to avoid multiple firings today
+          const updatedConfig: DailyAlertConfig = {
+            ...dailyConfig,
+            lastAlertDate: todayDateStr,
+          };
+          triggerSave({
+            ...appState,
+            systemConfig: {
+              ...appState.systemConfig,
+              dailyAlertConfig: updatedConfig,
+            },
+          });
+        }
+      }
+    };
+
+    checkDailyAlert();
+    const interval = setInterval(checkDailyAlert, 30000);
+    return () => clearInterval(interval);
+  }, [appState]);
+
+  const handleSaveDailyAlertConfig = (updatedConfig: DailyAlertConfig) => {
+    if (!appState) return;
+    const updatedState = {
+      ...appState,
+      systemConfig: {
+        ...appState.systemConfig,
+        dailyAlertConfig: updatedConfig,
+      },
+    };
+    triggerSave(updatedState, `تم حفظ وتأكيد موعد التنبيه اليومي (${updatedConfig.alertTime}) بنجاح`);
+  };
+
+  const handleTriggerTestAlert = (matchingBakeries: { bakery: Bakery; docName: string; expiryDate: string; daysDiff: number }[]) => {
+    const alertTime = appState?.systemConfig?.dailyAlertConfig?.alertTime || '09:00';
+    setDailyNotificationData({
+      isOpen: true,
+      alertTime,
+      expiredBakeries: matchingBakeries,
+    });
+  };
 
   // Expiration alerts engine scan
   const alertsList = useMemo(() => {
@@ -477,6 +717,12 @@ export default function App() {
     };
   }, [appState, bakeryRemainingDebtsMap]);
 
+  // Keep fresh ref of appState for 10-min pre-logout autosave
+  const appStateRef = React.useRef(appState);
+  useEffect(() => {
+    appStateRef.current = appState;
+  }, [appState]);
+
   // Handle Logout (Terminates session safely without resetting data)
   const handleLogout = useCallback((reason?: string) => {
     saveSessionUser(null);
@@ -484,17 +730,25 @@ export default function App() {
     setAppState((prev) => (prev ? { ...prev, currentUser: null } : null));
   }, []);
 
-  // Auto-logout when user leaves the computer / idle for 15 minutes or closes browser
+  // Auto-logout when user leaves the computer / idle for 10 minutes (with automatic full pre-logout save)
   useEffect(() => {
     if (!appState?.currentUser) return;
 
     let idleTimeout: ReturnType<typeof setTimeout>;
-    const IDLE_LIMIT_MS = 15 * 60 * 1000; // 15 minutes of inactivity
+    const IDLE_LIMIT_MS = 10 * 60 * 1000; // 10 minutes of inactivity
 
     const resetIdleTimer = () => {
       clearTimeout(idleTimeout);
-      idleTimeout = setTimeout(() => {
-        handleLogout('تم قفل الشاشة وتسجيل الخروج التلقائي لحماية سرية البيانات لعدم وجود نشاط على الكمبيوتر.');
+      idleTimeout = setTimeout(async () => {
+        // Pre-logout autosave of all registered data
+        if (appStateRef.current) {
+          try {
+            await persistFullState(appStateRef.current);
+          } catch (e) {
+            console.error('Pre-logout autosave failed:', e);
+          }
+        }
+        handleLogout('تم الحفظ التلقائي لجميع البيانات وقفل الشاشة وتأمين تسجيل الخروج التلقائي لعدم وجود نشاط لمدة 10 دقائق.');
       }, IDLE_LIMIT_MS);
     };
 
@@ -566,6 +820,10 @@ export default function App() {
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
+    if (!hasPermission(appState.currentUser, 'DELETE_BAKERY')) {
+      alert('عفواً، حذف المخبز يتطلب صلاحيات مدير النظام الصريحة.');
+      return;
+    }
     if (confirm(`هل أنت متأكد من حذف المخبز الخاص بـ "${ownerName}" نهائياً من المنظومة؟`)) {
       const updated = appState.bakeries.filter((b) => b.id !== bakeryId);
       triggerSave({ ...appState, bakeries: updated }, `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات بنجاح`);
@@ -582,6 +840,18 @@ export default function App() {
     } else {
       updated = [debt, ...appState.debts];
     }
+
+    if (debt.netRemainingDebt >= 50000) {
+      addHighDebtNotification(
+        debt.bakeryId,
+        debt.bakeryOwnerName,
+        debt.machineNumber,
+        debt.village,
+        debt.netRemainingDebt,
+        existingIndex >= 0 ? 'EDIT_DEBT' : 'ADD_DEBT'
+      );
+    }
+
     triggerSave(
       { ...appState, debts: updated },
       existingIndex >= 0 ? 'تم تعديل وحفظ قيد المديونية بنجاح' : 'تم إضافة وتسجيل قيد المديونية بنجاح'
@@ -589,6 +859,10 @@ export default function App() {
   };
 
   const handleDeleteDebt = (debtId: string) => {
+    if (!hasPermission(appState.currentUser, 'DELETE_DEBT')) {
+      alert('عفواً، حذف قيد المديونية يتطلب صلاحيات مدير النظام الصريحة.');
+      return;
+    }
     const updated = appState.debts.filter((d) => d.id !== debtId);
     triggerSave({ ...appState, debts: updated }, 'تم حذف قيد المديونية وتحديث قاعدة البيانات بنجاح');
   };
@@ -762,6 +1036,22 @@ export default function App() {
 
             {/* User Badge with Lock on Computer Exit */}
             <div className="flex items-center gap-2">
+              {/* Manager Admin Notifications Sidebar Button */}
+              <button
+                type="button"
+                onClick={() => setIsAdminDrawerOpen(true)}
+                className="relative inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-red-950 via-slate-900 to-red-900 text-white rounded-lg text-xs font-black shadow border border-red-500/50 hover:scale-105 active:scale-95 transition cursor-pointer"
+                title="عرض شريط التنبيهات الإدارية المباشرة للمديرين (المديونيات الحادة > 50,000 ج.م)"
+              >
+                <Bell className="w-4 h-4 text-red-400 animate-bounce" />
+                <span>تنبيهات المديرين</span>
+                {highDebtNotifications.filter((n) => !n.isRead).length > 0 && (
+                  <span className="w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse border border-amber-300">
+                    {highDebtNotifications.filter((n) => !n.isRead).length}
+                  </span>
+                )}
+              </button>
+
               <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-slate-800/80 border border-slate-700 rounded-lg text-xs font-bold text-amber-100 shadow-inner">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span>{appState.currentUser.fullName}</span>
@@ -881,7 +1171,28 @@ export default function App() {
               <span>الأقسام الرئيسية والمديونيات</span>
             </div>
 
-            {/* 1. Bakeries Database Button */}
+            {/* 1. Dedicated Charts & Analytics Button (الرسوم البيانية) */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('charts')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${
+                activeTab === 'charts'
+                  ? 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-950/50 border border-indigo-300'
+                  : 'bg-slate-950 hover:bg-slate-800 text-indigo-300 border border-indigo-900/40 hover:border-indigo-700/60'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 icon-animated text-indigo-300" />
+                <span>الرسوم البيانية</span>
+              </div>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-black ${
+                activeTab === 'charts' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-800 text-indigo-300'
+              }`}>
+                تحليل تفاعلي 📊
+              </span>
+            </button>
+
+            {/* 2. Bakeries Database Button */}
             <button
               type="button"
               onClick={() => setActiveTab('bakeries')}
@@ -985,17 +1296,19 @@ export default function App() {
             </div>
 
             {/* Quick Add Bakery */}
-            <button
-              type="button"
-              onClick={() => {
-                setBakeryToEdit(null);
-                setIsBakeryModalOpen(true);
-              }}
-              className="w-full flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Plus className="w-4 h-4 stroke-[3]" />
-              <span>إضافة مخبز جديد للقاعدة</span>
-            </button>
+            {appState.currentUser?.role !== 'viewer' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBakeryToEdit(null);
+                  setIsBakeryModalOpen(true);
+                }}
+                className="w-full flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                <Plus className="w-4 h-4 stroke-[3]" />
+                <span>إضافة مخبز جديد للقاعدة</span>
+              </button>
+            )}
 
             {/* Math Audit */}
             <button
@@ -1017,7 +1330,22 @@ export default function App() {
               <span>القرى والوحدات المحلية ({appState.villages.length})</span>
             </button>
 
-            {/* Hard Drive Auto Backup */}
+            {/* Hard Drive Auto Backup & GitHub Backup */}
+            <button
+              type="button"
+              onClick={() => setIsBackupModalOpen(true)}
+              className="w-full flex items-center justify-between px-3 py-2 bg-slate-950 hover:bg-slate-850 text-purple-200 border border-purple-500/50 hover:border-purple-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-sm"
+              title="حفظ واستيراد حزم النسخ الاحتياطية عبر حساب GitHub"
+            >
+              <div className="flex items-center gap-2">
+                <Globe className="w-3.5 h-3.5 text-purple-400" />
+                <span>نسخ واستيراد حزمة GitHub ☁️</span>
+              </div>
+              <span className="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded border border-purple-400/30">
+                استيراد/حفظ
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={() => setIsBackupModalOpen(true)}
@@ -1153,16 +1481,163 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-black text-amber-300">
-                إجمالي المخابز: {appState.bakeries.length}
-              </span>
-              <span className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-black text-rose-300">
-                سجلات المديونيات: {appState.debts.length}
-              </span>
+            {/* Top View Switcher Navigation Tabs (الرسوم البيانية على اليمين أولاً) */}
+            <div className="flex items-center flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('charts')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'charts'
+                    ? 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-950/40 border border-indigo-300'
+                    : 'bg-slate-950 text-indigo-300 hover:bg-slate-800 border border-indigo-900/40'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>الرسوم البيانية</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('bakeries')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'bakeries'
+                    ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-lg shadow-amber-900/40 border border-amber-300'
+                    : 'bg-slate-950 text-amber-300 hover:bg-slate-800 border border-slate-800'
+                }`}
+              >
+                <Building className="w-3.5 h-3.5" />
+                <span>قاعدة بيانات المخابز ({appState.bakeries.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('debts');
+                  setDebtFilterBakeryId(undefined);
+                }}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'debts'
+                    ? 'bg-gradient-to-r from-red-600 to-rose-700 text-white shadow-lg shadow-red-950/40 border border-red-400'
+                    : 'bg-slate-950 text-rose-300 hover:bg-slate-800 border border-slate-800'
+                }`}
+              >
+                <Scale className="w-3.5 h-3.5" />
+                <span>سجلات المديونيات ({appState.debts.length})</span>
+              </button>
             </div>
           </div>
-        {activeTab === 'debts' ? (
+
+        {activeTab === 'charts' ? (
+          /* DEDICATED CHARTS & ANALYTICS VIEW (الرسوم البيانية) */
+          <div className="space-y-6">
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950/80 to-slate-900 border-2 border-indigo-500/40 rounded-2xl p-5 shadow-2xl flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-indigo-950 border border-indigo-400/50 rounded-2xl shadow-lg">
+                  <BarChart3 className="w-7 h-7 text-indigo-300" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                    <span>لوحة الرسوم البيانية والتحليلات الإحصائية للمنظومة</span>
+                    <span className="text-[11px] bg-indigo-500/20 text-indigo-300 border border-indigo-400/40 px-2.5 py-0.5 rounded-full font-mono font-bold">
+                      D3.js + Recharts
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-300 mt-1">
+                    تحليل شامل لمديونيات المخابز وحصص الدقيق وتوزيع المخابز والإنتاج على مستوى المركز
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center flex-wrap gap-2">
+                {/* NEW: 'ملخص إحصائي' Button */}
+                <button
+                  type="button"
+                  onClick={() => setIsLocalUnitsModalOpen(true)}
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-slate-950 rounded-xl text-xs font-black shadow-lg shadow-amber-950/40 border border-amber-300 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-2 pulse-glow"
+                  title="عرض جدول إحصائي مجمع لعدد المخابز، إجمالي الحصة التموينية، وإجمالي المديونيات حسب كل وحدة محلية"
+                >
+                  <Table className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+                  <span>ملخص إحصائي</span>
+                  <span className="px-1.5 py-0.5 bg-black/25 text-amber-950 rounded-md font-mono text-[10px] font-black">
+                    الوحدات المحلية 📋
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('bakeries')}
+                  className="px-3.5 py-2 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>← جدول المخابز</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('debts');
+                    setDebtFilterBakeryId(undefined);
+                  }}
+                  className="px-3.5 py-2 bg-slate-950 hover:bg-slate-800 text-rose-300 border border-red-500/40 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>جدول المديونيات ←</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Banner to Launch Local Units Statistical Summary */}
+            <div className="bg-gradient-to-r from-amber-950/60 via-slate-900 to-indigo-950/60 border border-amber-500/40 rounded-2xl p-4 shadow-xl flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500/20 border border-amber-400/40 rounded-xl text-amber-300">
+                  <Table className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h4 className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
+                    <span>الملخص الإحصائي المجمع حسب كل وحدة محلية (Local Unit)</span>
+                    <span className="text-[10px] bg-amber-400 text-slate-950 font-black px-2 py-0.5 rounded-full">
+                      جديد 📊
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    يعرض جدولاً مجمعاً مفصلاً يوضح عدد المخابز، إجمالي الحصة التموينية اليومية، وإجمالي المديونيات المستحقة لكل وحدة محلية لتسهيل الرؤية الإدارية والرقابية
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsLocalUnitsModalOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md border border-amber-300 transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
+              >
+                <Table className="w-4 h-4 stroke-[2.5]" />
+                <span>فتح جدول الملخص الإحصائي الكامل</span>
+              </button>
+            </div>
+
+            {/* 1. D3.js Interactive Bakery Debts Distribution Pie Chart */}
+            <BakeryDebtsPieChart
+              bakeries={appState.bakeries}
+              debts={appState.debts}
+              onSelectBakeryFilter={(bakeryId) => {
+                setActiveTab('debts');
+                setDebtFilterBakeryId(bakeryId);
+              }}
+            />
+
+            {/* 2. Recharts Bakeries & Quotas Analytics */}
+            <BakeryAnalyticsCharts
+              bakeries={appState.bakeries}
+              debts={appState.debts}
+              villages={appState.villages}
+              onSelectTierFilter={(_min, _max, tierLabel) => {
+                setActiveTab('bakeries');
+                setSelectedDebtFilter('HAS_DEBT');
+                setSaveToast({
+                  id: Date.now(),
+                  message: `تم تصفية القائمة لعرض المخابز ضمن شريحة (${tierLabel})`,
+                  timestamp: new Date().toLocaleTimeString('ar-EG'),
+                });
+              }}
+            />
+          </div>
+        ) : activeTab === 'debts' ? (
           /* DEBTS VIEW */
           <DebtsView
             bakeries={appState.bakeries}
@@ -1171,10 +1646,29 @@ export default function App() {
             issuingEntities={appState.issuingEntities}
             violationTypes={appState.violationTypes}
             systemConfig={appState.systemConfig}
+            currentUser={appState.currentUser}
             onSaveDebt={handleSaveDebt}
             onDeleteDebt={handleDeleteDebt}
-            onUpdateEntities={(ents) => triggerSave({ ...appState, issuingEntities: ents })}
-            onUpdateViolations={(viols) => triggerSave({ ...appState, violationTypes: viols })}
+            onUpdateEntities={(ents) => triggerSave({ ...appState, issuingEntities: ents }, 'تم تحديث قائمة الجهات المحررة بنجاح')}
+            onUpdateViolations={(viols) => triggerSave({ ...appState, violationTypes: viols }, 'تم تحديث قائمة أنواع المخالفات بنجاح')}
+            onRenameEntity={(oldName, newName) => {
+              if (!oldName.trim() || !newName.trim() || oldName === newName) return;
+              const updatedEntities = appState.issuingEntities.map((e) => (e === oldName ? newName : e));
+              const updatedDebts = appState.debts.map((d) => (d.issuingEntity === oldName ? { ...d, issuingEntity: newName } : d));
+              triggerSave(
+                { ...appState, issuingEntities: updatedEntities, debts: updatedDebts },
+                `تم تعديل الجهة المحررة إلى "${newName}" وتحديث القيود المرتبطة بها`
+              );
+            }}
+            onRenameViolation={(oldName, newName) => {
+              if (!oldName.trim() || !newName.trim() || oldName === newName) return;
+              const updatedViolations = appState.violationTypes.map((v) => (v === oldName ? newName : v));
+              const updatedDebts = appState.debts.map((d) => (d.violationType === oldName ? { ...d, violationType: newName } : d));
+              triggerSave(
+                { ...appState, violationTypes: updatedViolations, debts: updatedDebts },
+                `تم تعديل نوع المخالفة إلى "${newName}" وتحديث القيود المرتبطة بها`
+              );
+            }}
             filterBakeryId={debtFilterBakeryId}
             onClearBakeryFilter={() => setDebtFilterBakeryId(undefined)}
           />
@@ -1271,26 +1765,25 @@ export default function App() {
               </div>
             </div>
 
-            {/* Interactive Recharts Analytics Section */}
-            <BakeryAnalyticsCharts bakeries={appState.bakeries} debts={appState.debts} villages={appState.villages} />
-
             {/* Toolbar: Action Buttons on the RIGHT side, Search on the left, Filters */}
             <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3.5 shadow-xl space-y-3 no-print">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 {/* Primary Action Buttons - Placed FIRST on the RIGHT side with smooth animations */}
                 <div className="flex items-center flex-wrap gap-2.5 justify-start">
                   {/* 1. Add Bakery Button (Glowing Golden with animated icon & pulse) */}
-                  <button
-                    onClick={() => {
-                      setBakeryToEdit(null);
-                      setIsBakeryModalOpen(true);
-                    }}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-amber-900/30 border border-amber-300 transition-all duration-300 hover:scale-105 active:scale-95 cursor-pointer pulse-glow"
-                    title="إضافة مخبز جديد إلى المنظومة"
-                  >
-                    <Plus className="w-4 h-4 text-slate-950 icon-animated" />
-                    <span>إضافة مخبز جديد</span>
-                  </button>
+                  {appState.currentUser?.role !== 'viewer' && (
+                    <button
+                      onClick={() => {
+                        setBakeryToEdit(null);
+                        setIsBakeryModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-amber-900/30 border border-amber-300 transition-all duration-300 hover:scale-105 active:scale-95 cursor-pointer pulse-glow"
+                      title="إضافة مخبز جديد إلى المنظومة"
+                    >
+                      <Plus className="w-4 h-4 text-slate-950 icon-animated" />
+                      <span>إضافة مخبز جديد</span>
+                    </button>
+                  )}
 
                   {/* 2. Golden Modify Column Headers Button */}
                   <button
@@ -1682,15 +2175,7 @@ export default function App() {
                         rowSpan={2}
                         className="py-2.5 px-1 bg-black border-l border-slate-800 text-slate-300 w-10 text-center"
                       >
-                        {ct.index}
-                      </th>
-
-                      {/* Actions Column Header moved to the RIGHT side as requested */}
-                      <th
-                        rowSpan={2}
-                        className="py-2.5 px-2 bg-gradient-to-r from-amber-950 to-slate-900 border-l border-slate-800 text-amber-300 min-w-[105px] no-print text-center"
-                      >
-                        {ct.actions}
+                        <ThHeaderTooltip label={ct.index} tooltipKey="index" />
                       </th>
 
                       {/* 1. Basic Info (Owner Name, Machine, Village, Local Unit) */}
@@ -1706,7 +2191,7 @@ export default function App() {
                         rowSpan={2}
                         className="py-2.5 px-2 bg-red-950 border-l border-slate-800 text-rose-200 min-w-[110px]"
                       >
-                        {ct.remainingDebt}
+                        <ThHeaderTooltip label={ct.remainingDebt} tooltipKey="remainingDebt" />
                       </th>
 
                       {/* 3. Quotas */}
@@ -1748,60 +2233,116 @@ export default function App() {
                       >
                         التراخيص والعقود وتواريخ السريان
                       </th>
+
+                      {/* Actions Column Header moved to the END of the table (Left side in RTL) */}
+                      <th
+                        rowSpan={2}
+                        className="py-2.5 px-2 bg-gradient-to-r from-slate-900 to-amber-950 border-l border-slate-800 text-amber-300 min-w-[105px] no-print text-center"
+                      >
+                        <ThHeaderTooltip label={ct.actions} tooltipKey="actions" />
+                      </th>
                     </tr>
 
                     {/* Sub Columns Headers */}
                     <tr className="bg-slate-950 text-[11px] text-slate-300 font-black border-b border-slate-800">
-                      {/* Basic Info sub-headers (Index and Actions are rowSpan 2 above) */}
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[160px]">{ct.bakeryOwnerName}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.machineNumber}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.village}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.localUnit}</th>
+                      {/* Basic Info sub-headers */}
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[160px]">
+                        <ThHeaderTooltip label={ct.bakeryOwnerName} tooltipKey="bakeryOwnerName" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
+                        <ThHeaderTooltip label={ct.machineNumber} tooltipKey="machineNumber" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
+                        <ThHeaderTooltip label={ct.village} tooltipKey="village" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
+                        <ThHeaderTooltip label={ct.localUnit} tooltipKey="localUnit" />
+                      </th>
 
                       {/* 3. Quotas */}
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.insuranceQuota}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.actualQuota}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[100px]">{ct.insuranceValue}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
+                        <ThHeaderTooltip label={ct.insuranceQuota} tooltipKey="insuranceQuota" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
+                        <ThHeaderTooltip label={ct.actualQuota} tooltipKey="actualQuota" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[100px]">
+                        <ThHeaderTooltip label={ct.insuranceValue} tooltipKey="insuranceValue" />
+                      </th>
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[95px] bg-amber-950/80 text-amber-300">
-                        {ct.loavesCount}
+                        <ThHeaderTooltip label={ct.loavesCount} tooltipKey="loavesCount" />
                       </th>
 
                       {/* 4. Demographics & Averages */}
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.villagePopulation}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px] bg-amber-950/50 text-amber-300">
-                        {ct.perCapitaAverage}
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">
+                        <ThHeaderTooltip label={ct.villagePopulation} tooltipKey="villagePopulation" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.beneficiaries2023}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">{ct.avg2023}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.beneficiaries2024}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">{ct.avg2024}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.beneficiaries2025}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">{ct.avg2025}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px] bg-amber-950/50 text-amber-300">
+                        <ThHeaderTooltip label={ct.perCapitaAverage} tooltipKey="perCapitaAverage" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
+                        <ThHeaderTooltip label={ct.beneficiaries2023} tooltipKey="beneficiaries2023" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">
+                        <ThHeaderTooltip label={ct.avg2023} tooltipKey="avg2023" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
+                        <ThHeaderTooltip label={ct.beneficiaries2024} tooltipKey="beneficiaries2024" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">
+                        <ThHeaderTooltip label={ct.avg2024} tooltipKey="avg2024" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
+                        <ThHeaderTooltip label={ct.beneficiaries2025} tooltipKey="beneficiaries2025" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">
+                        <ThHeaderTooltip label={ct.avg2025} tooltipKey="avg2025" />
+                      </th>
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[80px] bg-slate-900 text-amber-300">
-                        {ct.avgDiff}
+                        <ThHeaderTooltip label={ct.avgDiff} tooltipKey="avgDiff" />
                       </th>
 
                       {/* 5. Classification & Operations */}
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">{ct.activityStatus}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
+                        <ThHeaderTooltip label={ct.activityStatus} tooltipKey="activityStatus" />
+                      </th>
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[110px] bg-amber-950/40 text-amber-300">
-                        {ct.bakeryCategory}
+                        <ThHeaderTooltip label={ct.bakeryCategory} tooltipKey="bakeryCategory" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">{ct.breadType}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
+                        <ThHeaderTooltip label={ct.breadType} tooltipKey="breadType" />
+                      </th>
                       <th className="py-2 px-1 border-l border-slate-800 min-w-[75px] text-amber-300">
-                        {ct.breadTypeCount}
+                        <ThHeaderTooltip label={ct.breadTypeCount} tooltipKey="breadTypeCount" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.lineType}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.fuelType}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">
+                        <ThHeaderTooltip label={ct.lineType} tooltipKey="lineType" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">
+                        <ThHeaderTooltip label={ct.fuelType} tooltipKey="fuelType" />
+                      </th>
 
                       {/* 6. Contact and Identity */}
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[100px]">{ct.phone}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[120px]">{ct.nationalId}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[100px]">
+                        <ThHeaderTooltip label={ct.phone} tooltipKey="phone" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[120px]">
+                        <ThHeaderTooltip label={ct.nationalId} tooltipKey="nationalId" />
+                      </th>
 
                       {/* 7. Licenses & Dates */}
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.commercialRegDate}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.bakeryLicenseDate}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.leaseAgreementDate}</th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">{ct.taxCardDate}</th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">
+                        <ThHeaderTooltip label={ct.commercialRegDate} tooltipKey="commercialRegDate" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">
+                        <ThHeaderTooltip label={ct.bakeryLicenseDate} tooltipKey="bakeryLicenseDate" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">
+                        <ThHeaderTooltip label={ct.leaseAgreementDate} tooltipKey="leaseAgreementDate" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">
+                        <ThHeaderTooltip label={ct.taxCardDate} tooltipKey="taxCardDate" />
+                      </th>
                     </tr>
                   </thead>
 
@@ -1849,37 +2390,8 @@ export default function App() {
                                 : 'bg-slate-950 hover:bg-slate-800/90'
                             }`}
                           >
-                            {/* 1. Index & Actions on the RIGHT Side */}
+                            {/* 1. Index on the RIGHT Side */}
                             <td className="py-2.5 px-1 border-l border-slate-800 text-slate-400 num-enlarged">{index + 1}</td>
-
-                            {/* Actions Buttons - Now positioned on the RIGHT side of the table */}
-                            <td className="py-2.5 px-2 border-l border-slate-800 no-print">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setBakeryToEdit(b);
-                                    setIsBakeryModalOpen(true);
-                                  }}
-                                  className="p-1.5 hover:bg-amber-950/80 text-amber-400 hover:text-amber-300 border border-transparent hover:border-amber-700/60 rounded-xl transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
-                                  title="تعديل بيانات المخبز"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteBakery(b.id, b.bakeryOwnerName);
-                                  }}
-                                  className="p-1.5 hover:bg-red-950/80 text-red-400 hover:text-red-300 border border-transparent hover:border-red-700/60 rounded-xl transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
-                                  title="حذف المخبز"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </td>
 
                             <td className="py-2.5 px-2 border-l border-slate-800 font-black text-slate-100 text-right">
                               {b.bakeryOwnerName}
@@ -2060,6 +2572,42 @@ export default function App() {
                             >
                               {b.taxCardDate || '-'}
                             </td>
+
+                            {/* Actions Column moved to the END of the table (Left side in RTL) */}
+                            <td className="py-2.5 px-2 border-l border-slate-800 no-print text-center">
+                              {appState.currentUser?.role === 'viewer' ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-400 bg-slate-900 border border-slate-700 px-2 py-1 rounded-lg">
+                                  <span>👁️</span>
+                                  <span>عرض فقط</span>
+                                </span>
+                              ) : (
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setBakeryToEdit(b);
+                                      setIsBakeryModalOpen(true);
+                                    }}
+                                    className="p-1.5 hover:bg-amber-950/80 text-amber-400 hover:text-amber-300 border border-transparent hover:border-amber-700/60 rounded-xl transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
+                                    title="تعديل بيانات المخبز"
+                                  >
+                                    <Edit2 className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteBakery(b.id, b.bakeryOwnerName);
+                                    }}
+                                    className="p-1.5 hover:bg-red-950/80 text-red-400 hover:text-red-300 border border-transparent hover:border-red-700/60 rounded-xl transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
+                                    title="حذف المخبز"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              )}
+                            </td>
                           </tr>
                         );
                       })
@@ -2077,18 +2625,20 @@ export default function App() {
       <aside aria-label="أزرار القاعدة السريعة" className="fixed bottom-6 right-6 z-40 no-print flex flex-col items-end gap-2.5">
         <div className="bg-slate-950/95 backdrop-blur-md p-2 rounded-2xl border-2 border-amber-500/40 shadow-[0_10px_35px_rgba(0,0,0,0.85)] flex flex-row items-center gap-2">
           {/* Quick Add Bakery Button */}
-          <button
-            type="button"
-            onClick={() => {
-              setBakeryToEdit(null);
-              setIsBakeryModalOpen(true);
-            }}
-            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-lg border border-amber-300 transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
-            title="إضافة مخبز جديد إلى القاعدة"
-          >
-            <Plus className="w-4 h-4 text-slate-950 stroke-[3] transition-transform duration-300 group-hover:rotate-90" />
-            <span className="hidden sm:inline">إضافة مخبز</span>
-          </button>
+          {appState.currentUser?.role !== 'viewer' && (
+            <button
+              type="button"
+              onClick={() => {
+                setBakeryToEdit(null);
+                setIsBakeryModalOpen(true);
+              }}
+              className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-lg border border-amber-300 transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+              title="إضافة مخبز جديد إلى القاعدة"
+            >
+              <Plus className="w-4 h-4 text-slate-950 stroke-[3] transition-transform duration-300 group-hover:rotate-90" />
+              <span className="hidden sm:inline">إضافة مخبز</span>
+            </button>
+          )}
 
           {/* Quick Print A4 / Reports Center */}
           <button
@@ -2151,6 +2701,7 @@ export default function App() {
           isOpen={isBakeryModalOpen}
           onClose={() => setIsBakeryModalOpen(false)}
           bakeryToEdit={bakeryToEdit}
+          existingBakeries={appState.bakeries}
           villages={appState.villages}
           activityStatuses={appState.activityStatuses}
           currentUser={appState.currentUser}
@@ -2298,6 +2849,10 @@ export default function App() {
           onAddUser={(newUser) =>
             triggerSave({ ...appState, users: [...appState.users, newUser] }, 'تم إضافة وحفظ المستخدم الجديد بنجاح')
           }
+          onUpdateUser={(updatedUser) => {
+            const updatedUsers = appState.users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+            triggerSave({ ...appState, users: updatedUsers }, `تم تحديث صلاحية المستخدم (${updatedUser.fullName}) بنجاح`);
+          }}
           onDeleteUser={(userId) => {
             const updatedUsers = appState.users.filter((u) => u.id !== userId);
             triggerSave({ ...appState, users: updatedUsers }, 'تم حذف المستخدم وتحديث القائمة بنجاح');
@@ -2328,6 +2883,26 @@ export default function App() {
         />
       )}
 
+      {/* 11. Statistical Summary by Local Unit Modal (ملخص إحصائي) */}
+      {isLocalUnitsModalOpen && (
+        <LocalUnitsSummaryModal
+          isOpen={isLocalUnitsModalOpen}
+          onClose={() => setIsLocalUnitsModalOpen(false)}
+          bakeries={appState.bakeries}
+          debts={appState.debts}
+          villages={appState.villages}
+          systemConfig={appState.systemConfig}
+          onNavigateToBakeries={(localUnit) => {
+            setActiveTab('bakeries');
+            setSelectedUnit(localUnit);
+          }}
+          onNavigateToDebts={(localUnit) => {
+            setActiveTab('debts');
+            setSelectedUnit(localUnit);
+          }}
+        />
+      )}
+
       {/* Real-time Floating Save Success Toast Notification */}
       {saveToast && (
         <div className="fixed bottom-6 right-6 z-[9999] max-w-md animate-in slide-in-from-bottom-5 duration-200">
@@ -2353,6 +2928,35 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Admin Manager Notifications Drawer Sidebar */}
+      <AdminNotificationsDrawer
+        isOpen={isAdminDrawerOpen}
+        onClose={() => setIsAdminDrawerOpen(false)}
+        notifications={highDebtNotifications}
+        onMarkAsRead={(id) => {
+          setHighDebtNotifications((prev) => {
+            const updated = prev.map((n) => (n.id === id ? { ...n, isRead: true } : n));
+            localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
+            return updated;
+          });
+        }}
+        onMarkAllAsRead={() => {
+          setHighDebtNotifications((prev) => {
+            const updated = prev.map((n) => ({ ...n, isRead: true }));
+            localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
+            return updated;
+          });
+        }}
+        onClearAll={() => {
+          setHighDebtNotifications([]);
+          localStorage.removeItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS');
+        }}
+        onSelectBakeryDebt={(bakeryId) => {
+          setDebtFilterBakeryId(bakeryId);
+          setActiveTab('debts');
+        }}
+      />
     </div>
   );
 }

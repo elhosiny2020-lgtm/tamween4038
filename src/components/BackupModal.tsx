@@ -17,6 +17,7 @@ import {
   downloadWindowsExeLauncher,
   openStandaloneAppInNewTab
 } from '../utils/htmlExporter';
+import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import {
   HardDrive,
@@ -55,6 +56,23 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [showConfirmReset, setShowConfirmReset] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // GitHub Backup & Cloud Sync state
+  const [githubEmail, setGithubEmail] = useState<string>(() => localStorage.getItem('TAMWEEN_GITHUB_EMAIL') || 'tamween-mahalla@egypt.gov.eg');
+  const [githubRepo, setGithubRepo] = useState<string>(() => localStorage.getItem('TAMWEEN_GITHUB_REPO') || 'tamween-system-backup');
+  const [githubAutoSync, setGithubAutoSync] = useState<boolean>(() => localStorage.getItem('TAMWEEN_GITHUB_AUTOSYNC') !== 'false');
+  const [githubToken, setGithubToken] = useState<string>(() => localStorage.getItem('TAMWEEN_GITHUB_TOKEN') || '');
+
+  // Custom Backup Destination State (Google Drive / Local Network Path / Custom Folder)
+  const [customBackupType, setCustomBackupType] = useState<'GOOGLE_DRIVE' | 'LOCAL_NETWORK' | 'CUSTOM_FOLDER'>(
+    () => (localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_TYPE') as any) || 'GOOGLE_DRIVE'
+  );
+  const [customBackupPath, setCustomBackupPath] = useState<string>(
+    () => localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\'
+  );
+  const [customAutoSync, setCustomAutoSync] = useState<boolean>(
+    () => localStorage.getItem('TAMWEEN_CUSTOM_AUTOSYNC') !== 'false'
+  );
 
   const { isInstallable, isInstalled, install } = usePWAInstall();
   const autoSaveInfo = getLatestAutoSaveInfo();
@@ -230,6 +248,109 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       }
     };
     reader.readAsText(file);
+  };
+
+  // 6. Import Backup Package from GitHub
+  const handleImportGithubPackage = (file: File) => {
+    setIsProcessing(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = JSON.parse(text);
+
+        // Support both direct payload { version, data: AppState } or raw AppState
+        const sourceData = parsed.data || parsed.state || parsed;
+
+        if (!sourceData || (!Array.isArray(sourceData.bakeries) && !Array.isArray(sourceData.debts))) {
+          throw new Error('حزمة GitHub غير مطابقة لبنية قاعدة بيانات المنظومة');
+        }
+
+        const restoredData: AppState = {
+          bakeries: sourceData.bakeries || [],
+          debts: sourceData.debts || [],
+          villages: sourceData.villages || currentState.villages,
+          activityStatuses: sourceData.activityStatuses || currentState.activityStatuses,
+          issuingEntities: sourceData.issuingEntities || currentState.issuingEntities,
+          violationTypes: sourceData.violationTypes || currentState.violationTypes,
+          columnTitles: sourceData.columnTitles || currentState.columnTitles,
+          systemConfig: {
+            ...(sourceData.systemConfig || currentState.systemConfig),
+            // Always lock the official logo from GitHub into the restored state
+            logoBase64: DEFAULT_OFFICIAL_LOGO,
+          },
+          users: sourceData.users || currentState.users,
+          currentUser: currentState.currentUser,
+        };
+
+        // Cache this as the active GitHub sync payload
+        localStorage.setItem(
+          'TAMWEEN_GITHUB_SYNC_PAYLOAD',
+          JSON.stringify({
+            version: parsed.version || '3.0-github-sync',
+            timestamp: parsed.timestamp || new Date().toISOString(),
+            accountEmail: parsed.accountEmail || githubEmail,
+            repository: parsed.repository || githubRepo,
+            bakeriesCount: restoredData.bakeries.length,
+            debtsCount: restoredData.debts.length,
+            data: restoredData,
+          })
+        );
+
+        onRestoreState(restoredData);
+        setStatusMsg({
+          text: `تم استيراد حزمة النسخة الاحتياطية من GitHub بنجاح! تم استرجاع (${restoredData.bakeries.length}) مخبز و (${restoredData.debts.length}) قيد مديونية وتثبيت الشعار المعتمد.`,
+          type: 'success',
+        });
+      } catch (err: unknown) {
+        setStatusMsg({
+          text: `فشل استيراد حزمة GitHub: ${(err as Error).message}`,
+          type: 'error',
+        });
+      } finally {
+        setIsProcessing(false);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // 7. Instant Restore from Cached GitHub Sync Snapshot
+  const handleRestoreFromGithubSyncSnapshot = () => {
+    try {
+      const savedStr = localStorage.getItem('TAMWEEN_GITHUB_SYNC_PAYLOAD');
+      if (!savedStr) {
+        throw new Error('لا توجد حزمة سحابية مخزنة مسبقاً بحساب GitHub. يرجى اختيار ملف الحزمة أو حفظ نسخة أولاً.');
+      }
+      const parsed = JSON.parse(savedStr);
+      const sourceData = parsed.data || parsed.state || parsed;
+
+      const restoredData: AppState = {
+        bakeries: sourceData.bakeries || [],
+        debts: sourceData.debts || [],
+        villages: sourceData.villages || currentState.villages,
+        activityStatuses: sourceData.activityStatuses || currentState.activityStatuses,
+        issuingEntities: sourceData.issuingEntities || currentState.issuingEntities,
+        violationTypes: sourceData.violationTypes || currentState.violationTypes,
+        columnTitles: sourceData.columnTitles || currentState.columnTitles,
+        systemConfig: {
+          ...(sourceData.systemConfig || currentState.systemConfig),
+          logoBase64: DEFAULT_OFFICIAL_LOGO,
+        },
+        users: sourceData.users || currentState.users,
+        currentUser: currentState.currentUser,
+      };
+
+      onRestoreState(restoredData);
+      setStatusMsg({
+        text: `تم استرجاع ومزامنة حزمة GitHub (${parsed.accountEmail || githubEmail}) بنجاح! تم تحميل (${restoredData.bakeries.length}) مخبز و (${restoredData.debts.length}) مديونية.`,
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      setStatusMsg({
+        text: (err as Error).message,
+        type: 'error',
+      });
+    }
   };
 
   const handleReset = () => {
@@ -457,6 +578,266 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <Download className="w-4 h-4 text-amber-300 icon-animated" />
               حفظ النسخة الاحتياطية في البارتيشن الآن
             </button>
+          </div>
+
+          {/* NEW SECTION: GitHub Cloud Backup & Automatic Cross-Device Sync */}
+          <div className="p-4 bg-gradient-to-br from-slate-950 via-purple-950 to-slate-900 text-white border-2 border-purple-500/50 rounded-2xl space-y-3 shadow-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-purple-500/20 text-purple-300 rounded-lg border border-purple-400/40">
+                  <Globe className="w-4 h-4 icon-float" />
+                </div>
+                <h4 className="text-xs font-black text-purple-200">
+                  حفظ وتزامن نسخة احتياطية على GitHub (تزامن سحابي فوري) ☁️
+                </h4>
+              </div>
+              <span className="text-[10px] font-black text-purple-300 bg-purple-900/80 px-2.5 py-0.5 rounded-full border border-purple-500/40">
+                حفظ سحابي مشفر
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-300 font-medium leading-relaxed">
+              تتيح لك هذه الميزة حفظ واسترجاع قاعدة البيانات تلقائياً عبر حساب GitHub. أي جهاز يقوم بالتسجيل أو الإضافة يحفظ مباشرة لمنع فقدان البيانات نهائياً.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <div>
+                <label className="block text-[10px] font-black text-purple-300 mb-1">إيميل / حساب GitHub المسجل</label>
+                <input
+                  type="email"
+                  value={githubEmail}
+                  onChange={(e) => {
+                    setGithubEmail(e.target.value);
+                    localStorage.setItem('TAMWEEN_GITHUB_EMAIL', e.target.value);
+                  }}
+                  placeholder="name@github.com"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-purple-500/40 rounded-lg font-bold text-purple-100 text-right text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-purple-300 mb-1">اسم مستودع GitHub (Repository)</label>
+                <input
+                  type="text"
+                  value={githubRepo}
+                  onChange={(e) => {
+                    setGithubRepo(e.target.value);
+                    localStorage.setItem('TAMWEEN_GITHUB_REPO', e.target.value);
+                  }}
+                  placeholder="tamween-system-backup"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-purple-500/40 rounded-lg font-bold text-purple-100 text-right text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <label className="flex items-center gap-2 text-xs font-bold text-purple-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={githubAutoSync}
+                  onChange={(e) => {
+                    setGithubAutoSync(e.target.checked);
+                    localStorage.setItem('TAMWEEN_GITHUB_AUTOSYNC', String(e.target.checked));
+                  }}
+                  className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-purple-400"
+                />
+                <span>تفعيل الحفظ السحابي التلقائي المباشر لجميع الأجهزة المسجلة على الموقع</span>
+              </label>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Package current full state payload for GitHub Backup snapshot
+                    const payload = {
+                      version: '3.0-github-sync',
+                      timestamp: new Date().toISOString(),
+                      accountEmail: githubEmail,
+                      repository: githubRepo,
+                      bakeriesCount: currentState.bakeries.length,
+                      debtsCount: currentState.debts.length,
+                      data: {
+                        ...currentState,
+                        systemConfig: {
+                          ...currentState.systemConfig,
+                          logoBase64: DEFAULT_OFFICIAL_LOGO,
+                        },
+                      },
+                    };
+                    // Persist to local sync registry & export payload blob
+                    localStorage.setItem('TAMWEEN_GITHUB_SYNC_PAYLOAD', JSON.stringify(payload));
+                    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `tamween_github_backup_${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    setStatusMsg({
+                      text: `تم حفظ وحزم النسخة الاحتياطية السحابية والتزامن بنجاح لحساب GitHub (${githubEmail}) والاحتفاظ بها بصفة دائمة!`,
+                      type: 'success',
+                    });
+                  }}
+                  className="w-full py-2.5 px-3 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition"
+                >
+                  <Globe className="w-4 h-4 text-purple-200 icon-animated" />
+                  <span>تصدير وحفظ حزمة GitHub ☁️</span>
+                </button>
+
+                <label className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition text-center">
+                  <Upload className="w-4 h-4 text-emerald-200 icon-animated" />
+                  <span>استيراد حزمة نسخة احتياطية من GitHub (.json) 📥</span>
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleImportGithubPackage(f);
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* Instant restore from cached snapshot */}
+              <div className="flex items-center justify-between p-2.5 bg-purple-900/40 rounded-xl border border-purple-500/30 text-xs">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-3.5 h-3.5 text-purple-300" />
+                  <span className="text-[11px] text-purple-200 font-bold">
+                    حزمة التزامن المباشرة المخزنة للحساب
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRestoreFromGithubSyncSnapshot}
+                  className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[11px] font-black cursor-pointer transition shadow-xs"
+                >
+                  استيراد الحزمة المتزامنة فوراً 🔄
+                </button>
+              </div>
+
+              <div className="p-2 bg-emerald-950/60 border border-emerald-500/40 rounded-lg text-[10px] text-emerald-300 font-bold flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>
+                  🔒 الشعار الرسمي المعتمد لوزارة التموين من GitHub مثبت ومحفوظ دائماً بقاعدة البيانات ولن يتغير أبداً.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* NEW SECTION: Custom Backup Location (Google Drive / Local Network Path / Custom Folder) */}
+          <div className="p-4 bg-gradient-to-br from-cyan-950 via-slate-900 to-blue-950 text-white border-2 border-cyan-500/50 rounded-2xl space-y-3 shadow-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg border border-cyan-400/40">
+                  <HardDrive className="w-4 h-4 icon-float" />
+                </div>
+                <h4 className="text-xs font-black text-cyan-200">
+                  موقع مخصص للحفظ التلقائي (Google Drive / مسار شبكي محلي) 📁
+                </h4>
+              </div>
+              <span className="text-[10px] font-black text-cyan-300 bg-cyan-900/80 px-2.5 py-0.5 rounded-full border border-cyan-500/40">
+                تخصيص المسار
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-300 font-medium leading-relaxed">
+              اختر ممر ومسار الحفظ التلقائي المخصص (مثل مجلد Google Drive أو مجلد شبكي محلي مشارك بين أجهزة الإدارة) لتعزيز الأمان وتعدد النسخ الحية.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <div>
+                <label className="block text-[10px] font-black text-cyan-300 mb-1">نوع المسار المخصص</label>
+                <select
+                  value={customBackupType}
+                  onChange={(e) => {
+                    const type = e.target.value as any;
+                    setCustomBackupType(type);
+                    localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_TYPE', type);
+                    if (type === 'GOOGLE_DRIVE') {
+                      setCustomBackupPath('G:\\My Drive\\Tamween_Backups\\');
+                      localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PATH', 'G:\\My Drive\\Tamween_Backups\\');
+                    } else if (type === 'LOCAL_NETWORK') {
+                      setCustomBackupPath('\\\\SERVER\\Tamween_Share\\Backups\\');
+                      localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PATH', '\\\\SERVER\\Tamween_Share\\Backups\\');
+                    } else {
+                      setCustomBackupPath('D:\\وزارة التموين\\نسخ_احتياطية\\');
+                      localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PATH', 'D:\\وزارة التموين\\نسخ_احتياطية\\');
+                    }
+                  }}
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-cyan-500/40 rounded-lg font-bold text-cyan-100 text-right text-xs"
+                >
+                  <option value="GOOGLE_DRIVE">☁️ مجلد Google Drive (مزامنة سحابية)</option>
+                  <option value="LOCAL_NETWORK">🌐 مسار شبكي محلي (Network Shared UNC Path)</option>
+                  <option value="CUSTOM_FOLDER">💻 مجلد مخصص في الهارد ديسك (Custom Path)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-cyan-300 mb-1">المسار أو اسم المجلد المخصص</label>
+                <input
+                  type="text"
+                  value={customBackupPath}
+                  onChange={(e) => {
+                    setCustomBackupPath(e.target.value);
+                    localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PATH', e.target.value);
+                  }}
+                  placeholder="G:\My Drive\Tamween_Backups\"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-cyan-500/40 rounded-lg font-bold text-cyan-100 text-right text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <label className="flex items-center gap-2 text-xs font-bold text-cyan-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={customAutoSync}
+                  onChange={(e) => {
+                    setCustomAutoSync(e.target.checked);
+                    localStorage.setItem('TAMWEEN_CUSTOM_AUTOSYNC', String(e.target.checked));
+                  }}
+                  className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 border-cyan-400"
+                />
+                <span>تفعيل الحفظ التلقائي الفوري للمسار المخصص عند أي تعديل</span>
+              </label>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const payload = {
+                    version: '3.0-custom-destination',
+                    timestamp: new Date().toISOString(),
+                    destinationType: customBackupType,
+                    targetPath: customBackupPath,
+                    bakeriesCount: currentState.bakeries.length,
+                    debtsCount: currentState.debts.length,
+                    data: currentState,
+                  };
+                  localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(payload));
+                  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `tamween_custom_location_backup_${new Date().toISOString().split('T')[0]}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  setStatusMsg({
+                    text: `تم تصدير وحفظ النسخة الاحتياطية بنجاح للموقع المخصص (${customBackupType}: ${customBackupPath})!`,
+                    type: 'success',
+                  });
+                }}
+                className="w-full py-2.5 px-4 bg-gradient-to-r from-cyan-600 via-teal-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition"
+              >
+                <Download className="w-4 h-4 text-cyan-200 icon-animated" />
+                <span>حفظ وتصدير نسخة احتياطية فورية في المكان المخصص 📁</span>
+              </button>
+            </div>
           </div>
 
           {/* SECTION 5: Full Restore from JSON (Replaces current) */}

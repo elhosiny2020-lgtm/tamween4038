@@ -28,11 +28,13 @@ import {
   Table as TableIcon
 } from 'lucide-react';
 import { downloadWindowsExeLauncher, downloadUpdatedAppHtml } from '../utils/htmlExporter';
+import { D3DebtAnalysisChart } from './D3DebtAnalysisChart';
 
 interface BakeryAnalyticsChartsProps {
   bakeries: Bakery[];
   debts?: DebtRecord[];
   villages: VillageHierarchy[];
+  onSelectTierFilter?: (minAmount: number, maxAmount: number, tierLabel: string) => void;
 }
 
 const COLORS = [
@@ -44,7 +46,8 @@ const COLORS = [
 export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
   bakeries,
   debts = [],
-  villages
+  villages,
+  onSelectTierFilter
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [selectedVillageFilter, setSelectedVillageFilter] = useState('ALL');
@@ -285,6 +288,13 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
               <span>المديونيات: <strong className="text-rose-400">{totals.debts.toLocaleString()}</strong> ج.م</span>
             </div>
           </div>
+
+          {/* D3.js Debt Value Categories Donut Chart & Analytical Cards */}
+          <D3DebtAnalysisChart
+            bakeries={filteredData}
+            debts={debts}
+            onSelectTierFilter={onSelectTierFilter}
+          />
 
           {/* Charts Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

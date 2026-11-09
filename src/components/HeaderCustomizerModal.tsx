@@ -138,28 +138,27 @@ export const HeaderCustomizerModal: React.FC<HeaderCustomizerModalProps> = ({
                 />
               </div>
               <div>
-                <h4 className="text-xs font-black text-slate-900">شعار الجمهورية والوزارة</h4>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-xs font-black text-slate-900">شعار الجمهورية والوزارة</h4>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full font-black flex items-center gap-1">
+                    <Check className="w-3 h-3 text-emerald-600" />
+                    مثبت ومعتمد من GitHub دائماً
+                  </span>
+                </div>
                 <p className="text-[11px] text-slate-500 font-bold mt-0.5">
-                  يظهر في الترويسة العلوية، شاشة الدخول، وكشوف الطباعة الرسمية
+                  الشعار الرسمي المعتمد لوزارة التموين والتجارة الداخلية محفوظ ومثبت دائماً على قاعدة البيانات
                 </p>
                 <div className="flex items-center gap-2 mt-2">
-                  <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black shadow-sm transition">
-                    <Upload className="w-3.5 h-3.5" />
-                    رفع شعار مخصص
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleLogoUpload}
-                      className="hidden"
-                    />
-                  </label>
                   <button
                     type="button"
-                    onClick={handleResetLogo}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-bold transition"
+                    onClick={() => {
+                      setLogoPreview(DEFAULT_OFFICIAL_LOGO);
+                      setMsg('تم تأكيد تثبيت الشعار الرسمي المعتمد من GitHub');
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-black shadow-sm transition cursor-pointer"
                   >
-                    <RotateCcw className="w-3 h-3" />
-                    استعادة الشعار الأصلي
+                    <Check className="w-3.5 h-3.5" />
+                    تأكيد ثبات الشعار المعتمد
                   </button>
                 </div>
               </div>

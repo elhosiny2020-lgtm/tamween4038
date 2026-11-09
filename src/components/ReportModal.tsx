@@ -1307,9 +1307,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               {reportType === 'debts' ? (
                 /* DETAILED DEBTS ACCOUNT STATEMENT TABLE */
                 <div className="w-full overflow-visible space-y-3">
-                  {/* Urgent Alert Banner on Printout for Over 20k */}
+                  {/* Urgent Alert Banner on Printout for Over 20k (Hidden during print per instructions) */}
                   {debtReportTotals.over20kCount > 0 && (
-                    <div className="bg-red-100 border-2 border-red-600 p-2 rounded text-center text-xs font-black text-red-950">
+                    <div className="bg-red-100 border-2 border-red-600 p-2 rounded text-center text-xs font-black text-red-950 no-print">
                       تنبيه وإخطار تمويني مشدد: المديونيات المعلمة باللون الأحمر تتجاوز 20,000 ج.م ويُلزم أصحابها قانوناً بجدول دفعات أسبوعية ومتابعة تحصيل دورية!
                     </div>
                   )}
@@ -1488,8 +1488,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               ) : reportType === 'bakery-debts' ? (
                 /* PER-BAKERY DEBTS & REPAYMENT PERCENTAGES SUMMARY TABLE */
                 <div className="w-full overflow-visible space-y-2.5">
-                  {/* Summary Metric Cards Bar (Printable & Crisp) */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center text-xs">
+                  {/* Summary Metric Cards Bar (Hidden during print per instructions) */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center text-xs no-print">
                     <div className="bg-slate-100 border border-slate-400 rounded-lg p-1.5 shadow-xs">
                       <span className="text-[9px] text-slate-600 block font-bold">إجمالي المخابز المشمولة</span>
                       <span className="text-sm font-black text-slate-900 num-enlarged">{filteredBakeryDebts.length}</span>
@@ -1544,7 +1544,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
                   {/* Warning banner if there are any bakeries with > 20k debts */}
                   {bakeryDebtsTotals.over20kCount > 0 && (
-                    <div className="bg-red-100 border-2 border-red-600 p-1.5 rounded text-center text-xs font-black text-red-950">
+                    <div className="bg-red-100 border-2 border-red-600 p-1.5 rounded text-center text-xs font-black text-red-950 no-print">
                       ⚠️ تنبيه وإخطار تمويني مشدد: يتضمن الكشف عدد ({bakeryDebtsTotals.over20kCount}) مخابز تتجاوز مديونيتها 20,000 ج.م ويُلزم أصحابها قانوناً بجدول دفعات أسبوعية ومتابعة تحصيل دورية!
                     </div>
                   )}

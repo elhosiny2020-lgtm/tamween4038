@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Bakery, DebtRecord, VillageHierarchy, SystemConfig } from '../types';
+import { Bakery, DebtRecord, VillageHierarchy, SystemConfig, AppUser } from '../types';
 import { PAYMENT_METHODS } from '../defaultData';
-import { BakeryDebtsPieChart } from './BakeryDebtsPieChart';
 import {
   FileSpreadsheet,
   Printer,
@@ -18,11 +17,40 @@ import {
   Building,
   RotateCcw,
   Scale,
-  Calculator
+  Calculator,
+  Clock,
+  AlertTriangle,
+  Settings,
+  Check
 } from 'lucide-react';
 
 import { WeeklyInstallmentsModal } from './WeeklyInstallmentsModal';
 import { SupplyFinesCalculatorModal } from './SupplyFinesCalculatorModal';
+
+export const getDebtOverdueInfo = (
+  dateStr?: string,
+  netRemainingDebt: number = 0
+): { isOverdue: boolean; daysElapsed: number; isUnpaid: boolean } => {
+  const isUnpaid = netRemainingDebt > 0;
+  if (!isUnpaid || !dateStr || !dateStr.trim()) {
+    return { isOverdue: false, daysElapsed: 0, isUnpaid };
+  }
+
+  const debtDate = new Date(dateStr.trim());
+  if (isNaN(debtDate.getTime())) {
+    return { isOverdue: false, daysElapsed: 0, isUnpaid };
+  }
+
+  const now = new Date();
+  const diffMs = now.getTime() - debtDate.getTime();
+  const daysElapsed = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  return {
+    isOverdue: daysElapsed > 30,
+    daysElapsed: Math.max(0, daysElapsed),
+    isUnpaid,
+  };
+};
 
 interface DebtsViewProps {
   bakeries: Bakery[];
@@ -31,10 +59,13 @@ interface DebtsViewProps {
   issuingEntities: string[];
   violationTypes: string[];
   systemConfig: SystemConfig;
+  currentUser?: AppUser | null;
   onSaveDebt: (debt: DebtRecord) => void;
   onDeleteDebt: (debtId: string) => void;
   onUpdateEntities: (entities: string[]) => void;
   onUpdateViolations: (violations: string[]) => void;
+  onRenameEntity?: (oldName: string, newName: string) => void;
+  onRenameViolation?: (oldName: string, newName: string) => void;
   filterBakeryId?: string;
   onClearBakeryFilter?: () => void;
 }
@@ -46,19 +77,23 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   issuingEntities,
   violationTypes,
   systemConfig,
+  currentUser,
   onSaveDebt,
   onDeleteDebt,
   onUpdateEntities,
   onUpdateViolations,
+  onRenameEntity,
+  onRenameViolation,
   filterBakeryId,
   onClearBakeryFilter,
 }) => {
+  const isViewer = currentUser?.role === 'viewer';
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedVillage, setSelectedVillage] = useState('ALL');
   const [selectedUnit, setSelectedUnit] = useState('ALL');
   const [selectedEntity, setSelectedEntity] = useState('ALL');
   const [selectedViolationType, setSelectedViolationType] = useState('ALL');
-  const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K'>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE'>('ALL');
 
   // Modals state
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
@@ -75,7 +110,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
   // Manage entities inside modal
   const [newEntityName, setNewEntityName] = useState('');
+  const [editingEntityOldName, setEditingEntityOldName] = useState<string | null>(null);
+  const [editingEntityNewName, setEditingEntityNewName] = useState('');
+  const [entitySearchQuery, setEntitySearchQuery] = useState('');
+
+  // Manage violation types inside modal
   const [newViolationName, setNewViolationName] = useState('');
+  const [editingViolationOldName, setEditingViolationOldName] = useState<string | null>(null);
+  const [editingViolationNewName, setEditingViolationNewName] = useState('');
+  const [violationSearchQuery, setViolationSearchQuery] = useState('');
 
   // Filtering
   const filteredDebts = useMemo(() => {
@@ -89,6 +132,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       if (selectedStatus === 'UNPAID' && d.netRemainingDebt <= 0) return false;
       if (selectedStatus === 'PAID' && d.netRemainingDebt > 0) return false;
       if (selectedStatus === 'OVER_20K' && (d.netRemainingDebt || 0) <= 20000) return false;
+      if (selectedStatus === 'OVERDUE') {
+        const { isOverdue } = getDebtOverdueInfo(d.violationDate || d.disposalDate, d.netRemainingDebt);
+        if (!isOverdue) return false;
+      }
 
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase();
@@ -126,6 +173,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     let totalDisposal = 0;
     let paidDisposal = 0;
     let netRemainingTotal = 0;
+    let overdueCount = 0;
+    let overdueAmount = 0;
 
     debts.forEach((d) => {
       totalViolations += d.totalViolations || 0;
@@ -135,6 +184,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       totalDisposal += d.disposalValue || 0;
       paidDisposal += d.paidDisposalAmount || 0;
       netRemainingTotal += d.netRemainingDebt || 0;
+
+      const { isOverdue } = getDebtOverdueInfo(d.violationDate || d.disposalDate, d.netRemainingDebt);
+      if (isOverdue) {
+        overdueCount += 1;
+        overdueAmount += d.netRemainingDebt || 0;
+      }
     });
 
     return {
@@ -145,6 +200,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       totalDisposal,
       paidDisposal,
       netRemainingTotal,
+      overdueCount,
+      overdueAmount,
     };
   }, [debts]);
 
@@ -222,7 +279,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     <div className="space-y-4">
       {/* Active Bakery Filter Notification */}
       {filterBakeryId && (
-        <div className="bg-amber-100 border-2 border-amber-500 p-3 rounded-xl flex items-center justify-between text-amber-950 font-black text-xs">
+        <div className="bg-amber-100 border-2 border-amber-500 p-3 rounded-xl flex items-center justify-between text-amber-950 font-black text-xs no-print">
           <div className="flex items-center gap-2">
             <Scale className="w-5 h-5 text-amber-700" />
             <span>
@@ -242,8 +299,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
       )}
 
-      {/* Top Stat Cards for Debts */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2.5">
+      {/* Top Stat Cards for Debts (Hidden during print per instructions) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2.5 no-print">
         <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
           <span className="text-[11px] font-bold text-slate-400 block mb-0.5">
             إجمالي المخالفات
@@ -300,7 +357,31 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           <span className="text-[10px] text-amber-500 font-bold">ج.م</span>
         </div>
 
-        <div className="col-span-2 md:col-span-4 lg:col-span-1 bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-xl p-3 text-center shadow-lg border-2 border-red-500">
+        {/* NEW: Overdue Debts Card (> 30 days) */}
+        <div
+          onClick={() => setSelectedStatus('OVERDUE')}
+          className={`cursor-pointer transition-transform hover:scale-105 rounded-xl p-2.5 text-center shadow-lg border-2 ${
+            selectedStatus === 'OVERDUE'
+              ? 'bg-rose-950 border-rose-400 ring-2 ring-rose-500/50'
+              : 'bg-slate-900 border-rose-600/70 hover:border-rose-500'
+          }`}
+          title="انقر لتصفية المديونيات التي تجاوزت 30 يوماً دون سداد كامل"
+        >
+          <div className="flex items-center justify-center gap-1 mb-0.5">
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping inline-block" />
+            <span className="text-[11px] font-black text-rose-300 block">
+              المتأخرات (&gt; 30 يوماً)
+            </span>
+          </div>
+          <span className="stat-num text-rose-200 block text-base font-black">
+            {stats.overdueCount} <span className="text-[10px] font-bold text-slate-400">قيد</span>
+          </span>
+          <span className="text-[10px] text-rose-400 font-bold block truncate">
+            {stats.overdueAmount.toLocaleString()} ج.م
+          </span>
+        </div>
+
+        <div className="bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-xl p-3 text-center shadow-lg border-2 border-red-500">
           <span className="text-[11px] font-black text-rose-100 block mb-0.5">
             صافي المتبقي الكلي
           </span>
@@ -310,33 +391,23 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
       </div>
 
-      {/* NEW: Interactive Bakery Debts Pie Chart Analysis Component */}
-      <BakeryDebtsPieChart
-        bakeries={bakeries}
-        debts={debts}
-        onSelectBakeryFilter={(bakeryId) => {
-          const found = bakeries.find((b) => b.id === bakeryId);
-          if (found) {
-            setSearchTerm(found.bakeryOwnerName);
-          }
-        }}
-      />
-
       {/* Toolbar & Filter Bar */}
       <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-xl space-y-3.5 no-print">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Action Buttons (Right-aligned in RTL flexbox) */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => {
-                setDebtToEdit(null);
-                setIsDebtModalOpen(true);
-              }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-md border border-red-400/40 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
-            >
-              <Plus className="w-4 h-4 text-white stroke-[2.5]" />
-              تسجيل مديونية / مخالفة جديدة
-            </button>
+            {!isViewer && (
+              <button
+                onClick={() => {
+                  setDebtToEdit(null);
+                  setIsDebtModalOpen(true);
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-md border border-red-400/40 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
+              >
+                <Plus className="w-4 h-4 text-white stroke-[2.5]" />
+                تسجيل مديونية / مخالفة جديدة
+              </button>
+            )}
 
             <button
               onClick={() => setIsCalculatorModalOpen(true)}
@@ -348,18 +419,28 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
             <button
               onClick={() => setIsEntitiesModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-amber-400 rounded-xl text-xs font-bold transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-850 text-amber-300 border border-amber-600/60 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
+              title="إدارة وتعديل وحذف الجهات المحررة للمحاضر"
             >
               <Building className="w-3.5 h-3.5 text-amber-400" />
-              + الجهة المحررة
+              <span>الجهات المحررة</span>
+              <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 text-[10px] rounded-md border border-amber-500/40 font-mono">
+                {issuingEntities.length}
+              </span>
+              <Settings className="w-3 h-3 text-amber-400" />
             </button>
 
             <button
               onClick={() => setIsViolationsModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-red-400 rounded-xl text-xs font-bold transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-850 text-red-300 border border-red-600/60 hover:border-red-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
+              title="إدارة وتعديل وحذف أنواع المخالفات التموينية"
             >
               <Scale className="w-3.5 h-3.5 text-red-400" />
-              + نوع المخالفة
+              <span>أنواع المخالفات</span>
+              <span className="px-1.5 py-0.5 bg-red-500/20 text-red-300 text-[10px] rounded-md border border-red-500/40 font-mono">
+                {violationTypes.length}
+              </span>
+              <Settings className="w-3 h-3 text-red-400" />
             </button>
 
             <button
@@ -457,15 +538,35 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-[11px] font-black text-slate-400 mb-1">
-              الجهة المحررة للمحضر
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[11px] font-black text-slate-400">
+                الجهة المحررة للمحضر
+              </label>
+              <button
+                type="button"
+                onClick={() => setIsEntitiesModalOpen(true)}
+                className="inline-flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300 font-bold hover:underline cursor-pointer"
+                title="إدارة وتعديل وحذف الجهات المحررة"
+              >
+                <Settings className="w-2.5 h-2.5 text-amber-400" />
+                تعديل وإدارة ({issuingEntities.length})
+              </button>
+            </div>
             <select
               value={selectedEntity}
-              onChange={(e) => setSelectedEntity(e.target.value)}
+              onChange={(e) => {
+                if (e.target.value === '__MANAGE_ENTITIES__') {
+                  setIsEntitiesModalOpen(true);
+                  return;
+                }
+                setSelectedEntity(e.target.value);
+              }}
               className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
             >
-              <option value="ALL">كافة الجهات المحررة</option>
+              <option value="ALL">كافة الجهات المحررة ({issuingEntities.length})</option>
+              <option value="__MANAGE_ENTITIES__" className="text-amber-400 font-black bg-slate-900">
+                ⚙️ إدارة وتعديل / حذف الجهات المحررة ({issuingEntities.length})...
+              </option>
               {issuingEntities.map((e) => (
                 <option key={e} value={e}>
                   {e}
@@ -475,13 +576,33 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-[11px] font-black text-slate-400 mb-1">نوع المخالفة</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[11px] font-black text-slate-400">نوع المخالفة</label>
+              <button
+                type="button"
+                onClick={() => setIsViolationsModalOpen(true)}
+                className="inline-flex items-center gap-1 text-[10px] text-red-400 hover:text-red-300 font-bold hover:underline cursor-pointer"
+                title="إدارة وتعديل وحذف أنواع المخالفات"
+              >
+                <Settings className="w-2.5 h-2.5 text-red-400" />
+                تعديل وإدارة ({violationTypes.length})
+              </button>
+            </div>
             <select
               value={selectedViolationType}
-              onChange={(e) => setSelectedViolationType(e.target.value)}
+              onChange={(e) => {
+                if (e.target.value === '__MANAGE_VIOLATIONS__') {
+                  setIsViolationsModalOpen(true);
+                  return;
+                }
+                setSelectedViolationType(e.target.value);
+              }}
               className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
             >
-              <option value="ALL">كافة أنواع المخالفات</option>
+              <option value="ALL">كافة أنواع المخالفات ({violationTypes.length})</option>
+              <option value="__MANAGE_VIOLATIONS__" className="text-red-400 font-black bg-slate-900">
+                ⚙️ إدارة وتعديل / حذف أنواع المخالفات ({violationTypes.length})...
+              </option>
               {violationTypes.map((t) => (
                 <option key={t} value={t}>
                   {t}
@@ -491,13 +612,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-[11px] font-black text-slate-400 mb-1">حالة السداد والجدولة</label>
+            <label className="block text-[11px] font-black text-slate-400 mb-1">حالة السداد والجدولة والمتأخرات</label>
             <select
               value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value as 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K')}
+              onChange={(e) => setSelectedStatus(e.target.value as 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE')}
               className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
             >
               <option value="ALL">الكل (المسدد والمتبقي)</option>
+              <option value="OVERDUE">🚨 المتأخرات (&gt; 30 يوماً دون سداد كامل)</option>
               <option value="OVER_20K">مديونيات تتجاوز 20,000 ج.م (تستلزم دفعات)</option>
               <option value="UNPAID">عليه مديونية متبقية فقط</option>
               <option value="PAID">خالص المديونية بالكامل</option>
@@ -543,14 +665,6 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   م
                 </th>
 
-                {/* Actions Column moved to the RIGHT side as requested */}
-                <th
-                  rowSpan={2}
-                  className="py-2.5 px-2 bg-gradient-to-r from-amber-950 to-slate-900 border-l border-slate-700 text-amber-300 min-w-[100px] no-print text-center"
-                >
-                  الإجراءات
-                </th>
-
                 {/* 1. Basic Info (Owner Name, Machine, Village, Local Unit) */}
                 <th
                   colSpan={4}
@@ -593,6 +707,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   className="py-2.5 px-3 bg-red-700 border-l border-red-800 text-white text-xs font-black min-w-[130px]"
                 >
                   صافي المتبقي على صاحب المخبز
+                </th>
+
+                {/* Actions Column moved to the END of the table */}
+                <th
+                  rowSpan={2}
+                  className="py-2.5 px-2 bg-gradient-to-r from-slate-900 to-amber-950 border-l border-slate-700 text-amber-300 min-w-[100px] no-print text-center"
+                >
+                  الإجراءات
                 </th>
               </tr>
 
@@ -674,37 +796,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                           : 'bg-slate-950 hover:bg-slate-800/90'
                       }`}
                     >
-                      {/* 1. Basic Info - Index & Actions on the RIGHT side */}
+                      {/* 1. Basic Info - Index on the RIGHT side */}
                       <td className="py-2.5 px-1 border-l border-slate-800 text-slate-400 num-enlarged text-center">{index + 1}</td>
-
-                      {/* Actions Column on the RIGHT side with animated buttons */}
-                      <td className="py-2 px-1.5 border-l border-slate-800 no-print text-center bg-slate-900/40">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDebtToEdit(d);
-                              setIsDebtModalOpen(true);
-                            }}
-                            className="p-1.5 hover:bg-amber-950/80 text-amber-400 hover:text-amber-300 border border-amber-800/40 hover:border-amber-500 rounded-lg transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
-                            title="تعديل المديونية"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
-                                onDeleteDebt(d.id);
-                              }
-                            }}
-                            className="p-1.5 hover:bg-red-950/80 text-red-400 hover:text-red-300 border border-red-800/40 hover:border-red-500 rounded-lg transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
-                            title="حذف القيد"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
 
                       <td className="py-2.5 px-2 border-l border-slate-800 font-black text-slate-100 text-right">
                         {d.bakeryOwnerName}
@@ -717,7 +810,26 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
                       {/* 2. Violations */}
                       <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {d.violationDate || '-'}
+                        <div>
+                          <span>{d.violationDate || '-'}</span>
+                          {(() => {
+                            const { isOverdue, daysElapsed } = getDebtOverdueInfo(
+                              d.violationDate || d.disposalDate,
+                              d.netRemainingDebt
+                            );
+                            if (isOverdue) {
+                              return (
+                                <span
+                                  className="block text-[9.5px] font-black text-rose-300 bg-rose-950/90 border border-rose-700/60 rounded px-1 mt-0.5"
+                                  title={`مر ${daysElapsed} يوماً على تحرير الغرامة دون سداد`}
+                                >
+                                  محرر منذ {daysElapsed} يوم
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </td>
                       <td className="py-2.5 px-2 border-l border-slate-800 text-xs text-slate-300">
                         {d.issuingEntity}
@@ -813,10 +925,31 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       {/* Net Remaining Debt */}
                       <td className="py-2.5 px-3 border-l border-slate-800 num-enlarged font-black">
                         {d.netRemainingDebt > 0 ? (
-                          <div className="space-y-1">
+                          <div className="space-y-1 flex flex-col items-center justify-center">
                             <span className="inline-block px-2.5 py-1 bg-red-950/80 text-red-200 border border-red-700/80 rounded-lg text-xs font-black shadow-inner">
                               {d.netRemainingDebt.toLocaleString()} ج.م
                             </span>
+
+                            {/* Visual Overdue Tag (وسم المتأخرات > 30 يوماً دون سداد كامل) */}
+                            {(() => {
+                              const { isOverdue, daysElapsed } = getDebtOverdueInfo(
+                                d.violationDate || d.disposalDate,
+                                d.netRemainingDebt
+                              );
+                              if (isOverdue) {
+                                return (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white border border-amber-300 shadow-lg animate-pulse shrink-0 cursor-help my-0.5"
+                                    title={`تنبيه متأخرات: مر أكثر من 30 يوماً (${daysElapsed} يوماً) على تاريخ تحرير الغرامة دون سداد كامل!`}
+                                  >
+                                    <Clock className="w-3 h-3 text-amber-300" />
+                                    <span>متأخرات ({daysElapsed} يوم) 🚨</span>
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
+
                             {d.netRemainingDebt > 20000 && (
                               <button
                                 onClick={(e) => {
@@ -838,6 +971,42 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                           </span>
                         )}
                       </td>
+
+                      {/* Actions Column moved to the END of the table (Left side in RTL) */}
+                      <td className="py-2 px-1.5 border-l border-slate-800 no-print text-center bg-slate-900/40">
+                        {isViewer ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-400 bg-slate-950 border border-slate-700 px-2 py-1 rounded-lg">
+                            <span>👁️</span>
+                            <span>عرض فقط</span>
+                          </span>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDebtToEdit(d);
+                                setIsDebtModalOpen(true);
+                              }}
+                              className="p-1.5 hover:bg-amber-950/80 text-amber-400 hover:text-amber-300 border border-amber-800/40 hover:border-amber-500 rounded-lg transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
+                              title="تعديل المديونية"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
+                                  onDeleteDebt(d.id);
+                                }
+                              }}
+                              className="p-1.5 hover:bg-red-950/80 text-red-400 hover:text-red-300 border border-red-800/40 hover:border-red-500 rounded-lg transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
+                              title="حذف القيد"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
@@ -856,6 +1025,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           bakeries={bakeries}
           issuingEntities={issuingEntities}
           violationTypes={violationTypes}
+          onOpenManageEntities={() => setIsEntitiesModalOpen(true)}
+          onOpenManageViolations={() => setIsViolationsModalOpen(true)}
           onSave={(saved) => {
             onSaveDebt(saved);
             setIsDebtModalOpen(false);
@@ -863,146 +1034,594 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         />
       )}
 
-      {/* Modal 2: Dynamic Issuing Entities Manager */}
+      {/* Modal 2: Dynamic Issuing Entities Manager (Full Edit / Delete / Add / Search) */}
       {isEntitiesModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl border-2 border-amber-600 w-full max-w-md p-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
-              <h3 className="text-sm font-black text-slate-900">
-                إدارة الجهات المحررة لمحاضر المخابز
-              </h3>
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm cursor-pointer"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setEditingEntityOldName(null);
+              setIsEntitiesModalOpen(false);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border-2 border-amber-600 w-full max-w-xl p-5 cursor-default flex flex-col max-h-[88vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3.5 border-b border-slate-200 mb-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center">
+                  <Building className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">
+                    إدارة وتعديل الجهات المحررة لمحاضر المخابز
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-bold">
+                    إجمالي الجهات المعتمدة: {issuingEntities.length} جهة رسمية
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => setIsEntitiesModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600"
+                type="button"
+                onClick={() => {
+                  setEditingEntityOldName(null);
+                  setIsEntitiesModalOpen(false);
+                }}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex items-center gap-2 mb-4">
+            {/* Add New Entity Form */}
+            <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3 mb-3.5 shrink-0">
+              <label className="block text-[11px] font-black text-amber-950 mb-1.5">
+                إضافة جهة محررة جديدة إلى المنظومة:
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={newEntityName}
+                  onChange={(e) => setNewEntityName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const name = newEntityName.trim();
+                      if (!name) return;
+                      if (issuingEntities.includes(name)) {
+                        alert('هذه الجهة مسجلة بالفعل في القائمة');
+                        return;
+                      }
+                      onUpdateEntities([...issuingEntities, name]);
+                      setNewEntityName('');
+                    }
+                  }}
+                  placeholder="اكتب اسم الجهة (مثال: جهاز حماية المستهلك، مباحث التموين...)"
+                  className="flex-1 px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 text-right placeholder:text-slate-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const name = newEntityName.trim();
+                    if (!name) return;
+                    if (issuingEntities.includes(name)) {
+                      alert('هذه الجهة مسجلة بالفعل في القائمة');
+                      return;
+                    }
+                    onUpdateEntities([...issuingEntities, name]);
+                    setNewEntityName('');
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-white rounded-lg text-xs font-black shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  إضافة جهة
+                </button>
+              </div>
+            </div>
+
+            {/* Search in Entities */}
+            <div className="relative mb-3 shrink-0">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
-                value={newEntityName}
-                onChange={(e) => setNewEntityName(e.target.value)}
-                placeholder="اسم الجهة (مثال: جهاز حماية المستهلك)"
-                className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 text-right"
+                value={entitySearchQuery}
+                onChange={(e) => setEntitySearchQuery(e.target.value)}
+                placeholder="بحث سريع داخل قائمة الجهات المحررة..."
+                className="w-full pr-8 pl-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 placeholder:text-slate-400 focus:bg-white focus:ring-1 focus:ring-amber-500"
               />
+              {entitySearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setEntitySearchQuery('')}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                >
+                  مسح
+                </button>
+              )}
+            </div>
+
+            {/* List of Entities */}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-0.5 min-h-[160px] max-h-[340px]">
+              {issuingEntities
+                .filter((ent) =>
+                  entitySearchQuery.trim()
+                    ? ent.toLowerCase().includes(entitySearchQuery.toLowerCase().trim())
+                    : true
+                )
+                .map((ent, idx) => {
+                  const isEditing = editingEntityOldName === ent;
+                  const usageCount = debts.filter((d) => d.issuingEntity === ent).length;
+
+                  return (
+                    <div
+                      key={ent}
+                      className={`flex items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
+                        isEditing
+                          ? 'bg-amber-50/80 border-amber-400 shadow-sm'
+                          : 'bg-slate-50 hover:bg-slate-100/80 border-slate-200'
+                      }`}
+                    >
+                      {isEditing ? (
+                        /* Inline Edit View */
+                        <div className="flex items-center gap-2 flex-1 ml-2">
+                          <input
+                            type="text"
+                            autoFocus
+                            value={editingEntityNewName}
+                            onChange={(e) => setEditingEntityNewName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const clean = editingEntityNewName.trim();
+                                if (!clean) return;
+                                if (clean !== ent && issuingEntities.includes(clean)) {
+                                  alert('اسم الجهة موجود بالفعل في القائمة');
+                                  return;
+                                }
+                                if (clean !== ent) {
+                                  if (onRenameEntity) {
+                                    onRenameEntity(ent, clean);
+                                  } else {
+                                    onUpdateEntities(
+                                      issuingEntities.map((item) => (item === ent ? clean : item))
+                                    );
+                                  }
+                                }
+                                setEditingEntityOldName(null);
+                                setEditingEntityNewName('');
+                              } else if (e.key === 'Escape') {
+                                setEditingEntityOldName(null);
+                                setEditingEntityNewName('');
+                              }
+                            }}
+                            className="flex-1 px-2.5 py-1 bg-white border-2 border-amber-500 rounded-lg text-xs font-black text-slate-900 focus:outline-none"
+                            placeholder="الاسم الجديد للجهة..."
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const clean = editingEntityNewName.trim();
+                              if (!clean) {
+                                alert('يرجى إدخال اسم صحيح');
+                                return;
+                              }
+                              if (clean !== ent && issuingEntities.includes(clean)) {
+                                alert('اسم الجهة موجود بالفعل في القائمة');
+                                return;
+                              }
+                              if (clean !== ent) {
+                                if (onRenameEntity) {
+                                  onRenameEntity(ent, clean);
+                                } else {
+                                  onUpdateEntities(
+                                    issuingEntities.map((item) => (item === ent ? clean : item))
+                                  );
+                                }
+                              }
+                              setEditingEntityOldName(null);
+                              setEditingEntityNewName('');
+                            }}
+                            className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer"
+                            title="حفظ التعديل"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingEntityOldName(null);
+                              setEditingEntityNewName('');
+                            }}
+                            className="p-1.5 bg-slate-300 hover:bg-slate-400 text-slate-700 rounded-lg transition-colors cursor-pointer"
+                            title="إلغاء التعديل"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        /* Normal View */
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-600 text-[10px] font-mono flex items-center justify-center">
+                              {idx + 1}
+                            </span>
+                            <span className="text-slate-900 font-black">{ent}</span>
+                            {usageCount > 0 ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                {usageCount} محضر مديونية
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500">
+                                غير مستخدم حالياً
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingEntityOldName(ent);
+                                setEditingEntityNewName(ent);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-700 hover:text-amber-800 bg-white hover:bg-amber-50 border border-slate-300 hover:border-amber-400 rounded-lg transition-all text-[11px] font-bold cursor-pointer"
+                              title="تعديل اسم الجهة وتحديث كافة المحاضر المرتبطة بها"
+                            >
+                              <Edit2 className="w-3 h-3 text-amber-600" />
+                              تعديل
+                            </button>
+
+                            {issuingEntities.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (usageCount > 0) {
+                                    const confirmDel = window.confirm(
+                                      `تنبيه: الجهة "${ent}" مسجلة حالياً في (${usageCount}) محضر مديونية. هل أنت متأكد من رغبتك في حذفها من القائمة المعتمدة؟`
+                                    );
+                                    if (!confirmDel) return;
+                                  }
+                                  onUpdateEntities(issuingEntities.filter((e) => e !== ent));
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-red-600 hover:text-red-800 bg-white hover:bg-red-50 border border-slate-300 hover:border-red-400 rounded-lg transition-all text-[11px] font-bold cursor-pointer"
+                                title="حذف الجهة من القائمة"
+                              >
+                                <Trash2 className="w-3 h-3 text-red-600" />
+                                حذف
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+
+              {issuingEntities.filter((ent) =>
+                entitySearchQuery.trim()
+                  ? ent.toLowerCase().includes(entitySearchQuery.toLowerCase().trim())
+                  : true
+              ).length === 0 && (
+                <div className="text-center py-6 text-xs text-slate-500 font-bold">
+                  لا توجد جهات مطابقة لكلمة البحث "{entitySearchQuery}"
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <span className="text-[11px] text-slate-500 font-bold">
+                * عند تعديل اسم الجهة، يتم تلقائياً تحديث جميع القيود التاريخية المسجلة باسمها القديم
+              </span>
               <button
                 type="button"
                 onClick={() => {
-                  const name = newEntityName.trim();
-                  if (!name) return;
-                  if (issuingEntities.includes(name)) {
-                    alert('هذه الجهة مسجلة بالفعل');
-                    return;
-                  }
-                  onUpdateEntities([...issuingEntities, name]);
-                  setNewEntityName('');
+                  setEditingEntityOldName(null);
+                  setIsEntitiesModalOpen(false);
                 }}
-                className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-black"
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black cursor-pointer shadow-sm"
               >
-                إضافة
-              </button>
-            </div>
-
-            <div className="max-h-60 overflow-y-auto space-y-2">
-              {issuingEntities.map((ent) => (
-                <div
-                  key={ent}
-                  className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
-                >
-                  <span>{ent}</span>
-                  {issuingEntities.length > 1 && (
-                    <button
-                      onClick={() => onUpdateEntities(issuingEntities.filter((e) => e !== ent))}
-                      className="text-red-500 hover:text-red-700"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-slate-200 flex justify-end">
-              <button
-                onClick={() => setIsEntitiesModalOpen(false)}
-                className="px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-black"
-              >
-                إغلاق
+                تم والعودة
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal 3: Dynamic Violation Types Manager */}
+      {/* Modal 3: Dynamic Violation Types Manager (Full Edit / Delete / Add / Search) */}
       {isViolationsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl border-2 border-red-600 w-full max-w-md p-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
-              <h3 className="text-sm font-black text-slate-900">
-                إدارة أنواع المخالفات التموينية المعتمدة
-              </h3>
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm cursor-pointer"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setEditingViolationOldName(null);
+              setIsViolationsModalOpen(false);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border-2 border-red-600 w-full max-w-xl p-5 cursor-default flex flex-col max-h-[88vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3.5 border-b border-slate-200 mb-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-red-500/20 text-red-700 flex items-center justify-center">
+                  <Scale className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">
+                    إدارة وتعديل أنواع المخالفات التموينية المعتمدة
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-bold">
+                    إجمالي أنواع المخالفات المعتمدة: {violationTypes.length} نوع مخالفة
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => setIsViolationsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600"
+                type="button"
+                onClick={() => {
+                  setEditingViolationOldName(null);
+                  setIsViolationsModalOpen(false);
+                }}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex items-center gap-2 mb-4">
+            {/* Add New Violation Type Form */}
+            <div className="bg-red-50/60 border border-red-200 rounded-xl p-3 mb-3.5 shrink-0">
+              <label className="block text-[11px] font-black text-red-950 mb-1.5">
+                إضافة نوع مخالفة جديد إلى المنظومة:
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={newViolationName}
+                  onChange={(e) => setNewViolationName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const name = newViolationName.trim();
+                      if (!name) return;
+                      if (violationTypes.includes(name)) {
+                        alert('نوع المخالفة مسجل مسبقاً في القائمة');
+                        return;
+                      }
+                      onUpdateViolations([...violationTypes, name]);
+                      setNewViolationName('');
+                    }
+                  }}
+                  placeholder="اكتب نوع المخالفة (مثال: عدم نظافة المعجن، بيع بأزيد من السعر...)"
+                  className="flex-1 px-3 py-2 bg-white border border-red-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-red-500 text-right placeholder:text-slate-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const name = newViolationName.trim();
+                    if (!name) return;
+                    if (violationTypes.includes(name)) {
+                      alert('نوع المخالفة مسجل مسبقاً في القائمة');
+                      return;
+                    }
+                    onUpdateViolations([...violationTypes, name]);
+                    setNewViolationName('');
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white rounded-lg text-xs font-black shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  إضافة مخالفة
+                </button>
+              </div>
+            </div>
+
+            {/* Search in Violation Types */}
+            <div className="relative mb-3 shrink-0">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
-                value={newViolationName}
-                onChange={(e) => setNewViolationName(e.target.value)}
-                placeholder="نوع المخالفة (مثال: عدم نظافة المعجن)"
-                className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 text-right"
+                value={violationSearchQuery}
+                onChange={(e) => setViolationSearchQuery(e.target.value)}
+                placeholder="بحث سريع داخل أنواع المخالفات..."
+                className="w-full pr-8 pl-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 placeholder:text-slate-400 focus:bg-white focus:ring-1 focus:ring-red-500"
               />
+              {violationSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setViolationSearchQuery('')}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                >
+                  مسح
+                </button>
+              )}
+            </div>
+
+            {/* List of Violation Types */}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-0.5 min-h-[160px] max-h-[340px]">
+              {violationTypes
+                .filter((v) =>
+                  violationSearchQuery.trim()
+                    ? v.toLowerCase().includes(violationSearchQuery.toLowerCase().trim())
+                    : true
+                )
+                .map((v, idx) => {
+                  const isEditing = editingViolationOldName === v;
+                  const usageCount = debts.filter((d) => d.violationType === v).length;
+
+                  return (
+                    <div
+                      key={v}
+                      className={`flex items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
+                        isEditing
+                          ? 'bg-red-50/80 border-red-400 shadow-sm'
+                          : 'bg-slate-50 hover:bg-slate-100/80 border-slate-200'
+                      }`}
+                    >
+                      {isEditing ? (
+                        /* Inline Edit View */
+                        <div className="flex items-center gap-2 flex-1 ml-2">
+                          <input
+                            type="text"
+                            autoFocus
+                            value={editingViolationNewName}
+                            onChange={(e) => setEditingViolationNewName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const clean = editingViolationNewName.trim();
+                                if (!clean) return;
+                                if (clean !== v && violationTypes.includes(clean)) {
+                                  alert('نوع المخالفة موجود بالفعل في القائمة');
+                                  return;
+                                }
+                                if (clean !== v) {
+                                  if (onRenameViolation) {
+                                    onRenameViolation(v, clean);
+                                  } else {
+                                    onUpdateViolations(
+                                      violationTypes.map((item) => (item === v ? clean : item))
+                                    );
+                                  }
+                                }
+                                setEditingViolationOldName(null);
+                                setEditingViolationNewName('');
+                              } else if (e.key === 'Escape') {
+                                setEditingViolationOldName(null);
+                                setEditingViolationNewName('');
+                              }
+                            }}
+                            className="flex-1 px-2.5 py-1 bg-white border-2 border-red-500 rounded-lg text-xs font-black text-slate-900 focus:outline-none"
+                            placeholder="الاسم الجديد لنوع المخالفة..."
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const clean = editingViolationNewName.trim();
+                              if (!clean) {
+                                alert('يرجى إدخال اسم صحيح');
+                                return;
+                              }
+                              if (clean !== v && violationTypes.includes(clean)) {
+                                alert('نوع المخالفة موجود بالفعل في القائمة');
+                                return;
+                              }
+                              if (clean !== v) {
+                                if (onRenameViolation) {
+                                  onRenameViolation(v, clean);
+                                } else {
+                                  onUpdateViolations(
+                                    violationTypes.map((item) => (item === v ? clean : item))
+                                  );
+                                }
+                              }
+                              setEditingViolationOldName(null);
+                              setEditingViolationNewName('');
+                            }}
+                            className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer"
+                            title="حفظ التعديل"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingViolationOldName(null);
+                              setEditingViolationNewName('');
+                            }}
+                            className="p-1.5 bg-slate-300 hover:bg-slate-400 text-slate-700 rounded-lg transition-colors cursor-pointer"
+                            title="إلغاء التعديل"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        /* Normal View */
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-600 text-[10px] font-mono flex items-center justify-center">
+                              {idx + 1}
+                            </span>
+                            <span className="text-slate-900 font-black">{v}</span>
+                            {usageCount > 0 ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-300">
+                                {usageCount} محضر مديونية
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500">
+                                غير مستخدم حالياً
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingViolationOldName(v);
+                                setEditingViolationNewName(v);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-700 hover:text-red-800 bg-white hover:bg-red-50 border border-slate-300 hover:border-red-400 rounded-lg transition-all text-[11px] font-bold cursor-pointer"
+                              title="تعديل نوع المخالفة وتحديث كافة المحاضر المرتبطة بها"
+                            >
+                              <Edit2 className="w-3 h-3 text-red-600" />
+                              تعديل
+                            </button>
+
+                            {violationTypes.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (usageCount > 0) {
+                                    const confirmDel = window.confirm(
+                                      `تنبيه: نوع المخالفة "${v}" مسجل حالياً في (${usageCount}) محضر مديونية. هل أنت متأكد من رغبتك في حذفه من القائمة المعتمدة؟`
+                                    );
+                                    if (!confirmDel) return;
+                                  }
+                                  onUpdateViolations(violationTypes.filter((vt) => vt !== v));
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-red-600 hover:text-red-800 bg-white hover:bg-red-50 border border-slate-300 hover:border-red-400 rounded-lg transition-all text-[11px] font-bold cursor-pointer"
+                                title="حذف نوع المخالفة من القائمة"
+                              >
+                                <Trash2 className="w-3 h-3 text-red-600" />
+                                حذف
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+
+              {violationTypes.filter((v) =>
+                violationSearchQuery.trim()
+                  ? v.toLowerCase().includes(violationSearchQuery.toLowerCase().trim())
+                  : true
+              ).length === 0 && (
+                <div className="text-center py-6 text-xs text-slate-500 font-bold">
+                  لا توجد مخالفات مطابقة لكلمة البحث "{violationSearchQuery}"
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <span className="text-[11px] text-slate-500 font-bold">
+                * عند تعديل اسم المخالفة، يتم تلقائياً تحديث جميع القيود التاريخية المسجلة بالاسم القديم
+              </span>
               <button
                 type="button"
                 onClick={() => {
-                  const name = newViolationName.trim();
-                  if (!name) return;
-                  if (violationTypes.includes(name)) {
-                    alert('نوع المخالفة مسجل مسبقاً');
-                    return;
-                  }
-                  onUpdateViolations([...violationTypes, name]);
-                  setNewViolationName('');
+                  setEditingViolationOldName(null);
+                  setIsViolationsModalOpen(false);
                 }}
-                className="px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg text-xs font-black"
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black cursor-pointer shadow-sm"
               >
-                إضافة
-              </button>
-            </div>
-
-            <div className="max-h-60 overflow-y-auto space-y-2">
-              {violationTypes.map((v) => (
-                <div
-                  key={v}
-                  className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
-                >
-                  <span>{v}</span>
-                  {violationTypes.length > 1 && (
-                    <button
-                      onClick={() => onUpdateViolations(violationTypes.filter((vt) => vt !== v))}
-                      className="text-red-500 hover:text-red-700"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="pt-4 border-t border-slate-200 mt-4 flex justify-end">
-              <button
-                onClick={() => setIsViolationsModalOpen(false)}
-                className="px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-black cursor-pointer"
-              >
-                إغلاق
+                تم والعودة
               </button>
             </div>
           </div>
@@ -1082,6 +1701,8 @@ interface DebtModalFormProps {
   bakeries: Bakery[];
   issuingEntities: string[];
   violationTypes: string[];
+  onOpenManageEntities?: () => void;
+  onOpenManageViolations?: () => void;
   onSave: (debt: DebtRecord) => void;
 }
 
@@ -1092,6 +1713,8 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   bakeries,
   issuingEntities,
   violationTypes,
+  onOpenManageEntities,
+  onOpenManageViolations,
   onSave,
 }) => {
   // Bakery Selection
@@ -1109,6 +1732,19 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   const [violationType, setViolationType] = useState(
     debtToEdit?.violationType || violationTypes[0] || 'نقص وزن الرغيف البلدي المدعم'
   );
+
+  // Keep selected entity and violation in sync if options are updated/renamed
+  useEffect(() => {
+    if (issuingEntities.length > 0 && !issuingEntities.includes(issuingEntity)) {
+      setIssuingEntity(issuingEntities[0]);
+    }
+  }, [issuingEntities, issuingEntity]);
+
+  useEffect(() => {
+    if (violationTypes.length > 0 && !violationTypes.includes(violationType)) {
+      setViolationType(violationTypes[0]);
+    }
+  }, [violationTypes, violationType]);
   const [violationAmount, setViolationAmount] = useState<number>(debtToEdit?.violationAmount || 0);
   const [oldViolations, setOldViolations] = useState<number>(debtToEdit?.oldViolations || 0);
 
@@ -1466,14 +2102,36 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-black text-slate-700 mb-1">
-                  الجهة المحررة للمحضر
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-black text-slate-700">
+                    الجهة المحررة للمحضر
+                  </label>
+                  {onOpenManageEntities && (
+                    <button
+                      type="button"
+                      onClick={onOpenManageEntities}
+                      className="inline-flex items-center gap-1 text-[10px] text-amber-700 hover:text-amber-900 font-bold bg-amber-50 hover:bg-amber-100 px-1.5 py-0.5 rounded border border-amber-200 transition-colors cursor-pointer"
+                      title="إدارة وتعديل وحذف الجهات المحررة"
+                    >
+                      <Settings className="w-2.5 h-2.5 text-amber-600" />
+                      إدارة/تعديل ({issuingEntities.length})
+                    </button>
+                  )}
+                </div>
                 <select
                   value={issuingEntity}
-                  onChange={(e) => setIssuingEntity(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold"
+                  onChange={(e) => {
+                    if (e.target.value === '__MANAGE_ENTITIES__') {
+                      onOpenManageEntities?.();
+                      return;
+                    }
+                    setIssuingEntity(e.target.value);
+                  }}
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
                 >
+                  <option value="__MANAGE_ENTITIES__" className="text-amber-700 font-black bg-amber-50">
+                    ⚙️ إدارة وتعديل / حذف الجهات المحررة ({issuingEntities.length})...
+                  </option>
                   {issuingEntities.map((e) => (
                     <option key={e} value={e}>
                       {e}
@@ -1483,12 +2141,34 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-[11px] font-black text-slate-700 mb-1">نوع المخالفة</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-black text-slate-700">نوع المخالفة</label>
+                  {onOpenManageViolations && (
+                    <button
+                      type="button"
+                      onClick={onOpenManageViolations}
+                      className="inline-flex items-center gap-1 text-[10px] text-red-700 hover:text-red-900 font-bold bg-red-50 hover:bg-red-100 px-1.5 py-0.5 rounded border border-red-200 transition-colors cursor-pointer"
+                      title="إدارة وتعديل وحذف أنواع المخالفات"
+                    >
+                      <Settings className="w-2.5 h-2.5 text-red-600" />
+                      إدارة/تعديل ({violationTypes.length})
+                    </button>
+                  )}
+                </div>
                 <select
                   value={violationType}
-                  onChange={(e) => setViolationType(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold"
+                  onChange={(e) => {
+                    if (e.target.value === '__MANAGE_VIOLATIONS__') {
+                      onOpenManageViolations?.();
+                      return;
+                    }
+                    setViolationType(e.target.value);
+                  }}
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-red-500"
                 >
+                  <option value="__MANAGE_VIOLATIONS__" className="text-red-700 font-black bg-red-50">
+                    ⚙️ إدارة وتعديل / حذف أنواع المخالفات ({violationTypes.length})...
+                  </option>
                   {violationTypes.map((t) => (
                     <option key={t} value={t}>
                       {t}
