@@ -131,6 +131,149 @@ export function calculateNetRemainingDebt(
 }
 
 /**
+ * 9-ب. تطبيع وإعادة احتساب كافة المعادلات التموينية للمخبز بدقة (علامة عشرية ورقمين فقط للمتوسطات)
+ */
+export function normalizeBakeryCalculations(b: Bakery): Bakery {
+  const insuranceQuota = Number(b.insuranceQuota) || 0;
+  const actualQuota = Number(b.actualQuota) || 0;
+  const insuranceValue = Number(b.insuranceValue) || 0;
+  const loavesCount =
+    b.loavesCount !== undefined && b.loavesCount !== null && Number(b.loavesCount) > 0 && insuranceQuota === 0
+      ? Math.round(Number(b.loavesCount))
+      : calculateLoavesCount(insuranceQuota);
+
+  const villagePopulation = Number(b.villagePopulation) || 0;
+  const beneficiaries2023 = Number(b.beneficiaries2023) || 0;
+  const beneficiaries2024 = Number(b.beneficiaries2024) || 0;
+  const beneficiaries2025 = Number(b.beneficiaries2025) || 0;
+
+  const formatTwoDecimals = (rawVal: unknown, fallbackNum: number): string => {
+    if (fallbackNum > 0) {
+      return (loavesCount / fallbackNum).toFixed(2);
+    }
+    const parsed = parseFloat(String(rawVal ?? '').replace(/%/g, '').trim());
+    return !isNaN(parsed) ? parsed.toFixed(2) : '0.00';
+  };
+
+  const perCapitaAverage = formatTwoDecimals(b.perCapitaAverage, villagePopulation);
+  const avg2023 = formatTwoDecimals(b.avg2023, beneficiaries2023);
+  const avg2024 = formatTwoDecimals(b.avg2024, beneficiaries2024);
+  const avg2025 = formatTwoDecimals(b.avg2025, beneficiaries2025);
+  const avgDiff = calculateAverageDifference(avg2025, avg2023);
+
+  return {
+    ...b,
+    insuranceQuota,
+    actualQuota,
+    insuranceValue,
+    loavesCount,
+    villagePopulation,
+    beneficiaries2023,
+    beneficiaries2024,
+    beneficiaries2025,
+    perCapitaAverage,
+    avg2023,
+    avg2024,
+    avg2025,
+    avgDiff,
+    bakeryCategory: b.bakeryCategory || 'مخبز بلدي مدعم',
+    flourBagPrice: b.flourBagPrice !== undefined && b.flourBagPrice !== null ? Number(b.flourBagPrice) : 950,
+  };
+}
+
+/**
+ * 9-ج. تطبيع وإعادة احتساب معادلات قيد المديونية وربطها ببيانات المخبز المرجعي
+ */
+export function normalizeDebtCalculations(d: DebtRecord, linkedBakery?: Bakery): DebtRecord {
+  const violationAmount = Number(d.violationAmount) || 0;
+  const oldViolations = Number(d.oldViolations) || 0;
+  const paidViolationAmount = Number(d.paidViolationAmount) || 0;
+  const { totalViolations, remainingViolations } = calculateRemainingViolations(
+    violationAmount,
+    oldViolations,
+    paidViolationAmount
+  );
+
+  const addedAmount = Number(d.addedAmount) || 0;
+  const paidAddedAmount = Number(d.paidAddedAmount) || 0;
+  const remainingAdded = calculateRemainingAdded(addedAmount, paidAddedAmount);
+
+  const disposalBagsCount = Number(d.disposalBagsCount) || 0;
+  const flourBagPrice =
+    d.flourBagPrice !== undefined && d.flourBagPrice !== null && Number(d.flourBagPrice) > 0
+      ? Number(d.flourBagPrice)
+      : linkedBakery?.flourBagPrice || 950;
+  const disposalMultiplier: 1 | 2 = d.disposalMultiplier === 2 ? 2 : 1;
+
+  const disposalValue =
+    disposalBagsCount > 0
+      ? calculateDisposalValue(disposalBagsCount, flourBagPrice, disposalMultiplier)
+      : Number(d.disposalValue) || 0;
+  const paidDisposalAmount = Number(d.paidDisposalAmount) || 0;
+  const remainingDisposal = calculateRemainingDisposal(disposalValue, paidDisposalAmount);
+
+  const netRemainingDebt = calculateNetRemainingDebt(
+    remainingViolations,
+    remainingAdded,
+    remainingDisposal
+  );
+
+  return {
+    ...d,
+    bakeryId: linkedBakery ? linkedBakery.id : d.bakeryId,
+    bakeryOwnerName: linkedBakery ? linkedBakery.bakeryOwnerName : d.bakeryOwnerName,
+    machineNumber: linkedBakery ? linkedBakery.machineNumber : d.machineNumber,
+    village: linkedBakery ? linkedBakery.village : d.village,
+    localUnit: linkedBakery ? linkedBakery.localUnit : d.localUnit,
+    violationAmount,
+    oldViolations,
+    totalViolations,
+    paidViolationAmount,
+    remainingViolations,
+    addedAmount,
+    paidAddedAmount,
+    remainingAdded,
+    disposalBagsCount,
+    flourBagPrice,
+    disposalMultiplier,
+    disposalValue,
+    paidDisposalAmount,
+    remainingDisposal,
+    netRemainingDebt,
+  };
+}
+
+/**
+ * 9-د. مزامنة شاملة بين جدول المخابز وجدول المديونيات لضمان الترابط الكامل وتحديث جميع الحسابات
+ */
+export function synchronizeBakeryAndDebts(
+  bakeries: Bakery[],
+  debts: DebtRecord[]
+): { bakeries: Bakery[]; debts: DebtRecord[] } {
+  const normalizedBakeries = (bakeries || []).map(normalizeBakeryCalculations);
+  const byId = new Map<string, Bakery>();
+  const byMachine = new Map<string, Bakery>();
+
+  normalizedBakeries.forEach((b) => {
+    byId.set(b.id, b);
+    if (b.machineNumber) {
+      byMachine.set(b.machineNumber.trim(), b);
+    }
+  });
+
+  const synchronizedDebts = (debts || []).map((d) => {
+    const linked =
+      byId.get(d.bakeryId) || (d.machineNumber ? byMachine.get(d.machineNumber.trim()) : undefined);
+    return normalizeDebtCalculations(d, linked);
+  });
+
+  return {
+    bakeries: normalizedBakeries,
+    debts: synchronizedDebts,
+  };
+}
+
+/**
  * 10. دوال مساعدة نقية لإدارة القوائم المنسدلة (إضافة / تعديل / حذف)
  */
 export function addDropdownOption(list: string[], newItem: string): string[] {
