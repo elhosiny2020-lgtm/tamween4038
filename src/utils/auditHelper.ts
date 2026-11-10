@@ -1,8 +1,13 @@
 import { Bakery, DebtRecord, DailyBakeryTask, TaskPriority } from '../types';
 
 /**
+ * المعامل التمويني المعتمد لاحتساب عدد الأرغفة من المبلغ التأميني:
+ * عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3)
+ */
+export const APPROVED_INSURANCE_DIVISOR = 235 / 3;
+
+/**
  * دالة الاختبار الشاملة والتدقيق البرمجي لكافة المعادلات التموينية والحسابية
- * Comprehensive Audit and Verification Function for Supply & Bakery Calculations
  */
 export interface MathAuditResult {
   passed: boolean;
@@ -18,36 +23,130 @@ export interface MathAuditResult {
   }[];
 }
 
+export interface EquationChangeLogItem {
+  recordType: 'bakery' | 'debt';
+  recordId: string;
+  recordName: string;
+  field: string;
+  oldValue: string | number;
+  newValue: string | number;
+}
+
+export interface BakeryAnnualComparisonRow {
+  bakeryId: string;
+  bakeryOwnerName: string;
+  machineNumber: string;
+  village: string;
+  localUnit: string;
+  insuranceValue: number;
+  insuranceQuota: number;
+  loavesCount: number;
+  villagePopulation: number;
+  perCapitaAverage: string;
+  beneficiaries2023: number;
+  avg2023: string;
+  beneficiaries2024: number;
+  avg2024: string;
+  beneficiaries2025: number;
+  avg2025: string;
+  diff2024vs2023: string;
+  diff2025vs2024: string;
+  diff2025vs2023: string;
+  varianceFromGeneral2023: string;
+  varianceFromGeneral2024: string;
+  varianceFromGeneral2025: string;
+}
+
+export interface YearSummaryMetrics {
+  year: 2023 | 2024 | 2025;
+  activeBakeriesCount: number;
+  totalLoaves: number;
+  totalBeneficiaries: number;
+  weightedGeneralAverage: string;
+  simpleArithmeticAverage: string;
+  diffFromPreviousYear: string;
+}
+
+export interface AnnualWeightedReport {
+  rows: BakeryAnnualComparisonRow[];
+  year2023: YearSummaryMetrics;
+  year2024: YearSummaryMetrics;
+  year2025: YearSummaryMetrics;
+  totalBakeries: number;
+  totalInsuranceValue: number;
+  totalInsuranceQuota: number;
+  totalLoavesAll: number;
+  totalLoaves: number;
+  totalVillagePopulation: number;
+  weightedPopulationPerCapita: string;
+  weightedPerCapitaVillage: string;
+  totalBeneficiaries2023: number;
+  weightedGeneralAvg2023: string;
+  weightedAvg2023: string;
+  simpleArithmeticAvg2023: string;
+  totalBeneficiaries2024: number;
+  weightedGeneralAvg2024: string;
+  weightedAvg2024: string;
+  simpleArithmeticAvg2024: string;
+  totalBeneficiaries2025: number;
+  weightedGeneralAvg2025: string;
+  weightedAvg2025: string;
+  simpleArithmeticAvg2025: string;
+  weightedDiff2024vs2023: string;
+  weightedDiff2025vs2024: string;
+  weightedDiff2025vs2023: string;
+  cumulativeWeightedDiff2025vs2023: string;
+}
+
 /**
- * 1. حساب عدد الأرغفة التموينية = الحصة التأمينية × 1350
+ * 1-أ. احتساب عدد الأرغفة الخام (بدون أي تقريب في المراحل الوسيطة) من المبلغ التأميني
+ * المعادلة المعتمدة: عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3) = (المبلغ التأميني × 3) ÷ 235
+ */
+export function calculateRawLoavesFromInsuranceValue(insuranceValue: number): number {
+  const val = Number(insuranceValue) || 0;
+  if (val <= 0) return 0;
+  return (val * 3) / 235;
+}
+
+/**
+ * 1-ب. احتساب عدد الأرغفة المعتمد من المبلغ التأميني (تطبيق قاعدة التقريب النهائية فقط)
+ * المعادلة المعتمدة: عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3)
+ */
+export function calculateLoavesFromInsuranceValue(insuranceValue: number): number {
+  const raw = calculateRawLoavesFromInsuranceValue(insuranceValue);
+  return Math.round(raw);
+}
+
+/**
+ * 1-ج. احتساب عدد الأرغفة من الحصة التأمينية بالشكاير (معادلة رديفة عند عدم إدخال المبلغ التأميني)
  */
 export function calculateLoavesCount(insuranceQuota: number): number {
   return Math.round(Number(insuranceQuota || 0) * 1350);
 }
 
 /**
- * 2. متوسط نصيب الفرد = عدد الأرغفة ÷ عدد سكان القرية (علامة عشرية ورقمين فقط)
+ * 2. متوسط نصيب الفرد من المخبز الواحد = عدد الأرغفة ÷ عدد السكان/المستفيدين (علامة عشرية ورقمين فقط)
  */
 export function calculatePerCapitaAverage(loavesCount: number, villagePopulation: number): string {
   if (!villagePopulation || villagePopulation <= 0) return '0.00';
-  return (loavesCount / villagePopulation).toFixed(2);
+  return (Number(loavesCount || 0) / Number(villagePopulation)).toFixed(2);
 }
 
 /**
- * 3. متوسط المستفيدين لعام محدد = عدد الأرغفة ÷ عدد المستفيدين (علامة عشرية ورقمين فقط)
+ * 3. متوسط المستفيدين لعام محدد بشكل مستقل = عدد الأرغفة ÷ عدد المستفيدين المعتمد للسنة (علامة عشرية ورقمين فقط)
  */
 export function calculateYearlyAverage(loavesCount: number, beneficiariesCount: number): string {
   if (!beneficiariesCount || beneficiariesCount <= 0) return '0.00';
-  return (loavesCount / beneficiariesCount).toFixed(2);
+  return (Number(loavesCount || 0) / Number(beneficiariesCount)).toFixed(2);
 }
 
 /**
- * 4. الفرق التراكمي = متوسط 2025 - متوسط 2023 (علامة عشرية ورقمين فقط)
+ * 4. الفرق بين سنتين (بدون تقريب وسيط عند توفر القيم الخام، أو طرح المتوسطين المعتمدين بعلامة عشرية ورقمين فقط)
  */
-export function calculateAverageDifference(avg2025: string, avg2023: string): string {
-  const v25 = parseFloat(avg2025) || 0;
-  const v23 = parseFloat(avg2023) || 0;
-  return (v25 - v23).toFixed(2);
+export function calculateAverageDifference(avgNew: string, avgOld: string): string {
+  const vNew = parseFloat(avgNew) || 0;
+  const vOld = parseFloat(avgOld) || 0;
+  return (vNew - vOld).toFixed(2);
 }
 
 /**
@@ -56,16 +155,13 @@ export function calculateAverageDifference(avg2025: string, avg2023: string): st
 export function formatDateDDMMYYYY(dateStr?: string): string {
   if (!dateStr || !dateStr.trim()) return '';
   const trimmed = dateStr.trim();
-  // If YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
     const [y, m, d] = trimmed.split('-');
     return `${d}/${m}/${y}`;
   }
-  // If already DD/MM/YYYY
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
     return trimmed;
   }
-  // Fallback to JS Date parsing
   const d = new Date(trimmed);
   if (!isNaN(d.getTime())) {
     const day = String(d.getDate()).padStart(2, '0');
@@ -131,34 +227,58 @@ export function calculateNetRemainingDebt(
 }
 
 /**
- * 9-ب. تطبيع وإعادة احتساب كافة المعادلات التموينية للمخبز بدقة (علامة عشرية ورقمين فقط للمتوسطات)
+ * 9-ب. تطبيع وإعادة احتساب كافة المعادلات التموينية للمخبز بدقة
+ * - عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3) (عند وجود مبلغ تأميني > 0، مع عدم التقريب في المراحل الوسيطة)
+ * - احتساب متوسط نصيب الفرد للمخبز بصورة مستقلة
+ * - احتساب متوسط نصيب الفرد لكل سنة (2023، 2024، 2025) بصورة مستقلة تماماً
  */
 export function normalizeBakeryCalculations(b: Bakery): Bakery {
   const insuranceQuota = Number(b.insuranceQuota) || 0;
   const actualQuota = Number(b.actualQuota) || 0;
   const insuranceValue = Number(b.insuranceValue) || 0;
+
+  // القاعدة المعتمدة: عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3)
+  // إذا كان المبلغ التأميني مدخلاً (> 0) يتم الاحتساب منه مباشرة بدون تقريب وسيط ثم التقريب النهائي
   const loavesCount =
-    b.loavesCount !== undefined && b.loavesCount !== null && Number(b.loavesCount) > 0 && insuranceQuota === 0
-      ? Math.round(Number(b.loavesCount))
-      : calculateLoavesCount(insuranceQuota);
+    insuranceValue > 0
+      ? calculateLoavesFromInsuranceValue(insuranceValue)
+      : insuranceQuota > 0
+      ? calculateLoavesCount(insuranceQuota)
+      : Math.round(Number(b.loavesCount) || 0);
 
   const villagePopulation = Number(b.villagePopulation) || 0;
   const beneficiaries2023 = Number(b.beneficiaries2023) || 0;
   const beneficiaries2024 = Number(b.beneficiaries2024) || 0;
   const beneficiaries2025 = Number(b.beneficiaries2025) || 0;
 
-  const formatTwoDecimals = (rawVal: unknown, fallbackNum: number): string => {
-    if (fallbackNum > 0) {
-      return (loavesCount / fallbackNum).toFixed(2);
-    }
-    const parsed = parseFloat(String(rawVal ?? '').replace(/%/g, '').trim());
-    return !isNaN(parsed) ? parsed.toFixed(2) : '0.00';
-  };
+  const perCapitaAverage =
+    villagePopulation > 0
+      ? calculatePerCapitaAverage(loavesCount, villagePopulation)
+      : !isNaN(parseFloat(String(b.perCapitaAverage ?? '')))
+      ? parseFloat(String(b.perCapitaAverage)).toFixed(2)
+      : '0.00';
 
-  const perCapitaAverage = formatTwoDecimals(b.perCapitaAverage, villagePopulation);
-  const avg2023 = formatTwoDecimals(b.avg2023, beneficiaries2023);
-  const avg2024 = formatTwoDecimals(b.avg2024, beneficiaries2024);
-  const avg2025 = formatTwoDecimals(b.avg2025, beneficiaries2025);
+  const avg2023 =
+    beneficiaries2023 > 0
+      ? calculateYearlyAverage(loavesCount, beneficiaries2023)
+      : !isNaN(parseFloat(String(b.avg2023 ?? '')))
+      ? parseFloat(String(b.avg2023)).toFixed(2)
+      : '0.00';
+
+  const avg2024 =
+    beneficiaries2024 > 0
+      ? calculateYearlyAverage(loavesCount, beneficiaries2024)
+      : !isNaN(parseFloat(String(b.avg2024 ?? '')))
+      ? parseFloat(String(b.avg2024)).toFixed(2)
+      : '0.00';
+
+  const avg2025 =
+    beneficiaries2025 > 0
+      ? calculateYearlyAverage(loavesCount, beneficiaries2025)
+      : !isNaN(parseFloat(String(b.avg2025 ?? '')))
+      ? parseFloat(String(b.avg2025)).toFixed(2)
+      : '0.00';
+
   const avgDiff = calculateAverageDifference(avg2025, avg2023);
 
   return {
@@ -182,7 +302,7 @@ export function normalizeBakeryCalculations(b: Bakery): Bakery {
 }
 
 /**
- * 9-ج. تطبيع وإعادة احتساب معادلات قيد المديونية وربطها ببيانات المخبز المرجعي
+ * 9-ج. تطبيع وإعادة احتساب معادلات قيد المديونية وربطها ببيانات المخبز المرجعي بدون مضاعفة أو تكرار
  */
 export function normalizeDebtCalculations(d: DebtRecord, linkedBakery?: Bakery): DebtRecord {
   const violationAmount = Number(d.violationAmount) || 0;
@@ -198,16 +318,16 @@ export function normalizeDebtCalculations(d: DebtRecord, linkedBakery?: Bakery):
   const paidAddedAmount = Number(d.paidAddedAmount) || 0;
   const remainingAdded = calculateRemainingAdded(addedAmount, paidAddedAmount);
 
-  const disposalBagsCount = Number(d.disposalBagsCount) || 0;
-  const flourBagPrice =
-    d.flourBagPrice !== undefined && d.flourBagPrice !== null && Number(d.flourBagPrice) > 0
-      ? Number(d.flourBagPrice)
+  const disposalBags = Number(d.disposalBags) || 0;
+  const disposalBagPrice =
+    d.disposalBagPrice !== undefined && d.disposalBagPrice !== null && Number(d.disposalBagPrice) > 0
+      ? Number(d.disposalBagPrice)
       : linkedBakery?.flourBagPrice || 950;
-  const disposalMultiplier: 1 | 2 = d.disposalMultiplier === 2 ? 2 : 1;
+  const disposalMultiplier = Number(d.disposalMultiplier) > 0 ? Number(d.disposalMultiplier) : 1;
 
   const disposalValue =
-    disposalBagsCount > 0
-      ? calculateDisposalValue(disposalBagsCount, flourBagPrice, disposalMultiplier)
+    disposalBags > 0
+      ? calculateDisposalValue(disposalBags, disposalBagPrice, disposalMultiplier)
       : Number(d.disposalValue) || 0;
   const paidDisposalAmount = Number(d.paidDisposalAmount) || 0;
   const remainingDisposal = calculateRemainingDisposal(disposalValue, paidDisposalAmount);
@@ -233,8 +353,8 @@ export function normalizeDebtCalculations(d: DebtRecord, linkedBakery?: Bakery):
     addedAmount,
     paidAddedAmount,
     remainingAdded,
-    disposalBagsCount,
-    flourBagPrice,
+    disposalBags,
+    disposalBagPrice,
     disposalMultiplier,
     disposalValue,
     paidDisposalAmount,
@@ -261,15 +381,281 @@ export function synchronizeBakeryAndDebts(
     }
   });
 
-  const synchronizedDebts = (debts || []).map((d) => {
+  // Deduplicate debts by ID to ensure no duplicate financial movements
+  const seenDebtIds = new Set<string>();
+  const synchronizedDebts: DebtRecord[] = [];
+  (debts || []).forEach((d) => {
+    if (!d || !d.id || seenDebtIds.has(d.id)) return;
+    seenDebtIds.add(d.id);
     const linked =
       byId.get(d.bakeryId) || (d.machineNumber ? byMachine.get(d.machineNumber.trim()) : undefined);
-    return normalizeDebtCalculations(d, linked);
+    synchronizedDebts.push(normalizeDebtCalculations(d, linked));
   });
 
   return {
     bakeries: normalizedBakeries,
     debts: synchronizedDebts,
+  };
+}
+
+/**
+ * 9-هـ. احتساب التقرير السنوي للمتوسطات الفردية والمتوسطات العامة المرجحة بأعداد المستفيدين (2023 - 2024 - 2025)
+ * يستخدم المتوسط المرجح بأعداد المستفيدين (إجمالي الأرغفة للسنة ÷ إجمالي المستفيدين للسنة) وليس المتوسط الحسابي البسيط
+ */
+export function calculateAnnualWeightedAveragesReport(bakeries: Bakery[]): AnnualWeightedReport {
+  const normalized = (bakeries || []).map(normalizeBakeryCalculations);
+
+  let totalInsuranceValue = 0;
+  let totalInsuranceQuota = 0;
+  let totalLoavesAll = 0;
+  let totalVillagePopulation = 0;
+
+  let loaves2023 = 0, ben2023 = 0, count2023 = 0, sumSimple2023 = 0;
+  let loaves2024 = 0, ben2024 = 0, count2024 = 0, sumSimple2024 = 0;
+  let loaves2025 = 0, ben2025 = 0, count2025 = 0, sumSimple2025 = 0;
+
+  normalized.forEach((b) => {
+    totalInsuranceValue += b.insuranceValue || 0;
+    totalInsuranceQuota += b.insuranceQuota || 0;
+    totalLoavesAll += b.loavesCount || 0;
+    if (b.villagePopulation > 0) {
+      totalVillagePopulation += b.villagePopulation;
+    }
+
+    if (b.beneficiaries2023 > 0) {
+      loaves2023 += b.loavesCount;
+      ben2023 += b.beneficiaries2023;
+      count2023++;
+      sumSimple2023 += b.loavesCount / b.beneficiaries2023;
+    }
+    if (b.beneficiaries2024 > 0) {
+      loaves2024 += b.loavesCount;
+      ben2024 += b.beneficiaries2024;
+      count2024++;
+      sumSimple2024 += b.loavesCount / b.beneficiaries2024;
+    }
+    if (b.beneficiaries2025 > 0) {
+      loaves2025 += b.loavesCount;
+      ben2025 += b.beneficiaries2025;
+      count2025++;
+      sumSimple2025 += b.loavesCount / b.beneficiaries2025;
+    }
+  });
+
+  const rawWeighted2023 = ben2023 > 0 ? loaves2023 / ben2023 : 0;
+  const rawWeighted2024 = ben2024 > 0 ? loaves2024 / ben2024 : 0;
+  const rawWeighted2025 = ben2025 > 0 ? loaves2025 / ben2025 : 0;
+
+  const weighted2023 = rawWeighted2023.toFixed(2);
+  const weighted2024 = rawWeighted2024.toFixed(2);
+  const weighted2025 = rawWeighted2025.toFixed(2);
+
+  const year2023: YearSummaryMetrics = {
+    year: 2023,
+    activeBakeriesCount: count2023,
+    totalLoaves: loaves2023,
+    totalBeneficiaries: ben2023,
+    weightedGeneralAverage: weighted2023,
+    simpleArithmeticAverage: count2023 > 0 ? (sumSimple2023 / count2023).toFixed(2) : '0.00',
+    diffFromPreviousYear: '0.00',
+  };
+
+  const year2024: YearSummaryMetrics = {
+    year: 2024,
+    activeBakeriesCount: count2024,
+    totalLoaves: loaves2024,
+    totalBeneficiaries: ben2024,
+    weightedGeneralAverage: weighted2024,
+    simpleArithmeticAverage: count2024 > 0 ? (sumSimple2024 / count2024).toFixed(2) : '0.00',
+    diffFromPreviousYear: (rawWeighted2024 - rawWeighted2023).toFixed(2),
+  };
+
+  const year2025: YearSummaryMetrics = {
+    year: 2025,
+    activeBakeriesCount: count2025,
+    totalLoaves: loaves2025,
+    totalBeneficiaries: ben2025,
+    weightedGeneralAverage: weighted2025,
+    simpleArithmeticAverage: count2025 > 0 ? (sumSimple2025 / count2025).toFixed(2) : '0.00',
+    diffFromPreviousYear: (rawWeighted2025 - rawWeighted2024).toFixed(2),
+  };
+
+  const rows: BakeryAnnualComparisonRow[] = normalized.map((b) => {
+    const a23 = parseFloat(b.avg2023) || 0;
+    const a24 = parseFloat(b.avg2024) || 0;
+    const a25 = parseFloat(b.avg2025) || 0;
+
+    return {
+      bakeryId: b.id,
+      bakeryOwnerName: b.bakeryOwnerName,
+      machineNumber: b.machineNumber,
+      village: b.village,
+      localUnit: b.localUnit,
+      insuranceValue: b.insuranceValue,
+      insuranceQuota: b.insuranceQuota,
+      loavesCount: b.loavesCount,
+      villagePopulation: b.villagePopulation,
+      perCapitaAverage: b.perCapitaAverage,
+      beneficiaries2023: b.beneficiaries2023,
+      avg2023: b.avg2023,
+      beneficiaries2024: b.beneficiaries2024,
+      avg2024: b.avg2024,
+      beneficiaries2025: b.beneficiaries2025,
+      avg2025: b.avg2025,
+      diff2024vs2023: (a24 - a23).toFixed(2),
+      diff2025vs2024: (a25 - a24).toFixed(2),
+      diff2025vs2023: b.avgDiff,
+      varianceFromGeneral2023: (a23 - rawWeighted2023).toFixed(2),
+      varianceFromGeneral2024: (a24 - rawWeighted2024).toFixed(2),
+      varianceFromGeneral2025: (a25 - rawWeighted2025).toFixed(2),
+    };
+  });
+
+  const weightedPopulationPerCapita =
+    totalVillagePopulation > 0 ? (totalLoavesAll / totalVillagePopulation).toFixed(2) : '0.00';
+
+  const cumulativeDiff25vs23 = (rawWeighted2025 - rawWeighted2023).toFixed(2);
+
+  return {
+    rows,
+    year2023,
+    year2024,
+    year2025,
+    totalBakeries: normalized.length,
+    totalInsuranceValue,
+    totalInsuranceQuota,
+    totalLoavesAll,
+    totalLoaves: totalLoavesAll,
+    totalVillagePopulation,
+    weightedPopulationPerCapita,
+    weightedPerCapitaVillage: weightedPopulationPerCapita,
+    totalBeneficiaries2023: ben2023,
+    weightedGeneralAvg2023: year2023.weightedGeneralAverage,
+    weightedAvg2023: year2023.weightedGeneralAverage,
+    simpleArithmeticAvg2023: year2023.simpleArithmeticAverage,
+    totalBeneficiaries2024: ben2024,
+    weightedGeneralAvg2024: year2024.weightedGeneralAverage,
+    weightedAvg2024: year2024.weightedGeneralAverage,
+    simpleArithmeticAvg2024: year2024.simpleArithmeticAverage,
+    totalBeneficiaries2025: ben2025,
+    weightedGeneralAvg2025: year2025.weightedGeneralAverage,
+    weightedAvg2025: year2025.weightedGeneralAverage,
+    simpleArithmeticAvg2025: year2025.simpleArithmeticAverage,
+    weightedDiff2024vs2023: year2024.diffFromPreviousYear,
+    weightedDiff2025vs2024: year2025.diffFromPreviousYear,
+    weightedDiff2025vs2023: cumulativeDiff25vs23,
+    cumulativeWeightedDiff2025vs2023: cumulativeDiff25vs23,
+  };
+}
+
+/**
+ * 9-و. محرك "احتساب المعادلات" الشامل لجميع سجلات المخابز والمديونيات مع سجل التغييرات والتنبيهات
+ */
+export function recalculateAllDatabaseEquations(
+  bakeries: Bakery[],
+  debts: DebtRecord[]
+): {
+  bakeries: Bakery[];
+  debts: DebtRecord[];
+  annualReport: AnnualWeightedReport;
+  auditResult: MathAuditResult;
+  warnings: string[];
+  changesLog: EquationChangeLogItem[];
+  summaryMessage: string;
+  summary: {
+    updatedBakeriesCount: number;
+    updatedDebtsCount: number;
+    totalChangesCount: number;
+  };
+} {
+  const warnings: string[] = [];
+  const changesLog: EquationChangeLogItem[] = [];
+
+  (bakeries || []).forEach((b) => {
+    if (!b.insuranceValue || b.insuranceValue <= 0) {
+      warnings.push(`المخبز (${b.bakeryOwnerName}): المبلغ التأميني غير مسجل أو يساوي صفر.`);
+    }
+    if (!b.villagePopulation || b.villagePopulation <= 0) {
+      warnings.push(`المخبز (${b.bakeryOwnerName}): عدد سكان القرية غير مسجل.`);
+    }
+    if (!b.beneficiaries2023 || !b.beneficiaries2024 || !b.beneficiaries2025) {
+      warnings.push(`المخبز (${b.bakeryOwnerName}): توجد بيانات مستفيدين سنوية ناقصة لإحدى السنوات (2023/2024/2025).`);
+    }
+
+    const updated = normalizeBakeryCalculations(b);
+    if (b.loavesCount !== updated.loavesCount) {
+      changesLog.push({
+        recordType: 'bakery',
+        recordId: b.id,
+        recordName: b.bakeryOwnerName,
+        field: 'عدد الأرغفة (المبلغ التأميني ÷ (235 ÷ 3))',
+        oldValue: b.loavesCount,
+        newValue: updated.loavesCount,
+      });
+    }
+    if (b.perCapitaAverage !== updated.perCapitaAverage) {
+      changesLog.push({
+        recordType: 'bakery',
+        recordId: b.id,
+        recordName: b.bakeryOwnerName,
+        field: 'متوسط نصيب الفرد للمخبز',
+        oldValue: b.perCapitaAverage,
+        newValue: updated.perCapitaAverage,
+      });
+    }
+    if (b.avg2023 !== updated.avg2023 || b.avg2024 !== updated.avg2024 || b.avg2025 !== updated.avg2025) {
+      changesLog.push({
+        recordType: 'bakery',
+        recordId: b.id,
+        recordName: b.bakeryOwnerName,
+        field: 'المتوسطات السنوية (2023 / 2024 / 2025)',
+        oldValue: `${b.avg2023} / ${b.avg2024} / ${b.avg2025}`,
+        newValue: `${updated.avg2023} / ${updated.avg2024} / ${updated.avg2025}`,
+      });
+    }
+  });
+
+  const { bakeries: syncedBakeries, debts: syncedDebts } = synchronizeBakeryAndDebts(bakeries, debts);
+
+  (debts || []).forEach((oldD) => {
+    const newD = syncedDebts.find((x) => x.id === oldD.id);
+    if (newD && oldD.netRemainingDebt !== newD.netRemainingDebt) {
+      changesLog.push({
+        recordType: 'debt',
+        recordId: oldD.id,
+        recordName: newD.bakeryOwnerName,
+        field: 'صافي المديونية المتبقية',
+        oldValue: oldD.netRemainingDebt,
+        newValue: newD.netRemainingDebt,
+      });
+    }
+  });
+
+  const annualReport = calculateAnnualWeightedAveragesReport(syncedBakeries);
+  const auditResult = runComprehensiveAudit(syncedBakeries, syncedDebts);
+
+  const summaryMessage = `تم احتساب جميع المعادلات بنجاح لـ (${syncedBakeries.length}) مخبز و (${syncedDebts.length}) قيد مديونية! إجمالي الأرغفة المعتمدة: ${annualReport.totalLoavesAll.toLocaleString()} رغيف | المتوسط العام المرجح 2023: (${annualReport.year2023.weightedGeneralAverage}) | 2024: (${annualReport.year2024.weightedGeneralAverage}) | 2025: (${annualReport.year2025.weightedGeneralAverage}).`;
+
+  const updatedBakeriesCount = new Set(
+    changesLog.filter((c) => c.recordType === 'bakery').map((c) => c.recordId)
+  ).size;
+  const updatedDebtsCount = new Set(
+    changesLog.filter((c) => c.recordType === 'debt').map((c) => c.recordId)
+  ).size;
+
+  return {
+    bakeries: syncedBakeries,
+    debts: syncedDebts,
+    annualReport,
+    auditResult,
+    warnings,
+    changesLog,
+    summaryMessage,
+    summary: {
+      updatedBakeriesCount,
+      updatedDebtsCount,
+      totalChangesCount: changesLog.length,
+    },
   };
 }
 
@@ -332,7 +718,7 @@ export function filterAndSortDailyTasks(
 }
 
 /**
- * 12. تشغيل دالة الاختبار الشاملة والتحقق من دقة كافة المعادلات
+ * 12. تشغيل دالة الاختبار الشاملة والتحقق من دقة كافة المعادلات (بما فيها معادلة الأرغفة = المبلغ التأميني ÷ (235 ÷ 3))
  */
 export function runComprehensiveAudit(
   sampleBakeries: Bakery[] = [],
@@ -340,57 +726,67 @@ export function runComprehensiveAudit(
 ): MathAuditResult {
   const details: MathAuditResult['details'] = [];
 
-  // فحص 1: دقة معادلة الأرغفة (20 شيكارة × 1350 = 27,000 رغيف)
+  // فحص 1: المعادلة المعتمدة لاحتساب عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3) بدون تقريب وسيط
+  const loavesFromInsurance = calculateLoavesFromInsuranceValue(235000);
+  details.push({
+    checkName: 'معادلة الأرغفة من المبلغ التأميني: 235,000 ÷ (235 ÷ 3)',
+    expected: 3000,
+    actual: loavesFromInsurance,
+    status: loavesFromInsurance === 3000 ? 'PASS' : 'FAIL',
+    description: 'تحقق من قسمة المبلغ التأميني على (235 ÷ 3) بدون تقريب في المراحل الوسيطة.',
+  });
+
+  // فحص 2: دقة معادلة الأرغفة من المبلغ التأميني للكسور (18,500 ÷ (235 ÷ 3) = 236 رغيف)
+  const loavesFraction = calculateLoavesFromInsuranceValue(18500);
+  details.push({
+    checkName: 'معادلة الأرغفة للكسور العشرية: 18,500 ÷ (235 ÷ 3)',
+    expected: 236,
+    actual: loavesFraction,
+    status: loavesFraction === 236 ? 'PASS' : 'FAIL',
+    description: 'تحقق من تطبيق قاعدة التقريب النهائية المعتمدة فقط بعد إتمام القسمة الدقيقة.',
+  });
+
+  // فحص 3: دقة معادلة الحصة التأمينية بالشكاير (20 شيكارة × 1350 = 27,000 رغيف)
   const loaves20 = calculateLoavesCount(20);
   details.push({
-    checkName: 'معادلة حساب الأرغفة (20 شيكارة × 1350)',
+    checkName: 'معادلة الحصة التأمينية بالشكاير (20 شيكارة × 1350)',
     expected: 27000,
     actual: loaves20,
     status: loaves20 === 27000 ? 'PASS' : 'FAIL',
-    description: 'تحقق من ضرب الحصة التأمينية في المعيار التمويني المعتمد 1350 رغيفاً.',
+    description: 'تحقق من معادلة الحصة التأمينية المستقلة بالشكاير.',
   });
 
-  // فحص 2: دقة الأرغفة مع الكسور (15.5 شيكارة × 1350 = 20,925 رغيف)
-  const loaves15_5 = calculateLoavesCount(15.5);
-  details.push({
-    checkName: 'معادلة حساب الأرغفة للكسور (15.5 شيكارة)',
-    expected: 20925,
-    actual: loaves15_5,
-    status: loaves15_5 === 20925 ? 'PASS' : 'FAIL',
-    description: 'تحقق من حساب الأرغفة للحصص غير الصحيحة بدقة تقريبية.',
-  });
-
-  // فحص 3: متوسط نصيب الفرد لسكان 30,000 نسمة بحصة 27,000 رغيف = 0.90 (علامة عشرية ورقمين فقط)
+  // فحص 4: متوسط نصيب الفرد لسكان 30,000 نسمة بحصة 27,000 رغيف = 0.90 (علامة عشرية ورقمين فقط)
   const perCapita = calculatePerCapitaAverage(27000, 30000);
   details.push({
-    checkName: 'متوسط نصيب الفرد من الخبز (27,000 / 30,000)',
+    checkName: 'متوسط نصيب الفرد من المخبز الواحد (27,000 ÷ 30,000)',
     expected: '0.90',
     actual: perCapita,
     status: perCapita === '0.90' ? 'PASS' : 'FAIL',
-    description: 'تحقق من دقة قسمة الأرغفة على إجمالي سكان القرية بعلامة عشرية ورقمين فقط (0.90).',
+    description: 'تحقق من دقة احتساب متوسط نصيب الفرد لكل مخبز بشكل مستقل بعلامة عشرية ورقمين فقط (0.90).',
   });
 
-  // فحص 4: متوسط مستفيدي 2023 (27,000 / 27,000) = 1.00 (علامة عشرية ورقمين فقط)
+  // فحص 5: متوسط مستفيدي 2023 (27,000 ÷ 27,000) = 1.00
   const avg23 = calculateYearlyAverage(27000, 27000);
   details.push({
-    checkName: 'متوسط مستفيدي 2023 (27,000 / 27,000)',
+    checkName: 'متوسط مستفيدي عام 2023 المستقل (27,000 ÷ 27,000)',
     expected: '1.00',
     actual: avg23,
     status: avg23 === '1.00' ? 'PASS' : 'FAIL',
-    description: 'تحقق من قسمة الأرغفة على مستفيدي 2023 بعلامة عشرية ورقمين فقط.',
+    description: 'تحقق من قسمة الأرغفة على مستفيدي 2023 بشكل مستقل.',
   });
 
-  // فحص 5: متوسط مستفيدي 2025 (27,000 / 29,800) = 0.91 (علامة عشرية ورقمين فقط)
+  // فحص 6: متوسط مستفيدي 2025 (27,000 ÷ 29,800) = 0.91
   const avg25 = calculateYearlyAverage(27000, 29800);
   details.push({
-    checkName: 'متوسط مستفيدي 2025 (27,000 / 29,800)',
+    checkName: 'متوسط مستفيدي عام 2025 المستقل (27,000 ÷ 29,800)',
     expected: '0.91',
     actual: avg25,
     status: avg25 === '0.91' ? 'PASS' : 'FAIL',
-    description: 'تحقق من قسمة الأرغفة على مستفيدي 2025 والتقريب لأقرب رقمين عشريين (0.91).',
+    description: 'تحقق من قسمة الأرغفة على مستفيدي 2025 والتقريب النهائي لرقمين عشريين (0.91).',
   });
 
-  // فحص 6: الفرق التراكمي (0.91 - 1.00 = -0.09)
+  // فحص 7: الفرق التراكمي بين السنوات (0.91 - 1.00 = -0.09)
   const diff = calculateAverageDifference('0.91', '1.00');
   details.push({
     checkName: 'الفرق التراكمي بين متوسطي 2025 و 2023',
@@ -400,7 +796,7 @@ export function runComprehensiveAudit(
     description: 'تحقق من طرح متوسط 2023 من متوسط 2025 بعلامة عشرية ورقمين فقط.',
   });
 
-  // فحص 7: حساب إجمالي ومتبقي المخالفات (5000 + 2000 - 3000 = 4000)
+  // فحص 8: حساب إجمالي ومتبقي المخالفات (5000 + 2000 - 3000 = 4000)
   const violCalc = calculateRemainingViolations(5000, 2000, 3000);
   details.push({
     checkName: 'معادلة متبقي المخالفات (5000 + 2000 - 3000)',
@@ -410,7 +806,7 @@ export function runComprehensiveAudit(
     description: 'تحقق من جمع المخالفة والمخالفات القديمة وطرح المسدد.',
   });
 
-  // فحص 8: حساب متبقي المنصرف/المضاف (15000 - 10000 = 5000)
+  // فحص 9: حساب متبقي المنصرف/المضاف (15000 - 10000 = 5000)
   const addedRem = calculateRemainingAdded(15000, 10000);
   details.push({
     checkName: 'معادلة متبقي المنصرف والمضاف (15,000 - 10,000)',
@@ -420,7 +816,7 @@ export function runComprehensiveAudit(
     description: 'تحقق من خصم المسدد من المضاف.',
   });
 
-  // فحص 9: حساب قيمة التصرف في الدقيق (10 شكاير × 850 ج.م × مضاعف 2 = 17,000 ج.م)
+  // فحص 10: حساب قيمة التصرف في الدقيق (10 شكاير × 850 ج.م × مضاعف 2 = 17,000 ج.م)
   const disposalVal = calculateDisposalValue(10, 850, 2);
   details.push({
     checkName: 'معادلة غرامة التصرف في الدقيق (10 شكاير × 850 × 2x)',
@@ -430,7 +826,7 @@ export function runComprehensiveAudit(
     description: 'تحقق من حساب غرامة التصرف بالشكاير مع مضاعف العقوبة.',
   });
 
-  // فحص 10: حساب صافي المتبقي الإجمالي (4000 مخالفات + 5000 مضاف + 12000 تصرف = 21,000)
+  // فحص 11: حساب صافي المتبقي الإجمالي (4000 مخالفات + 5000 مضاف + 12000 تصرف = 21,000)
   const netDebt = calculateNetRemainingDebt(4000, 5000, 12000);
   details.push({
     checkName: 'معادلة صافي المديونية الإجمالية (4000 + 5000 + 12000)',
@@ -440,17 +836,32 @@ export function runComprehensiveAudit(
     description: 'تحقق من تجميع كافة المتبقيات من مخالفات ومضاف وتصرف.',
   });
 
-  // فحص 11: شرط التنبيه التلقائي للمديونية الكبرى > 20,000 ج.م
-  const isOver20k = netDebt > 20000;
-  details.push({
-    checkName: 'تفعيل إشعار وجدولة المديونية الكبرى (> 20,000 ج.م)',
-    expected: 'TRUE',
-    actual: isOver20k ? 'TRUE' : 'FALSE',
-    status: isOver20k ? 'PASS' : 'FAIL',
-    description: 'تحقق من تفعيل التنبيه الأسبوعي الإلزامي عند تجاوز 20,000 ج.م.',
-  });
+  // فحص 12: فحص كافة سجلات المخابز الحية بقاعدة البيانات
+  if (sampleBakeries.length > 0) {
+    let consistentBakeries = 0;
+    sampleBakeries.forEach((b) => {
+      const norm = normalizeBakeryCalculations(b);
+      if (
+        norm.loavesCount === b.loavesCount &&
+        norm.perCapitaAverage === b.perCapitaAverage &&
+        norm.avg2023 === b.avg2023 &&
+        norm.avg2024 === b.avg2024 &&
+        norm.avg2025 === b.avg2025 &&
+        norm.avgDiff === b.avgDiff
+      ) {
+        consistentBakeries++;
+      }
+    });
+    details.push({
+      checkName: `فحص مطابقة معادلات جميع سجلات المخابز الحية (${sampleBakeries.length} مخبز)`,
+      expected: sampleBakeries.length,
+      actual: consistentBakeries,
+      status: consistentBakeries === sampleBakeries.length ? 'PASS' : 'FAIL',
+      description: 'تحقق من تطابق عدد الأرغفة ومتوسطات نصيب الفرد السنوية لجميع المخابز بقاعدة البيانات.',
+    });
+  }
 
-  // فحص عينات البيانات الحية المحملة في المنظومة (إن وجدت)
+  // فحص 13: فحص كافة قيود المديونيات الحية بقاعدة البيانات
   if (sampleDebts.length > 0) {
     let consistentRecords = 0;
     sampleDebts.forEach((d) => {
@@ -529,7 +940,6 @@ export function filterDebtsByAdvancedCriteria(
     if (issuingEntity !== 'ALL' && d.issuingEntity !== issuingEntity) return false;
     if (violationType !== 'ALL' && d.violationType !== violationType) return false;
 
-    // Date range filter (من - إلى) matching primary violationDate or disposalDate
     if (cleanFrom || cleanTo) {
       const recordDates = [d.violationDate, d.disposalDate]
         .map((dt) => (dt || '').trim())
@@ -572,5 +982,3 @@ export function filterDebtsByAdvancedCriteria(
     return true;
   });
 }
-
-

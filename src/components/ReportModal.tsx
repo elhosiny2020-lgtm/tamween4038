@@ -5,7 +5,10 @@ import {
   sanitizeLiveStylesheets,
   printHtmlElementA4,
 } from '../utils/pdfHelper';
-import { formatDateDDMMYYYY } from '../utils/auditHelper';
+import {
+  formatDateDDMMYYYY,
+  calculateAnnualWeightedAveragesReport,
+} from '../utils/auditHelper';
 import {
   ALL_PERMISSIONS_LIST,
   getDefaultPermissionsForRole,
@@ -21,6 +24,7 @@ import {
   Layers,
   TrendingUp,
   Users,
+  Calculator,
 } from 'lucide-react';
 
 interface ReportModalProps {
@@ -33,7 +37,7 @@ interface ReportModalProps {
   systemConfig: SystemConfig;
   currentUser?: AppUser | null;
   users?: AppUser[];
-  initialReportType?: 'bakeries' | 'debts' | 'bakery-debts' | 'users';
+  initialReportType?: 'bakeries' | 'debts' | 'bakery-debts' | 'users' | 'annual-averages';
 }
 
 export const ReportModal: React.FC<ReportModalProps> = ({
@@ -48,8 +52,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   users = [],
   initialReportType = 'bakeries',
 }) => {
-  // Report Mode: 'bakeries' | 'debts' | 'bakery-debts' | 'users'
-  const [reportType, setReportType] = useState<'bakeries' | 'debts' | 'bakery-debts' | 'users'>(
+  // Report Mode: 'bakeries' | 'debts' | 'bakery-debts' | 'users' | 'annual-averages'
+  const [reportType, setReportType] = useState<'bakeries' | 'debts' | 'bakery-debts' | 'users' | 'annual-averages'>(
     initialReportType
   );
   const [includeUsersAppendix, setIncludeUsersAppendix] = useState<boolean>(false);
@@ -194,6 +198,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       return `كشف حصر المديونيات الحالية لكل مخبز بلدي وتفاصيل المبالغ المستحقة ونسب السداد ${locationSuffix}`;
     }
 
+    if (reportType === 'annual-averages') {
+      return `تقرير متوسطات نصيب الفرد السنوية والمتوسط العام المرجح بأعداد المستفيدين (2023 - 2024 - 2025) ${locationSuffix}`;
+    }
+
     return `كشف حصر وتشغيل المخابز البلدية والحصص التموينية ${locationSuffix}`;
   }, [reportType, selectedVillage, selectedUnit, debtFilterStatus, bakeryDebtFilter]);
 
@@ -206,6 +214,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       return true;
     });
   }, [bakeries, selectedVillage, selectedUnit, selectedActivity]);
+
+  // Annual Weighted Averages Report Data (2023 - 2025)
+  const annualWeightedReport = useMemo(() => {
+    return calculateAnnualWeightedAveragesReport(filteredBakeries);
+  }, [filteredBakeries]);
 
   // Filtered debts for detailed debt report
   const filteredDebts = useMemo(() => {
@@ -506,6 +519,85 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   // Export Report to CSV with UTF-8 BOM
   const handleExportCSV = () => {
+    if (reportType === 'annual-averages') {
+      const headers = [
+        'م',
+        'اسم صاحب المخبز',
+        'رقم الماكينة',
+        'القرية',
+        'الوحدة المحلية',
+        'المبلغ التأميني (ج.م)',
+        'الحصة التأمينية (شيكارة)',
+        'عدد الأرغفة (المبلغ التأميني ÷ (235 ÷ 3))',
+        'سكان القرية',
+        'متوسط نصيب الفرد للمخبز',
+        'مستفيدي عام 2023',
+        'متوسط الفرد عام 2023',
+        'مستفيدي عام 2024',
+        'متوسط الفرد عام 2024',
+        'مستفيدي عام 2025',
+        'متوسط الفرد عام 2025',
+        'فرق 2024 عن 2023',
+        'فرق 2025 عن 2024',
+        'الفرق التراكمي 2025 عن 2023',
+      ];
+      const rows = annualWeightedReport.rows.map((r, idx) =>
+        [
+          idx + 1,
+          `"${(r.bakeryOwnerName || '').replace(/"/g, '""')}"`,
+          `"${r.machineNumber || ''}"`,
+          `"${r.village || ''}"`,
+          `"${r.localUnit || ''}"`,
+          r.insuranceValue,
+          r.insuranceQuota,
+          r.loavesCount,
+          r.villagePopulation,
+          r.perCapitaAverage,
+          r.beneficiaries2023,
+          r.avg2023,
+          r.beneficiaries2024,
+          r.avg2024,
+          r.beneficiaries2025,
+          r.avg2025,
+          r.diff2024vs2023,
+          r.diff2025vs2024,
+          r.diff2025vs2023,
+        ].join(',')
+      );
+      rows.push(
+        [
+          '"الإجمالي / المتوسط العام المرجح"',
+          `"${annualWeightedReport.rows.length} مخبز"`,
+          '""',
+          '""',
+          '""',
+          annualWeightedReport.totalInsuranceValue,
+          annualWeightedReport.totalInsuranceQuota,
+          annualWeightedReport.totalLoaves,
+          annualWeightedReport.totalVillagePopulation,
+          annualWeightedReport.weightedPerCapitaVillage,
+          annualWeightedReport.totalBeneficiaries2023,
+          annualWeightedReport.weightedGeneralAvg2023,
+          annualWeightedReport.totalBeneficiaries2024,
+          annualWeightedReport.weightedGeneralAvg2024,
+          annualWeightedReport.totalBeneficiaries2025,
+          annualWeightedReport.weightedGeneralAvg2025,
+          annualWeightedReport.weightedDiff2024vs2023,
+          annualWeightedReport.weightedDiff2025vs2024,
+          annualWeightedReport.weightedDiff2025vs2023,
+        ].join(',')
+      );
+      const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `تقرير_المتوسطات_السنوية_والمرجحة_2023_2025_${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
     if (reportType === 'users') {
       const headers = [
         'م',
@@ -1035,6 +1127,19 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
             <button
               type="button"
+              onClick={() => setReportType('annual-averages')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                reportType === 'annual-averages'
+                  ? 'bg-teal-500 text-slate-950 shadow-md font-black ring-2 ring-teal-200'
+                  : 'bg-slate-800 text-teal-300 hover:text-white hover:bg-slate-700 border border-teal-500/40'
+              }`}
+            >
+              <Calculator className="w-4 h-4" />
+              تقرير المتوسطات السنوية والمرجحة (2023-2025) ({annualWeightedReport.rows.length})
+            </button>
+
+            <button
+              type="button"
               onClick={() => setReportType('users')}
               className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
                 reportType === 'users'
@@ -1062,6 +1167,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             <div className="text-[11px] font-bold text-amber-200">
               {reportType === 'users'
                 ? `إجمالي المستخدمين المسجلين بالكشف: ${users.length} مستخدم`
+                : reportType === 'annual-averages'
+                ? `المتوسط العام المرجح: 2023 (${annualWeightedReport.weightedGeneralAvg2023}) • 2024 (${annualWeightedReport.weightedGeneralAvg2024}) • 2025 (${annualWeightedReport.weightedGeneralAvg2025})`
                 : reportType === 'debts'
                 ? `إجمالي صافي المديونيات بالكشف: ${debtReportTotals.sumNetRemaining.toLocaleString()} ج.م`
                 : reportType === 'bakery-debts'
@@ -1401,7 +1508,115 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               </div>
 
               {/* REPORT BODY ACCORDING TO SELECTED TAB */}
-              {reportType === 'users' ? (
+              {reportType === 'annual-averages' ? (
+                <div className="w-full overflow-visible space-y-3">
+                  {/* Weighted Summary Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center text-xs">
+                    <div className="bg-slate-100 border border-black rounded-lg p-1.5">
+                      <span className="text-[9px] font-black block">إجمالي الأرغفة المعتمدة</span>
+                      <span className="text-sm font-black font-mono">{annualWeightedReport.totalLoaves.toLocaleString()}</span>
+                      <span className="text-[8px] block">المبلغ التأميني ÷ (235 ÷ 3)</span>
+                    </div>
+                    <div className="bg-amber-50 border border-black rounded-lg p-1.5">
+                      <span className="text-[9px] font-black block">المتوسط المرجح لسكان القرى</span>
+                      <span className="text-sm font-black font-mono">{annualWeightedReport.weightedPerCapitaVillage}</span>
+                      <span className="text-[8px] block">إجمالي السكان: {annualWeightedReport.totalVillagePopulation.toLocaleString()}</span>
+                    </div>
+                    <div className="bg-cyan-50 border border-black rounded-lg p-1.5">
+                      <span className="text-[9px] font-black block">المتوسط العام المرجح 2023</span>
+                      <span className="text-sm font-black font-mono">{annualWeightedReport.weightedGeneralAvg2023}</span>
+                      <span className="text-[8px] block">مستفيدون: {annualWeightedReport.totalBeneficiaries2023.toLocaleString()} (حسابي بسيط: {annualWeightedReport.simpleArithmeticAvg2023})</span>
+                    </div>
+                    <div className="bg-blue-50 border border-black rounded-lg p-1.5">
+                      <span className="text-[9px] font-black block">المتوسط العام المرجح 2024</span>
+                      <span className="text-sm font-black font-mono">{annualWeightedReport.weightedGeneralAvg2024}</span>
+                      <span className="text-[8px] block">مستفيدون: {annualWeightedReport.totalBeneficiaries2024.toLocaleString()} (حسابي بسيط: {annualWeightedReport.simpleArithmeticAvg2024})</span>
+                    </div>
+                    <div className="bg-purple-50 border border-black rounded-lg p-1.5">
+                      <span className="text-[9px] font-black block">المتوسط العام المرجح 2025</span>
+                      <span className="text-sm font-black font-mono">{annualWeightedReport.weightedGeneralAvg2025}</span>
+                      <span className="text-[8px] block">مستفيدون: {annualWeightedReport.totalBeneficiaries2025.toLocaleString()} (حسابي بسيط: {annualWeightedReport.simpleArithmeticAvg2025})</span>
+                    </div>
+                    <div className="bg-emerald-50 border border-black rounded-lg p-1.5">
+                      <span className="text-[9px] font-black block">فروق المتوسطات السنوية المرجحة</span>
+                      <span className="text-xs font-black font-mono block">
+                        24-23: {annualWeightedReport.weightedDiff2024vs2023} | 25-24: {annualWeightedReport.weightedDiff2025vs2024}
+                      </span>
+                      <span className="text-[9px] font-black block">تراكمي (25-23): {annualWeightedReport.weightedDiff2025vs2023}</span>
+                    </div>
+                  </div>
+
+                  <table className={`report-table-compact w-full text-center border-collapse border border-black leading-tight table-fixed ${fontSizeClass}`}>
+                    <thead>
+                      <tr className="bg-slate-900 text-white font-black border border-black">
+                        <th className="border border-black py-1 px-0.5 w-7">م</th>
+                        <th className="border border-black py-1 px-1 w-28">اسم المخبز</th>
+                        <th className="border border-black py-1 px-0.5 w-14">الماكينة</th>
+                        <th className="border border-black py-1 px-0.5 w-16">القرية</th>
+                        <th className="border border-black py-1 px-0.5 w-20">المبلغ التأميني</th>
+                        <th className="border border-black py-1 px-0.5 w-12">الحصة</th>
+                        <th className="border border-black py-1 px-0.5 w-16">الأرغفة</th>
+                        <th className="border border-black py-1 px-0.5 w-16">سكان القرية</th>
+                        <th className="border border-black py-1 px-0.5 w-14">متوسط المخبز</th>
+                        <th className="border border-black py-1 px-0.5 w-16">مستفيد 2023</th>
+                        <th className="border border-black py-1 px-0.5 w-14">متوسط 2023</th>
+                        <th className="border border-black py-1 px-0.5 w-16">مستفيد 2024</th>
+                        <th className="border border-black py-1 px-0.5 w-14">متوسط 2024</th>
+                        <th className="border border-black py-1 px-0.5 w-16">مستفيد 2025</th>
+                        <th className="border border-black py-1 px-0.5 w-14">متوسط 2025</th>
+                        <th className="border border-black py-1 px-0.5 w-14">فرق 24-23</th>
+                        <th className="border border-black py-1 px-0.5 w-14">فرق 25-24</th>
+                        <th className="border border-black py-1 px-0.5 w-14">فرق 25-23</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-black font-bold">
+                      {annualWeightedReport.rows.map((r, idx) => (
+                        <tr key={r.bakeryId} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">{idx + 1}</td>
+                          <td className="border border-black py-1 px-1 font-black text-right">{r.bakeryOwnerName}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono font-black">{r.machineNumber}</td>
+                          <td className="border border-black py-1 px-0.5">{r.village}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono">{r.insuranceValue.toLocaleString()}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono font-black">{r.insuranceQuota}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono font-black bg-amber-50/60">{r.loavesCount.toLocaleString()}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono">{r.villagePopulation.toLocaleString()}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono font-black">{r.perCapitaAverage}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono">{r.beneficiaries2023.toLocaleString()}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono font-black">{r.avg2023}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono">{r.beneficiaries2024.toLocaleString()}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono font-black">{r.avg2024}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono">{r.beneficiaries2025.toLocaleString()}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono font-black">{r.avg2025}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono">{r.diff2024vs2023}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono">{r.diff2025vs2024}</td>
+                          <td className="border border-black py-1 px-0.5 font-mono font-black bg-amber-100/70">{r.diff2025vs2023}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-200 font-black border-t-2 border-black">
+                        <td colSpan={4} className="border border-black py-1.5 px-2 text-right">
+                          الإجمالي العام / المتوسط العام المرجح بأعداد المستفيدين ({annualWeightedReport.rows.length} مخبز)
+                        </td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalInsuranceValue.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalInsuranceQuota}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalLoaves.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalVillagePopulation.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedPerCapitaVillage}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalBeneficiaries2023.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedGeneralAvg2023}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalBeneficiaries2024.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedGeneralAvg2024}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalBeneficiaries2025.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedGeneralAvg2025}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedDiff2024vs2023}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedDiff2025vs2024}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedDiff2025vs2023}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : reportType === 'users' ? (
                 <div className="w-full overflow-visible space-y-3">
                   <table className={`report-table-compact w-full text-center border-collapse border border-black leading-tight ${fontSizeClass}`}>
                     <thead>

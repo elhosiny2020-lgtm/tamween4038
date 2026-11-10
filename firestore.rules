@@ -1,0 +1,99 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isWorkspaceOwner(workspaceId) {
+      return isSignedIn() && request.auth.uid == workspaceId;
+    }
+
+    function isValidWorkspace(data) {
+      return data.keys().hasAll(['ownerId', 'updatedAt', 'bakeriesCount', 'debtsCount', 'payloadJson'])
+        && data.keys().hasOnly(['ownerId', 'ownerEmail', 'updatedAt', 'bakeriesCount', 'debtsCount', 'payloadJson'])
+        && data.ownerId is string && data.ownerId.size() <= 128
+        && data.ownerId == request.auth.uid
+        && (!('ownerEmail' in data) || (data.ownerEmail is string && data.ownerEmail.size() <= 256))
+        && data.updatedAt is string && data.updatedAt.size() <= 64
+        && data.bakeriesCount is number && data.bakeriesCount >= 0
+        && data.debtsCount is number && data.debtsCount >= 0
+        && data.payloadJson is string && data.payloadJson.size() <= 950000;
+    }
+
+    function isValidBakerySubrecord(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'machineNumber', 'bakeryOwnerName', 'updatedAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.ownerId is string && data.ownerId.size() <= 128
+        && data.ownerId == request.auth.uid
+        && data.machineNumber is string && data.machineNumber.size() <= 64
+        && data.bakeryOwnerName is string && data.bakeryOwnerName.size() <= 256
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidDebtSubrecord(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'machineNumber', 'bakeryOwnerName', 'updatedAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.ownerId is string && data.ownerId.size() <= 128
+        && data.ownerId == request.auth.uid
+        && data.machineNumber is string && data.machineNumber.size() <= 64
+        && data.bakeryOwnerName is string && data.bakeryOwnerName.size() <= 256
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    // Boot connection test path
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    match /workspaces/{workspaceId} {
+      allow get: if isValidId(workspaceId) && isWorkspaceOwner(workspaceId);
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isValidId(workspaceId) && isWorkspaceOwner(workspaceId) && isValidWorkspace(incoming());
+      allow update: if isValidId(workspaceId) && isWorkspaceOwner(workspaceId) && isValidWorkspace(incoming())
+        && incoming().ownerId == existing().ownerId;
+      allow delete: if false;
+
+      match /bakeries/{bakeryId} {
+        allow get: if isValidId(workspaceId) && isValidId(bakeryId) && isWorkspaceOwner(workspaceId);
+        allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(workspaceId) && isValidId(bakeryId) && isWorkspaceOwner(workspaceId)
+          && isValidBakerySubrecord(incoming());
+        allow update: if isValidId(workspaceId) && isValidId(bakeryId) && isWorkspaceOwner(workspaceId)
+          && isValidBakerySubrecord(incoming())
+          && incoming().ownerId == existing().ownerId;
+        allow delete: if isValidId(workspaceId) && isValidId(bakeryId) && isWorkspaceOwner(workspaceId);
+      }
+
+      match /debts/{debtId} {
+        allow get: if isValidId(workspaceId) && isValidId(debtId) && isWorkspaceOwner(workspaceId);
+        allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(workspaceId) && isValidId(debtId) && isWorkspaceOwner(workspaceId)
+          && isValidDebtSubrecord(incoming());
+        allow update: if isValidId(workspaceId) && isValidId(debtId) && isWorkspaceOwner(workspaceId)
+          && isValidDebtSubrecord(incoming())
+          && incoming().ownerId == existing().ownerId;
+        allow delete: if isValidId(workspaceId) && isValidId(debtId) && isWorkspaceOwner(workspaceId);
+      }
+    }
+  }
+}

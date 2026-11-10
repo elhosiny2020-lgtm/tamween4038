@@ -28,6 +28,20 @@ import {
   INITIAL_DAILY_TASKS,
   INITIAL_INBOX_MESSAGES
 } from './defaultData';
+import {
+  normalizeBakeryCalculations,
+  synchronizeBakeryAndDebts
+} from './utils/auditHelper';
+import { auth, syncWorkspaceToFirestore } from './lib/firebase';
+
+export interface MergeConflictItem {
+  id: string;
+  recordType: 'bakery' | 'debt';
+  recordId: string;
+  label: string;
+  reason: string;
+  timestamp: string;
+}
 
 export interface AppState {
   bakeries: Bakery[];
@@ -76,21 +90,32 @@ const KEYS = {
   USERS: 'TAMWEEN_USERS_V3',
   AUTOSAVE_BACKUP: 'TAMWEEN_AUTOSAVE_BACKUP_V3',
   AUTOSAVE_TIMESTAMP: 'TAMWEEN_AUTOSAVE_TIMESTAMP_V3',
+  MERGE_CONFLICTS: 'TAMWEEN_MERGE_CONFLICTS_LOG',
 };
 
 function normalizeBakeryPerCapita(b: Bakery): Bakery {
-  const num = parseFloat(String(b.perCapitaAverage ?? ''));
-  const formatted = !isNaN(num)
-    ? num.toFixed(2)
-    : b.villagePopulation > 0
-    ? ((b.loavesCount || 0) / b.villagePopulation).toFixed(2)
-    : '0.00';
-  return {
+  return normalizeBakeryCalculations({
     ...b,
     bakeryCategory: b.bakeryCategory || 'مخبز بلدي مدعم',
     flourBagPrice: b.flourBagPrice !== undefined && b.flourBagPrice !== null ? Number(b.flourBagPrice) : 950,
-    perCapitaAverage: formatted,
-  };
+  });
+}
+
+export function getMergeConflictsLog(): MergeConflictItem[] {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(KEYS.MERGE_CONFLICTS) : null;
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function clearMergeConflictsLog(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(KEYS.MERGE_CONFLICTS);
+    }
+  } catch {}
 }
 
 // IndexedDB Helper with safety timeout for file:/// and offline environments
@@ -160,22 +185,46 @@ async function idbSet(key: string, val: unknown): Promise<void> {
   }
 }
 
-// Merge two application states (merges bakeries without losing existing ones on original device)
+/**
+ * Mandatory ADD ONLY Smart Merge (قاعدة إلزامية: ADD ONLY):
+ * - Preserves all existing records in `base` without deleting, replacing, or overwriting them.
+ * - Adds ONLY new records whose ID / machineNumber does not already exist in `base`.
+ * - Logs any conflicting records for user review without mutating existing records.
+ */
 export function mergeStates(base: AppState, incoming: Partial<AppState>): AppState {
+  const conflicts: MergeConflictItem[] = getMergeConflictsLog();
+  const nowStr = new Date().toISOString();
+
   const bakeryMap = new Map<string, Bakery>();
   base.bakeries.forEach((b) => bakeryMap.set(b.id, normalizeBakeryPerCapita(b)));
   (incoming.bakeries || []).forEach((b) => {
     let matchedId: string | null = bakeryMap.has(b.id) ? b.id : null;
     if (!matchedId) {
       for (const [id, ex] of bakeryMap.entries()) {
-        if (ex.machineNumber && b.machineNumber && ex.machineNumber === b.machineNumber) {
+        if (ex.machineNumber && b.machineNumber && ex.machineNumber.trim() === b.machineNumber.trim()) {
           matchedId = id;
           break;
         }
       }
     }
     if (matchedId) {
-      bakeryMap.set(matchedId, normalizeBakeryPerCapita({ ...bakeryMap.get(matchedId)!, ...b }));
+      // ADD ONLY RULE: Never overwrite existing bakery; log conflict if incoming values differ
+      const existing = bakeryMap.get(matchedId)!;
+      const incomingNorm = normalizeBakeryPerCapita(b);
+      if (
+        existing.bakeryOwnerName !== incomingNorm.bakeryOwnerName ||
+        Number(existing.insuranceValue) !== Number(incomingNorm.insuranceValue) ||
+        Number(existing.insuranceQuota) !== Number(incomingNorm.insuranceQuota)
+      ) {
+        conflicts.unshift({
+          id: `conf-b-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          recordType: 'bakery',
+          recordId: matchedId,
+          label: `${existing.bakeryOwnerName} (ماكينة ${existing.machineNumber})`,
+          reason: `تعارض عند الاستيراد (تم الحفاظ على السجل الأصلي دون استبدال وفق قاعدة ADD ONLY): الوارد باسم "${incomingNorm.bakeryOwnerName}" وقيمة تأمينية (${incomingNorm.insuranceValue}) مقابل الأصلي (${existing.insuranceValue}).`,
+          timestamp: nowStr,
+        });
+      }
     } else {
       bakeryMap.set(b.id, normalizeBakeryPerCapita(b));
     }
@@ -184,8 +233,34 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
   const debtMap = new Map<string, DebtRecord>();
   base.debts.forEach((d) => debtMap.set(d.id, d));
   (incoming.debts || []).forEach((d) => {
-    debtMap.set(d.id, { ...(debtMap.get(d.id) || {}), ...d });
+    if (debtMap.has(d.id)) {
+      // ADD ONLY RULE: Never overwrite existing debt record; log conflict if amounts differ
+      const existingDebt = debtMap.get(d.id)!;
+      if (Number(existingDebt.netRemainingDebt) !== Number(d.netRemainingDebt)) {
+        conflicts.unshift({
+          id: `conf-d-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          recordType: 'debt',
+          recordId: d.id,
+          label: `${existingDebt.bakeryOwnerName} (${existingDebt.violationType})`,
+          reason: `تعارض في قيد المديونية رقم (${d.id}): تم الاحتفاظ بالسجل الأصلي بصافي متبقي (${existingDebt.netRemainingDebt}) ج.م وتجاهل تعديل الاستيراد (${d.netRemainingDebt}) ج.م وفق قاعدة ADD ONLY.`,
+          timestamp: nowStr,
+        });
+      }
+    } else {
+      debtMap.set(d.id, d);
+    }
   });
+
+  try {
+    if (typeof localStorage !== 'undefined' && conflicts.length > 0) {
+      localStorage.setItem(KEYS.MERGE_CONFLICTS, JSON.stringify(conflicts.slice(0, 100)));
+    }
+  } catch {}
+
+  const synced = synchronizeBakeryAndDebts(
+    Array.from(bakeryMap.values()),
+    Array.from(debtMap.values())
+  );
 
   const villageMap = new Map<string, Set<string>>();
   base.villages.forEach((v) => villageMap.set(v.village, new Set(v.localUnits)));
@@ -207,25 +282,27 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
     const existingByUsername = Array.from(userMap.values()).find(
       (ex) => ex.username.toLowerCase() === u.username.toLowerCase()
     );
-    if (existingByUsername) {
-      userMap.set(existingByUsername.id, { ...existingByUsername, ...u, id: existingByUsername.id });
-    } else {
+    if (!existingByUsername && !userMap.has(u.id)) {
       userMap.set(u.id, u);
     }
   });
 
   const taskMap = new Map<string, DailyBakeryTask>();
   (base.dailyTasks || INITIAL_DAILY_TASKS).forEach((t) => taskMap.set(t.id, t));
-  (incoming.dailyTasks || []).forEach((t) => taskMap.set(t.id, t));
+  (incoming.dailyTasks || []).forEach((t) => {
+    if (!taskMap.has(t.id)) taskMap.set(t.id, t);
+  });
 
   const msgMap = new Map<string, InboxChatMessage>();
   (base.inboxMessages || INITIAL_INBOX_MESSAGES).forEach((m) => msgMap.set(m.id, m));
-  (incoming.inboxMessages || []).forEach((m) => msgMap.set(m.id, m));
+  (incoming.inboxMessages || []).forEach((m) => {
+    if (!msgMap.has(m.id)) msgMap.set(m.id, m);
+  });
 
   return {
     ...base,
-    bakeries: Array.from(bakeryMap.values()),
-    debts: Array.from(debtMap.values()),
+    bakeries: synced.bakeries,
+    debts: synced.debts,
     villages: mergedVillages.length > 0 ? mergedVillages : base.villages,
     users: Array.from(userMap.values()),
     issuingEntities: Array.from(new Set([...base.issuingEntities, ...(incoming.issuingEntities || [])])),
@@ -240,11 +317,11 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
     dailyTasks: Array.from(taskMap.values()),
     inboxMessages: Array.from(msgMap.values()),
     systemConfig: {
-      ...(base.systemConfig || {}),
       ...(incoming.systemConfig || {}),
+      ...(base.systemConfig || {}),
       logoBase64: DEFAULT_OFFICIAL_LOGO,
     },
-    columnTitles: incoming.columnTitles || base.columnTitles,
+    columnTitles: base.columnTitles || incoming.columnTitles,
   };
 }
 
@@ -456,8 +533,12 @@ export async function loadInitialState(): Promise<AppState> {
     }
 
     // 3. Fallback defaults if any section is empty
-    bakeries = (bakeries ?? INITIAL_BAKERIES).map(normalizeBakeryPerCapita);
-    debts = debts ?? INITIAL_DEBTS;
+    const syncedInitial = synchronizeBakeryAndDebts(
+      (bakeries ?? INITIAL_BAKERIES).map(normalizeBakeryPerCapita),
+      debts ?? INITIAL_DEBTS
+    );
+    bakeries = syncedInitial.bakeries;
+    debts = syncedInitial.debts;
     villages = villages ?? DEFAULT_VILLAGES_HIERARCHY;
     issuingEntities = issuingEntities ?? DEFAULT_ISSUING_ENTITIES;
     violationTypes = violationTypes ?? DEFAULT_VIOLATION_TYPES;
@@ -522,6 +603,8 @@ export async function loadInitialState(): Promise<AppState> {
     let savedSessionStr: string | null = null;
     try {
       savedSessionStr = sessionStorage.getItem(KEYS.SESSION);
+      // Security enforcement: never keep plaintext Gmail passwords in localStorage
+      localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
     } catch {}
     const activeUsers = users ?? INITIAL_USERS;
     if (savedSessionStr) {
@@ -556,9 +639,13 @@ export async function loadInitialState(): Promise<AppState> {
     };
   } catch (criticalErr) {
     console.error('Critical fallback in loadInitialState:', criticalErr);
+    const fallbackSync = synchronizeBakeryAndDebts(
+      INITIAL_BAKERIES.map(normalizeBakeryPerCapita),
+      INITIAL_DEBTS
+    );
     return {
-      bakeries: INITIAL_BAKERIES.map(normalizeBakeryPerCapita),
-      debts: INITIAL_DEBTS,
+      bakeries: fallbackSync.bakeries,
+      debts: fallbackSync.debts,
       villages: DEFAULT_VILLAGES_HIERARCHY,
       issuingEntities: DEFAULT_ISSUING_ENTITIES,
       violationTypes: DEFAULT_VIOLATION_TYPES,
@@ -601,7 +688,12 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     users
   } = state;
 
-  const normalizedBakeries = (bakeries || []).map(normalizeBakeryPerCapita);
+  const synced = synchronizeBakeryAndDebts(
+    (bakeries || []).map(normalizeBakeryPerCapita),
+    debts || []
+  );
+  const normalizedBakeries = synced.bakeries;
+  const normalizedDebts = synced.debts;
 
   // Guarantee official Egyptian Ministry logo from GitHub is permanently locked in saved config
   const lockedConfig: SystemConfig = {
@@ -611,8 +703,9 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
 
   // LocalStorage
   try {
+    localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
     localStorage.setItem(KEYS.BAKERIES, JSON.stringify(normalizedBakeries));
-    localStorage.setItem(KEYS.DEBTS, JSON.stringify(debts));
+    localStorage.setItem(KEYS.DEBTS, JSON.stringify(normalizedDebts));
     localStorage.setItem(KEYS.VILLAGES, JSON.stringify(villages));
     localStorage.setItem(KEYS.ENTITIES, JSON.stringify(issuingEntities));
     localStorage.setItem(KEYS.VIOLATIONS, JSON.stringify(violationTypes));
@@ -635,7 +728,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
   // IndexedDB (No 5MB limit, stores large logos and thousands of entries safely)
   await Promise.all([
     idbSet(KEYS.BAKERIES, normalizedBakeries),
-    idbSet(KEYS.DEBTS, debts),
+    idbSet(KEYS.DEBTS, normalizedDebts),
     idbSet(KEYS.VILLAGES, villages),
     idbSet(KEYS.ENTITIES, issuingEntities),
     idbSet(KEYS.VIOLATIONS, violationTypes),
@@ -660,7 +753,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
       gmailEmail: lockedConfig.gmailEmail || localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') || 'ELHOSINY2020@gmail.com',
       state: {
         bakeries: normalizedBakeries,
-        debts,
+        debts: normalizedDebts,
         villages,
         issuingEntities,
         violationTypes,
@@ -701,11 +794,16 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
         destinationType: 'GOOGLE_DRIVE',
         targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
         bakeriesCount: normalizedBakeries.length,
-        debtsCount: debts.length,
+        debtsCount: normalizedDebts.length,
         data: backupSnapshot.state,
       };
       localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(drivePayload));
       localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, JSON.stringify(drivePayload));
+    }
+
+    // Cloud Firestore synchronization when user is authenticated with Firebase Auth
+    if (auth.currentUser) {
+      syncWorkspaceToFirestore(backupSnapshot.state).catch(() => {});
     }
 
     // Continuous auto-backup to selected hard disk file

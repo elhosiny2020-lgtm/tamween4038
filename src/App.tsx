@@ -42,7 +42,13 @@ import {
   INITIAL_INBOX_MESSAGES,
   DEFAULT_OFFICIAL_LOGO
 } from './defaultData';
-import { formatDateDDMMYYYY } from './utils/auditHelper';
+import {
+  formatDateDDMMYYYY,
+  synchronizeBakeryAndDebts,
+  recalculateAllDatabaseEquations,
+  calculateAnnualWeightedAveragesReport,
+} from './utils/auditHelper';
+import { testFirestoreConnection } from './lib/firebase';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
 import { HeaderCustomizerModal } from './components/HeaderCustomizerModal';
@@ -233,7 +239,7 @@ export default function App() {
   const [isVillageModalOpen, setIsVillageModalOpen] = useState(false);
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [reportModalInitialTab, setReportModalInitialTab] = useState<'bakeries' | 'debts' | 'bakery-debts' | 'users'>('bakeries');
+  const [reportModalInitialTab, setReportModalInitialTab] = useState<'bakeries' | 'debts' | 'bakery-debts' | 'users' | 'annual-averages'>('bakeries');
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
@@ -326,6 +332,9 @@ export default function App() {
   useEffect(() => {
     let hasLoaded = false;
 
+    const isAutoStart =
+      typeof window !== 'undefined' && window.location.search.includes('autostart=1');
+
     // Failsafe timer: if storage loading takes longer than 350ms, open app immediately with preloaded or defaults!
     const failsafe = setTimeout(() => {
       if (!hasLoaded) {
@@ -333,6 +342,7 @@ export default function App() {
         const preloaded = typeof window !== 'undefined'
           ? (window as unknown as { PRELOADED_TAMWEEN_STATE?: Partial<AppState> }).PRELOADED_TAMWEEN_STATE
           : undefined;
+        const usersList = preloaded?.users ?? INITIAL_USERS;
         setAppState({
           bakeries: preloaded?.bakeries ?? INITIAL_BAKERIES,
           debts: preloaded?.debts ?? INITIAL_DEBTS,
@@ -349,8 +359,8 @@ export default function App() {
           dailyTasks: preloaded?.dailyTasks ?? INITIAL_DAILY_TASKS,
           columnTitles: preloaded?.columnTitles ?? DEFAULT_COLUMN_TITLES,
           systemConfig: preloaded?.systemConfig ?? DEFAULT_SYSTEM_CONFIG,
-          users: preloaded?.users ?? INITIAL_USERS,
-          currentUser: null,
+          users: usersList,
+          currentUser: isAutoStart ? usersList[0] : null,
         });
         setSaveTimestamp(getArabicTimestamp());
       }
@@ -361,7 +371,10 @@ export default function App() {
         if (!hasLoaded) {
           hasLoaded = true;
           clearTimeout(failsafe);
-          setAppState(state);
+          setAppState({
+            ...state,
+            currentUser: isAutoStart ? (state.currentUser || state.users[0] || INITIAL_USERS[0]) : state.currentUser,
+          });
           setSaveTimestamp(getArabicTimestamp());
         }
       })
@@ -388,7 +401,7 @@ export default function App() {
             columnTitles: DEFAULT_COLUMN_TITLES,
             systemConfig: DEFAULT_SYSTEM_CONFIG,
             users: INITIAL_USERS,
-            currentUser: null,
+            currentUser: isAutoStart ? INITIAL_USERS[0] : null,
           });
           setSaveTimestamp(getArabicTimestamp());
         }
@@ -397,12 +410,21 @@ export default function App() {
     return () => clearTimeout(failsafe);
   }, []);
 
+  // Verify Firestore connection on boot per Firebase integration guidelines
+  useEffect(() => {
+    testFirestoreConnection().catch(() => {});
+  }, []);
+
   // Open Daily Entry Briefing Modal automatically once when user enters the database
   const [hasShownDailyBriefingSession, setHasShownDailyBriefingSession] = useState(false);
   useEffect(() => {
     if (appState?.currentUser && !hasShownDailyBriefingSession) {
       setHasShownDailyBriefingSession(true);
-      setIsDailyBriefingModalOpen(true);
+      const isAutoStart =
+        typeof window !== 'undefined' && window.location.search.includes('autostart=1');
+      if (!isAutoStart) {
+        setIsDailyBriefingModalOpen(true);
+      }
     }
   }, [appState?.currentUser, hasShownDailyBriefingSession]);
 
@@ -789,6 +811,12 @@ export default function App() {
     };
   }, [appState, bakeryRemainingDebtsMap]);
 
+  // Annual Weighted Averages Report Summary (المتوسط العام المرجح بأعداد المستفيدين 2023 - 2025)
+  const annualWeightedSummary = useMemo(() => {
+    if (!appState) return null;
+    return calculateAnnualWeightedAveragesReport(filteredBakeries.length > 0 ? filteredBakeries : appState.bakeries);
+  }, [appState, filteredBakeries]);
+
   // Keep fresh ref of appState for 10-min pre-logout autosave
   const appStateRef = React.useRef(appState);
   useEffect(() => {
@@ -1038,10 +1066,39 @@ export default function App() {
     } else {
       updated = [bakery, ...appState.bakeries];
     }
+    const synced = synchronizeBakeryAndDebts(updated, appState.debts);
     triggerSave(
-      { ...appState, bakeries: updated },
-      existingIndex >= 0 ? `تم حفظ وتعديل بيانات مخبز (${bakery.bakeryOwnerName}) بنجاح` : `تم إضافة وحفظ بيانات مخبز (${bakery.bakeryOwnerName}) بنجاح`
+      { ...appState, bakeries: synced.bakeries, debts: synced.debts },
+      existingIndex >= 0
+        ? `تم حفظ وتعديل بيانات مخبز (${bakery.bakeryOwnerName}) وإعادة احتساب المعادلات ومزامنة السجلات بنجاح`
+        : `تم إضافة وحفظ بيانات مخبز (${bakery.bakeryOwnerName}) وإعادة احتساب المعادلات بنجاح`
     );
+  };
+
+  const handleRecalculateAllDatabaseEquations = () => {
+    // 1. Save a safety snapshot before global recalculation
+    try {
+      localStorage.setItem(
+        'TAMWEEN_PRE_RECALC_SAFETY_BACKUP',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          bakeries: appState.bakeries,
+          debts: appState.debts,
+        })
+      );
+    } catch {}
+
+    // 2. Execute full database recalculation
+    const result = recalculateAllDatabaseEquations(appState.bakeries, appState.debts);
+    triggerSave(
+      {
+        ...appState,
+        bakeries: result.bakeries,
+        debts: result.debts,
+      },
+      `تم تنفيذ احتساب المعادلات لجميع سجلات قاعدة البيانات (${result.bakeries.length} مخبز و ${result.debts.length} مديونية) بنجاح!`
+    );
+    setIsAuditModalOpen(true);
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
@@ -1066,20 +1123,23 @@ export default function App() {
       updated = [debt, ...appState.debts];
     }
 
-    if (debt.netRemainingDebt >= 50000) {
+    const synced = synchronizeBakeryAndDebts(appState.bakeries, updated);
+    const savedDebt = synced.debts.find((d) => d.id === debt.id) || debt;
+
+    if (savedDebt.netRemainingDebt >= 50000) {
       addHighDebtNotification(
-        debt.bakeryId,
-        debt.bakeryOwnerName,
-        debt.machineNumber,
-        debt.village,
-        debt.netRemainingDebt,
+        savedDebt.bakeryId,
+        savedDebt.bakeryOwnerName,
+        savedDebt.machineNumber,
+        savedDebt.village,
+        savedDebt.netRemainingDebt,
         existingIndex >= 0 ? 'EDIT_DEBT' : 'ADD_DEBT'
       );
     }
 
     triggerSave(
-      { ...appState, debts: updated },
-      existingIndex >= 0 ? 'تم تعديل وحفظ قيد المديونية بنجاح' : 'تم إضافة وتسجيل قيد المديونية بنجاح'
+      { ...appState, bakeries: synced.bakeries, debts: synced.debts },
+      existingIndex >= 0 ? 'تم تعديل وحفظ قيد المديونية وإعادة احتساب الأرصدة بنجاح' : 'تم إضافة وتسجيل قيد المديونية وإعادة احتساب الأرصدة بنجاح'
     );
   };
 
@@ -2091,6 +2151,31 @@ export default function App() {
                     <Printer className="w-4 h-4 text-amber-400" />
                     <span>كشف الطباعة A4</span>
                   </button>
+
+                  {/* 6. Dedicated Recalculate Equations Button: احتساب المعادلات */}
+                  <button
+                    type="button"
+                    onClick={handleRecalculateAllDatabaseEquations}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-teal-600 via-emerald-600 to-teal-700 hover:from-teal-500 hover:to-emerald-500 text-white rounded-xl text-xs font-black shadow-lg border border-emerald-300/60 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    title="إعادة احتساب جميع المعادلات الحسابية والمحاسبية في قاعدة البيانات بالكامل (الأرغفة، متوسطات نصيب الفرد، المتوسطات السنوية، وأرصدة المديونيات)"
+                  >
+                    <Calculator className="w-4 h-4 text-amber-200" />
+                    <span>احتساب المعادلات</span>
+                  </button>
+
+                  {/* 7. Annual Weighted Averages Report Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReportModalInitialTab('annual-averages');
+                      setIsReportModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-cyan-900 to-blue-950 hover:from-cyan-800 hover:to-blue-900 text-cyan-200 rounded-xl text-xs font-black shadow-md border border-cyan-500/50 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    title="تقرير متوسطات نصيب الفرد السنوية والمتوسط العام المرجح بأعداد المستفيدين (2023 - 2025)"
+                  >
+                    <Table className="w-4 h-4 text-cyan-300" />
+                    <span>تقرير المتوسطات السنوية (2023-2025)</span>
+                  </button>
                 </div>
 
                 {/* Search Bar placed on the other side */}
@@ -3085,6 +3170,38 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Annual Weighted General Averages Summary Banner (المتوسط العام المرجح بأعداد المستفيدين للسنوات 2023 - 2025) */}
+              {annualWeightedSummary && (
+                <div className="p-3.5 bg-gradient-to-r from-slate-950 via-teal-950/40 to-slate-950 border-t-2 border-teal-500/40 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Calculator className="w-4 h-4 text-teal-400 shrink-0" />
+                    <span className="font-black text-teal-300">
+                      المتوسط السنوي العام المرجح بأعداد المستفيدين ({annualWeightedSummary.rows.length} مخبز):
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg font-black text-amber-300 font-mono">
+                      إجمالي الأرغفة: {annualWeightedSummary.totalLoaves.toLocaleString()} رغيف
+                    </span>
+                    <span className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg font-black text-emerald-300 font-mono">
+                      متوسط نصيب الفرد المرجح بالقرى: {annualWeightedSummary.weightedPerCapitaVillage}
+                    </span>
+                    <span className="px-2.5 py-1 bg-slate-900 border border-cyan-800 rounded-lg font-black text-cyan-200 font-mono">
+                      عام 2023: {annualWeightedSummary.weightedGeneralAvg2023} ({annualWeightedSummary.totalBeneficiaries2023.toLocaleString()} مستفيد)
+                    </span>
+                    <span className="px-2.5 py-1 bg-slate-900 border border-blue-800 rounded-lg font-black text-blue-200 font-mono">
+                      عام 2024: {annualWeightedSummary.weightedGeneralAvg2024} ({annualWeightedSummary.totalBeneficiaries2024.toLocaleString()} مستفيد)
+                    </span>
+                    <span className="px-2.5 py-1 bg-slate-900 border border-purple-800 rounded-lg font-black text-purple-200 font-mono">
+                      عام 2025: {annualWeightedSummary.weightedGeneralAvg2025} ({annualWeightedSummary.totalBeneficiaries2025.toLocaleString()} مستفيد)
+                    </span>
+                    <span className="px-2.5 py-1 bg-amber-950/80 border border-amber-500/60 rounded-lg font-black text-amber-300 font-mono">
+                      الفرق التراكمي المرجح (2025-2023): {annualWeightedSummary.weightedDiff2025vs2023}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

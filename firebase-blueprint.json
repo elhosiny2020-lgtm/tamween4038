@@ -1,0 +1,147 @@
+{
+  "entities": {
+    "Workspace": {
+      "title": "Workspace",
+      "description": "Cloud workspace state for the Ministry of Supply Bakery & Debts System",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the authenticated workspace owner",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerEmail": {
+          "type": "string",
+          "description": "Email of the workspace owner",
+          "maxLength": 256
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last sync",
+          "maxLength": 64
+        },
+        "bakeriesCount": {
+          "type": "number",
+          "description": "Count of bakeries in the workspace"
+        },
+        "debtsCount": {
+          "type": "number",
+          "description": "Count of debt records in the workspace"
+        },
+        "payloadJson": {
+          "type": "string",
+          "description": "Serialized workspace backup state",
+          "maxLength": 950000
+        }
+      },
+      "required": ["ownerId", "updatedAt", "bakeriesCount", "debtsCount", "payloadJson"]
+    },
+    "BakeryRecord": {
+      "title": "BakeryRecord",
+      "description": "Individual bakery record with beneficiaries, insurance value, loaves count, and per-capita averages",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique bakery identifier",
+          "maxLength": 128
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Authenticated user UID",
+          "maxLength": 128
+        },
+        "machineNumber": {
+          "type": "string",
+          "description": "Unique bakery machine number",
+          "maxLength": 64
+        },
+        "bakeryOwnerName": {
+          "type": "string",
+          "description": "Bakery owner full name",
+          "maxLength": 256
+        },
+        "insuranceValue": {
+          "type": "number",
+          "description": "Insurance value in EGP used to compute loavesCount = (insuranceValue * 3) / 235"
+        },
+        "insuranceQuota": {
+          "type": "number",
+          "description": "Daily flour quota in sacks"
+        },
+        "loavesCount": {
+          "type": "number",
+          "description": "Approved loaves count calculated from insuranceValue"
+        },
+        "perCapitaAverage": {
+          "type": "string",
+          "description": "Per-capita average formatted to 2 decimal places",
+          "maxLength": 32
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update",
+          "maxLength": 64
+        }
+      },
+      "required": ["id", "ownerId", "machineNumber", "bakeryOwnerName", "updatedAt"]
+    },
+    "DebtRecord": {
+      "title": "DebtRecord",
+      "description": "Individual bakery financial debt and violation record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique debt identifier",
+          "maxLength": 128
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Authenticated user UID",
+          "maxLength": 128
+        },
+        "bakeryId": {
+          "type": "string",
+          "description": "Linked bakery ID",
+          "maxLength": 128
+        },
+        "machineNumber": {
+          "type": "string",
+          "description": "Linked bakery machine number",
+          "maxLength": 64
+        },
+        "bakeryOwnerName": {
+          "type": "string",
+          "description": "Linked bakery owner name",
+          "maxLength": 256
+        },
+        "netRemainingDebt": {
+          "type": "number",
+          "description": "Calculated net remaining debt balance"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update",
+          "maxLength": 64
+        }
+      },
+      "required": ["id", "ownerId", "machineNumber", "bakeryOwnerName", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/workspaces/{workspaceId}": {
+      "schema": { "$ref": "#/entities/Workspace" },
+      "description": "Stores the synchronized workspace state for an authenticated user"
+    },
+    "/workspaces/{workspaceId}/bakeries/{bakeryId}": {
+      "schema": { "$ref": "#/entities/BakeryRecord" },
+      "description": "Stores individual bakery documents within a workspace"
+    },
+    "/workspaces/{workspaceId}/debts/{debtId}": {
+      "schema": { "$ref": "#/entities/DebtRecord" },
+      "description": "Stores individual debt documents within a workspace"
+    }
+  }
+}

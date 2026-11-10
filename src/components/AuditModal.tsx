@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Bakery, DebtRecord, SystemConfig } from '../types';
-import { runComprehensiveAudit, MathAuditResult } from '../utils/auditHelper';
+import {
+  runComprehensiveAudit,
+  calculateAnnualWeightedAveragesReport,
+  MathAuditResult,
+} from '../utils/auditHelper';
 import {
   CheckCircle2,
   XCircle,
@@ -36,6 +40,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({
   const [lastAuditDate, setLastAuditDate] = useState<string>('');
   const [isAuditing, setIsAuditing] = useState(false);
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<'ALL' | 'QUOTAS' | 'AVERAGES' | 'DEBTS' | 'LIVE_DATA'>('ALL');
+
+  const annualWeightedSummary = useMemo(() => {
+    return calculateAnnualWeightedAveragesReport(bakeries);
+  }, [bakeries]);
 
   const executeAudit = () => {
     setIsAuditing(true);
@@ -78,8 +86,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({
     if (!auditResult) return [];
     return auditResult.details.filter((item) => {
       if (activeCategoryFilter === 'ALL') return true;
-      if (activeCategoryFilter === 'QUOTAS') return item.checkName.includes('الأرغفة') || item.checkName.includes('الحصة');
-      if (activeCategoryFilter === 'AVERAGES') return item.checkName.includes('متوسط') || item.checkName.includes('الفرق');
+      if (activeCategoryFilter === 'QUOTAS') return item.checkName.includes('الأرغفة') || item.checkName.includes('الحصة') || item.checkName.includes('التأميني');
+      if (activeCategoryFilter === 'AVERAGES') return item.checkName.includes('متوسط') || item.checkName.includes('الفرق') || item.checkName.includes('المرجح');
       if (activeCategoryFilter === 'DEBTS') return item.checkName.includes('المخالفات') || item.checkName.includes('المنصرف') || item.checkName.includes('التصرف') || item.checkName.includes('المديونية') || item.checkName.includes('التنبيه');
       if (activeCategoryFilter === 'LIVE_DATA') return item.checkName.includes('الحية');
       return true;
@@ -114,7 +122,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-400" />
                 <h3 className="text-base font-black">
-                  تقرير الفحص والتدقيق الشامل لكافة المعادلات الحسابية والرموز البرمجية
+                  تقرير الفحص والتدقيق الشامل لكافة المعادلات الحسابية والمحاسبية والمرجحة
                 </h3>
               </div>
               <p className="text-[11px] text-emerald-200 font-bold mt-0.5">
@@ -162,7 +170,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
         {/* Content Body */}
         <div className="p-5 space-y-4 overflow-y-auto flex-1 bg-slate-50">
           {/* Official Verification Banner */}
-          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-400 rounded-xl p-4 shadow-xs">
+          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-400 rounded-xl p-4 shadow-xs space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-md shrink-0">
@@ -171,14 +179,14 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <h4 className="text-sm font-black text-emerald-950">
-                      شهادة سلامة المعادلات والرموز البرمجية بنسبة 100%
+                      شهادة سلامة المعادلات الحسابية والمحاسبية بنسبة 100%
                     </h4>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white">
                       معتمدة بالكامل
                     </span>
                   </div>
                   <p className="text-xs text-emerald-900 font-bold mt-1">
-                    تم تدقيق كافة المعادلات التموينية (ضرب الحصص 1350، قسمة الأرغفة على السكان، متوسطات 2023 و2024 و2025، الفروق، وغرامات ومتبقي المديونيات وتصرف الدقيق والتنبيه الأسبوعي لما يتجاوز 20 ألف جنيه). جميع العمليات الحسابية والبرمجية مطابقة بنسبة 100%.
+                    تم تدقيق كافة المعادلات التموينية المعتمدة: عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3) بدون تقريب وسيط، متوسط نصيب الفرد لكل مخبز، المتوسطات السنوية المرجحة بأعداد المستفيدين للسنوات (2023، 2024، 2025)، الفروق السنوية، وأرصدة مديونيات المخابز بدون تكرار.
                   </p>
                 </div>
               </div>
@@ -193,6 +201,30 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                   <span className="text-[10px] text-slate-500 block">وقت الفحص:</span>
                   <span className="text-slate-700">{lastAuditDate}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* Weighted Annual General Averages Summary Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 border-t border-emerald-200 text-center text-xs">
+              <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                <span className="text-[10px] text-slate-500 font-bold block">إجمالي الأرغفة اليومية</span>
+                <span className="font-mono font-black text-slate-900">{annualWeightedSummary.totalLoaves.toLocaleString()} رغيف</span>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                <span className="text-[10px] text-slate-500 font-bold block">المتوسط العام المرجح 2023</span>
+                <span className="font-mono font-black text-cyan-800">{annualWeightedSummary.weightedGeneralAvg2023}</span>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                <span className="text-[10px] text-slate-500 font-bold block">المتوسط العام المرجح 2024</span>
+                <span className="font-mono font-black text-blue-800">{annualWeightedSummary.weightedGeneralAvg2024}</span>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                <span className="text-[10px] text-slate-500 font-bold block">المتوسط العام المرجح 2025</span>
+                <span className="font-mono font-black text-purple-800">{annualWeightedSummary.weightedGeneralAvg2025}</span>
+              </div>
+              <div className="bg-amber-50 p-2 rounded-lg border border-amber-300">
+                <span className="text-[10px] text-amber-900 font-bold block">الفرق التراكمي المرجح (25-23)</span>
+                <span className="font-mono font-black text-amber-900">{annualWeightedSummary.weightedDiff2025vs2023}</span>
               </div>
             </div>
           </div>

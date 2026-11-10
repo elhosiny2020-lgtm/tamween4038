@@ -19,7 +19,10 @@ import firebaseConfig from '../../firebase-applet-config.json';
 // 1. Initialize Firebase App, Auth, and Firestore Database
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app, (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId);
+export const db = getFirestore(
+  app,
+  (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId || '(default)'
+);
 
 // 2. Configure Google Workspace OAuth Scopes (Google Drive & Gmail Direct Integration)
 export const WORKSPACE_SCOPES = [
@@ -37,6 +40,10 @@ export function getCachedGoogleAccessToken(): string | null {
   return cachedAccessToken;
 }
 
+export function getCachedAccessToken(): string | null {
+  return cachedAccessToken;
+}
+
 export function initGoogleAuthListener(callback?: (user: User | null) => void) {
   return onAuthStateChanged(auth, (user) => {
     if (!user) {
@@ -48,6 +55,7 @@ export function initGoogleAuthListener(callback?: (user: User | null) => void) {
 
 export async function signInWithGoogleWorkspace(): Promise<{
   user: User;
+  email: string;
   accessToken: string | null;
 }> {
   const result = await signInWithPopup(auth, googleAuthProvider);
@@ -55,6 +63,7 @@ export async function signInWithGoogleWorkspace(): Promise<{
   cachedAccessToken = credential?.accessToken ?? null;
   return {
     user: result.user,
+    email: result.user.email || '',
     accessToken: cachedAccessToken,
   };
 }
@@ -150,29 +159,41 @@ export async function testFirestoreConnection(): Promise<boolean> {
 
 // 5. Cloud Database Persistence (Firestore /workspaces/{uid})
 export async function syncWorkspaceToFirestore(
-  stateSnapshot: {
-    bakeriesCount: number;
-    debtsCount: number;
-    gmailEmail: string;
-    payloadJson: string;
-  }
+  stateOrSnapshot: Record<string, any>
 ): Promise<boolean> {
   const currentUser = auth.currentUser;
   if (!currentUser) return false;
 
   const path = `workspaces/${currentUser.uid}`;
   try {
+    const isNormalizedSnapshot =
+      typeof stateOrSnapshot.payloadJson === 'string' &&
+      typeof stateOrSnapshot.bakeriesCount === 'number';
+
+    const payloadJson = isNormalizedSnapshot
+      ? stateOrSnapshot.payloadJson
+      : JSON.stringify(stateOrSnapshot);
+    const bakeriesCount = isNormalizedSnapshot
+      ? stateOrSnapshot.bakeriesCount
+      : Array.isArray(stateOrSnapshot.bakeries)
+      ? stateOrSnapshot.bakeries.length
+      : 0;
+    const debtsCount = isNormalizedSnapshot
+      ? stateOrSnapshot.debtsCount
+      : Array.isArray(stateOrSnapshot.debts)
+      ? stateOrSnapshot.debts.length
+      : 0;
+
     // Firestore document limit is 1 MiB; ensure payload fits safely
-    if (stateSnapshot.payloadJson.length > 900_000) {
+    if (payloadJson.length > 900_000) {
       return false;
     }
     await setDoc(doc(db, 'workspaces', currentUser.uid), {
-      ownerUid: currentUser.uid,
-      ownerEmail: currentUser.email || stateSnapshot.gmailEmail || '',
-      gmailEmail: stateSnapshot.gmailEmail || currentUser.email || '',
-      bakeriesCount: stateSnapshot.bakeriesCount,
-      debtsCount: stateSnapshot.debtsCount,
-      payloadJson: stateSnapshot.payloadJson,
+      ownerId: currentUser.uid,
+      ownerEmail: currentUser.email || stateOrSnapshot.gmailEmail || '',
+      bakeriesCount,
+      debtsCount,
+      payloadJson,
       updatedAt: new Date().toISOString(),
     });
     return true;
@@ -214,7 +235,7 @@ export async function loadWorkspaceFromFirestore(): Promise<{
 
 // 6. Direct Google Drive Upload & Sync API (https://www.googleapis.com/auth/drive.file)
 export async function uploadBackupToGoogleDriveDirect(
-  backupPayload: object,
+  backupPayload: object | string,
   fileName: string = 'tamween_mahalla_cloud_backup.json',
   confirmOverwrite?: (existingFileName: string) => boolean
 ): Promise<{
@@ -268,7 +289,8 @@ export async function uploadBackupToGoogleDriveDirect(
     description: 'نسخة احتياطية لمنظومة إدارة تموين مركز المحلة الكبرى - قاعدة بيانات المخابز والمديونيات',
   };
 
-  const jsonContent = JSON.stringify(backupPayload, null, 2);
+  const jsonContent =
+    typeof backupPayload === 'string' ? backupPayload : JSON.stringify(backupPayload, null, 2);
   const boundary = '-------TamweenGoogleDriveBoundary7MA4YWxkTrZu0gW';
   const delimiter = `\r\n--${boundary}\r\n`;
   const closeDelimiter = `\r\n--${boundary}--`;
@@ -314,7 +336,7 @@ export async function uploadBackupToGoogleDriveDirect(
 
 export async function downloadLatestBackupFromGoogleDriveDirect(): Promise<{
   success: boolean;
-  data?: unknown;
+  data?: any;
   fileName?: string;
   modifiedTime?: string;
   message: string;
@@ -396,7 +418,7 @@ function toBase64Standard(str: string): string {
 
 export async function sendBackupDirectToGmail(
   recipientEmail: string,
-  backupPayload: object,
+  backupPayload: object | string,
   stats: { bakeriesCount: number; debtsCount: number; totalRemainingDebt?: number }
 ): Promise<{
   success: boolean;
@@ -443,7 +465,9 @@ export async function sendBackupDirectToGmail(
     </div>
   `;
 
-  const jsonAttachmentBase64 = toBase64Standard(JSON.stringify(backupPayload, null, 2));
+  const rawJson =
+    typeof backupPayload === 'string' ? backupPayload : JSON.stringify(backupPayload, null, 2);
+  const jsonAttachmentBase64 = toBase64Standard(rawJson);
   const mimeBoundary = 'TamweenGmailMimeBoundary_98457293';
 
   const mimeMessage = [

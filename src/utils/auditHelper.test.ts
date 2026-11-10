@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {
   calculatePerCapitaAverage,
   calculateLoavesCount,
+  calculateRawLoavesFromInsuranceValue,
+  calculateLoavesFromInsuranceValue,
+  calculateAnnualWeightedAveragesReport,
+  recalculateAllDatabaseEquations,
   runComprehensiveAudit,
   addDropdownOption,
   editDropdownOption,
@@ -17,6 +21,44 @@ test('calculatePerCapitaAverage returns strictly 2 decimal places (not 3)', () =
   assert.equal(calculatePerCapitaAverage(27000, 30000), '0.90');
   assert.equal(calculatePerCapitaAverage(24300, 29400), '0.83');
   assert.equal(calculatePerCapitaAverage(0, 0), '0.00');
+});
+
+test('calculateLoavesFromInsuranceValue computes (insuranceValue * 3) / 235 with no intermediate rounding', () => {
+  // 235 / 3 = 78.33333333333333 (NOT 78.33)
+  assert.equal(calculateLoavesFromInsuranceValue(2538000), 32400);
+  assert.equal(calculateLoavesFromInsuranceValue(1903500), 24300);
+  assert.equal(calculateLoavesFromInsuranceValue(2115000), 27000);
+  assert.equal(calculateLoavesFromInsuranceValue(2326500), 29700);
+  assert.equal(calculateLoavesFromInsuranceValue(1692000), 21600);
+  // Check raw unrounded precision
+  const raw = calculateRawLoavesFromInsuranceValue(235);
+  assert.equal(raw, 3);
+});
+
+test('calculateAnnualWeightedAveragesReport computes weighted general averages vs simple arithmetic averages accurately', () => {
+  const report = calculateAnnualWeightedAveragesReport(INITIAL_BAKERIES);
+  const sum23 = INITIAL_BAKERIES.reduce((s, b) => s + b.beneficiaries2023, 0);
+  const sum24 = INITIAL_BAKERIES.reduce((s, b) => s + b.beneficiaries2024, 0);
+  const sum25 = INITIAL_BAKERIES.reduce((s, b) => s + b.beneficiaries2025, 0);
+  assert.equal(report.totalBakeries, 5);
+  assert.equal(report.totalLoaves, 135000);
+  assert.equal(report.totalBeneficiaries2023, sum23);
+  assert.equal(report.totalBeneficiaries2024, sum24);
+  assert.equal(report.totalBeneficiaries2025, sum25);
+  // Weighted average = sum(loaves) / sum(beneficiaries)
+  assert.equal(report.weightedAvg2023, (135000 / sum23).toFixed(2));
+  assert.equal(report.weightedAvg2024, (135000 / sum24).toFixed(2));
+  assert.equal(report.weightedAvg2025, (135000 / sum25).toFixed(2));
+});
+
+test('recalculateAllDatabaseEquations normalizes and synchronizes all bakeries and debts idempotently', () => {
+  const staleBakeries = INITIAL_BAKERIES.map((b, idx) =>
+    idx === 0 ? { ...b, loavesCount: 999, perCapitaAverage: '0.123' } : b
+  );
+  const res = recalculateAllDatabaseEquations(staleBakeries, INITIAL_DEBTS);
+  assert.equal(res.bakeries[0].loavesCount, 32400);
+  assert.equal(res.bakeries[0].perCapitaAverage, '0.84');
+  assert.equal(res.summary.updatedBakeriesCount >= 1, true);
 });
 
 test('runComprehensiveAudit passes all mathematical and 2-decimal checks', () => {

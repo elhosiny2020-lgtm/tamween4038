@@ -177,17 +177,17 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'بشبيش الرئيسية',
     insuranceQuota: 24,
     actualQuota: 24,
-    insuranceValue: 18500,
-    loavesCount: 24 * 1350, // 32400
+    insuranceValue: 2538000, // 2538000 ÷ (235 ÷ 3) = 32400 رغيف
+    loavesCount: 32400,
     villagePopulation: 38500,
     perCapitaAverage: (32400 / 38500).toFixed(2), // 0.84
     beneficiaries2023: 34200,
-    avg2023: (32400 / 34200).toFixed(2),
+    avg2023: (32400 / 34200).toFixed(2), // 0.95
     beneficiaries2024: 35800,
-    avg2024: (32400 / 35800).toFixed(2),
+    avg2024: (32400 / 35800).toFixed(2), // 0.91
     beneficiaries2025: 37400,
-    avg2025: (32400 / 37400).toFixed(2),
-    avgDiff: ((32400 / 37400) - (32400 / 34200)).toFixed(2),
+    avg2025: (32400 / 37400).toFixed(2), // 0.87
+    avgDiff: (parseFloat((32400 / 37400).toFixed(2)) - parseFloat((32400 / 34200).toFixed(2))).toFixed(2), // -0.08
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
@@ -198,7 +198,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     phone: '01004414038',
     nationalId: '28905141600174',
     commercialRegDate: '2027-04-15',
-    bakeryLicenseDate: '2026-11-18', // Expiring in 12 days!
+    bakeryLicenseDate: '2026-11-18',
     leaseAgreementDate: '2028-09-01',
     taxCardDate: '2027-01-10',
     notes: 'مخبز منتظم في الإنتاج وجودة رغيف ممتازة'
@@ -211,17 +211,17 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'محلة حسن الرئيسية',
     insuranceQuota: 18,
     actualQuota: 18,
-    insuranceValue: 14200,
-    loavesCount: 18 * 1350, // 24300
+    insuranceValue: 1903500, // 1903500 ÷ (235 ÷ 3) = 24300 رغيف
+    loavesCount: 24300,
     villagePopulation: 29400,
     perCapitaAverage: (24300 / 29400).toFixed(2), // 0.83
     beneficiaries2023: 26100,
-    avg2023: (24300 / 26100).toFixed(2),
+    avg2023: (24300 / 26100).toFixed(2), // 0.93
     beneficiaries2024: 27500,
-    avg2024: (24300 / 27500).toFixed(2),
+    avg2024: (24300 / 27500).toFixed(2), // 0.88
     beneficiaries2025: 28900,
-    avg2025: (24300 / 28900).toFixed(2),
-    avgDiff: ((24300 / 28900) - (24300 / 26100)).toFixed(2),
+    avg2025: (24300 / 28900).toFixed(2), // 0.84
+    avgDiff: (parseFloat((24300 / 28900).toFixed(2)) - parseFloat((24300 / 26100).toFixed(2))).toFixed(2), // -0.09
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
@@ -231,9 +231,9 @@ export const INITIAL_BAKERIES: Bakery[] = [
     fuelType: 'سولار',
     phone: '01123456789',
     nationalId: '28509211601289',
-    commercialRegDate: '2026-11-14', // Expiring in 8 days!
+    commercialRegDate: '2026-11-14',
     bakeryLicenseDate: '2027-08-30',
-    leaseAgreementDate: '2026-11-09', // Expiring in 3 days!
+    leaseAgreementDate: '2026-11-09',
     taxCardDate: '2027-12-01',
     notes: 'تم فحص المخبز وسحب عينات دورية'
   },
@@ -245,17 +245,17 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'شبرا بابل',
     insuranceQuota: 20,
     actualQuota: 20,
-    insuranceValue: 16000,
-    loavesCount: 20 * 1350, // 27000
+    insuranceValue: 2115000, // 2115000 ÷ (235 ÷ 3) = 27000 رغيف
+    loavesCount: 27000,
     villagePopulation: 31200,
     perCapitaAverage: (27000 / 31200).toFixed(2), // 0.87
     beneficiaries2023: 28000,
-    avg2023: (27000 / 28000).toFixed(2),
+    avg2023: (27000 / 28000).toFixed(2), // 0.96
     beneficiaries2024: 29500,
-    avg2024: (27000 / 29500).toFixed(2),
+    avg2024: (27000 / 29500).toFixed(2), // 0.92
     beneficiaries2025: 30800,
-    avg2025: (27000 / 30800).toFixed(2),
-    avgDiff: ((27000 / 30800) - (27000 / 28000)).toFixed(2),
+    avg2025: (27000 / 30800).toFixed(2), // 0.88
+    avgDiff: (parseFloat((27000 / 30800).toFixed(2)) - parseFloat((27000 / 28000).toFixed(2))).toFixed(2), // -0.08
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
@@ -268,8 +268,8 @@ export const INITIAL_BAKERIES: Bakery[] = [
     commercialRegDate: '2028-02-20',
     bakeryLicenseDate: '2027-05-15',
     leaseAgreementDate: '2029-01-01',
-    taxCardDate: '2026-11-20', // Expiring in 14 days!
-    notes: 'خط إنتاج حديث مطابق للااشتراطات البيئية'
+    taxCardDate: '2026-11-20',
+    notes: 'خط إنتاج حديث مطابق للاشتراطات البيئية'
   },
   {
     id: 'b-104',
@@ -279,17 +279,17 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'دمرو الرئيسية',
     insuranceQuota: 22,
     actualQuota: 22,
-    insuranceValue: 17200,
-    loavesCount: 22 * 1350, // 29700
+    insuranceValue: 2326500, // 2326500 ÷ (235 ÷ 3) = 29700 رغيف
+    loavesCount: 29700,
     villagePopulation: 33400,
     perCapitaAverage: (29700 / 33400).toFixed(2), // 0.89
     beneficiaries2023: 29800,
-    avg2023: (29700 / 29800).toFixed(2),
+    avg2023: (29700 / 29800).toFixed(2), // 1.00
     beneficiaries2024: 31200,
-    avg2024: (29700 / 31200).toFixed(2),
+    avg2024: (29700 / 31200).toFixed(2), // 0.95
     beneficiaries2025: 32900,
-    avg2025: (29700 / 32900).toFixed(2),
-    avgDiff: ((29700 / 32900) - (29700 / 29800)).toFixed(2),
+    avg2025: (29700 / 32900).toFixed(2), // 0.90
+    avgDiff: (parseFloat((29700 / 32900).toFixed(2)) - parseFloat((29700 / 29800).toFixed(2))).toFixed(2), // -0.10
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مجر',
@@ -313,17 +313,17 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'الدواخلية',
     insuranceQuota: 16,
     actualQuota: 16,
-    insuranceValue: 12500,
-    loavesCount: 16 * 1350, // 21600
+    insuranceValue: 1692000, // 1692000 ÷ (235 ÷ 3) = 21600 رغيف
+    loavesCount: 21600,
     villagePopulation: 25800,
     perCapitaAverage: (21600 / 25800).toFixed(2), // 0.84
     beneficiaries2023: 23000,
-    avg2023: (21600 / 23000).toFixed(3),
+    avg2023: (21600 / 23000).toFixed(2), // 0.94
     beneficiaries2024: 24200,
-    avg2024: (21600 / 24200).toFixed(3),
+    avg2024: (21600 / 24200).toFixed(2), // 0.89
     beneficiaries2025: 25100,
-    avg2025: (21600 / 25100).toFixed(3),
-    avgDiff: ((21600 / 25100) - (21600 / 23000)).toFixed(3),
+    avg2025: (21600 / 25100).toFixed(2), // 0.86
+    avgDiff: (parseFloat((21600 / 25100).toFixed(2)) - parseFloat((21600 / 23000).toFixed(2))).toFixed(2), // -0.08
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
@@ -334,7 +334,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     phone: '01098765432',
     nationalId: '28712051601934',
     commercialRegDate: '2027-10-05',
-    bakeryLicenseDate: '2026-11-05', // Expired yesterday!
+    bakeryLicenseDate: '2026-11-05',
     leaseAgreementDate: '2028-04-18',
     taxCardDate: '2027-09-22',
     notes: 'رخصة المخبز تحتاج إلى تجديد عاجل'
