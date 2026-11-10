@@ -3335,7 +3335,7 @@ export default function App() {
                             </tr>
                           );
 
-                          // Helper to render Grand Total Row
+                          // Helper to render Grand Total Row ("الإجمالي")
                           const renderGrandTotalRow = () => {
                             let gInsVal = 0;
                             let gInsQuota = 0;
@@ -3373,7 +3373,7 @@ export default function App() {
                                 {showBasicCols && (
                                   <>
                                     <td className="py-3.5 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300 text-sm">
-                                      الإجمالي العام لمركز المحلة الكبرى
+                                      الإجمالي العام (الإجمالي)
                                     </td>
                                     <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
                                       {sortedBakeries.length} مخبز
@@ -3389,7 +3389,7 @@ export default function App() {
                                 )}
                                 {showQuotaCols && (
                                   <>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gInsVal.toLocaleString()}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gInsVal.toLocaleString()} ج.م</td>
                                     <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
                                       {gInsQuota.toLocaleString()}
                                     </td>
@@ -3467,6 +3467,112 @@ export default function App() {
                         })()
                       )}
                     </tbody>
+
+                    {/* Dedicated Sticky Summary Footer ("الإجمالي") */}
+                    {sortedBakeries.length > 0 && (
+                      <tfoot className="sticky bottom-0 z-20 bg-[#051124] text-amber-300 font-extrabold border-t-4 border-amber-500 shadow-xl text-xs">
+                        {(() => {
+                          let gInsVal = 0;
+                          let gInsQuota = 0;
+                          let gActQuota = 0;
+                          let gLoaves = 0;
+                          let gPop = 0;
+                          let gBen2023 = 0;
+                          let gBen2024 = 0;
+                          let gBen2025 = 0;
+                          let gDebt = 0;
+
+                          sortedBakeries.forEach((b) => {
+                            gInsVal += Number(b.insuranceValue) || 0;
+                            gInsQuota += Number(b.insuranceQuota) || 0;
+                            gActQuota += Number(b.actualQuota) || 0;
+                            gLoaves += Number(b.loavesCount) || 0;
+                            gPop += Number(b.villagePopulation) || 0;
+                            gBen2023 += Number(b.beneficiaries2023) || 0;
+                            gBen2024 += Number(b.beneficiaries2024) || 0;
+                            gBen2025 += Number(b.beneficiaries2025) || 0;
+                            gDebt += bakeryRemainingDebtsMap[b.id] || 0;
+                          });
+
+                          const gAvg2023 = gBen2023 > 0 ? (gLoaves / gBen2023).toFixed(2) : '0.00';
+                          const gAvg2024 = gBen2024 > 0 ? (gLoaves / gBen2024).toFixed(2) : '0.00';
+                          const gAvg2025 = gBen2025 > 0 ? (gLoaves / gBen2025).toFixed(2) : '0.00';
+                          const gAvgDiff = (Number(gAvg2023) - Number(gAvg2024) - Number(gAvg2025)).toFixed(2);
+
+                          return (
+                            <tr>
+                              <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-400 font-black text-sm">🏛️</td>
+                              {showBasicCols && (
+                                <>
+                                  <td className="py-3.5 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300 text-sm">
+                                    الإجمالي
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                    {sortedBakeries.length} مخبز
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-slate-300">مركز المحلة</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-slate-300">جميع الوحدات</td>
+                                </>
+                              )}
+                              {showDebtCol && (
+                                <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-rose-300 text-sm">
+                                  {gDebt > 0 ? `${gDebt.toLocaleString()} ج.م` : 'خالص (0)'}
+                                </td>
+                              )}
+                              {showQuotaCols && (
+                                <>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gInsVal.toLocaleString()} ج.م</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
+                                    {gInsQuota.toLocaleString()}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gActQuota.toLocaleString()}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
+                                    {gLoaves.toLocaleString()}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-emerald-300 bg-[#0F2342]">
+                                    {gAvg2025}
+                                  </td>
+                                </>
+                              )}
+                              {showDemographicsCols && (
+                                <>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gPop.toLocaleString()}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2023.toLocaleString()}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2024.toLocaleString()}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2025.toLocaleString()}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2023}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2024}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2025}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-400 bg-[#162F57]">{gAvgDiff}</td>
+                                </>
+                              )}
+                              {showOperationsCols && (
+                                <>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                </>
+                              )}
+                              {showContactLicenseCols && (
+                                <>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                </>
+                              )}
+                              <td className="py-3.5 px-2 no-print">—</td>
+                            </tr>
+                          );
+                        })()}
+                      </tfoot>
+                    )}
                   </table>
                 </div>
 

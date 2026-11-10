@@ -358,27 +358,30 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   return (
     <div className="space-y-4" dir="rtl">
       {/* 1. Prominent Section Title Banner: قاعدة بيانات مديونيات المخابز */}
-      <div className="bg-gradient-to-l from-[#0A1931] via-[#0F2342] to-[#1E3A8A] text-white rounded-2xl p-5 shadow-md border border-blue-900/40 flex flex-wrap items-center justify-between gap-4 no-print">
+      <div className="bg-[#0F2342] text-white rounded-2xl p-5 shadow-md border border-[#1E3A5F] flex flex-wrap items-center justify-between gap-4 no-print">
         <div className="flex items-center gap-3.5">
           <div className="p-3 bg-white/10 rounded-xl border border-white/20">
-            <Scale className="w-7 h-7 text-blue-200" />
+            <Scale className="w-7 h-7 text-amber-400" />
           </div>
           <div>
-            <h2 className="text-lg md:text-xl font-black tracking-tight text-white">
-              قاعدة بيانات مديونيات المخابز
+            <h2 className="text-lg md:text-xl font-black tracking-tight text-white flex items-center gap-2">
+              <span>قاعدة بيانات مديونيات المخابز</span>
+              <span className="text-xs bg-amber-500/20 text-amber-300 px-2.5 py-0.5 rounded-full border border-amber-400/30">
+                منظومة موحدة
+              </span>
             </h2>
-            <p className="text-xs text-blue-200 font-bold mt-0.5">
+            <p className="text-xs text-slate-300 font-bold mt-0.5">
               إدارة ومتابعة المخالفات التموينية والمبالغ المضافة وفروق التصرف والتحصيلات وصافي المديونيات المتبقية
             </p>
           </div>
         </div>
 
-        <div className="flex items-center flex-wrap gap-2">
+        <div className="flex items-center flex-wrap justify-end gap-2 text-right">
           <button
             type="button"
             disabled={isExportingPdf}
             onClick={handleExportDebtsPdf}
-            className="px-4 py-2.5 bg-[#1D4ED8] hover:bg-[#2563EB] active:scale-[0.98] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm border border-blue-400/40 transition cursor-pointer"
+            className="px-4 py-2.5 bg-[#1E3A8A] hover:bg-[#2563EB] active:scale-[0.98] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm border border-blue-400/40 transition cursor-pointer"
           >
             {isExportingPdf ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
             <span>{isExportingPdf ? 'جاري التصدير...' : 'تصدير التقرير PDF'}</span>
@@ -394,7 +397,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             }
             className="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
           >
-            <Printer className="w-4 h-4" />
+            <Printer className="w-4 h-4 text-amber-300" />
             <span>طباعة فورية</span>
           </button>
         </div>
@@ -1275,46 +1278,46 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 )}
               </tbody>
 
-              {/* Highlighted Summary Footer Row (tfoot) */}
+              {/* Highlighted Summary Footer Row (tfoot - الإجمالي) */}
               {filteredDebts.length > 0 && (
-                <tfoot>
-                  <tr className="bg-[#DBEAFE] text-[#0F2342] font-black border-t-2 border-[#0F2342] text-xs font-mono">
-                    <td colSpan={5} className="py-3 px-3 text-right font-sans font-black border-l border-blue-300">
-                      إجمالي السجلات المعروضة ({filteredDebts.length} قيد مديونية)
+                <tfoot className="sticky bottom-0 z-20 bg-[#051124] text-amber-300 font-extrabold border-t-4 border-amber-500 shadow-xl text-xs font-mono">
+                  <tr>
+                    <td colSpan={5} className="py-3.5 px-3 text-right font-sans font-black border-l border-[#1E3A5F] text-amber-300 text-sm">
+                      الإجمالي ({filteredDebts.length} قيد مديونية)
                     </td>
-                    <td colSpan={3} className="border-l border-blue-300">—</td>
-                    <td className="py-2.5 px-2 border-l border-blue-300">{filteredTotals.sumViol.toLocaleString()}</td>
-                    <td className="py-2.5 px-2 border-l border-blue-300">{filteredTotals.sumOldViol.toLocaleString()}</td>
-                    <td className="py-2.5 px-2 border-l border-blue-300 bg-blue-200/70">
+                    <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-400">—</td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumViol.toLocaleString()}</td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumOldViol.toLocaleString()}</td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
                       {filteredTotals.sumTotalViol.toLocaleString()}
                     </td>
-                    <td colSpan={3} className="border-l border-blue-300">—</td>
-                    <td className="py-2.5 px-2 border-l border-blue-300 text-emerald-800">
+                    <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-400">—</td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-400 font-black">
                       {filteredTotals.sumPaidViol.toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-2 border-l border-blue-300 bg-blue-200/70">
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
                       {filteredTotals.sumRemViol.toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-2 border-l border-blue-300">{filteredTotals.sumAdded.toLocaleString()}</td>
-                    <td colSpan={3} className="border-l border-blue-300">—</td>
-                    <td className="py-2.5 px-2 border-l border-blue-300 text-emerald-800">
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumAdded.toLocaleString()}</td>
+                    <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-400">—</td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-400 font-black">
                       {filteredTotals.sumPaidAdded.toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-2 border-l border-blue-300 bg-blue-200/70">
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
                       {filteredTotals.sumRemAdded.toLocaleString()}
                     </td>
-                    <td className="border-l border-blue-300">—</td>
-                    <td className="py-2.5 px-1.5 border-l border-blue-300">{filteredTotals.sumDispBags}</td>
-                    <td colSpan={2} className="border-l border-blue-300">—</td>
-                    <td className="py-2.5 px-2 border-l border-blue-300 bg-blue-200/70">
+                    <td className="border-l border-[#1E3A5F] text-slate-400">—</td>
+                    <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-white">{filteredTotals.sumDispBags}</td>
+                    <td colSpan={2} className="border-l border-[#1E3A5F] text-slate-400">—</td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
                       {filteredTotals.sumDispVal.toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-2 border-l border-blue-300">{filteredTotals.sumDispVal.toLocaleString()}</td>
-                    <td colSpan={3} className="border-l border-blue-300">—</td>
-                    <td className="py-2.5 px-2 border-l border-blue-300 text-emerald-800">
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumDispVal.toLocaleString()}</td>
+                    <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-400">—</td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-400 font-black">
                       {filteredTotals.sumPaidDisp.toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-3 border-l border-blue-300 bg-red-100 text-red-900 font-black">
+                    <td className="py-2.5 px-3 border-l border-[#1E3A5F] bg-[#162F57] text-rose-300 font-black text-sm">
                       {filteredTotals.sumNetRem.toLocaleString()} ج.م
                     </td>
                     <td className="no-print" />
