@@ -12,6 +12,69 @@ export const OFFICIAL_ONLINE_URL = 'https://ais-pre-7v2ybbenoneaktwif4yyyx-51885
  * 3. Uses standard script tags (non-module) so Chrome and Edge NEVER block it on file:///
  * 4. Permanently saves changes on the device via LocalStorage/IndexedDB.
  */
+export function generateStandaloneHtml(currentState: AppState): string {
+  const exportTimestamp = new Date().toISOString();
+  const exportPayload = {
+    exportTimestamp,
+    version: '3.0',
+    bakeries: currentState.bakeries,
+    debts: currentState.debts,
+    villages: currentState.villages,
+    issuingEntities: currentState.issuingEntities,
+    violationTypes: currentState.violationTypes,
+    activityStatuses: currentState.activityStatuses,
+    columnTitles: currentState.columnTitles,
+    systemConfig: currentState.systemConfig,
+    users: currentState.users,
+  };
+
+  const preloadedScript =
+    '<scr' +
+    'ipt id="tamween-preloaded-data">\nwindow.PRELOADED_TAMWEEN_STATE = ' +
+    JSON.stringify(exportPayload) +
+    ';\n</scr' +
+    'ipt>';
+
+  let baseHtml = '';
+  if (typeof document !== 'undefined') {
+    baseHtml = '<!doctype html>\n' + document.documentElement.outerHTML;
+  } else {
+    baseHtml = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>منظومة وزارة التموين</title></head><body><div id="root"></div></body></html>`;
+  }
+
+  // Remove external CDN script tags
+  baseHtml = baseHtml.replace(
+    /<script[^>]*src="https:\/\/cdnjs\.cloudflare\.com[^>]*><\/script>/gi,
+    `<!-- Non-blocking offline script fallback -->
+  <script>
+    try {
+      if (typeof window !== 'undefined' && navigator.onLine) {
+        var s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        s.async = true;
+        document.head.appendChild(s);
+      }
+    } catch (e) {}
+  </script>`
+  );
+
+  baseHtml = baseHtml.replace(/<script type="module"/gi, '<script');
+  baseHtml = baseHtml.replace(/crossorigin="[^"]*"/gi, '');
+  baseHtml = baseHtml.replace(/crossorigin/gi, '');
+
+  const preloadedRegex = /<script id="tamween-preloaded-data">[\s\S]*?<\/script>/i;
+  if (preloadedRegex.test(baseHtml)) {
+    return baseHtml.replace(preloadedRegex, () => preloadedScript);
+  } else if (baseHtml.includes('</head>')) {
+    return baseHtml.replace('</head>', () => `${preloadedScript}\n</head>`);
+  }
+  return preloadedScript + '\n' + baseHtml;
+}
+
+/**
+ * Downloads a complete, standalone, self-contained HTML application file
+ * with ALL current modifications, bakeries, debts, and settings preloaded.
+ */
 export async function downloadUpdatedAppHtml(currentState: AppState): Promise<{ success: boolean; message: string; fileName?: string }> {
   try {
     const exportTimestamp = new Date().toISOString();

@@ -1003,7 +1003,29 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 <input
                   type="number"
                   value={flourBagPrice}
-                  onChange={(e) => setFlourBagPrice(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => {
+                    const price = parseFloat(e.target.value) || 0;
+                    setFlourBagPrice(price);
+                    // عند تعديل سعر الشيكارة يعاد احتساب المبلغ التأميني والحصة التأمينية فوراً
+                    // المعامل الرسمي المعتمد للتأمين: 235 ج.م × 3 أيام = 705 ج.م للشكارة الواحدة
+                    const multiplier = price <= 300 ? 3 : 1;
+                    const currentQ = insuranceQuota > 0 ? insuranceQuota : (actualQuota > 0 ? actualQuota : 10);
+                    const calculatedInsValue = price > 0 ? Math.round(currentQ * price * multiplier) : insuranceValue;
+                    setInsuranceValue(calculatedInsValue);
+                    const newQuota = calculateInsuranceQuota(calculatedInsValue);
+                    setInsuranceQuota(newQuota);
+                    calculateAllAverages(
+                      newQuota,
+                      villagePopulation,
+                      beneficiaries2023,
+                      beneficiaries2024,
+                      beneficiaries2025,
+                      calculatedInsValue,
+                      actualQuota,
+                      breadTypeCount
+                    );
+                    clearError('flourBagPrice');
+                  }}
                   placeholder="950"
                   className="w-full px-2.5 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
                 />
@@ -1032,7 +1054,20 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </div>
                 <select
                   value={String(breadTypeCount)}
-                  onChange={(e) => setBreadTypeCount(Number(e.target.value) || 1)}
+                  onChange={(e) => {
+                    const cnt = Number(e.target.value) || 1;
+                    setBreadTypeCount(cnt);
+                    calculateAllAverages(
+                      insuranceQuota,
+                      villagePopulation,
+                      beneficiaries2023,
+                      beneficiaries2024,
+                      beneficiaries2025,
+                      insuranceValue,
+                      actualQuota,
+                      cnt
+                    );
+                  }}
                   className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
                 >
                   {breadTypeCounts.map((cnt) => (
@@ -1540,7 +1575,16 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                   onChange={(e) => {
                     const pop = parseInt(e.target.value) || 0;
                     setVillagePopulation(pop);
-                    calculateAllAverages(insuranceQuota, pop);
+                    calculateAllAverages(
+                      insuranceQuota,
+                      pop,
+                      beneficiaries2023,
+                      beneficiaries2024,
+                      beneficiaries2025,
+                      insuranceValue,
+                      actualQuota,
+                      breadTypeCount
+                    );
                   }}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
                 />
@@ -1555,7 +1599,16 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                   onChange={(e) => {
                     const b = parseInt(e.target.value) || 0;
                     setBeneficiaries2023(b);
-                    calculateAllAverages(insuranceQuota, villagePopulation, b);
+                    calculateAllAverages(
+                      insuranceQuota,
+                      villagePopulation,
+                      b,
+                      beneficiaries2024,
+                      beneficiaries2025,
+                      insuranceValue,
+                      actualQuota,
+                      breadTypeCount
+                    );
                   }}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
                 />
@@ -1570,7 +1623,16 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                   onChange={(e) => {
                     const b = parseInt(e.target.value) || 0;
                     setBeneficiaries2024(b);
-                    calculateAllAverages(insuranceQuota, villagePopulation, beneficiaries2023, b);
+                    calculateAllAverages(
+                      insuranceQuota,
+                      villagePopulation,
+                      beneficiaries2023,
+                      b,
+                      beneficiaries2025,
+                      insuranceValue,
+                      actualQuota,
+                      breadTypeCount
+                    );
                   }}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
                 />
@@ -1585,7 +1647,16 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                   onChange={(e) => {
                     const b = parseInt(e.target.value) || 0;
                     setBeneficiaries2025(b);
-                    calculateAllAverages(insuranceQuota, villagePopulation, beneficiaries2023, beneficiaries2024, b);
+                    calculateAllAverages(
+                      insuranceQuota,
+                      villagePopulation,
+                      beneficiaries2023,
+                      beneficiaries2024,
+                      b,
+                      insuranceValue,
+                      actualQuota,
+                      breadTypeCount
+                    );
                   }}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
                 />

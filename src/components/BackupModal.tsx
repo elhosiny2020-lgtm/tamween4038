@@ -29,8 +29,19 @@ import {
   downloadWindowsDesktopInstallerBat,
   downloadWindowsVbsLauncher,
   downloadWindowsExeLauncher,
-  openStandaloneAppInNewTab
+  openStandaloneAppInNewTab,
+  generateStandaloneHtml
 } from '../utils/htmlExporter';
+import {
+  getSupabaseConfig,
+  saveSupabaseConfig,
+  testSupabaseConnection,
+  uploadAppHtmlToSupabaseStorage,
+  migrateDatabaseToSupabase,
+  fetchDatabaseFromSupabase,
+  SUPABASE_TABLES_SQL_SCHEMA,
+  SUPABASE_BUCKET_NAME,
+} from '../lib/supabase';
 import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import {
@@ -104,6 +115,17 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   const [isGoogleConnected, setIsGoogleConnected] = useState<boolean>(() => !!auth.currentUser);
   const [googleConnectedEmail, setGoogleConnectedEmail] = useState<string | null>(() => auth.currentUser?.email || null);
+
+  // Supabase Cloud Database & Storage state
+  const [supabaseCfg, setSupabaseCfg] = useState(() => getSupabaseConfig());
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState(() => getSupabaseConfig().url);
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState(() => getSupabaseConfig().anonKey);
+  const [lastSupabaseSyncTime, setLastSupabaseSyncTime] = useState<string | null>(
+    () => localStorage.getItem('TAMWEEN_LAST_SUPABASE_SYNC') || null
+  );
+  const [showSqlSchemaModal, setShowSqlSchemaModal] = useState(false);
+  const [uploadedHtmlPublicUrl, setUploadedHtmlPublicUrl] = useState<string | null>(null);
+  const [showSupabaseSettings, setShowSupabaseSettings] = useState(false);
 
   useEffect(() => {
     const unsub = initGoogleAuthListener((user) => {
@@ -748,6 +770,77 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
+  // Supabase Actions
+  const handleSaveAndTestSupabaseConfig = async () => {
+    setIsProcessing(true);
+    setStatusMsg({ text: 'جاري حفظ إعدادات Supabase والتحقق من الاتصال...', type: 'info' });
+    const newCfg = saveSupabaseConfig(supabaseUrlInput, supabaseKeyInput);
+    setSupabaseCfg(newCfg);
+    const testRes = await testSupabaseConnection();
+    setIsProcessing(false);
+    if (testRes.success) {
+      setStatusMsg({ text: testRes.message, type: 'success' });
+    } else {
+      setStatusMsg({ text: testRes.message, type: 'error' });
+    }
+  };
+
+  const handleUploadIndexHtmlToSupabase = async () => {
+    setIsProcessing(true);
+    setStatusMsg({ text: 'جاري حزم ورفع ملف index.html إلى Supabase Storage...', type: 'info' });
+    const res = await uploadAppHtmlToSupabaseStorage(undefined, currentState);
+    setIsProcessing(false);
+    if (res.success) {
+      setUploadedHtmlPublicUrl(res.publicUrl || null);
+      setStatusMsg({
+        text: `${res.message} ${res.publicUrl ? `رابط التحميل المباشر: ${res.publicUrl}` : ''}`,
+        type: 'success',
+      });
+    } else {
+      setStatusMsg({ text: res.message, type: 'error' });
+    }
+  };
+
+  const handleMigrateAllDatabaseToSupabase = async () => {
+    setIsProcessing(true);
+    setStatusMsg({ text: 'جاري نقل وترحيل ومزامنة كافة جداول قاعدة البيانات (المخابز والمديونيات) إلى Supabase...', type: 'info' });
+    const res = await migrateDatabaseToSupabase(currentState);
+    setIsProcessing(false);
+    if (res.success) {
+      const nowAr = new Date().toLocaleString('ar-EG');
+      setLastSupabaseSyncTime(nowAr);
+      if (res.publicHtmlUrl) setUploadedHtmlPublicUrl(res.publicHtmlUrl);
+      setStatusMsg({ text: res.message, type: 'success' });
+    } else {
+      setStatusMsg({ text: res.message, type: 'error' });
+    }
+  };
+
+  const handleRestoreFromSupabaseDatabase = async () => {
+    setIsProcessing(true);
+    setStatusMsg({ text: 'جاري استرجاع وتحميل أحدث قاعدة بيانات من Supabase...', type: 'info' });
+    const res = await fetchDatabaseFromSupabase();
+    setIsProcessing(false);
+    if (res.success && res.data) {
+      const merged = mergeStates(currentState, res.data);
+      onRestoreState(merged);
+      setStatusMsg({
+        text: `تم بنجاح تحميل ودمج البيانات من Supabase! إجمالي المخابز: (${merged.bakeries.length}) مخبز و (${merged.debts.length}) مديونية دون حذف أي سجلات محلية.`,
+        type: 'success',
+      });
+    } else {
+      setStatusMsg({ text: res.message, type: 'error' });
+    }
+  };
+
+  const handleCopySqlSchema = () => {
+    navigator.clipboard.writeText(SUPABASE_TABLES_SQL_SCHEMA);
+    setStatusMsg({
+      text: 'تم نسخ كود إنشاء جداول SQL (Schema Script) إلى الحافظة! يمكنك لصقه وتشغيله مباشرة في Supabase SQL Editor.',
+      type: 'success',
+    });
+  };
+
   const handleReset = () => {
     onFactoryReset();
     setShowConfirmReset(false);
@@ -897,6 +990,222 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               </button>
             </div>
           </div>
+
+          {/* SECTION: SUPABASE CLOUD DATABASE & INDEX.HTML STORAGE */}
+          <div className="p-4.5 bg-gradient-to-br from-emerald-950 via-slate-900 to-teal-950 text-white border-2 border-emerald-500/80 rounded-2xl space-y-3.5 shadow-lg relative overflow-hidden">
+            {/* Background Glow */}
+            <div className="absolute top-0 left-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+
+            <div className="flex items-center justify-between relative z-10">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-500/20 text-emerald-300 rounded-xl border border-emerald-400/30 shadow-inner">
+                  <Database className="w-4 h-4 icon-float text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-emerald-300 flex items-center gap-2">
+                    <span>قاعدة بيانات Supabase السحابية ورفع ملف index.html</span>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 px-2 py-0.5 rounded-full font-bold">
+                      Supabase Cloud DB & Storage
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-300 font-medium mt-0.5">
+                    ربط قاعدة البيانات سحابياً بـ Supabase ورفع ملف index.html إلى الحاوية التخزينية
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {supabaseCfg.isConfigured ? (
+                  <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-emerald-300 bg-emerald-900/60 border border-emerald-400/40 px-2.5 py-1 rounded-full shadow-inner">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    <span>متصل بـ Supabase</span>
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-black text-amber-300 bg-amber-950/60 border border-amber-500/40 px-2.5 py-1 rounded-full">
+                    بحاجة لإدخال المفاتيح
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowSupabaseSettings(!showSupabaseSettings)}
+                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-lg text-[10px] font-black transition cursor-pointer"
+                >
+                  {showSupabaseSettings ? 'إخفاء الإعدادات ✕' : '⚙️ إعدادات المفاتيح'}
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Status / Info Banner */}
+            <div className="bg-slate-900/80 border border-emerald-500/30 rounded-xl p-3 text-xs space-y-1.5 relative z-10">
+              <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
+                <span>سجلات المخابز والمديونيات الجاهزة للنقل:</span>
+                <span className="text-emerald-300 font-black bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
+                  ({currentState.bakeries.length}) مخبز &bull; ({currentState.debts.length}) مديونية
+                </span>
+              </div>
+              {lastSupabaseSyncTime && (
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
+                  <span>آخر مزامنة مكتملة مع Supabase:</span>
+                  <span className="text-emerald-400 font-black">{lastSupabaseSyncTime}</span>
+                </div>
+              )}
+              {uploadedHtmlPublicUrl && (
+                <div className="flex items-center justify-between text-[11px] font-bold text-emerald-200 pt-1 border-t border-emerald-900/50">
+                  <span>رابط ملف index.html المرفوع على Supabase:</span>
+                  <a
+                    href={uploadedHtmlPublicUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-emerald-400 hover:text-emerald-300 underline font-black flex items-center gap-1"
+                  >
+                    <span>فتح الملف السحابي ↗</span>
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Collapsible Supabase Credentials Panel */}
+            {showSupabaseSettings && (
+              <div className="p-3 bg-slate-950/90 border border-emerald-500/40 rounded-xl space-y-2.5 text-xs animate-fadeIn relative z-10">
+                <div className="text-[11px] font-black text-emerald-300">
+                  🔑 بيانات الاتصال بمشروع Supabase الخاص بك:
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-300 mb-1">
+                    عنوان المشروع (Project URL)
+                  </label>
+                  <input
+                    type="text"
+                    value={supabaseUrlInput}
+                    onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                    placeholder="https://xyzcompany.supabase.co"
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs font-mono focus:border-emerald-500 focus:outline-hidden text-left"
+                    dir="ltr"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-300 mb-1">
+                    المفتاح العام (anon / publishable public key)
+                  </label>
+                  <input
+                    type="password"
+                    value={supabaseKeyInput}
+                    onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs font-mono focus:border-emerald-500 focus:outline-hidden text-left"
+                    dir="ltr"
+                  />
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    type="button"
+                    disabled={isProcessing}
+                    onClick={handleSaveAndTestSupabaseConfig}
+                    className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>حفظ البيانات واختبار الاتصال فوراً</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopySqlSchema}
+                    className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer transition"
+                  >
+                    <span>📋 نسخ كود إنشاء الجداول (SQL Schema)</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Core Action Buttons for Supabase */}
+            <div className="space-y-2 relative z-10 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* 1. Upload index.html to Supabase Storage */}
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleUploadIndexHtmlToSupabase}
+                  className="py-3 px-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50 border border-emerald-400/40"
+                >
+                  <Upload className="w-4 h-4 text-emerald-200 icon-animated" />
+                  <span>رفع ملف index.html إلى Supabase Storage 🚀</span>
+                </button>
+
+                {/* 2. Migrate All Database to Supabase */}
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleMigrateAllDatabaseToSupabase}
+                  className="py-3 px-4 bg-gradient-to-r from-amber-600 via-yellow-600 to-amber-700 hover:from-amber-500 hover:to-yellow-500 text-slate-950 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50 border border-amber-300"
+                >
+                  <Database className="w-4 h-4 text-slate-950 icon-float" />
+                  <span>مزامنة ونقل قاعدة البيانات بالكامل إلى Supabase ⚡</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                {/* 3. Restore / Pull from Supabase */}
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleRestoreFromSupabaseDatabase}
+                  className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-emerald-200 border border-emerald-500/40 rounded-xl text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4 text-emerald-400" />
+                  <span>استعادة وتحميل البيانات من Supabase 📥</span>
+                </button>
+
+                {/* 4. View / Copy SQL Schema */}
+                <button
+                  type="button"
+                  onClick={() => setShowSqlSchemaModal(true)}
+                  className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition"
+                >
+                  <FileCode className="w-4 h-4 text-amber-400" />
+                  <span>عرض ونسخ سكريبت جداول SQL (Schema) 📄</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Modal for viewing SQL Schema script */}
+          {showSqlSchemaModal && (
+            <div className="p-4 bg-slate-950 border-2 border-amber-400 rounded-2xl space-y-3 text-xs animate-fadeIn">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div className="flex items-center gap-2">
+                  <FileCode className="w-4 h-4 text-amber-400" />
+                  <span className="font-black text-amber-300">
+                    سكريبت إنشاء وتهيئة جداول Supabase (PostgreSQL)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopySqlSchema}
+                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-black transition cursor-pointer"
+                  >
+                    نسخ الكود بالكامل 📋
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowSqlSchemaModal(false)}
+                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-black cursor-pointer"
+                  >
+                    إغلاق ✕
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                قم بلصق هذا الكود في نافذة <strong>SQL Editor</strong> داخل لوحة تحكم مشروع Supabase واضغط <strong>Run</strong> لإنشاء جداول المخابز والمديونيات وسياسات الأمان RLS بنقرة واحدة:
+              </p>
+              <pre
+                className="bg-slate-900 border border-slate-800 rounded-xl p-3 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-56 leading-relaxed select-all"
+                dir="ltr"
+              >
+                {SUPABASE_TABLES_SQL_SCHEMA}
+              </pre>
+            </div>
+          )}
 
           {/* SECTION 2: Download Standalone HTML application (FIXED & TESTED 100% WORKING) */}
           <div className="p-4 bg-emerald-50/80 border-2 border-emerald-400/80 rounded-2xl space-y-2.5 shadow-xs">
