@@ -21,9 +21,18 @@ interface LocalUnitSummaryRow {
   localUnit: string;
   village: string;
   bakeryCount: number;
+  totalInsuranceValue: number;
   totalInsuranceQuota: number;
   totalActualQuota: number;
   totalLoaves: number;
+  totalPopulation: number;
+  totalBen2023: number;
+  totalBen2024: number;
+  totalBen2025: number;
+  avg2023: string;
+  avg2024: string;
+  avg2025: string;
+  avgDiff: string;
   totalDebts: number;
   avgDebtPerBakery: number;
   percentageOfBakeries: number;
@@ -81,14 +90,18 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
 
   // Aggregate data by Local Unit
   const aggregatedData = useMemo(() => {
-    // Collect all unique local units from villages hierarchy and from existing bakeries
     const unitsMap = new Map<string, {
       localUnit: string;
       village: string;
       bakeryCount: number;
+      totalInsuranceValue: number;
       totalInsuranceQuota: number;
       totalActualQuota: number;
       totalLoaves: number;
+      totalPopulation: number;
+      totalBen2023: number;
+      totalBen2024: number;
+      totalBen2025: number;
       totalDebts: number;
     }>();
 
@@ -99,9 +112,14 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
           localUnit: u,
           village: v.village,
           bakeryCount: 0,
+          totalInsuranceValue: 0,
           totalInsuranceQuota: 0,
           totalActualQuota: 0,
           totalLoaves: 0,
+          totalPopulation: 0,
+          totalBen2023: 0,
+          totalBen2024: 0,
+          totalBen2025: 0,
           totalDebts: 0,
         });
       });
@@ -114,16 +132,26 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
         localUnit: uName,
         village: b.village || 'غير محدد',
         bakeryCount: 0,
+        totalInsuranceValue: 0,
         totalInsuranceQuota: 0,
         totalActualQuota: 0,
         totalLoaves: 0,
+        totalPopulation: 0,
+        totalBen2023: 0,
+        totalBen2024: 0,
+        totalBen2025: 0,
         totalDebts: 0,
       };
 
       existing.bakeryCount += 1;
+      existing.totalInsuranceValue += Number(b.insuranceValue) || 0;
       existing.totalInsuranceQuota += Number(b.insuranceQuota) || 0;
       existing.totalActualQuota += Number(b.actualQuota) || 0;
-      existing.totalLoaves += Number(b.loavesCount) || (Number(b.actualQuota) || 0) * 1350;
+      existing.totalLoaves += Number(b.loavesCount) || 0;
+      existing.totalPopulation = Math.max(existing.totalPopulation, Number(b.villagePopulation) || 0);
+      existing.totalBen2023 += Number(b.beneficiaries2023) || 0;
+      existing.totalBen2024 += Number(b.beneficiaries2024) || 0;
+      existing.totalBen2025 += Number(b.beneficiaries2025) || 0;
 
       // Debt calculation
       const bDebt = debtsMap[b.id] || 0;
@@ -134,12 +162,21 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
 
     const totalBakeriesCount = bakeries.length || 1;
 
-    // Convert map to array with calculated metrics
+    // Convert map to array with calculated weighted averages
     const rows: LocalUnitSummaryRow[] = Array.from(unitsMap.values()).map((item) => {
       const avgDebt = item.bakeryCount > 0 ? item.totalDebts / item.bakeryCount : 0;
       const pct = (item.bakeryCount / totalBakeriesCount) * 100;
+      const a2023 = item.totalBen2023 > 0 ? (item.totalLoaves / item.totalBen2023).toFixed(2) : '0.00';
+      const a2024 = item.totalBen2024 > 0 ? (item.totalLoaves / item.totalBen2024).toFixed(2) : '0.00';
+      const a2025 = item.totalBen2025 > 0 ? (item.totalLoaves / item.totalBen2025).toFixed(2) : '0.00';
+      const diff = (Number(a2023) - Number(a2024) - Number(a2025)).toFixed(2);
+
       return {
         ...item,
+        avg2023: a2023,
+        avg2024: a2024,
+        avg2025: a2025,
+        avgDiff: diff,
         avgDebtPerBakery: Math.round(avgDebt),
         percentageOfBakeries: Number(pct.toFixed(1)),
       };
@@ -175,18 +212,48 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
 
   // Overall Totals
   const totals = useMemo(() => {
-    return filteredAndSortedRows.reduce(
+    const res = filteredAndSortedRows.reduce(
       (acc, r) => {
         acc.unitCount += 1;
         acc.bakeries += r.bakeryCount;
+        acc.insuranceValue += r.totalInsuranceValue;
         acc.insuranceQuota += r.totalInsuranceQuota;
         acc.actualQuota += r.totalActualQuota;
         acc.loaves += r.totalLoaves;
+        acc.population += r.totalPopulation;
+        acc.ben2023 += r.totalBen2023;
+        acc.ben2024 += r.totalBen2024;
+        acc.ben2025 += r.totalBen2025;
         acc.debts += r.totalDebts;
         return acc;
       },
-      { unitCount: 0, bakeries: 0, insuranceQuota: 0, actualQuota: 0, loaves: 0, debts: 0 }
+      {
+        unitCount: 0,
+        bakeries: 0,
+        insuranceValue: 0,
+        insuranceQuota: 0,
+        actualQuota: 0,
+        loaves: 0,
+        population: 0,
+        ben2023: 0,
+        ben2024: 0,
+        ben2025: 0,
+        debts: 0,
+      }
     );
+
+    const avg23 = res.ben2023 > 0 ? (res.loaves / res.ben2023).toFixed(2) : '0.00';
+    const avg24 = res.ben2024 > 0 ? (res.loaves / res.ben2024).toFixed(2) : '0.00';
+    const avg25 = res.ben2025 > 0 ? (res.loaves / res.ben2025).toFixed(2) : '0.00';
+    const diff = (Number(avg23) - Number(avg24) - Number(avg25)).toFixed(2);
+
+    return {
+      ...res,
+      avg2023: avg23,
+      avg2024: avg24,
+      avg2025: avg25,
+      avgDiff: diff,
+    };
   }, [filteredAndSortedRows]);
 
   const handleSort = (field: keyof LocalUnitSummaryRow) => {
@@ -396,10 +463,10 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
           <table className="w-full text-center border-collapse text-xs">
             <thead>
               <tr className="bg-slate-900 border-b border-slate-700 text-slate-200 font-black">
-                <th className="py-2.5 px-2 border-l border-slate-800 text-slate-400 w-12">م</th>
+                <th className="py-2.5 px-2 border-l border-slate-800 text-slate-400 w-10">م</th>
                 <th
                   onClick={() => handleSort('localUnit')}
-                  className="py-2.5 px-3 border-l border-slate-800 text-right cursor-pointer hover:bg-slate-800 transition select-none"
+                  className="py-2.5 px-3 border-l border-slate-800 text-right cursor-pointer hover:bg-slate-800 transition select-none min-w-[130px]"
                 >
                   <div className="inline-flex items-center gap-1">
                     <span>الوحدة المحلية</span>
@@ -408,7 +475,7 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
                 </th>
                 <th
                   onClick={() => handleSort('village')}
-                  className="py-2.5 px-3 border-l border-slate-800 text-right cursor-pointer hover:bg-slate-800 transition select-none"
+                  className="py-2.5 px-3 border-l border-slate-800 text-right cursor-pointer hover:bg-slate-800 transition select-none min-w-[110px]"
                 >
                   <div className="inline-flex items-center gap-1">
                     <span>القرية التابعة</span>
@@ -417,68 +484,78 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
                 </th>
                 <th
                   onClick={() => handleSort('bakeryCount')}
-                  className="py-2.5 px-2.5 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[110px]"
+                  className="py-2.5 px-2 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[90px]"
                 >
                   <div className="inline-flex items-center gap-1 justify-center">
-                    <span>عدد المخابز</span>
+                    <span>المخابز</span>
+                    <ArrowUpDown className="w-3 h-3 text-amber-400" />
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('totalInsuranceValue')}
+                  className="py-2.5 px-2 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[100px]"
+                >
+                  <div className="inline-flex items-center gap-1 justify-center">
+                    <span>المبلغ التأميني</span>
                     <ArrowUpDown className="w-3 h-3 text-amber-400" />
                   </div>
                 </th>
                 <th
                   onClick={() => handleSort('totalInsuranceQuota')}
-                  className="py-2.5 px-2.5 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[105px]"
+                  className="py-2.5 px-2 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[95px]"
                 >
                   <div className="inline-flex items-center gap-1 justify-center">
-                    <span>الحصة التأمينية</span>
+                    <span>حصة تأمينية</span>
                     <ArrowUpDown className="w-3 h-3 text-amber-400" />
                   </div>
                 </th>
                 <th
                   onClick={() => handleSort('totalActualQuota')}
-                  className="py-2.5 px-2.5 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[105px]"
+                  className="py-2.5 px-2 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[95px]"
                 >
                   <div className="inline-flex items-center gap-1 justify-center">
-                    <span>الحصة الفعلية</span>
+                    <span>حصة فعلية</span>
                     <ArrowUpDown className="w-3 h-3 text-blue-400" />
                   </div>
                 </th>
                 <th
                   onClick={() => handleSort('totalLoaves')}
-                  className="py-2.5 px-2.5 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[110px]"
+                  className="py-2.5 px-2 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[105px]"
                 >
                   <div className="inline-flex items-center gap-1 justify-center">
-                    <span>إنتاج الأرغفة/يوم</span>
+                    <span>الأرغفة/يوم</span>
                     <ArrowUpDown className="w-3 h-3 text-emerald-400" />
                   </div>
                 </th>
                 <th
-                  onClick={() => handleSort('totalDebts')}
-                  className="py-2.5 px-3 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[120px] bg-red-950/40 text-rose-200"
+                  onClick={() => handleSort('totalPopulation')}
+                  className="py-2.5 px-2 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[95px]"
                 >
-                  <div className="inline-flex items-center gap-1 justify-center">
-                    <span>إجمالي المديونيات</span>
-                    <ArrowUpDown className="w-3 h-3 text-rose-400" />
-                  </div>
+                  <span>السكان</span>
                 </th>
+                <th className="py-2.5 px-2 border-l border-slate-800 min-w-[90px]">مستفيدي 23</th>
+                <th className="py-2.5 px-2 border-l border-slate-800 min-w-[90px]">مستفيدي 24</th>
+                <th className="py-2.5 px-2 border-l border-slate-800 min-w-[90px]">مستفيدي 25</th>
+                <th className="py-2.5 px-2 border-l border-slate-800 min-w-[85px] bg-[#1E3A8A] text-sky-200">متوسط 23</th>
+                <th className="py-2.5 px-2 border-l border-slate-800 min-w-[85px] bg-[#1E3A8A] text-sky-200">متوسط 24</th>
+                <th className="py-2.5 px-2 border-l border-slate-800 min-w-[85px] bg-[#1E3A8A] text-sky-200">متوسط 25</th>
+                <th className="py-2.5 px-2 border-l border-slate-800 min-w-[85px] bg-[#1E3A8A] text-amber-200">ف التراكمي</th>
                 <th
-                  onClick={() => handleSort('avgDebtPerBakery')}
-                  className="py-2.5 px-2.5 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[110px]"
+                  onClick={() => handleSort('totalDebts')}
+                  className="py-2.5 px-2.5 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[110px] bg-red-950/40 text-rose-200"
                 >
                   <div className="inline-flex items-center gap-1 justify-center">
-                    <span>متوسط مديونية المخبز</span>
+                    <span>المديونيات</span>
                     <ArrowUpDown className="w-3 h-3 text-rose-400" />
                   </div>
                 </th>
-                <th className="py-2.5 px-2.5 border-l border-slate-800 min-w-[110px]">
-                  موقف المديونية
-                </th>
-                <th className="py-2.5 px-2 min-w-[90px] no-print">إجراء سريع</th>
+                <th className="py-2.5 px-2 min-w-[80px] no-print">إجراء</th>
               </tr>
             </thead>
             <tbody>
               {filteredAndSortedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center text-slate-400 font-bold bg-slate-900/30">
+                  <td colSpan={18} className="py-8 text-center text-slate-400 font-bold bg-slate-900/30">
                     لا توجد وحدات محلية مطابقة لمعايير البحث الحالية
                   </td>
                 </tr>
@@ -507,33 +584,62 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
                         {row.village}
                       </td>
 
-                      <td className="py-2 px-2.5 border-l border-slate-800 font-mono font-black text-amber-300">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <span>{row.bakeryCount}</span>
-                          <span className="text-[10px] text-slate-400 font-normal">({row.percentageOfBakeries}%)</span>
-                        </div>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-black text-amber-300">
+                        <span>{row.bakeryCount} مخبز</span>
                       </td>
 
-                      <td className="py-2 px-2.5 border-l border-slate-800 font-mono font-bold text-amber-200">
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-bold text-amber-200">
+                        {row.totalInsuranceValue.toLocaleString()} ج.م
+                      </td>
+
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-bold text-amber-200">
                         {row.totalInsuranceQuota.toLocaleString()}
-                        <span className="text-[10px] text-amber-400/80 mr-1">شكارة</span>
                       </td>
 
-                      <td className="py-2 px-2.5 border-l border-slate-800 font-mono font-black text-blue-300">
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-black text-blue-300">
                         {row.totalActualQuota.toLocaleString()}
-                        <span className="text-[10px] text-blue-400/80 mr-1">شكارة</span>
                       </td>
 
-                      <td className="py-2 px-2.5 border-l border-slate-800 font-mono font-bold text-emerald-300">
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-bold text-emerald-300">
                         {row.totalLoaves.toLocaleString()}
-                        <span className="text-[10px] text-emerald-400/80 mr-1">رغيف</span>
                       </td>
 
-                      <td className={`py-2 px-3 border-l border-slate-800 font-mono font-black text-sm ${
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-semibold text-slate-300">
+                        {row.totalPopulation.toLocaleString()}
+                      </td>
+
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-slate-300">
+                        {row.totalBen2023.toLocaleString()}
+                      </td>
+
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-slate-300">
+                        {row.totalBen2024.toLocaleString()}
+                      </td>
+
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-slate-300">
+                        {row.totalBen2025.toLocaleString()}
+                      </td>
+
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-bold text-sky-300 bg-[#1E3A8A]/30">
+                        {row.avg2023}
+                      </td>
+
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-bold text-sky-300 bg-[#1E3A8A]/30">
+                        {row.avg2024}
+                      </td>
+
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-bold text-sky-300 bg-[#1E3A8A]/30">
+                        {row.avg2025}
+                      </td>
+
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-bold text-amber-300 bg-[#1E3A8A]/30">
+                        {row.avgDiff}
+                      </td>
+
+                      <td className={`py-2 px-2.5 border-l border-slate-800 font-mono font-black ${
                         hasDebt ? 'text-rose-300 bg-red-950/30' : 'text-emerald-400'
                       }`}>
-                        {row.totalDebts.toLocaleString()}
-                        <span className="text-[10px] font-bold text-slate-400 mr-1">ج.م</span>
+                        {row.totalDebts.toLocaleString()} ج.م
                       </td>
 
                       <td className="py-2 px-2.5 border-l border-slate-800 font-mono font-bold text-slate-300 text-xs">
@@ -600,26 +706,50 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
                     <span className="text-slate-300 text-[11px]">({totals.unitCount} وحدة محلية مجمعة)</span>
                   </div>
                 </td>
-                <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-amber-300 text-sm">
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-amber-300 text-sm">
                   {totals.bakeries} مخبز
                 </td>
-                <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-amber-200 text-sm">
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-amber-200 text-sm">
+                  {totals.insuranceValue.toLocaleString()} ج.م
+                </td>
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-amber-200 text-sm">
                   {totals.insuranceQuota.toLocaleString()}
                 </td>
-                <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-blue-300 text-sm">
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-blue-300 text-sm">
                   {totals.actualQuota.toLocaleString()}
                 </td>
-                <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-emerald-300 text-sm">
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-emerald-300 text-sm">
                   {totals.loaves.toLocaleString()}
                 </td>
-                <td className="py-3 px-3 border-l border-slate-700 font-mono text-rose-300 text-sm bg-red-950/60">
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-slate-200">
+                  {totals.population.toLocaleString()}
+                </td>
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-slate-200">
+                  {totals.ben2023.toLocaleString()}
+                </td>
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-slate-200">
+                  {totals.ben2024.toLocaleString()}
+                </td>
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-slate-200">
+                  {totals.ben2025.toLocaleString()}
+                </td>
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-sky-200 text-sm">
+                  {totals.avg2023}
+                </td>
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-sky-200 text-sm">
+                  {totals.avg2024}
+                </td>
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-sky-200 text-sm">
+                  {totals.avg2025}
+                </td>
+                <td className="py-3 px-2 border-l border-slate-700 font-mono text-amber-300 text-sm">
+                  {totals.avgDiff}
+                </td>
+                <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-rose-300 text-sm bg-red-950/60">
                   {totals.debts.toLocaleString()} ج.م
                 </td>
-                <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-slate-300">
-                  {totals.bakeries > 0 ? Math.round(totals.debts / totals.bakeries).toLocaleString() : 0} ج.م
-                </td>
-                <td colSpan={2} className="py-3 px-2 text-slate-400 text-[10px]">
-                  مركز المحلة الكبرى
+                <td className="py-3 px-2 text-slate-400 text-[10px] no-print">
+                  مركز المحلة
                 </td>
               </tr>
             </tfoot>

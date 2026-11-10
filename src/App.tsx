@@ -214,6 +214,7 @@ export default function App() {
   const [columnViewMode, setColumnViewMode] = useState<
     'ALL' | 'BASIC' | 'BREAD' | 'QUOTAS' | 'INSURANCE' | 'BENEFICIARIES' | 'EQUATIONS'
   >('ALL');
+  const [groupingViewMode, setGroupingViewMode] = useState<'HIERARCHICAL' | 'FLAT'>('HIERARCHICAL');
   const [sortField, setSortField] = useState<string>('index');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -871,6 +872,168 @@ export default function App() {
     });
     return list;
   }, [filteredBakeries, sortField, sortDirection, bakeryRemainingDebtsMap]);
+
+  // In-table Hierarchical Grouping Engine (Village & Local Unit Totals)
+  const hierarchicalGroups = useMemo(() => {
+    const list = sortedBakeries;
+    if (!list || list.length === 0) return [];
+
+    const map = new Map<string, Map<string, Bakery[]>>();
+
+    list.forEach((b) => {
+      const u = b.localUnit || 'غير محدد';
+      const v = b.village || 'غير محدد';
+      if (!map.has(u)) {
+        map.set(u, new Map<string, Bakery[]>());
+      }
+      const vMap = map.get(u)!;
+      if (!vMap.has(v)) {
+        vMap.set(v, []);
+      }
+      vMap.get(v)!.push(b);
+    });
+
+    const result: {
+      localUnit: string;
+      villages: {
+        localUnit: string;
+        village: string;
+        bakeries: Bakery[];
+        bakeryCount: number;
+        insuranceValue: number;
+        insuranceQuota: number;
+        actualQuota: number;
+        loavesCount: number;
+        villagePopulation: number;
+        beneficiaries2023: number;
+        beneficiaries2024: number;
+        beneficiaries2025: number;
+        avg2023: string;
+        avg2024: string;
+        avg2025: string;
+        perCapitaAverage: string;
+        avgDiff: string;
+        remainingDebt: number;
+      }[];
+      bakeryCount: number;
+      insuranceValue: number;
+      insuranceQuota: number;
+      actualQuota: number;
+      loavesCount: number;
+      villagePopulation: number;
+      beneficiaries2023: number;
+      beneficiaries2024: number;
+      beneficiaries2025: number;
+      avg2023: string;
+      avg2024: string;
+      avg2025: string;
+      perCapitaAverage: string;
+      avgDiff: string;
+      remainingDebt: number;
+    }[] = [];
+
+    map.forEach((vMap, uName) => {
+      const villageGroups: any[] = [];
+      let unitBakeryCount = 0;
+      let unitInsVal = 0;
+      let unitInsQuota = 0;
+      let unitActQuota = 0;
+      let unitLoaves = 0;
+      let unitPop = 0;
+      let unitBen2023 = 0;
+      let unitBen2024 = 0;
+      let unitBen2025 = 0;
+      let unitDebt = 0;
+
+      vMap.forEach((bList, vName) => {
+        let vInsVal = 0;
+        let vInsQuota = 0;
+        let vActQuota = 0;
+        let vLoaves = 0;
+        let vPop = 0;
+        let vBen2023 = 0;
+        let vBen2024 = 0;
+        let vBen2025 = 0;
+        let vDebt = 0;
+
+        bList.forEach((b) => {
+          vInsVal += Number(b.insuranceValue) || 0;
+          vInsQuota += Number(b.insuranceQuota) || 0;
+          vActQuota += Number(b.actualQuota) || 0;
+          vLoaves += Number(b.loavesCount) || 0;
+          vPop = Math.max(vPop, Number(b.villagePopulation) || 0);
+          vBen2023 += Number(b.beneficiaries2023) || 0;
+          vBen2024 += Number(b.beneficiaries2024) || 0;
+          vBen2025 += Number(b.beneficiaries2025) || 0;
+          vDebt += bakeryRemainingDebtsMap[b.id] || 0;
+        });
+
+        const vAvg2023 = vBen2023 > 0 ? (vLoaves / vBen2023).toFixed(2) : '0.00';
+        const vAvg2024 = vBen2024 > 0 ? (vLoaves / vBen2024).toFixed(2) : '0.00';
+        const vAvg2025 = vBen2025 > 0 ? (vLoaves / vBen2025).toFixed(2) : '0.00';
+        const vAvgDiff = (Number(vAvg2023) - Number(vAvg2024) - Number(vAvg2025)).toFixed(2);
+
+        villageGroups.push({
+          localUnit: uName,
+          village: vName,
+          bakeries: bList,
+          bakeryCount: bList.length,
+          insuranceValue: vInsVal,
+          insuranceQuota: vInsQuota,
+          actualQuota: vActQuota,
+          loavesCount: vLoaves,
+          villagePopulation: vPop,
+          beneficiaries2023: vBen2023,
+          beneficiaries2024: vBen2024,
+          beneficiaries2025: vBen2025,
+          avg2023: vAvg2023,
+          avg2024: vAvg2024,
+          avg2025: vAvg2025,
+          perCapitaAverage: vAvg2025,
+          avgDiff: vAvgDiff,
+          remainingDebt: vDebt,
+        });
+
+        unitBakeryCount += bList.length;
+        unitInsVal += vInsVal;
+        unitInsQuota += vInsQuota;
+        unitActQuota += vActQuota;
+        unitLoaves += vLoaves;
+        unitPop += vPop;
+        unitBen2023 += vBen2023;
+        unitBen2024 += vBen2024;
+        unitBen2025 += vBen2025;
+        unitDebt += vDebt;
+      });
+
+      const uAvg2023 = unitBen2023 > 0 ? (unitLoaves / unitBen2023).toFixed(2) : '0.00';
+      const uAvg2024 = unitBen2024 > 0 ? (unitLoaves / unitBen2024).toFixed(2) : '0.00';
+      const uAvg2025 = unitBen2025 > 0 ? (unitLoaves / unitBen2025).toFixed(2) : '0.00';
+      const uAvgDiff = (Number(uAvg2023) - Number(uAvg2024) - Number(uAvg2025)).toFixed(2);
+
+      result.push({
+        localUnit: uName,
+        villages: villageGroups,
+        bakeryCount: unitBakeryCount,
+        insuranceValue: unitInsVal,
+        insuranceQuota: unitInsQuota,
+        actualQuota: unitActQuota,
+        loavesCount: unitLoaves,
+        villagePopulation: unitPop,
+        beneficiaries2023: unitBen2023,
+        beneficiaries2024: unitBen2024,
+        beneficiaries2025: unitBen2025,
+        avg2023: uAvg2023,
+        avg2024: uAvg2024,
+        avg2025: uAvg2025,
+        perCapitaAverage: uAvg2025,
+        avgDiff: uAvgDiff,
+        remainingDebt: unitDebt,
+      });
+    });
+
+    return result;
+  }, [sortedBakeries, bakeryRemainingDebtsMap]);
 
   const totalPages = Math.max(1, Math.ceil(sortedBakeries.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -2704,326 +2867,604 @@ export default function App() {
 
                     {/* Table Body (Pure White & Very Light Gray with Dark Charcoal Text) */}
                     <tbody className="divide-y divide-slate-200 font-semibold text-slate-800">
-                      {paginatedBakeries.length === 0 ? (
+                      {sortedBakeries.length === 0 ? (
                         <tr>
                           <td colSpan={33} className="py-12 text-center text-slate-500 font-bold bg-white">
                             لا توجد أي مخابز مطابقة لمعايير البحث أو التصفية الحالية
                           </td>
                         </tr>
                       ) : (
-                        paginatedBakeries.map((b, idx) => {
-                          const globalIndex = (safeCurrentPage - 1) * pageSize + idx + 1;
-                          const isSelected = selectedBakeryRowId === b.id;
-                          const remainingDebt = bakeryRemainingDebtsMap[b.id] || 0;
+                        (() => {
+                          let runningIndex = 0;
 
-                          const today = new Date();
-                          const checkExpiry = (dStr?: string) => {
-                            if (!dStr) return false;
-                            const d = new Date(dStr);
-                            if (isNaN(d.getTime())) return false;
-                            const diff = (d.getTime() - today.getTime()) / (1000 * 3600 * 24);
-                            return diff <= 15;
-                          };
+                          // Helper to render a single bakery row
+                          const renderBakeryRow = (b: Bakery, globalIndex: number) => {
+                            const isSelected = selectedBakeryRowId === b.id;
+                            const remainingDebt = bakeryRemainingDebtsMap[b.id] || 0;
 
-                          const hasLicenseWarning = checkExpiry(b.bakeryLicenseDate);
-                          const hasCommWarning = checkExpiry(b.commercialRegDate);
-                          const hasLeaseWarning = checkExpiry(b.leaseAgreementDate);
-                          const hasTaxWarning = checkExpiry(b.taxCardDate);
+                            const today = new Date();
+                            const checkExpiry = (dStr?: string) => {
+                              if (!dStr) return false;
+                              const d = new Date(dStr);
+                              if (isNaN(d.getTime())) return false;
+                              const diff = (d.getTime() - today.getTime()) / (1000 * 3600 * 24);
+                              return diff <= 15;
+                            };
 
-                          // Check missing cells
-                          const isMissingPhone = !b.phone || !b.phone.trim();
-                          const isMissingNatId = !b.nationalId || !b.nationalId.trim();
-                          const isMissingBen2023 = !b.beneficiaries2023 || b.beneficiaries2023 <= 0;
-                          const isMissingBen2024 = !b.beneficiaries2024 || b.beneficiaries2024 <= 0;
-                          const isMissingBen2025 = !b.beneficiaries2025 || b.beneficiaries2025 <= 0;
+                            const hasLicenseWarning = checkExpiry(b.bakeryLicenseDate);
+                            const hasCommWarning = checkExpiry(b.commercialRegDate);
+                            const hasLeaseWarning = checkExpiry(b.leaseAgreementDate);
+                            const hasTaxWarning = checkExpiry(b.taxCardDate);
 
-                          return (
-                            <tr
-                              key={b.id}
-                              onClick={() => setSelectedBakeryRowId(b.id)}
-                              className={`cursor-pointer transition-colors ${
-                                isSelected
-                                  ? 'row-selected'
-                                  : idx % 2 === 0
-                                  ? 'bg-white hover:bg-blue-50/40'
-                                  : 'bg-[#F8FAFC] hover:bg-blue-50/40'
-                              }`}
-                            >
-                              {/* Index */}
-                              <td className="py-2.5 px-2 border-l border-slate-200 text-slate-500 num-enlarged">
-                                {globalIndex}
-                              </td>
+                            const isMissingPhone = !b.phone || !b.phone.trim();
+                            const isMissingNatId = !b.nationalId || !b.nationalId.trim();
+                            const isMissingBen2023 = !b.beneficiaries2023 || b.beneficiaries2023 <= 0;
+                            const isMissingBen2024 = !b.beneficiaries2024 || b.beneficiaries2024 <= 0;
+                            const isMissingBen2025 = !b.beneficiaries2025 || b.beneficiaries2025 <= 0;
 
-                              {showBasicCols && (
-                                <>
-                                  <td className="py-2.5 px-2.5 border-l border-slate-200 font-extrabold text-slate-900 text-right">
-                                    {b.bakeryOwnerName}
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-[#1E3A8A]">
-                                    {b.machineNumber}
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.village}</td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 text-slate-600">{b.localUnit}</td>
-                                </>
-                              )}
+                            return (
+                              <tr
+                                key={b.id}
+                                onClick={() => setSelectedBakeryRowId(b.id)}
+                                className={`cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'row-selected'
+                                    : globalIndex % 2 === 0
+                                    ? 'bg-white hover:bg-blue-50/40'
+                                    : 'bg-[#F8FAFC] hover:bg-blue-50/40'
+                                }`}
+                              >
+                                <td className="py-2.5 px-2 border-l border-slate-200 text-slate-500 num-enlarged">
+                                  {globalIndex}
+                                </td>
 
-                              {showDebtCol && (
-                                <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged">
-                                  {remainingDebt > 0 ? (
-                                    <div className="flex flex-col items-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setDebtFilterBakeryId(b.id);
-                                          setActiveTab('debts');
-                                        }}
-                                        className={`px-2 py-0.5 rounded-md text-xs font-bold transition cursor-pointer border ${
-                                          remainingDebt > 20000
-                                            ? 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
-                                            : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                                        }`}
-                                        title="انقر لعرض تفاصيل مديونيات المخبز"
-                                      >
-                                        {remainingDebt.toLocaleString()} ج.م
-                                      </button>
-                                      {remainingDebt > 20000 && (
+                                {showBasicCols && (
+                                  <>
+                                    <td className="py-2.5 px-2.5 border-l border-slate-200 font-extrabold text-slate-900 text-right">
+                                      {b.bakeryOwnerName}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-[#1E3A8A]">
+                                      {b.machineNumber}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.village}</td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 text-slate-600">{b.localUnit}</td>
+                                  </>
+                                )}
+
+                                {showDebtCol && (
+                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged">
+                                    {remainingDebt > 0 ? (
+                                      <div className="flex flex-col items-center gap-1">
                                         <button
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            setSelectedInstallmentBakeryId(b.id);
-                                            setIsWeeklyInstallmentsModalOpen(true);
+                                            setDebtFilterBakeryId(b.id);
+                                            setActiveTab('debts');
                                           }}
-                                          className="text-[10px] text-red-700 underline hover:text-red-900 font-bold cursor-pointer"
+                                          className={`px-2 py-0.5 rounded-md text-xs font-bold transition cursor-pointer border ${
+                                            remainingDebt > 20000
+                                              ? 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
+                                              : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                                          }`}
+                                          title="انقر لعرض تفاصيل مديونيات المخبز"
                                         >
-                                          دفعات أسبوعية
+                                          {remainingDebt.toLocaleString()} ج.م
                                         </button>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 text-emerald-700 text-[11px] font-bold">
-                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                      <span>خالص (0)</span>
-                                    </span>
-                                  )}
-                                </td>
-                              )}
-
-                              {showQuotaCols && (
-                                <>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-slate-800">
-                                    {b.insuranceValue?.toLocaleString()}
-                                  </td>
-                                  {/* Calculated: Insurance Quota */}
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#0F2342] font-extrabold">
-                                    {b.insuranceQuota}
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-slate-900">
-                                    {b.actualQuota}
-                                  </td>
-                                  {/* Calculated: Loaves Count */}
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#0F2342] font-extrabold">
-                                    {b.loavesCount?.toLocaleString()}
-                                  </td>
-                                  {/* Calculated: Per-Bakery Average */}
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-emerald-800 font-extrabold">
-                                    {Number(b.perCapitaAverage || 0).toFixed(2)}
-                                  </td>
-                                </>
-                              )}
-
-                              {showDemographicsCols && (
-                                <>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-slate-700">
-                                    {b.villagePopulation?.toLocaleString()}
-                                  </td>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
-                                      isMissingBen2023 ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {b.beneficiaries2023?.toLocaleString() || 'ناقص'}
-                                  </td>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
-                                      isMissingBen2024 ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {b.beneficiaries2024?.toLocaleString() || 'ناقص'}
-                                  </td>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
-                                      isMissingBen2025 ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {b.beneficiaries2025?.toLocaleString() || 'ناقص'}
-                                  </td>
-                                  {/* Calculated: Avg 2023, 2024, 2025, Cumulative Diff */}
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#1E3A8A]">
-                                    {b.avg2023}
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#1E3A8A]">
-                                    {b.avg2024}
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#1E3A8A]">
-                                    {b.avg2025}
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF] text-[#0F2342] font-extrabold">
-                                    {b.avgDiff}
-                                  </td>
-                                </>
-                              )}
-
-                              {showOperationsCols && (
-                                <>
-                                  <td className="py-2.5 px-2 border-l border-slate-200">
-                                    <span
-                                      className={`font-bold text-[11px] ${
-                                        b.activityStatus === 'شغال' ? 'text-emerald-700' : 'text-red-700'
-                                      }`}
-                                    >
-                                      {b.activityStatus}
-                                    </span>
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">
-                                    {b.bakeryCategory || 'مخبز بلدي مدعم'}
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.breadType}</td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-slate-800">
-                                    {(b.flourBagPrice ?? 950).toLocaleString()} ج.م
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-[#1E3A8A]">
-                                    {b.breadTypeCount || 660}
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.lineType}</td>
-                                  <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.fuelType}</td>
-                                </>
-                              )}
-
-                              {showContactLicenseCols && (
-                                <>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged font-mono ${
-                                      isMissingPhone ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {isMissingPhone ? (
-                                      <span className="text-[10px] font-bold">بيانات ناقصة</span>
+                                        {remainingDebt > 20000 && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedInstallmentBakeryId(b.id);
+                                              setIsWeeklyInstallmentsModalOpen(true);
+                                            }}
+                                            className="text-[10px] text-red-700 underline hover:text-red-900 font-bold cursor-pointer"
+                                          >
+                                            دفعات أسبوعية
+                                          </button>
+                                        )}
+                                      </div>
                                     ) : (
-                                      <a
-                                        href={`tel:${b.phone}`}
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="text-[#1E40AF] hover:underline"
-                                      >
-                                        {b.phone}
-                                      </a>
+                                      <span className="inline-flex items-center gap-1 text-emerald-700 text-[11px] font-bold">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                        <span>خالص (0)</span>
+                                      </span>
                                     )}
                                   </td>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged font-mono ${
-                                      isMissingNatId ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {isMissingNatId ? 'بيانات ناقصة' : b.nationalId}
+                                )}
+
+                                {showQuotaCols && (
+                                  <>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-slate-800">
+                                      {b.insuranceValue?.toLocaleString()}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#0F2342] font-extrabold">
+                                      {b.insuranceQuota}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-slate-900">
+                                      {b.actualQuota}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#0F2342] font-extrabold">
+                                      {b.loavesCount?.toLocaleString()}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-emerald-800 font-extrabold">
+                                      {Number(b.perCapitaAverage || 0).toFixed(2)}
+                                    </td>
+                                  </>
+                                )}
+
+                                {showDemographicsCols && (
+                                  <>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-slate-700">
+                                      {b.villagePopulation?.toLocaleString()}
+                                    </td>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
+                                        isMissingBen2023 ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {b.beneficiaries2023?.toLocaleString() || 'ناقص'}
+                                    </td>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
+                                        isMissingBen2024 ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {b.beneficiaries2024?.toLocaleString() || 'ناقص'}
+                                    </td>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
+                                        isMissingBen2025 ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {b.beneficiaries2025?.toLocaleString() || 'ناقص'}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#1E3A8A]">
+                                      {b.avg2023}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#1E3A8A]">
+                                      {b.avg2024}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF]/70 text-[#1E3A8A]">
+                                      {b.avg2025}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged bg-[#EFF6FF] text-[#0F2342] font-extrabold">
+                                      {b.avgDiff}
+                                    </td>
+                                  </>
+                                )}
+
+                                {showOperationsCols && (
+                                  <>
+                                    <td className="py-2.5 px-2 border-l border-slate-200">
+                                      <span
+                                        className={`font-bold text-[11px] ${
+                                          b.activityStatus === 'شغال' ? 'text-emerald-700' : 'text-red-700'
+                                        }`}
+                                      >
+                                        {b.activityStatus}
+                                      </span>
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">
+                                      {b.bakeryCategory || 'مخبز بلدي مدعم'}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.breadType}</td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-slate-800">
+                                      {(b.flourBagPrice ?? 950).toLocaleString()} ج.م
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 num-enlarged text-[#1E3A8A]">
+                                      {b.breadTypeCount || 660}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.lineType}</td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.fuelType}</td>
+                                  </>
+                                )}
+
+                                {showContactLicenseCols && (
+                                  <>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged font-mono ${
+                                        isMissingPhone ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {isMissingPhone ? (
+                                        <span className="text-[10px] font-bold">بيانات ناقصة</span>
+                                      ) : (
+                                        <a
+                                          href={`tel:${b.phone}`}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="text-[#1E40AF] hover:underline"
+                                        >
+                                          {b.phone}
+                                        </a>
+                                      )}
+                                    </td>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged font-mono ${
+                                        isMissingNatId ? 'bg-amber-50 text-amber-800' : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {isMissingNatId ? 'بيانات ناقصة' : b.nationalId}
+                                    </td>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
+                                        !b.commercialRegDate
+                                          ? 'bg-amber-50 text-amber-800'
+                                          : hasCommWarning
+                                          ? 'bg-red-50 text-red-700 font-bold'
+                                          : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {formatDateDDMMYYYY(b.commercialRegDate) || 'ناقص'}
+                                    </td>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
+                                        !b.bakeryLicenseDate
+                                          ? 'bg-amber-50 text-amber-800'
+                                          : hasLicenseWarning
+                                          ? 'bg-red-50 text-red-700 font-bold'
+                                          : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {formatDateDDMMYYYY(b.bakeryLicenseDate) || 'ناقص'}
+                                    </td>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
+                                        !b.leaseAgreementDate
+                                          ? 'bg-amber-50 text-amber-800'
+                                          : hasLeaseWarning
+                                          ? 'bg-red-50 text-red-700 font-bold'
+                                          : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {formatDateDDMMYYYY(b.leaseAgreementDate) || 'ناقص'}
+                                    </td>
+                                    <td
+                                      className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
+                                        !b.taxCardDate
+                                          ? 'bg-amber-50 text-amber-800'
+                                          : hasTaxWarning
+                                          ? 'bg-red-50 text-red-700 font-bold'
+                                          : 'text-slate-700'
+                                      }`}
+                                    >
+                                      {formatDateDDMMYYYY(b.taxCardDate) || 'ناقص'}
+                                    </td>
+                                  </>
+                                )}
+
+                                <td className="py-2 px-2 no-print text-center">
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDetailsBakery(b);
+                                      }}
+                                      className="p-1.5 text-[#1E40AF] hover:bg-blue-100 rounded-lg transition cursor-pointer"
+                                      title="عرض تفصيلي لبيانات ومعادلات المخبز"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+
+                                    {appState.currentUser?.role !== 'viewer' && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setBakeryToEdit(b);
+                                            setIsBakeryModalOpen(true);
+                                          }}
+                                          className="p-1.5 text-slate-700 hover:text-[#0F2342] hover:bg-slate-200 rounded-lg transition cursor-pointer"
+                                          title="تعديل بيانات المخبز"
+                                        >
+                                          <Edit2 className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteBakery(b.id, b.bakeryOwnerName);
+                                          }}
+                                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                                          title="حذف المخبز"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          };
+
+                          // Helper to render Village Total Row
+                          const renderVillageTotalRow = (vGroup: any) => (
+                            <tr
+                              key={`vtotal-${vGroup.localUnit}-${vGroup.village}`}
+                              className="bg-[#EBF5FF] text-[#0284C7] font-black border-t-2 border-b-2 border-sky-300/80 shadow-xs text-xs"
+                            >
+                              <td className="py-2.5 px-2 border-l border-sky-200 text-[#0284C7] font-extrabold">∑</td>
+                              {showBasicCols && (
+                                <>
+                                  <td className="py-2.5 px-2.5 border-l border-sky-200 text-right font-black text-[#0369A1]">
+                                    إجمالي قرية {vGroup.village}
                                   </td>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
-                                      !b.commercialRegDate
-                                        ? 'bg-amber-50 text-amber-800'
-                                        : hasCommWarning
-                                        ? 'bg-red-50 text-red-700 font-bold'
-                                        : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {formatDateDDMMYYYY(b.commercialRegDate) || 'ناقص'}
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged text-[#0284C7]">
+                                    {vGroup.bakeryCount} مخبز
                                   </td>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
-                                      !b.bakeryLicenseDate
-                                        ? 'bg-amber-50 text-amber-800'
-                                        : hasLicenseWarning
-                                        ? 'bg-red-50 text-red-700 font-bold'
-                                        : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {formatDateDDMMYYYY(b.bakeryLicenseDate) || 'ناقص'}
+                                  <td className="py-2.5 px-2 border-l border-sky-200">{vGroup.village}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">{vGroup.localUnit}</td>
+                                </>
+                              )}
+                              {showDebtCol && (
+                                <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-rose-700">
+                                  {vGroup.remainingDebt > 0 ? `${vGroup.remainingDebt.toLocaleString()} ج.م` : 'خالص (0)'}
+                                </td>
+                              )}
+                              {showQuotaCols && (
+                                <>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.insuranceValue?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-[#0F2342] bg-sky-200/50">
+                                    {vGroup.insuranceQuota?.toLocaleString()}
                                   </td>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
-                                      !b.leaseAgreementDate
-                                        ? 'bg-amber-50 text-amber-800'
-                                        : hasLeaseWarning
-                                        ? 'bg-red-50 text-red-700 font-bold'
-                                        : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {formatDateDDMMYYYY(b.leaseAgreementDate) || 'ناقص'}
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.actualQuota?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-[#0F2342] bg-sky-200/50">
+                                    {vGroup.loavesCount?.toLocaleString()}
                                   </td>
-                                  <td
-                                    className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
-                                      !b.taxCardDate
-                                        ? 'bg-amber-50 text-amber-800'
-                                        : hasTaxWarning
-                                        ? 'bg-red-50 text-red-700 font-bold'
-                                        : 'text-slate-700'
-                                    }`}
-                                  >
-                                    {formatDateDDMMYYYY(b.taxCardDate) || 'ناقص'}
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-emerald-800 bg-sky-200/50">
+                                    {vGroup.perCapitaAverage}
                                   </td>
                                 </>
                               )}
-
-                              {/* Actions Column: View Details + Edit + Delete */}
-                              <td className="py-2 px-2 no-print text-center">
-                                <div className="flex items-center justify-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setDetailsBakery(b);
-                                    }}
-                                    className="p-1.5 text-[#1E40AF] hover:bg-blue-100 rounded-lg transition cursor-pointer"
-                                    title="عرض تفصيلي لبيانات ومعادلات المخبز"
-                                    aria-label={`عرض تفصيلي لمخبز ${b.bakeryOwnerName}`}
-                                  >
-                                    <Eye className="w-4 h-4" />
-                                  </button>
-
-                                  {appState.currentUser?.role !== 'viewer' && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setBakeryToEdit(b);
-                                          setIsBakeryModalOpen(true);
-                                        }}
-                                        className="p-1.5 text-slate-700 hover:text-[#0F2342] hover:bg-slate-200 rounded-lg transition cursor-pointer"
-                                        title="تعديل بيانات المخبز"
-                                        aria-label={`تعديل بيانات مخبز ${b.bakeryOwnerName}`}
-                                      >
-                                        <Edit2 className="w-4 h-4" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteBakery(b.id, b.bakeryOwnerName);
-                                        }}
-                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
-                                        title="حذف المخبز"
-                                        aria-label={`حذف مخبز ${b.bakeryOwnerName}`}
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              </td>
+                              {showDemographicsCols && (
+                                <>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.villagePopulation?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.beneficiaries2023?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.beneficiaries2024?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.beneficiaries2025?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged bg-sky-200/50 text-[#1E3A8A]">{vGroup.avg2023}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged bg-sky-200/50 text-[#1E3A8A]">{vGroup.avg2024}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged bg-sky-200/50 text-[#1E3A8A]">{vGroup.avg2025}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-amber-900 bg-sky-200/70">{vGroup.avgDiff}</td>
+                                </>
+                              )}
+                              {showOperationsCols && (
+                                <>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                </>
+                              )}
+                              {showContactLicenseCols && (
+                                <>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                </>
+                              )}
+                              <td className="py-2.5 px-2 no-print">—</td>
                             </tr>
                           );
-                        })
+
+                          // Helper to render Local Unit Total Row
+                          const renderLocalUnitTotalRow = (uGroup: any) => (
+                            <tr
+                              key={`utotal-${uGroup.localUnit}`}
+                              className="bg-[#0F2342] text-amber-300 font-extrabold border-t-2 border-b-2 border-amber-500/80 shadow-md text-xs"
+                            >
+                              <td className="py-3 px-2 border-l border-[#1E3A5F] text-amber-400 font-black">∑∑</td>
+                              {showBasicCols && (
+                                <>
+                                  <td className="py-3 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300">
+                                    إجمالي وحدة محلية {uGroup.localUnit}
+                                  </td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                    {uGroup.bakeryCount} مخبز
+                                  </td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-slate-300">
+                                    {uGroup.villages.length} قرية
+                                  </td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-slate-300">{uGroup.localUnit}</td>
+                                </>
+                              )}
+                              {showDebtCol && (
+                                <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-rose-300">
+                                  {uGroup.remainingDebt > 0 ? `${uGroup.remainingDebt.toLocaleString()} ج.م` : 'خالص (0)'}
+                                </td>
+                              )}
+                              {showQuotaCols && (
+                                <>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.insuranceValue?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#162F57]">
+                                    {uGroup.insuranceQuota?.toLocaleString()}
+                                  </td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.actualQuota?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#162F57]">
+                                    {uGroup.loavesCount?.toLocaleString()}
+                                  </td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-emerald-300 bg-[#162F57]">
+                                    {uGroup.perCapitaAverage}
+                                  </td>
+                                </>
+                              )}
+                              {showDemographicsCols && (
+                                <>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.villagePopulation?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.beneficiaries2023?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.beneficiaries2024?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.beneficiaries2025?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#162F57] text-sky-200">{uGroup.avg2023}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#162F57] text-sky-200">{uGroup.avg2024}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#162F57] text-sky-200">{uGroup.avg2025}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-400 bg-[#1A3868]">{uGroup.avgDiff}</td>
+                                </>
+                              )}
+                              {showOperationsCols && (
+                                <>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                </>
+                              )}
+                              {showContactLicenseCols && (
+                                <>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                </>
+                              )}
+                              <td className="py-3 px-2 no-print">—</td>
+                            </tr>
+                          );
+
+                          // Helper to render Grand Total Row
+                          const renderGrandTotalRow = () => {
+                            let gInsVal = 0;
+                            let gInsQuota = 0;
+                            let gActQuota = 0;
+                            let gLoaves = 0;
+                            let gPop = 0;
+                            let gBen2023 = 0;
+                            let gBen2024 = 0;
+                            let gBen2025 = 0;
+                            let gDebt = 0;
+
+                            sortedBakeries.forEach((b) => {
+                              gInsVal += Number(b.insuranceValue) || 0;
+                              gInsQuota += Number(b.insuranceQuota) || 0;
+                              gActQuota += Number(b.actualQuota) || 0;
+                              gLoaves += Number(b.loavesCount) || 0;
+                              gPop += Number(b.villagePopulation) || 0;
+                              gBen2023 += Number(b.beneficiaries2023) || 0;
+                              gBen2024 += Number(b.beneficiaries2024) || 0;
+                              gBen2025 += Number(b.beneficiaries2025) || 0;
+                              gDebt += bakeryRemainingDebtsMap[b.id] || 0;
+                            });
+
+                            const gAvg2023 = gBen2023 > 0 ? (gLoaves / gBen2023).toFixed(2) : '0.00';
+                            const gAvg2024 = gBen2024 > 0 ? (gLoaves / gBen2024).toFixed(2) : '0.00';
+                            const gAvg2025 = gBen2025 > 0 ? (gLoaves / gBen2025).toFixed(2) : '0.00';
+                            const gAvgDiff = (Number(gAvg2023) - Number(gAvg2024) - Number(gAvg2025)).toFixed(2);
+
+                            return (
+                              <tr
+                                key="grand-total-row"
+                                className="bg-[#051124] text-amber-300 font-extrabold border-t-4 border-amber-500 shadow-xl text-xs"
+                              >
+                                <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-400 font-black text-sm">🏛️</td>
+                                {showBasicCols && (
+                                  <>
+                                    <td className="py-3.5 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300 text-sm">
+                                      الإجمالي العام لمركز المحلة الكبرى
+                                    </td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                      {sortedBakeries.length} مخبز
+                                    </td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-slate-300">مركز المحلة</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-slate-300">جميع الوحدات</td>
+                                  </>
+                                )}
+                                {showDebtCol && (
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-rose-300 text-sm">
+                                    {gDebt > 0 ? `${gDebt.toLocaleString()} ج.م` : 'خالص (0)'}
+                                  </td>
+                                )}
+                                {showQuotaCols && (
+                                  <>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gInsVal.toLocaleString()}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
+                                      {gInsQuota.toLocaleString()}
+                                    </td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gActQuota.toLocaleString()}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
+                                      {gLoaves.toLocaleString()}
+                                    </td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-emerald-300 bg-[#0F2342]">
+                                      {gAvg2025}
+                                    </td>
+                                  </>
+                                )}
+                                {showDemographicsCols && (
+                                  <>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gPop.toLocaleString()}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2023.toLocaleString()}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2024.toLocaleString()}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2025.toLocaleString()}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2023}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2024}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2025}</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-400 bg-[#162F57]">{gAvgDiff}</td>
+                                  </>
+                                )}
+                                {showOperationsCols && (
+                                  <>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  </>
+                                )}
+                                {showContactLicenseCols && (
+                                  <>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  </>
+                                )}
+                                <td className="py-3.5 px-2 no-print">—</td>
+                              </tr>
+                            );
+                          };
+
+                          if (groupingViewMode === 'HIERARCHICAL') {
+                            const elements: React.ReactNode[] = [];
+
+                            hierarchicalGroups.forEach((uGroup) => {
+                              uGroup.villages.forEach((vGroup) => {
+                                vGroup.bakeries.forEach((b) => {
+                                  runningIndex++;
+                                  elements.push(renderBakeryRow(b, runningIndex));
+                                });
+                                elements.push(renderVillageTotalRow(vGroup));
+                              });
+                              elements.push(renderLocalUnitTotalRow(uGroup));
+                            });
+
+                            elements.push(renderGrandTotalRow());
+                            return elements;
+                          } else {
+                            const elements = paginatedBakeries.map((b, idx) => {
+                              const globalIndex = (safeCurrentPage - 1) * pageSize + idx + 1;
+                              return renderBakeryRow(b, globalIndex);
+                            });
+                            elements.push(renderGrandTotalRow());
+                            return elements;
+                          }
+                        })()
                       )}
                     </tbody>
                   </table>
