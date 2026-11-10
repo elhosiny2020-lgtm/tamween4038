@@ -74,6 +74,14 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
     const activeBakeries = bakeries.filter((b) => b.activityStatus === 'شغال').length;
     const stoppedBakeries = totalBakeries - activeBakeries;
     const totalDebts = debts.reduce((acc, d) => acc + (Number(d.netRemainingDebt) || 0), 0);
+    const needsReviewCount = bakeries.filter(
+      (b) =>
+        !b.bakeryOwnerName ||
+        !b.machineNumber ||
+        Number(b.actualQuota) <= 0 ||
+        Number(b.beneficiaries2025) <= 0 ||
+        Math.abs((Number(b.actualQuota) || 0) - (Number(b.insuranceQuota) || 0)) > 0.01
+    ).length;
 
     return {
       totalBakeries,
@@ -88,6 +96,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
       activeBakeries,
       stoppedBakeries,
       totalDebts,
+      needsReviewCount,
     };
   }, [bakeries, debts]);
 
@@ -528,6 +537,34 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
             </div>
             <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl group-hover:bg-emerald-700 group-hover:text-white transition">
               <Calculator className="w-5 h-5" />
+            </div>
+          </button>
+
+          {/* Card 9: Bakeries Needing Data Review */}
+          <button
+            type="button"
+            onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
+            className="bg-white hover:bg-amber-50/40 border border-slate-200 hover:border-amber-400 rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group sm:col-span-2 lg:col-span-4"
+          >
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <span className="text-xs font-bold text-slate-500 block">
+                  9. عدد المخابز التي تحتاج إلى مراجعة بيانات (فروق حصص أو بيانات ناقصة)
+                </span>
+                <div className="flex items-baseline gap-3 mt-1">
+                  <span className="text-2xl font-black text-amber-700 font-mono tabular-nums">
+                    {stats.needsReviewCount}
+                  </span>
+                  <span className="text-xs font-bold text-slate-600">
+                    {stats.needsReviewCount === 0
+                      ? 'جميع المخابز مكتملة البيانات ومطابقة للحصص بنسبة 100%'
+                      : `مخبز يحتاج لمراجعة البيانات أو مطابقة الحصة الفعلية بالتأمينية`}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="p-2.5 bg-amber-50 text-amber-700 rounded-xl group-hover:bg-amber-600 group-hover:text-white transition">
+              <AlertTriangle className="w-5 h-5" />
             </div>
           </button>
         </div>

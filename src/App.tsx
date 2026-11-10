@@ -77,6 +77,7 @@ import { AdvancedPermissionsModal } from './components/AdvancedPermissionsModal'
 import { InboxChatModal } from './components/InboxChatModal';
 import { DailyEntryBriefingModal } from './components/DailyEntryBriefingModal';
 import { RightSidebar, SidebarNavId } from './components/RightSidebar';
+import { ReportsCenterView, ReportTemplateId } from './components/ReportsCenterView';
 import { HomeDashboardView } from './components/HomeDashboardView';
 import { BakeryDetailsModal } from './components/BakeryDetailsModal';
 import { HighDebtAlertNotification } from './types';
@@ -205,7 +206,8 @@ const ThHeaderTooltip: React.FC<{ label: string; tooltipKey: string; className?:
 export default function App() {
   const { isInstallable, install } = usePWAInstall();
   const [appState, setAppState] = useState<AppState | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'charts' | 'bakeries' | 'debts'>('bakeries');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'charts' | 'bakeries' | 'debts' | 'reports'>('bakeries');
+  const [activeReportId, setActiveReportId] = useState<ReportTemplateId>('bak-all');
   const [activeSidebarNavId, setActiveSidebarNavId] = useState<SidebarNavId>('bakeries-all');
   const [breadcrumbGroup, setBreadcrumbGroup] = useState<string>('إدارة المخابز');
   const [breadcrumbItem, setBreadcrumbItem] = useState<string>('قاعدة بيانات المخابز');
@@ -1439,24 +1441,34 @@ export default function App() {
         handleRecalculateAllDatabaseEquations();
         break;
 
-      // Group 4: Reports & Statistics
+      // Group 5: Reports Center & Printing
+      case 'reports-center':
+        setActiveTab('reports');
+        setActiveReportId('bak-all');
+        break;
       case 'report-detailed':
-        setReportModalInitialTab('bakeries');
-        setIsReportModalOpen(true);
+        setActiveTab('reports');
+        setActiveReportId('bak-all');
         break;
       case 'report-summary':
-        setIsLocalUnitsModalOpen(true);
+        setActiveTab('reports');
+        setActiveReportId('comp-totals');
         break;
       case 'report-years-comparison':
-        setActiveTab('charts');
+        setActiveTab('reports');
+        setActiveReportId('comp-3years');
         break;
       case 'report-insurance-quotas':
-        setIsBudgetFrequencyModalOpen(true);
+        setActiveTab('reports');
+        setActiveReportId('ins-quotas');
         break;
       case 'report-per-capita':
+        setActiveTab('reports');
+        setActiveReportId('avg-yearly');
+        break;
       case 'report-differences':
-        setReportModalInitialTab('annual-averages');
-        setIsReportModalOpen(true);
+        setActiveTab('reports');
+        setActiveReportId('avg-cumdiff');
         break;
 
       // Group 5: Search & Inquiry
@@ -1769,6 +1781,18 @@ export default function App() {
               </button>
               <button
                 type="button"
+                onClick={() => handleSelectSidebarNav('reports-center', 'مركز التقارير والطباعة', 'شاشة التقارير والطباعة المتقدمة')}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'reports'
+                    ? 'bg-[#0F2342] text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>مركز التقارير والطباعة</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => handleSelectSidebarNav('report-years-comparison', 'التقارير والإحصائيات', 'مقارنة بيانات الأعوام')}
                 className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'charts'
@@ -2043,6 +2067,16 @@ export default function App() {
                 }}
               />
             </div>
+          ) : activeTab === 'reports' ? (
+            /* REPORTS CENTER VIEW */
+            <ReportsCenterView
+              bakeries={appState.bakeries}
+              debts={appState.debts}
+              villages={appState.villages}
+              systemConfig={appState.systemConfig}
+              currentUser={appState.currentUser}
+              initialReportId={activeReportId}
+            />
           ) : activeTab === 'debts' ? (
             /* DEBTS VIEW */
             <DebtsView

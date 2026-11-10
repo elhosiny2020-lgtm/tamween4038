@@ -1,6 +1,17 @@
 // Helper to sanitize modern CSS color functions (oklch, oklab, color-mix, light-dark)
 // in live and cloned documents before html2canvas parses stylesheets, preventing PDF export crashes,
-// and enforcing pure black (#000000) text and populated tables for all PDF and Print operations.
+// and enforcing official Deep Navy (#0F2342) headers with white text and crisp alternating rows
+// for all PDF and Print operations.
+
+export interface PdfExportOptions {
+  filename?: string;
+  title?: string;
+  paperSize?: 'a4' | 'a3';
+  orientation?: 'landscape' | 'portrait';
+  margins?: 'normal' | 'narrow' | 'wide';
+  fontClass?: string;
+  onProgress?: (stage: string) => void;
+}
 
 function createColorConverter() {
   const canvas = document.createElement('canvas');
@@ -11,10 +22,10 @@ function createColorConverter() {
 
   const convertColorToRgb = (colorStr: string): string => {
     if (colorCache.has(colorStr)) return colorCache.get(colorStr)!;
-    if (!ctx) return '#000000';
+    if (!ctx) return '#0f2342';
     try {
       ctx.clearRect(0, 0, 1, 1);
-      ctx.fillStyle = '#000000';
+      ctx.fillStyle = '#0f2342';
       ctx.fillStyle = colorStr;
       const computed = ctx.fillStyle;
       if (computed && !computed.includes('oklch') && !computed.includes('oklab')) {
@@ -24,8 +35,8 @@ function createColorConverter() {
     } catch {
       // fallback
     }
-    colorCache.set(colorStr, '#000000');
-    return '#000000';
+    colorCache.set(colorStr, '#0f2342');
+    return '#0f2342';
   };
 
   const sanitizeCssText = (css: string): string => {
@@ -110,7 +121,7 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
       }
     }
 
-    // 5. Inject the sanitized stylesheet rules + strict pure black (#000000) report override into clonedDoc.head
+    // 5. Inject the sanitized stylesheet rules + Official Governmental Deep Navy Report Override into clonedDoc.head
     const masterStyle = clonedDoc.createElement('style');
     const sanitizedAllRules = sanitizeCssText(collectedCss.join('\n'));
     masterStyle.textContent = `
@@ -130,21 +141,18 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
         zoom: 1 !important;
         transform: none !important;
         background: #ffffff !important;
+        direction: rtl !important;
+        font-family: 'Cairo', 'Tajawal', 'Segoe UI', Tahoma, sans-serif !important;
       }
 
-      /* Strict PDF Report Override: Pure Black (#000000) Typography & Crisp Table Grid */
-      .print-container,
-      .print-container * {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        text-shadow: none !important;
-      }
+      /* Official Governmental Report Table Styling: Deep Navy (#0F2342) Headers with White Bold Text */
       .print-container table {
         display: table !important;
         border-collapse: collapse !important;
         width: 100% !important;
-        border: 2px solid #000000 !important;
-        margin-top: 6px !important;
+        border: 1.5px solid #0f2342 !important;
+        margin-top: 8px !important;
+        direction: rtl !important;
       }
       .print-container thead {
         display: table-header-group !important;
@@ -158,33 +166,44 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
       .print-container tr {
         display: table-row !important;
         page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
+      .print-container thead th,
       .print-container th {
         display: table-cell !important;
-        background-color: #e2e8f0 !important;
-        color: #000000 !important;
-        border: 1.5px solid #000000 !important;
-        font-weight: 900 !important;
-        padding: 5px 3px !important;
+        background-color: #0f2342 !important;
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        border: 1px solid #1e3a8a !important;
+        font-weight: 800 !important;
+        padding: 6px 5px !important;
         text-align: center !important;
         vertical-align: middle !important;
       }
-      .print-container td {
+      .print-container tbody td {
         display: table-cell !important;
-        color: #000000 !important;
-        border: 1.2px solid #000000 !important;
-        font-weight: 800 !important;
-        padding: 4px 3px !important;
-        text-align: center !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        border: 1px solid #cbd5e1 !important;
+        font-weight: 700 !important;
+        padding: 5px 4px !important;
         vertical-align: middle !important;
         word-break: break-word !important;
       }
+      .print-container tbody tr:nth-child(odd) td {
+        background-color: #ffffff !important;
+      }
+      .print-container tbody tr:nth-child(even) td {
+        background-color: #f8fafc !important;
+      }
       .print-container tfoot tr,
       .print-container tfoot td {
-        background-color: #cbd5e1 !important;
-        color: #000000 !important;
-        border: 2px solid #000000 !important;
+        background-color: #dbeafe !important;
+        color: #0f2342 !important;
+        -webkit-text-fill-color: #0f2342 !important;
+        border: 1.5px solid #0f2342 !important;
         font-weight: 900 !important;
+        padding: 6px 5px !important;
       }
       .print-container .no-print {
         display: none !important;
@@ -213,16 +232,26 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
   }
 }
 
-// Universal, rock-solid A4 Landscape Print Engine for any HTML element or table
+// Universal, rock-solid Print Engine supporting A4/A3, Portrait/Landscape, and Custom Margins
 export function printHtmlElementA4(
   element: HTMLElement | null,
   documentTitle: string,
-  fontClass: string = 'report-font-standard'
+  fontClass: string = 'report-font-standard',
+  options?: {
+    paperSize?: 'a4' | 'a3';
+    orientation?: 'landscape' | 'portrait';
+    margins?: 'normal' | 'narrow' | 'wide';
+  }
 ) {
   if (!element) {
     window.print();
     return;
   }
+
+  const size = (options?.paperSize || 'a4').toUpperCase();
+  const orient = options?.orientation || 'landscape';
+  const marginMm =
+    options?.margins === 'narrow' ? '5mm' : options?.margins === 'wide' ? '15mm' : '10mm';
 
   try {
     let iframe = document.getElementById('report-fast-print-iframe') as HTMLIFrameElement | null;
@@ -246,7 +275,6 @@ export function printHtmlElementA4(
       return;
     }
 
-    // Clone the element and remove any internal .no-print nodes so only pure report content is printed
     const cloned = element.cloneNode(true) as HTMLElement;
     cloned.querySelectorAll('.no-print').forEach((n) => n.remove());
 
@@ -257,28 +285,26 @@ export function printHtmlElementA4(
       <head>
         <meta charset="utf-8">
         <title>${documentTitle}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@500;600;700;800;900&display=swap" rel="stylesheet">
         <style>
           @page {
-            size: A4 landscape;
-            margin: 10mm;
+            size: ${size} ${orient};
+            margin: ${marginMm};
           }
           * {
             box-sizing: border-box;
-            font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif !important;
-            color: #000000 !important;
-            -webkit-text-fill-color: #000000 !important;
-            text-shadow: none !important;
+            font-family: 'Cairo', 'Tajawal', 'Segoe UI', Tahoma, sans-serif !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           html, body {
             margin: 0 !important;
             padding: 0 !important;
             width: 100% !important;
             background: #ffffff !important;
-            color: #000000 !important;
+            color: #0f172a !important;
             direction: rtl !important;
             font-weight: 700 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
           }
           .no-print {
             display: none !important;
@@ -289,18 +315,20 @@ export function printHtmlElementA4(
             margin: 0 !important;
             padding: 2mm !important;
             background: #ffffff !important;
-            color: #000000 !important;
+            color: #0f172a !important;
           }
           table {
             width: 100% !important;
             border-collapse: collapse !important;
             table-layout: auto !important;
             page-break-inside: auto;
-            border: 2px solid #000000 !important;
-            margin-top: 10px !important;
+            border: 1.5px solid #0f2342 !important;
+            margin-top: 8px !important;
+            direction: rtl !important;
           }
           tr {
-            page-break-inside: avoid;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
             page-break-after: auto;
           }
           thead {
@@ -312,40 +340,51 @@ export function printHtmlElementA4(
           tfoot {
             display: table-footer-group !important;
           }
-          th, td {
-            border: 1px solid #000000 !important;
-            color: #000000 !important;
-            padding: 6px 4px !important;
-            word-break: break-word !important;
-            line-height: 1.2 !important;
+          th {
+            background-color: #0f2342 !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            border: 1px solid #1e3a8a !important;
+            font-weight: 800 !important;
+            padding: 6px 5px !important;
             text-align: center !important;
             vertical-align: middle !important;
           }
-          .report-font-compact th, .report-font-compact td { font-size: 7pt !important; }
-          .report-font-standard th, .report-font-standard td { font-size: 8pt !important; }
-          .report-font-large th, .report-font-large td { font-size: 9pt !important; }
-          th {
-            background-color: #e2e8f0 !important;
-            color: #000000 !important;
-            font-weight: 900 !important;
+          td {
+            border: 1px solid #cbd5e1 !important;
+            color: #0f172a !important;
+            padding: 5px 4px !important;
+            word-break: break-word !important;
+            line-height: 1.3 !important;
+            text-align: center !important;
+            vertical-align: middle !important;
+            font-weight: 700 !important;
+          }
+          .text-right {
+            text-align: right !important;
+          }
+          .report-font-compact th, .report-font-compact td { font-size: 7.5pt !important; }
+          .report-font-standard th, .report-font-standard td { font-size: 8.5pt !important; }
+          .report-font-large th, .report-font-large td { font-size: 9.5pt !important; }
+          tbody tr:nth-child(odd) td {
+            background-color: #ffffff !important;
           }
           tbody tr:nth-child(even) td {
-            background-color: #f1f5f9 !important;
+            background-color: #f8fafc !important;
           }
           tfoot tr, tfoot td {
-            background-color: #cbd5e1 !important;
-            color: #000000 !important;
+            background-color: #dbeafe !important;
+            color: #0f2342 !important;
+            -webkit-text-fill-color: #0f2342 !important;
             font-weight: 900 !important;
-            border: 2px solid #000000 !important;
+            border: 1.5px solid #0f2342 !important;
           }
           .num-enlarged {
-            font-weight: 900 !important;
-            font-size: 1.1em !important;
-            color: #000000 !important;
+            font-weight: 800 !important;
           }
           img {
-            max-width: 50px !important;
-            max-height: 50px !important;
+            max-width: 52px !important;
+            max-height: 52px !important;
             object-fit: contain !important;
           }
         </style>
@@ -366,8 +405,102 @@ export function printHtmlElementA4(
       } catch {
         window.print();
       }
-    }, 200);
+    }, 220);
   } catch {
     window.print();
+  }
+}
+
+// Universal Standalone PDF Exporter with Arabic RTL support, progress feedback, and safe naming
+export async function exportElementToPdf(
+  element: HTMLElement | null,
+  options: PdfExportOptions = {}
+): Promise<boolean> {
+  if (!element) return false;
+
+  const dateStr = new Date().toISOString().split('T')[0];
+  const rawTitle = options.title || options.filename || 'تقرير_قاعدة_بيانات_المخابز';
+  const cleanTitle = rawTitle
+    .replace(/[^\u0600-\u06FFa-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 70);
+  const finalFilename = options.filename?.endsWith('.pdf')
+    ? options.filename
+    : `${cleanTitle || 'تقرير_قاعدة_بيانات_المخابز'}_${dateStr}.pdf`;
+
+  const paperSize = options.paperSize || 'a4';
+  const orientation = options.orientation || 'landscape';
+  const marginArr =
+    options.margins === 'narrow'
+      ? [4, 4, 4, 4]
+      : options.margins === 'wide'
+      ? [12, 12, 12, 12]
+      : [7, 7, 7, 7];
+
+  options.onProgress?.('جاري تجهيز الخطوط العربية وتنسيق الصفحات...');
+  sanitizeLiveStylesheets();
+
+  const win = window as unknown as {
+    html2pdf?: () => {
+      from: (el: HTMLElement) => { set: (o: any) => { save: () => Promise<void> } };
+    };
+    loadHtml2PdfOnDemand?: () => Promise<any>;
+  };
+
+  if (typeof win.html2pdf !== 'function' && typeof win.loadHtml2PdfOnDemand === 'function') {
+    try {
+      options.onProgress?.('جاري تحميل محرك تصدير PDF...');
+      await win.loadHtml2PdfOnDemand();
+    } catch (e) {
+      console.warn('html2pdf dynamic loading notice:', e);
+    }
+  }
+
+  const opt = {
+    margin: marginArr,
+    filename: finalFilename,
+    image: { type: 'jpeg', quality: 0.96 },
+    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+    html2canvas: {
+      scale: 1.6,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      windowWidth: paperSize === 'a3' ? 1800 : 1440,
+      scrollX: 0,
+      scrollY: 0,
+      onclone: (clonedDoc: Document) => {
+        sanitizeClonedDocumentForPdf(clonedDoc);
+      },
+    },
+    jsPDF: { unit: 'mm', format: paperSize, orientation },
+  };
+
+  if (typeof win.html2pdf === 'function') {
+    try {
+      options.onProgress?.('جاري توليد ملف PDF باللغة العربية...');
+      const pdfTask = win.html2pdf().from(element).set(opt).save();
+      const timeoutTask = new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('PDF generation timed out')), 12000)
+      );
+      await Promise.race([pdfTask, timeoutTask]);
+      options.onProgress?.('تم استخراج وتنزيل ملف PDF بنجاح');
+      return true;
+    } catch (err) {
+      console.warn('PDF generation fallback to print preview:', err);
+      printHtmlElementA4(element, rawTitle, options.fontClass || 'report-font-standard', {
+        paperSize,
+        orientation,
+        margins: options.margins,
+      });
+      return true;
+    }
+  } else {
+    printHtmlElementA4(element, rawTitle, options.fontClass || 'report-font-standard', {
+      paperSize,
+      orientation,
+      margins: options.margins,
+    });
+    return true;
   }
 }

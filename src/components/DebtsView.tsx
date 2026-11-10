@@ -22,12 +22,15 @@ import {
   AlertTriangle,
   Settings,
   Check,
-  Calendar
+  Calendar,
+  FileText,
+  Store,
+  RefreshCw,
 } from 'lucide-react';
 
 import { WeeklyInstallmentsModal } from './WeeklyInstallmentsModal';
 import { SupplyFinesCalculatorModal } from './SupplyFinesCalculatorModal';
-import { printHtmlElementA4 } from '../utils/pdfHelper';
+import { printHtmlElementA4, exportElementToPdf } from '../utils/pdfHelper';
 import { filterDebtsByAdvancedCriteria, formatDateDDMMYYYY } from '../utils/auditHelper';
 
 export const getDebtOverdueInfo = (
@@ -103,6 +106,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   // Advanced Search Across Debts (البحث المتقدم عبر المديونيات: من تاريخ - إلى تاريخ)
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
 
   // Modals state
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
@@ -172,6 +176,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     let netRemainingTotal = 0;
     let overdueCount = 0;
     let overdueAmount = 0;
+    const indebtedBakeryIds = new Set<string>();
 
     debts.forEach((d) => {
       totalViolations += d.totalViolations || 0;
@@ -182,6 +187,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       paidDisposal += d.paidDisposalAmount || 0;
       netRemainingTotal += d.netRemainingDebt || 0;
 
+      if ((d.netRemainingDebt || 0) > 0) {
+        indebtedBakeryIds.add(d.bakeryId);
+      }
+
       const { isOverdue } = getDebtOverdueInfo(d.violationDate || d.disposalDate, d.netRemainingDebt);
       if (isOverdue) {
         overdueCount += 1;
@@ -189,7 +198,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       }
     });
 
+    const totalOriginalDebt = totalViolations + totalAdded + totalDisposal;
+    const totalPaidAmount = paidViolations + paidAdded + paidDisposal;
+
     return {
+      totalBakeriesCount: bakeries.length,
+      indebtedBakeriesCount: indebtedBakeryIds.size,
+      totalOriginalDebt,
+      totalPaidAmount,
       totalViolations,
       paidViolations,
       totalAdded,
@@ -200,7 +216,53 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       overdueCount,
       overdueAmount,
     };
-  }, [debts]);
+  }, [debts, bakeries.length]);
+
+  // Filtered totals for table footer
+  const filteredTotals = useMemo(() => {
+    let sumViol = 0;
+    let sumOldViol = 0;
+    let sumTotalViol = 0;
+    let sumPaidViol = 0;
+    let sumRemViol = 0;
+    let sumAdded = 0;
+    let sumPaidAdded = 0;
+    let sumRemAdded = 0;
+    let sumDispBags = 0;
+    let sumDispVal = 0;
+    let sumPaidDisp = 0;
+    let sumNetRem = 0;
+
+    filteredDebts.forEach((d) => {
+      sumViol += Number(d.violationAmount) || 0;
+      sumOldViol += Number(d.oldViolations) || 0;
+      sumTotalViol += Number(d.totalViolations) || 0;
+      sumPaidViol += Number(d.paidViolationAmount) || 0;
+      sumRemViol += Number(d.remainingViolations) || 0;
+      sumAdded += Number(d.addedAmount) || 0;
+      sumPaidAdded += Number(d.paidAddedAmount) || 0;
+      sumRemAdded += Number(d.remainingAdded) || 0;
+      sumDispBags += Number(d.disposalBags) || 0;
+      sumDispVal += Number(d.disposalValue) || 0;
+      sumPaidDisp += Number(d.paidDisposalAmount) || 0;
+      sumNetRem += Number(d.netRemainingDebt) || 0;
+    });
+
+    return {
+      sumViol,
+      sumOldViol,
+      sumTotalViol,
+      sumPaidViol,
+      sumRemViol,
+      sumAdded,
+      sumPaidAdded,
+      sumRemAdded,
+      sumDispBags,
+      sumDispVal,
+      sumPaidDisp,
+      sumNetRem,
+    };
+  }, [filteredDebts]);
 
   // Handle Export to CSV (Excel UTF-8 BOM)
   const handleExportCSV = () => {
@@ -250,7 +312,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       d.remainingAdded,
       d.disposalBags,
       d.disposalBagPrice,
-      `${d.disposalMultiplier}x`,
+      d.disposalMultiplier,
       d.disposalValue,
       d.paidDisposalAmount,
       d.remainingDisposal,
@@ -263,7 +325,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `كشف_مديونيات_أصحاب_المخابز_مركز_المحلة_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `قاعدة_بيانات_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -275,15 +337,72 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     }
     printHtmlElementA4(
       debtsPrintRef.current,
-      `كشف_مديونيات_أصحاب_المخابز_${new Date().toISOString().split('T')[0]}`
+      `تقرير_قاعدة_بيانات_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}`
     );
   };
 
+  const handleExportDebtsPdf = async () => {
+    if (isExportingPdf || !debtsPrintRef.current) return;
+    setIsExportingPdf(true);
+    try {
+      await exportElementToPdf(debtsPrintRef.current, {
+        title: 'تقرير_قاعدة_بيانات_مديونيات_المخابز',
+        paperSize: 'a4',
+        orientation: 'landscape',
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" dir="rtl">
+      {/* 1. Prominent Section Title Banner: قاعدة بيانات مديونيات المخابز */}
+      <div className="bg-gradient-to-l from-[#0A1931] via-[#0F2342] to-[#1E3A8A] text-white rounded-2xl p-5 shadow-md border border-blue-900/40 flex flex-wrap items-center justify-between gap-4 no-print">
+        <div className="flex items-center gap-3.5">
+          <div className="p-3 bg-white/10 rounded-xl border border-white/20">
+            <Scale className="w-7 h-7 text-blue-200" />
+          </div>
+          <div>
+            <h2 className="text-lg md:text-xl font-black tracking-tight text-white">
+              قاعدة بيانات مديونيات المخابز
+            </h2>
+            <p className="text-xs text-blue-200 font-bold mt-0.5">
+              إدارة ومتابعة المخالفات التموينية والمبالغ المضافة وفروق التصرف والتحصيلات وصافي المديونيات المتبقية
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={isExportingPdf}
+            onClick={handleExportDebtsPdf}
+            className="px-4 py-2.5 bg-[#1D4ED8] hover:bg-[#2563EB] active:scale-[0.98] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm border border-blue-400/40 transition cursor-pointer"
+          >
+            {isExportingPdf ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+            <span>{isExportingPdf ? 'جاري التصدير...' : 'تصدير التقرير PDF'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              printHtmlElementA4(
+                debtsPrintRef.current,
+                `قاعدة_بيانات_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}`
+              )
+            }
+            className="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+          >
+            <Printer className="w-4 h-4" />
+            <span>طباعة فورية</span>
+          </button>
+        </div>
+      </div>
+
       {/* Active Bakery Filter Notification */}
       {filterBakeryId && (
-        <div className="bg-amber-100 border-2 border-amber-500 p-3 rounded-xl flex items-center justify-between text-amber-950 font-black text-xs no-print">
+        <div className="bg-amber-50 border border-amber-300 p-3.5 rounded-xl flex items-center justify-between text-amber-950 font-black text-xs no-print shadow-2xs">
           <div className="flex items-center gap-2">
             <Scale className="w-5 h-5 text-amber-700" />
             <span>
@@ -295,7 +414,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
           <button
             onClick={onClearBakeryFilter}
-            className="inline-flex items-center gap-1 px-3 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs"
+            className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-lg text-xs font-bold cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             إلغاء التصفية وعرض كافة المخابز
@@ -303,236 +422,241 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
       )}
 
-      {/* Top Stat Cards for Debts (Hidden during print per instructions) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2.5 no-print">
-        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
-          <span className="text-[11px] font-bold text-slate-400 block mb-0.5">
-            إجمالي المخالفات
-          </span>
-          <span className="stat-num text-white block">
-            {stats.totalViolations.toLocaleString()}
-          </span>
-          <span className="text-[10px] text-slate-400 font-bold">ج.م</span>
+      {/* 2. Primary 5 Statistical Cards Above Debts Table (البطاقات الإحصائية الخمس المطلوبة) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 no-print">
+        {/* Card 1: إجمالي عدد المخابز */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex items-center justify-between">
+          <div>
+            <span className="text-xs font-bold text-slate-500 block">1. إجمالي عدد المخابز</span>
+            <span className="text-2xl font-black text-[#0F2342] font-mono tabular-nums mt-1 block">
+              {stats.totalBakeriesCount.toLocaleString()}
+            </span>
+            <span className="text-[11px] font-bold text-slate-500 mt-0.5 block">مخبز مسجل بالمنظومة</span>
+          </div>
+          <div className="p-3 bg-blue-50 text-[#1E3A8A] rounded-xl border border-blue-100">
+            <Store className="w-6 h-6" />
+          </div>
         </div>
 
-        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
-          <span className="text-[11px] font-bold text-emerald-400 block mb-0.5">
-            المسدد من المخالفات
-          </span>
-          <span className="stat-num text-emerald-300 block">
-            {stats.paidViolations.toLocaleString()}
-          </span>
-          <span className="text-[10px] text-emerald-500 font-bold">ج.م</span>
-        </div>
-
-        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
-          <span className="text-[11px] font-bold text-cyan-400 block mb-0.5">إجمالي المضاف</span>
-          <span className="stat-num text-cyan-300 block">
-            {stats.totalAdded.toLocaleString()}
-          </span>
-          <span className="text-[10px] text-cyan-500 font-bold">ج.م</span>
-        </div>
-
-        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
-          <span className="text-[11px] font-bold text-indigo-400 block mb-0.5">
-            المسدد من المضاف
-          </span>
-          <span className="stat-num text-indigo-300 block">
-            {stats.paidAdded.toLocaleString()}
-          </span>
-          <span className="text-[10px] text-indigo-500 font-bold">ج.م</span>
-        </div>
-
-        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
-          <span className="text-[11px] font-bold text-orange-400 block mb-0.5">إجمالي التصرف</span>
-          <span className="stat-num text-orange-300 block">
-            {stats.totalDisposal.toLocaleString()}
-          </span>
-          <span className="text-[10px] text-orange-500 font-bold">ج.م</span>
-        </div>
-
-        <div className="bg-slate-900 border-2 border-slate-800 rounded-xl p-3 text-center shadow-md">
-          <span className="text-[11px] font-bold text-amber-400 block mb-0.5">
-            المسدد من التصرف
-          </span>
-          <span className="stat-num text-amber-300 block">
-            {stats.paidDisposal.toLocaleString()}
-          </span>
-          <span className="text-[10px] text-amber-500 font-bold">ج.م</span>
-        </div>
-
-        {/* NEW: Overdue Debts Card (> 30 days) */}
+        {/* Card 2: إجمالي عدد المخابز المدينة */}
         <div
-          onClick={() => setSelectedStatus('OVERDUE')}
-          className={`cursor-pointer transition-transform hover:scale-105 rounded-xl p-2.5 text-center shadow-lg border-2 ${
-            selectedStatus === 'OVERDUE'
-              ? 'bg-rose-950 border-rose-400 ring-2 ring-rose-500/50'
-              : 'bg-slate-900 border-rose-600/70 hover:border-rose-500'
-          }`}
-          title="انقر لتصفية المديونيات التي تجاوزت 30 يوماً دون سداد كامل"
+          onClick={() => setSelectedStatus('UNPAID')}
+          className="bg-white hover:bg-amber-50/40 border border-slate-200 hover:border-amber-400 rounded-2xl p-4 shadow-2xs flex items-center justify-between cursor-pointer transition"
         >
-          <div className="flex items-center justify-center gap-1 mb-0.5">
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping inline-block" />
-            <span className="text-[11px] font-black text-rose-300 block">
-              المتأخرات (&gt; 30 يوماً)
+          <div>
+            <span className="text-xs font-bold text-slate-500 block">2. إجمالي عدد المخابز المدينة</span>
+            <span className="text-2xl font-black text-amber-700 font-mono tabular-nums mt-1 block">
+              {stats.indebtedBakeriesCount.toLocaleString()}
+            </span>
+            <span className="text-[11px] font-bold text-amber-800 mt-0.5 block">
+              من إجمالي {debts.length} قيد مديونية
             </span>
           </div>
-          <span className="stat-num text-rose-200 block text-base font-black">
-            {stats.overdueCount} <span className="text-[10px] font-bold text-slate-400">قيد</span>
-          </span>
-          <span className="text-[10px] text-rose-400 font-bold block truncate">
-            {stats.overdueAmount.toLocaleString()} ج.م
-          </span>
+          <div className="p-3 bg-amber-50 text-amber-700 rounded-xl border border-amber-200">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
         </div>
 
-        <div className="bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-xl p-3 text-center shadow-lg border-2 border-red-500">
-          <span className="text-[11px] font-black text-rose-100 block mb-0.5">
-            صافي المتبقي الكلي
-          </span>
-          <span className="stat-num text-white block">
-            {stats.netRemainingTotal.toLocaleString()}
-          </span>
+        {/* Card 3: إجمالي قيمة المديونيات */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex items-center justify-between">
+          <div>
+            <span className="text-xs font-bold text-slate-500 block">3. إجمالي قيمة المديونيات</span>
+            <span className="text-2xl font-black text-[#1E3A8A] font-mono tabular-nums mt-1 block">
+              {stats.totalOriginalDebt.toLocaleString()}
+            </span>
+            <span className="text-[11px] font-bold text-slate-500 mt-0.5 block">
+              جنيه مصري (مخالفات + مضاف + تصرف)
+            </span>
+          </div>
+          <div className="p-3 bg-blue-50 text-[#1E40AF] rounded-xl border border-blue-200">
+            <Scale className="w-6 h-6" />
+          </div>
+        </div>
+
+        {/* Card 4: إجمالي المبالغ المسددة */}
+        <div
+          onClick={() => setSelectedStatus('PAID')}
+          className="bg-white hover:bg-emerald-50/40 border border-slate-200 hover:border-emerald-400 rounded-2xl p-4 shadow-2xs flex items-center justify-between cursor-pointer transition"
+        >
+          <div>
+            <span className="text-xs font-bold text-slate-500 block">4. إجمالي المبالغ المسددة</span>
+            <span className="text-2xl font-black text-emerald-700 font-mono tabular-nums mt-1 block">
+              {stats.totalPaidAmount.toLocaleString()}
+            </span>
+            <span className="text-[11px] font-bold text-emerald-700 mt-0.5 block">جنيه مصري محصل</span>
+          </div>
+          <div className="p-3 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200">
+            <CheckCircle2 className="w-6 h-6" />
+          </div>
+        </div>
+
+        {/* Card 5: إجمالي المبالغ المتبقية */}
+        <div
+          onClick={() => setSelectedStatus('UNPAID')}
+          className="bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-2xl p-4 shadow-sm flex items-center justify-between cursor-pointer transition hover:shadow-md"
+        >
+          <div>
+            <span className="text-xs font-bold text-rose-100 block">5. إجمالي المبالغ المتبقية</span>
+            <span className="text-2xl font-black text-white font-mono tabular-nums mt-1 block">
+              {stats.netRemainingTotal.toLocaleString()}
+            </span>
+            <span className="text-[11px] font-bold text-rose-100 mt-0.5 block">
+              جنيه مصري مستحق التحصيل
+            </span>
+          </div>
+          <div className="p-3 bg-white/15 text-white rounded-xl border border-white/25">
+            <DollarSign className="w-6 h-6" />
+          </div>
         </div>
       </div>
 
-      {/* Toolbar & Filter Bar */}
-      <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl p-4 shadow-xl space-y-3.5 no-print">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Action Buttons (Right-aligned in RTL flexbox) */}
+      {/* 3. Organized Command Toolbar & Filter Bar Above Debts Table */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-3.5 no-print">
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             {!isViewer && (
               <button
+                type="button"
                 onClick={() => {
                   setDebtToEdit(null);
                   setIsDebtModalOpen(true);
                 }}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-md border border-red-400/40 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#0F2342] hover:bg-[#1E3A8A] active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
               >
-                <Plus className="w-4 h-4 text-white stroke-[2.5]" />
-                تسجيل مديونية / مخالفة جديدة
+                <Plus className="w-4 h-4 text-white" />
+                <span>تسجيل مديونية / مخالفة جديدة</span>
+              </button>
+            )}
+
+            {!isViewer && selectedRowId && (
+              <button
+                type="button"
+                onClick={() => {
+                  const found = debts.find((d) => d.id === selectedRowId);
+                  if (found) {
+                    setDebtToEdit(found);
+                    setIsDebtModalOpen(true);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#1E40AF] hover:bg-[#2563EB] active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
+              >
+                <Edit2 className="w-3.5 h-3.5 text-white" />
+                <span>تعديل المديونية المحددة</span>
               </button>
             )}
 
             <button
+              type="button"
               onClick={() => setIsCalculatorModalOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-600 hover:bg-amber-500 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
             >
-              <Calculator className="w-4 h-4 text-slate-950 stroke-[2.5]" />
-              حاسبة الغرامات التموينية
+              <Calculator className="w-4 h-4 text-white" />
+              <span>حاسبة الغرامات التموينية</span>
             </button>
 
             <button
-              onClick={() => setIsEntitiesModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-850 text-amber-300 border border-amber-600/60 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
-              title="إدارة وتعديل وحذف الجهات المحررة للمحاضر"
-            >
-              <Building className="w-3.5 h-3.5 text-amber-400" />
-              <span>الجهات المحررة</span>
-              <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 text-[10px] rounded-md border border-amber-500/40 font-mono">
-                {issuingEntities.length}
-              </span>
-              <Settings className="w-3 h-3 text-amber-400" />
-            </button>
-
-            <button
-              onClick={() => setIsViolationsModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-850 text-red-300 border border-red-600/60 hover:border-red-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
-              title="إدارة وتعديل وحذف أنواع المخالفات التموينية"
-            >
-              <Scale className="w-3.5 h-3.5 text-red-400" />
-              <span>أنواع المخالفات</span>
-              <span className="px-1.5 py-0.5 bg-red-500/20 text-red-300 text-[10px] rounded-md border border-red-500/40 font-mono">
-                {violationTypes.length}
-              </span>
-              <Settings className="w-3 h-3 text-red-400" />
-            </button>
-
-            <button
+              type="button"
               onClick={() => {
                 setInstallmentBakeryId(undefined);
                 setIsWeeklyInstallmentsOpen(true);
               }}
-              className="inline-flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#1E40AF] hover:bg-[#2563EB] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
             >
-              <DollarSign className="w-4 h-4 text-slate-950 stroke-[2.5]" />
-              جدولة الدفعات الأسبوعية (&gt; 20 ألف)
+              <DollarSign className="w-4 h-4 text-white" />
+              <span>جدولة الدفعات الأسبوعية (&gt; 20 ألف)</span>
             </button>
 
             <button
+              type="button"
+              onClick={() => setIsEntitiesModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
+              title="إدارة وتعديل وحذف الجهات المحررة للمحاضر"
+            >
+              <Building className="w-3.5 h-3.5 text-[#1E40AF]" />
+              <span>الجهات المحررة ({issuingEntities.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsViolationsModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
+              title="إدارة وتعديل وحذف أنواع المخالفات التموينية"
+            >
+              <Scale className="w-3.5 h-3.5 text-red-600" />
+              <span>أنواع المخالفات ({violationTypes.length})</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-sm border border-emerald-600/50 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
             >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
-              تصدير Excel
+              <FileSpreadsheet className="w-4 h-4 text-white" />
+              <span>تصدير Excel</span>
             </button>
 
             <button
+              type="button"
+              disabled={isExportingPdf}
+              onClick={handleExportDebtsPdf}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#1D4ED8] hover:bg-[#2563EB] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
+            >
+              <FileText className="w-4 h-4 text-white" />
+              <span>تصدير التقرير PDF</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handlePrintDebts}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-950 hover:bg-slate-800 text-cyan-300 border border-cyan-500/50 hover:border-cyan-400 rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
-              title="فتح كشف طباعة المديونيات وتنزيل PDF A4 بالعرض"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-[#0F2342] border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
             >
-              <Printer className="w-4 h-4 text-cyan-400" />
-              طباعة الكشف A4
-            </button>
-
-            <button
-              onClick={() =>
-                printHtmlElementA4(
-                  debtsPrintRef.current,
-                  `كشف_مديونيات_أصحاب_المخابز_${new Date().toISOString().split('T')[0]}`
-                )
-              }
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-500/50 hover:border-amber-400 rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
-              title="طباعة فورية للجدول المعروض حالياً على الطابعة"
-            >
-              <Printer className="w-4 h-4 text-amber-400" />
-              طباعة سريعة للجدول
+              <Printer className="w-4 h-4 text-[#0F2342]" />
+              <span>معاينة وطباعة الكشف</span>
             </button>
           </div>
 
           {/* Search Box */}
-          <div className="relative flex-1 min-w-[240px]">
+          <div className="relative flex-1 min-w-[240px] max-w-sm">
             <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="بحث باسم صاحب المخبز، رقم الماكينة، رقم الإيصال..."
-              className="w-full pr-9 pl-3 py-2 bg-black border border-slate-700 text-slate-100 placeholder:text-slate-500 rounded-xl text-xs font-black focus:ring-2 focus:ring-amber-500 text-right transition"
+              className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-300 text-slate-800 placeholder:text-slate-400 rounded-xl text-xs font-bold focus:bg-white focus:ring-2 focus:ring-[#1E40AF] text-right transition"
             />
           </div>
         </div>
 
-        {/* NEW: البحث المتقدم عبر المديونيات (نطاق تاريخي من - إلى + نوع المخالفة) */}
+        {/* Advanced Date & Violation Type Filter Panel */}
         <div
           role="region"
           aria-label="البحث المتقدم عبر المديونيات"
-          className="p-3.5 bg-gradient-to-r from-slate-950 via-red-950/35 to-slate-950 border-2 border-amber-500/60 rounded-xl space-y-3 shadow-inner"
+          className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/25 pb-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
             <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-amber-500/20 border border-amber-400/50 rounded-lg">
-                <Filter className="w-4 h-4 text-amber-400" />
+              <div className="p-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+                <Filter className="w-4 h-4 text-[#1E3A8A]" />
               </div>
               <div>
-                <h3 className="text-xs sm:text-sm font-black text-amber-300 flex items-center gap-2">
-                  <span>البحث المتقدم عبر المديونيات</span>
-                  <span className="text-[10px] bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full font-black">
-                    نطاق تاريخي (من - إلى) + نوع المخالفة
+                <h3 className="text-xs sm:text-sm font-black text-[#0F2342] flex items-center gap-2">
+                  <span>البحث والتصفية المتقدمة لسجلات المديونيات</span>
+                  <span className="text-[10px] bg-blue-100 text-[#1E3A8A] px-2 py-0.5 rounded-full font-bold">
+                    نطاق تاريخي + نوع المخالفة + المنطقة
                   </span>
                 </h3>
-                <p className="text-[11px] text-slate-300 font-bold mt-0.5">
-                  فلترة فورية للمديونيات المسجلة خلال فترة زمنية محددة (من تاريخ - إلى تاريخ) وحسب نوع المخالفة التموينية
-                </p>
               </div>
             </div>
 
             <div className="flex items-center flex-wrap gap-2">
-              <span className="px-2.5 py-1 bg-slate-900 border border-amber-500/40 text-amber-300 rounded-lg text-[11px] font-black">
-                القيود المطابقة: {filteredDebts.length} من {debts.length} قيد
+              <span className="px-2.5 py-1 bg-white border border-slate-300 text-slate-700 rounded-lg text-[11px] font-bold">
+                القيود المعروضة: <strong className="text-[#0F2342] font-mono">{filteredDebts.length}</strong> من{' '}
+                <strong className="font-mono">{debts.length}</strong> قيد
               </span>
-              <span className="px-2.5 py-1 bg-red-950/90 border border-red-500/50 text-rose-200 rounded-lg text-[11px] font-black">
-                صافي مديونيات الفترة: {filteredPeriodNetDebt.toLocaleString()} ج.م
+              <span className="px-2.5 py-1 bg-red-50 border border-red-200 text-red-800 rounded-lg text-[11px] font-black">
+                صافي مديونيات النتائج: {filteredPeriodNetDebt.toLocaleString()} ج.م
               </span>
               {(dateFrom !== '' ||
                 dateTo !== '' ||
@@ -554,26 +678,24 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     setSelectedStatus('ALL');
                     setSearchTerm('');
                   }}
-                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[11px] font-black cursor-pointer flex items-center gap-1 shadow-sm"
-                  title="إلغاء جميع فلاتر التاريخ ونوع المخالفة وعرض كافة المديونيات"
+                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[11px] font-bold cursor-pointer flex items-center gap-1"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>إعادة تعيين البحث المتقدم</span>
+                  <span>إعادة تعيين التصفية</span>
                 </button>
               )}
             </div>
           </div>
 
-          {/* Date Range (من - إلى) + Violation Type + Quick Presets */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs items-end">
-            {/* 1. Date From (من تاريخ) */}
+            {/* 1. Date From */}
             <div>
               <label
                 htmlFor="debt-advanced-date-from"
-                className="flex items-center gap-1.5 text-[11px] font-black text-amber-200 mb-1"
+                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1"
               >
-                <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                <span>من تاريخ (يوم/شهر/سنة DD/MM/YYYY):</span>
+                <Calendar className="w-3.5 h-3.5 text-[#1E40AF]" />
+                <span>من تاريخ:</span>
               </label>
               <input
                 id="debt-advanced-date-from"
@@ -582,23 +704,18 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 lang="ar-EG"
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
-                className="w-full px-3 py-2 bg-black border-2 border-amber-500/50 focus:border-amber-400 rounded-xl font-mono font-black text-white text-xs cursor-pointer"
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl font-mono font-bold text-slate-800 text-xs cursor-pointer"
               />
-              {dateFrom && (
-                <span className="block text-[10px] font-black text-amber-300 bg-amber-950/80 border border-amber-500/40 rounded px-1.5 py-0.5 mt-1 text-center font-mono">
-                  📅 المحدد: {formatDateDDMMYYYY(dateFrom)}
-                </span>
-              )}
             </div>
 
-            {/* 2. Date To (إلى تاريخ) */}
+            {/* 2. Date To */}
             <div>
               <label
                 htmlFor="debt-advanced-date-to"
-                className="flex items-center gap-1.5 text-[11px] font-black text-amber-200 mb-1"
+                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1"
               >
-                <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                <span>إلى تاريخ (يوم/شهر/سنة DD/MM/YYYY):</span>
+                <Calendar className="w-3.5 h-3.5 text-[#1E40AF]" />
+                <span>إلى تاريخ:</span>
               </label>
               <input
                 id="debt-advanced-date-to"
@@ -607,35 +724,19 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 lang="ar-EG"
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
-                className="w-full px-3 py-2 bg-black border-2 border-amber-500/50 focus:border-amber-400 rounded-xl font-mono font-black text-white text-xs cursor-pointer"
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl font-mono font-bold text-slate-800 text-xs cursor-pointer"
               />
-              {dateTo && (
-                <span className="block text-[10px] font-black text-amber-300 bg-amber-950/80 border border-amber-500/40 rounded px-1.5 py-0.5 mt-1 text-center font-mono">
-                  📅 المحدد: {formatDateDDMMYYYY(dateTo)}
-                </span>
-              )}
             </div>
 
-            {/* 3. Violation Type (حسب نوع المخالفة) */}
+            {/* 3. Violation Type */}
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label
-                  htmlFor="debt-advanced-violation-type"
-                  className="flex items-center gap-1.5 text-[11px] font-black text-rose-300"
-                >
-                  <Scale className="w-3.5 h-3.5 text-rose-400" />
-                  <span>حسب نوع المخالفة التموينية:</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setIsViolationsModalOpen(true)}
-                  className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
-                  title="إضافة أو تعديل أو حذف أنواع المخالفات"
-                >
-                  <Edit2 className="w-3 h-3" />
-                  <span>تعديل/حذف</span>
-                </button>
-              </div>
+              <label
+                htmlFor="debt-advanced-violation-type"
+                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1"
+              >
+                <Scale className="w-3.5 h-3.5 text-red-600" />
+                <span>حسب نوع المخالفة التموينية:</span>
+              </label>
               <select
                 id="debt-advanced-violation-type"
                 aria-label="حسب نوع المخالفة التموينية"
@@ -647,7 +748,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   }
                   setSelectedViolationType(e.target.value);
                 }}
-                className="w-full px-3 py-2 bg-black border-2 border-rose-500/60 focus:border-rose-400 rounded-xl font-black text-rose-200 text-xs cursor-pointer"
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-800 text-xs cursor-pointer"
               >
                 <option value="ALL">كافة أنواع المخالفات ({debts.length} قيد)</option>
                 {Array.from(new Set([...violationTypes, ...debts.map((d) => d.violationType).filter(Boolean)])).map(
@@ -660,17 +761,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     );
                   }
                 )}
-                <option value="__MANAGE_VIOLATIONS__" className="text-amber-300 font-black bg-slate-900">
-                  ⚙️ إدارة وتعديل أنواع المخالفات...
-                </option>
+                <option value="__MANAGE_VIOLATIONS__">⚙️ إدارة وتعديل أنواع المخالفات...</option>
               </select>
             </div>
 
-            {/* 4. Quick Date Range Presets (فترات زمنية سريعة) */}
+            {/* 4. Quick Date Range Presets */}
             <div>
-              <span className="block text-[11px] font-black text-cyan-300 mb-1">
-                فترات زمنية سريعة (نقرة واحدة):
-              </span>
+              <span className="block text-[11px] font-bold text-slate-700 mb-1">فترات زمنية سريعة:</span>
               <div className="flex items-center flex-wrap gap-1.5">
                 <button
                   type="button"
@@ -678,10 +775,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     setDateFrom('');
                     setDateTo('');
                   }}
-                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black cursor-pointer border transition ${
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border transition ${
                     dateFrom === '' && dateTo === ''
-                      ? 'bg-amber-400 text-slate-950 border-amber-300'
-                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-400'
+                      ? 'bg-[#0F2342] text-white border-[#0F2342]'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
                   }`}
                 >
                   كل الفترات
@@ -692,10 +789,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     setDateFrom('2026-10-01');
                     setDateTo('2026-10-15');
                   }}
-                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black cursor-pointer border transition ${
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border transition ${
                     dateFrom === '2026-10-01' && dateTo === '2026-10-15'
-                      ? 'bg-amber-400 text-slate-950 border-amber-300'
-                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-400'
+                      ? 'bg-[#0F2342] text-white border-[#0F2342]'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
                   }`}
                 >
                   1 - 15 أكتوبر
@@ -706,10 +803,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     setDateFrom('2026-10-16');
                     setDateTo('2026-10-31');
                   }}
-                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black cursor-pointer border transition ${
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border transition ${
                     dateFrom === '2026-10-16' && dateTo === '2026-10-31'
-                      ? 'bg-amber-400 text-slate-950 border-amber-300'
-                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-400'
+                      ? 'bg-[#0F2342] text-white border-[#0F2342]'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
                   }`}
                 >
                   16 - 31 أكتوبر
@@ -720,10 +817,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     setDateFrom('2026-01-01');
                     setDateTo('2026-12-31');
                   }}
-                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black cursor-pointer border transition ${
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border transition ${
                     dateFrom === '2026-01-01' && dateTo === '2026-12-31'
-                      ? 'bg-amber-400 text-slate-950 border-amber-300'
-                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-400'
+                      ? 'bg-[#0F2342] text-white border-[#0F2342]'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
                   }`}
                 >
                   عام 2026
@@ -731,459 +828,272 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Dropdowns Filter */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 pt-2 border-t border-slate-800 text-xs">
-          <div>
-            <label className="block text-[11px] font-black text-slate-400 mb-1">القرية</label>
-            <select
-              value={selectedVillage}
-              onChange={(e) => {
-                setSelectedVillage(e.target.value);
-                setSelectedUnit('ALL');
-              }}
-              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
-            >
-              <option value="ALL">كافة قرى المركز</option>
-              {villages.map((v) => (
-                <option key={v.village} value={v.village}>
-                  {v.village}
+          {/* Secondary Dropdown Filters */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-slate-200 text-xs">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">القرية</label>
+              <select
+                value={selectedVillage}
+                onChange={(e) => {
+                  setSelectedVillage(e.target.value);
+                  setSelectedUnit('ALL');
+                }}
+                className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-800"
+              >
+                <option value="ALL">كافة قرى المركز</option>
+                {villages.map((v) => (
+                  <option key={v.village} value={v.village}>
+                    {v.village}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">الوحدة المحلية التابعة</label>
+              <select
+                value={selectedUnit}
+                onChange={(e) => setSelectedUnit(e.target.value)}
+                className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-800"
+              >
+                <option value="ALL">
+                  {selectedVillage === 'ALL' ? 'كافة الوحدات المحلية بالمركز' : `كافة وحدات ${selectedVillage}`}
                 </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-black text-slate-400 mb-1">
-              الوحدة المحلية التابعة
-            </label>
-            <select
-              value={selectedUnit}
-              onChange={(e) => setSelectedUnit(e.target.value)}
-              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
-            >
-              <option value="ALL">
                 {selectedVillage === 'ALL'
-                  ? 'كافة الوحدات المحلية بالمركز'
-                  : `كافة وحدات ${selectedVillage}`}
-              </option>
-              {selectedVillage === 'ALL'
-                ? villages.map((v) => (
-                    <optgroup key={v.village} label={`قرية ${v.village}`}>
-                      {v.localUnits.map((u) => (
-                        <option key={`${v.village}-${u}`} value={u}>
-                          {u} ({v.village})
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))
-                : (villages.find((v) => v.village === selectedVillage)?.localUnits || []).map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
-            </select>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-[11px] font-black text-slate-400">
-                الجهة المحررة للمحضر
-              </label>
-              <button
-                type="button"
-                onClick={() => setIsEntitiesModalOpen(true)}
-                className="inline-flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300 font-bold hover:underline cursor-pointer"
-                title="إدارة وتعديل وحذف الجهات المحررة"
-              >
-                <Settings className="w-2.5 h-2.5 text-amber-400" />
-                تعديل وإدارة ({issuingEntities.length})
-              </button>
+                  ? villages.map((v) => (
+                      <optgroup key={v.village} label={`قرية ${v.village}`}>
+                        {v.localUnits.map((u) => (
+                          <option key={`${v.village}-${u}`} value={u}>
+                            {u} ({v.village})
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))
+                  : (villages.find((v) => v.village === selectedVillage)?.localUnits || []).map((u) => (
+                      <option key={u} value={u}>
+                        {u}
+                      </option>
+                    ))}
+              </select>
             </div>
-            <select
-              value={selectedEntity}
-              onChange={(e) => {
-                if (e.target.value === '__MANAGE_ENTITIES__') {
-                  setIsEntitiesModalOpen(true);
-                  return;
-                }
-                setSelectedEntity(e.target.value);
-              }}
-              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
-            >
-              <option value="ALL">كافة الجهات المحررة ({issuingEntities.length})</option>
-              <option value="__MANAGE_ENTITIES__" className="text-amber-400 font-black bg-slate-900">
-                ⚙️ إدارة وتعديل / حذف الجهات المحررة ({issuingEntities.length})...
-              </option>
-              {issuingEntities.map((e) => (
-                <option key={e} value={e}>
-                  {e}
-                </option>
-              ))}
-            </select>
-          </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-[11px] font-black text-slate-400">نوع المخالفة</label>
-              <button
-                type="button"
-                onClick={() => setIsViolationsModalOpen(true)}
-                className="inline-flex items-center gap-1 text-[10px] text-red-400 hover:text-red-300 font-bold hover:underline cursor-pointer"
-                title="إدارة وتعديل وحذف أنواع المخالفات"
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">الجهة المحررة للمحضر</label>
+              <select
+                value={selectedEntity}
+                onChange={(e) => {
+                  if (e.target.value === '__MANAGE_ENTITIES__') {
+                    setIsEntitiesModalOpen(true);
+                    return;
+                  }
+                  setSelectedEntity(e.target.value);
+                }}
+                className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-800"
               >
-                <Settings className="w-2.5 h-2.5 text-red-400" />
-                تعديل وإدارة ({violationTypes.length})
-              </button>
+                <option value="ALL">كافة الجهات المحررة ({issuingEntities.length})</option>
+                <option value="__MANAGE_ENTITIES__">⚙️ إدارة وتعديل الجهات المحررة...</option>
+                {issuingEntities.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
             </div>
-            <select
-              value={selectedViolationType}
-              onChange={(e) => {
-                if (e.target.value === '__MANAGE_VIOLATIONS__') {
-                  setIsViolationsModalOpen(true);
-                  return;
-                }
-                setSelectedViolationType(e.target.value);
-              }}
-              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
-            >
-              <option value="ALL">كافة أنواع المخالفات ({violationTypes.length})</option>
-              <option value="__MANAGE_VIOLATIONS__" className="text-red-400 font-black bg-slate-900">
-                ⚙️ إدارة وتعديل / حذف أنواع المخالفات ({violationTypes.length})...
-              </option>
-              {violationTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
 
-          <div>
-            <label className="block text-[11px] font-black text-slate-400 mb-1">حالة السداد والجدولة والمتأخرات</label>
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value as 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE')}
-              className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-xl font-black text-slate-100 focus:ring-1 focus:ring-amber-500"
-            >
-              <option value="ALL">الكل (المسدد والمتبقي)</option>
-              <option value="OVERDUE">🚨 المتأخرات (&gt; 30 يوماً دون سداد كامل)</option>
-              <option value="OVER_20K">مديونيات تتجاوز 20,000 ج.م (تستلزم دفعات)</option>
-              <option value="UNPAID">عليه مديونية متبقية فقط</option>
-              <option value="PAID">خالص المديونية بالكامل</option>
-            </select>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">حالة السداد والجدولة</label>
+              <select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value as 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE')}
+                className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-800"
+              >
+                <option value="ALL">الكل (المسدد والمتبقي)</option>
+                <option value="OVERDUE">المتأخرات (&gt; 30 يوماً دون سداد كامل)</option>
+                <option value="OVER_20K">مديونيات تتجاوز 20,000 ج.م (دفعات أسبوعية)</option>
+                <option value="UNPAID">عليه مديونية متبقية فقط</option>
+                <option value="PAID">خالص المديونية بالكامل</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Printable Wrapper for Direct Table Print */}
-      <div ref={debtsPrintRef} className="space-y-3">
-      {/* Official Printable Header (Appears during print) */}
-      <div className="hidden print:block print-container mb-4 text-center border-b-2 border-black pb-3">
-        <div className="flex items-center justify-between">
-          <div className="text-right">
-            <h4 className="text-xs font-black text-black">جمهورية مصر العربية</h4>
-            <h4 className="text-xs font-black text-black">{systemConfig.governorateTitle}</h4>
-            <h4 className="text-xs font-black text-black">{systemConfig.directorateTitle}</h4>
-            <h4 className="text-xs font-black text-black">{systemConfig.administrationTitle}</h4>
-          </div>
-          <div className="w-16 h-16">
-            <img src={systemConfig.logoBase64} alt="شعار" className="w-full h-full object-contain" />
-          </div>
-          <div className="text-left font-mono text-[10px]">
-            <p>كشف مديونيات ومخالفات المخابز</p>
-            <p>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</p>
-            <p>الاسم بالكامل: {currentUser?.fullName || 'أحمد الحسيني'}</p>
-            <p>اليوزر: {currentUser?.username || 'admin'} | الباسورد: {currentUser?.password || 'admin'}</p>
+      {/* 4. Printable Wrapper & Official Grouped Headers Debts Table */}
+      <div ref={debtsPrintRef} className="space-y-3 print-container">
+        {/* Official Printable Header (Appears during print & PDF export) */}
+        <div className="hidden print:block mb-4 text-center border-b-2 border-[#0F2342] pb-3">
+          <div className="flex items-center justify-between">
+            <div className="text-right">
+              <h4 className="text-xs font-black text-slate-900">جمهورية مصر العربية · {systemConfig.governorateTitle}</h4>
+              <h4 className="text-xs font-black text-[#0F2342]">{systemConfig.directorateTitle}</h4>
+              <h4 className="text-xs font-black text-[#0F2342]">{systemConfig.administrationTitle}</h4>
+            </div>
+            {systemConfig.logoBase64 && (
+              <div className="w-14 h-14">
+                <img src={systemConfig.logoBase64} alt="شعار" className="w-full h-full object-contain" />
+              </div>
+            )}
+            <div className="text-left font-mono text-[10px] font-bold">
+              <p>تقرير قاعدة بيانات مديونيات المخابز</p>
+              <p>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</p>
+              <p>عدد القيود: {filteredDebts.length} قيد</p>
+            </div>
           </div>
         </div>
-        <h2 className="text-sm font-black mt-2 underline">
-          كشف حصر مديونيات ومخالفات أصحاب المخابز البلدية بمركز المحلة الكبرى
-        </h2>
-      </div>
 
-      {/* Grouped Headers Debts Table */}
-      <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
-        <div className="overflow-x-auto max-h-[650px] relative">
-          <table className="w-full text-center border-collapse text-xs">
-            {/* Super Headers */}
-            <thead className="sticky top-0 z-20 bg-slate-900 text-white font-black">
-              <tr className="border-b border-slate-700">
-                {/* Index Column */}
-                <th
-                  rowSpan={2}
-                  className="py-2.5 px-1 bg-black border-l border-slate-700 text-slate-300 w-10 text-center"
-                >
-                  م
-                </th>
-
-                {/* 1. Basic Info (Owner Name, Machine, Village, Local Unit) */}
-                <th
-                  colSpan={4}
-                  className="py-2.5 px-2 bg-slate-900 border-l border-slate-700 text-amber-300"
-                >
-                  1. البيانات الأساسية وموقع المخبز
-                </th>
-                <th
-                  colSpan={6}
-                  className="py-2.5 px-2 bg-red-950 border-l border-slate-700 text-rose-200"
-                >
-                  2. مخالفات المخبز
-                </th>
-                <th
-                  colSpan={5}
-                  className="py-2.5 px-2 bg-emerald-950 border-l border-slate-700 text-emerald-200"
-                >
-                  3. سداد المخالفات
-                </th>
-                <th
-                  colSpan={6}
-                  className="py-2.5 px-2 bg-blue-950 border-l border-slate-700 text-blue-200"
-                >
-                  4. المنصرف وسداد المنصرف (المضاف)
-                </th>
-                <th
-                  colSpan={5}
-                  className="py-2.5 px-2 bg-amber-950 border-l border-slate-700 text-amber-200"
-                >
-                  5. التصرف من المخبز
-                </th>
-                <th
-                  colSpan={5}
-                  className="py-2.5 px-2 bg-teal-950 border-l border-slate-700 text-teal-200"
-                >
-                  6. السداد من التصرف
-                </th>
-                <th
-                  rowSpan={2}
-                  className="py-2.5 px-3 bg-red-700 border-l border-red-800 text-white text-xs font-black min-w-[130px]"
-                >
-                  صافي المتبقي على صاحب المخبز
-                </th>
-
-                {/* Actions Column moved to the END of the table */}
-                <th
-                  rowSpan={2}
-                  className="py-2.5 px-2 bg-gradient-to-r from-slate-900 to-amber-950 border-l border-slate-700 text-amber-300 min-w-[100px] no-print text-center"
-                >
-                  الإجراءات
-                </th>
-              </tr>
-
-              {/* Sub Columns Headers */}
-              <tr className="bg-slate-800 text-[11px] text-slate-200 font-black border-b-2 border-slate-600">
-                {/* 1. Basic Info Sub-headers (Index and Actions are rowSpan 2 above) */}
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[150px]">اسم صاحب المخبز</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[90px]">رقم الماكينة</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">القرية</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[90px]">الوحدة التابعة</th>
-
-                {/* 2. Violations */}
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">تاريخ العملية</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[120px]">الجهة المحررة</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[130px]">نوع المخالفة</th>
-                <th className="py-2 px-2 border-l border-slate-700">قيمة المخالفة</th>
-                <th className="py-2 px-2 border-l border-slate-700">مخالفات قديمة</th>
-                <th className="py-2 px-2 border-l border-slate-700 bg-red-900/60 text-white">
-                  إجمالي المخالفات
-                </th>
-
-                {/* 3. Violation Payment */}
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">تاريخ السداد</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">رقم الإيصال</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">نوع السداد</th>
-                <th className="py-2 px-2 border-l border-slate-700 text-emerald-300">المبلغ المسدد</th>
-                <th className="py-2 px-2 border-l border-slate-700 bg-emerald-900/60 text-white">
-                  المتبقي
-                </th>
-
-                {/* 4. Added (المضاف) */}
-                <th className="py-2 px-2 border-l border-slate-700">المضاف للمخبز</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">تاريخ السداد</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">رقم الإيصال</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">نوع السداد</th>
-                <th className="py-2 px-2 border-l border-slate-700 text-blue-300">المسدد من المضاف</th>
-                <th className="py-2 px-2 border-l border-slate-700 bg-blue-900/60 text-white">
-                  المتبقي
-                </th>
-
-                {/* 5. Disposal (التصرف) */}
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">تاريخ التصرف</th>
-                <th className="py-2 px-1 border-l border-slate-700">الشكاير</th>
-                <th className="py-2 px-2 border-l border-slate-700">سعر الشيكارة</th>
-                <th className="py-2 px-1 border-l border-slate-700">المضاعفة</th>
-                <th className="py-2 px-2 border-l border-slate-700 bg-amber-900/60 text-white">
-                  قيمة التصرف
-                </th>
-
-                {/* 6. Disposal Payment */}
-                <th className="py-2 px-2 border-l border-slate-700">قيمة التصرف</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">تاريخ السداد</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[80px]">رقم الإيصال</th>
-                <th className="py-2 px-2 border-l border-slate-700 min-w-[85px]">نوع السداد</th>
-                <th className="py-2 px-2 border-l border-slate-700 text-teal-300">السداد من التصرف</th>
-              </tr>
-            </thead>
-
-            {/* Table Body with Professional Row Highlight */}
-            <tbody className="divide-y divide-slate-200 font-bold">
-              {filteredDebts.length === 0 ? (
-                <tr>
-                  <td colSpan={34} className="py-10 text-center text-slate-500 font-black">
-                    لا توجد أي قيود مديونية مطابقة لمعايير البحث الحالية
-                  </td>
+        {/* Debts Database Table */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+          <div className="overflow-x-auto max-h-[650px] relative">
+            <table className="w-full text-center border-collapse text-xs">
+              {/* Super Headers */}
+              <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-bold shadow-xs">
+                <tr className="border-b border-[#1E3A8A]">
+                  <th
+                    rowSpan={2}
+                    className="py-3 px-2 bg-[#0A1931] border-l border-[#1E3A8A] text-white w-10 text-center font-black"
+                  >
+                    م
+                  </th>
+                  <th
+                    colSpan={4}
+                    className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-white font-black"
+                  >
+                    1. البيانات الأساسية وموقع المخبز
+                  </th>
+                  <th
+                    colSpan={6}
+                    className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
+                  >
+                    2. مخالفات المخبز
+                  </th>
+                  <th
+                    colSpan={5}
+                    className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-white font-black"
+                  >
+                    3. سداد المخالفات
+                  </th>
+                  <th
+                    colSpan={6}
+                    className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
+                  >
+                    4. المنصرف وسداد المنصرف (المضاف)
+                  </th>
+                  <th
+                    colSpan={5}
+                    className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-white font-black"
+                  >
+                    5. التصرف من المخبز
+                  </th>
+                  <th
+                    colSpan={5}
+                    className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
+                  >
+                    6. السداد من التصرف
+                  </th>
+                  <th
+                    rowSpan={2}
+                    className="py-3 px-3 bg-[#1E3A8A] border-l border-blue-800 text-white text-xs font-black min-w-[135px]"
+                  >
+                    صافي المتبقي على صاحب المخبز
+                  </th>
+                  <th
+                    rowSpan={2}
+                    className="py-3 px-2 bg-[#0A1931] border-l border-[#1E3A8A] text-white min-w-[95px] no-print text-center font-black"
+                  >
+                    الإجراءات
+                  </th>
                 </tr>
-              ) : (
-                filteredDebts.map((d, index) => {
-                  const isSelected = selectedRowId === d.id;
-                  return (
-                    <tr
-                      key={d.id}
-                      onClick={() => setSelectedRowId(d.id)}
-                      className={`cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'row-selected'
-                          : index % 2 === 0
-                          ? 'bg-slate-900/90 hover:bg-slate-800/90'
-                          : 'bg-slate-950 hover:bg-slate-800/90'
-                      }`}
-                    >
-                      {/* 1. Basic Info - Index on the RIGHT side */}
-                      <td className="py-2.5 px-1 border-l border-slate-800 text-slate-400 num-enlarged text-center">{index + 1}</td>
 
-                      <td className="py-2.5 px-2 border-l border-slate-800 font-black text-slate-100 text-right">
-                        {d.bakeryOwnerName}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-amber-300">
-                        {d.machineNumber}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-200">{d.village}</td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-400">{d.localUnit}</td>
+                {/* Sub Columns Headers */}
+                <tr className="bg-[#152E59] text-[11px] text-white font-bold border-b-2 border-[#0F2342]">
+                  {/* 1. Basic Info */}
+                  <th className="py-2.5 px-2.5 border-l border-[#1E3A8A] min-w-[155px] text-right">اسم صاحب المخبز</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[90px]">رقم الماكينة</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">القرية</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[95px]">الوحدة التابعة</th>
 
-                      {/* 2. Violations */}
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        <div>
-                          <span>{formatDateDDMMYYYY(d.violationDate) || '-'}</span>
-                          {(() => {
-                            const { isOverdue, daysElapsed } = getDebtOverdueInfo(
-                              d.violationDate || d.disposalDate,
-                              d.netRemainingDebt
-                            );
-                            if (isOverdue) {
-                              return (
-                                <span
-                                  className="block text-[9.5px] font-black text-rose-300 bg-rose-950/90 border border-rose-700/60 rounded px-1 mt-0.5"
-                                  title={`مر ${daysElapsed} يوماً على تحرير الغرامة دون سداد`}
-                                >
-                                  محرر منذ {daysElapsed} يوم
-                                </span>
-                              );
-                            }
-                            return null;
-                          })()}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 text-xs text-slate-300">
-                        {d.issuingEntity}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 text-xs text-rose-300 font-bold">
-                        {d.violationType}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-rose-400">
-                        {d.violationAmount?.toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-400">
-                        {d.oldViolations?.toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-red-950/50 text-red-200">
-                        {d.totalViolations?.toLocaleString()}
-                      </td>
+                  {/* 2. Violations */}
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ العملية</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[115px]">الجهة المحررة</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[125px]">نوع المخالفة</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">قيمة المخالفة</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">مخالفات قديمة</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">إجمالي المخالفات</th>
 
-                      {/* 3. Violation Payment */}
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {formatDateDDMMYYYY(d.violationPaymentDate) || '-'}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
-                        {d.violationReceiptNumber || '-'}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800">
-                        <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-200 border border-slate-700">
-                          {d.violationPaymentMethod}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-emerald-400">
-                        {d.paidViolationAmount?.toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-emerald-950/50 text-emerald-200">
-                        {d.remainingViolations?.toLocaleString()}
-                      </td>
+                  {/* 3. Violation Payment */}
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المبلغ المسدد</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">المتبقي</th>
 
-                      {/* 4. Added (المضاف) */}
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-cyan-300">
-                        {d.addedAmount?.toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {formatDateDDMMYYYY(d.addedPaymentDate) || '-'}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
-                        {d.addedReceiptNumber || '-'}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800">
-                        <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-200 border border-slate-700">
-                          {d.addedPaymentMethod}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-blue-400">
-                        {d.paidAddedAmount?.toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-blue-950/50 text-blue-200">
-                        {d.remainingAdded?.toLocaleString()}
-                      </td>
+                  {/* 4. Added */}
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المضاف للمخبز</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المسدد من المضاف</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">المتبقي</th>
 
-                      {/* 5. Disposal (التصرف) */}
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {formatDateDDMMYYYY(d.disposalDate) || '-'}
-                      </td>
-                      <td className="py-2.5 px-1 border-l border-slate-800 num-enlarged text-slate-200">{d.disposalBags}</td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {d.disposalBagPrice?.toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-1 border-l border-slate-800 num-enlarged text-amber-400">
-                        {d.disposalMultiplier}x
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-amber-950/40 text-amber-200">
-                        {d.disposalValue?.toLocaleString()}
-                      </td>
+                  {/* 5. Disposal */}
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ التصرف</th>
+                  <th className="py-2.5 px-1.5 border-l border-[#1E3A8A]">الشكاير</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">سعر الشيكارة</th>
+                  <th className="py-2.5 px-1.5 border-l border-[#1E3A8A]">المضاعفة</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">قيمة التصرف</th>
 
-                      {/* 6. Disposal Payment */}
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {d.disposalValue?.toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {formatDateDDMMYYYY(d.disposalPaymentDate) || '-'}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
-                        {d.disposalReceiptNumber || '-'}
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800">
-                        <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-200 border border-slate-700">
-                          {d.disposalPaymentMethod}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-teal-400">
-                        {d.paidDisposalAmount?.toLocaleString()}
-                      </td>
+                  {/* 6. Disposal Payment */}
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">قيمة التصرف</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">السداد من التصرف</th>
+                </tr>
+              </thead>
 
-                      {/* Net Remaining Debt */}
-                      <td className="py-2.5 px-3 border-l border-slate-800 num-enlarged font-black">
-                        {d.netRemainingDebt > 0 ? (
-                          <div className="space-y-1 flex flex-col items-center justify-center">
-                            <span className="inline-block px-2.5 py-1 bg-red-950/80 text-red-200 border border-red-700/80 rounded-lg text-xs font-black shadow-inner">
-                              {d.netRemainingDebt.toLocaleString()} ج.م
-                            </span>
+              {/* Table Body */}
+              <tbody className="divide-y divide-slate-200 font-bold text-slate-800">
+                {filteredDebts.length === 0 ? (
+                  <tr>
+                    <td colSpan={34} className="py-12 text-center text-slate-500 font-black">
+                      لا توجد أي قيود مديونية مطابقة لمعايير البحث الحالية
+                    </td>
+                  </tr>
+                ) : (
+                  filteredDebts.map((d, index) => {
+                    const isSelected = selectedRowId === d.id;
+                    return (
+                      <tr
+                        key={d.id}
+                        onClick={() => setSelectedRowId(d.id)}
+                        className={`cursor-pointer transition-colors ${
+                          isSelected
+                            ? 'row-selected'
+                            : index % 2 === 0
+                            ? 'bg-white hover:bg-blue-50/70'
+                            : 'bg-slate-50/90 hover:bg-blue-50/70'
+                        }`}
+                      >
+                        {/* Index */}
+                        <td className="py-2.5 px-1.5 border-l border-slate-200 text-slate-500 font-mono text-center">
+                          {index + 1}
+                        </td>
 
-                            {/* Visual Overdue Tag (وسم المتأخرات > 30 يوماً دون سداد كامل) */}
+                        {/* Owner & Location */}
+                        <td className="py-2.5 px-2.5 border-l border-slate-200 font-extrabold text-[#0F2342] text-right">
+                          {d.bakeryOwnerName}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-[#1E40AF]">
+                          {d.machineNumber}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-800">{d.village}</td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-600">{d.localUnit}</td>
+
+                        {/* 2. Violations */}
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                          <div>
+                            <span>{formatDateDDMMYYYY(d.violationDate) || '-'}</span>
                             {(() => {
                               const { isOverdue, daysElapsed } = getDebtOverdueInfo(
                                 d.violationDate || d.disposalDate,
@@ -1192,82 +1102,228 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                               if (isOverdue) {
                                 return (
                                   <span
-                                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white border border-amber-300 shadow-lg animate-pulse shrink-0 cursor-help my-0.5"
-                                    title={`تنبيه متأخرات: مر أكثر من 30 يوماً (${daysElapsed} يوماً) على تاريخ تحرير الغرامة دون سداد كامل!`}
+                                    className="block text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded px-1 mt-0.5"
+                                    title={`مر ${daysElapsed} يوماً على تحرير الغرامة دون سداد`}
                                   >
-                                    <Clock className="w-3 h-3 text-amber-300" />
-                                    <span>متأخرات ({daysElapsed} يوم) 🚨</span>
+                                    منذ {daysElapsed} يوم
                                   </span>
                                 );
                               }
                               return null;
                             })()}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 text-xs text-slate-700">
+                          {d.issuingEntity}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 text-xs text-red-700 font-extrabold">
+                          {d.violationType}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-800">
+                          {(d.violationAmount || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-600">
+                          {(d.oldViolations || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-red-50/60 text-red-800">
+                          {(d.totalViolations || 0).toLocaleString()}
+                        </td>
 
-                            {d.netRemainingDebt > 20000 && (
+                        {/* 3. Violation Payment */}
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                          {formatDateDDMMYYYY(d.violationPaymentDate) || '-'}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
+                          {d.violationReceiptNumber || '-'}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200">
+                          <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
+                            {d.violationPaymentMethod}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
+                          {(d.paidViolationAmount || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-blue-50/40 text-[#0F2342]">
+                          {(d.remainingViolations || 0).toLocaleString()}
+                        </td>
+
+                        {/* 4. Added */}
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-800">
+                          {(d.addedAmount || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                          {formatDateDDMMYYYY(d.addedPaymentDate) || '-'}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
+                          {d.addedReceiptNumber || '-'}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200">
+                          <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
+                            {d.addedPaymentMethod}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
+                          {(d.paidAddedAmount || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-blue-50/40 text-[#0F2342]">
+                          {(d.remainingAdded || 0).toLocaleString()}
+                        </td>
+
+                        {/* 5. Disposal */}
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                          {formatDateDDMMYYYY(d.disposalDate) || '-'}
+                        </td>
+                        <td className="py-2.5 px-1.5 border-l border-slate-200 font-mono text-slate-800">
+                          {d.disposalBags}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                          {(d.disposalBagPrice || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-1.5 border-l border-slate-200 font-mono text-amber-700">
+                          {d.disposalMultiplier}x
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-amber-50/50 text-amber-900">
+                          {(d.disposalValue || 0).toLocaleString()}
+                        </td>
+
+                        {/* 6. Disposal Payment */}
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                          {(d.disposalValue || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                          {formatDateDDMMYYYY(d.disposalPaymentDate) || '-'}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
+                          {d.disposalReceiptNumber || '-'}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200">
+                          <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
+                            {d.disposalPaymentMethod}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
+                          {(d.paidDisposalAmount || 0).toLocaleString()}
+                        </td>
+
+                        {/* Net Remaining Debt */}
+                        <td className="py-2.5 px-3 border-l border-slate-200 font-mono font-black bg-slate-50/60">
+                          {d.netRemainingDebt > 0 ? (
+                            <div className="space-y-1 flex flex-col items-center justify-center">
+                              <span className="inline-block px-2.5 py-1 bg-red-50 text-red-700 border border-red-300 rounded-lg text-xs font-black">
+                                {d.netRemainingDebt.toLocaleString()} ج.م
+                              </span>
+                              {d.netRemainingDebt > 20000 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setInstallmentBakeryId(d.bakeryId);
+                                    setIsWeeklyInstallmentsOpen(true);
+                                  }}
+                                  className="block mx-auto text-[10px] bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-md font-bold cursor-pointer transition"
+                                >
+                                  دفعات أسبوعية (&gt;20 ألف)
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[11px] font-black">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              خالص (0)
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Actions Column */}
+                        <td className="py-2 px-1.5 border-l border-slate-200 no-print text-center">
+                          {isViewer ? (
+                            <span className="text-[11px] font-bold text-slate-500">عرض فقط</span>
+                          ) : (
+                            <div className="flex items-center justify-center gap-1">
                               <button
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setInstallmentBakeryId(d.bakeryId);
-                                  setIsWeeklyInstallmentsOpen(true);
+                                  setDebtToEdit(d);
+                                  setIsDebtModalOpen(true);
                                 }}
-                                className="block mx-auto text-[10px] bg-red-700 hover:bg-red-600 text-white px-2 py-0.5 rounded-md font-black animate-pulse cursor-pointer shadow-sm transition-transform hover:scale-105"
-                                title="مديونية تتجاوز 20,000 ج.م - انقر لجدولة دفعات أسبوعية"
+                                className="p-1.5 bg-blue-50 hover:bg-blue-100 text-[#1E40AF] border border-blue-200 rounded-lg transition cursor-pointer"
+                                title="تعديل المديونية"
                               >
-                                &gt; 20 ألف (جدول دفعات أسبوعية)
+                                <Edit2 className="w-3.5 h-3.5" />
                               </button>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-950/80 text-emerald-300 border border-emerald-700/70 rounded-lg text-[11px] font-black">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                            خالص (0)
-                          </span>
-                        )}
-                      </td>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
+                                    onDeleteDebt(d.id);
+                                  }
+                                }}
+                                className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg transition cursor-pointer"
+                                title="حذف القيد"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
 
-                      {/* Actions Column moved to the END of the table (Left side in RTL) */}
-                      <td className="py-2 px-1.5 border-l border-slate-800 no-print text-center bg-slate-900/40">
-                        {isViewer ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-400 bg-slate-950 border border-slate-700 px-2 py-1 rounded-lg">
-                            <span>👁️</span>
-                            <span>عرض فقط</span>
-                          </span>
-                        ) : (
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDebtToEdit(d);
-                                setIsDebtModalOpen(true);
-                              }}
-                              className="p-1.5 hover:bg-amber-950/80 text-amber-400 hover:text-amber-300 border border-amber-800/40 hover:border-amber-500 rounded-lg transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
-                              title="تعديل المديونية"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
-                                  onDeleteDebt(d.id);
-                                }
-                              }}
-                              className="p-1.5 hover:bg-red-950/80 text-red-400 hover:text-red-300 border border-red-800/40 hover:border-red-500 rounded-lg transition-all duration-200 transform hover:scale-120 active:scale-95 shadow-sm cursor-pointer"
-                              title="حذف القيد"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
+              {/* Highlighted Summary Footer Row (tfoot) */}
+              {filteredDebts.length > 0 && (
+                <tfoot>
+                  <tr className="bg-[#DBEAFE] text-[#0F2342] font-black border-t-2 border-[#0F2342] text-xs font-mono">
+                    <td colSpan={5} className="py-3 px-3 text-right font-sans font-black border-l border-blue-300">
+                      إجمالي السجلات المعروضة ({filteredDebts.length} قيد مديونية)
+                    </td>
+                    <td colSpan={3} className="border-l border-blue-300">—</td>
+                    <td className="py-2.5 px-2 border-l border-blue-300">{filteredTotals.sumViol.toLocaleString()}</td>
+                    <td className="py-2.5 px-2 border-l border-blue-300">{filteredTotals.sumOldViol.toLocaleString()}</td>
+                    <td className="py-2.5 px-2 border-l border-blue-300 bg-blue-200/70">
+                      {filteredTotals.sumTotalViol.toLocaleString()}
+                    </td>
+                    <td colSpan={3} className="border-l border-blue-300">—</td>
+                    <td className="py-2.5 px-2 border-l border-blue-300 text-emerald-800">
+                      {filteredTotals.sumPaidViol.toLocaleString()}
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-blue-300 bg-blue-200/70">
+                      {filteredTotals.sumRemViol.toLocaleString()}
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-blue-300">{filteredTotals.sumAdded.toLocaleString()}</td>
+                    <td colSpan={3} className="border-l border-blue-300">—</td>
+                    <td className="py-2.5 px-2 border-l border-blue-300 text-emerald-800">
+                      {filteredTotals.sumPaidAdded.toLocaleString()}
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-blue-300 bg-blue-200/70">
+                      {filteredTotals.sumRemAdded.toLocaleString()}
+                    </td>
+                    <td className="border-l border-blue-300">—</td>
+                    <td className="py-2.5 px-1.5 border-l border-blue-300">{filteredTotals.sumDispBags}</td>
+                    <td colSpan={2} className="border-l border-blue-300">—</td>
+                    <td className="py-2.5 px-2 border-l border-blue-300 bg-blue-200/70">
+                      {filteredTotals.sumDispVal.toLocaleString()}
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-blue-300">{filteredTotals.sumDispVal.toLocaleString()}</td>
+                    <td colSpan={3} className="border-l border-blue-300">—</td>
+                    <td className="py-2.5 px-2 border-l border-blue-300 text-emerald-800">
+                      {filteredTotals.sumPaidDisp.toLocaleString()}
+                    </td>
+                    <td className="py-2.5 px-3 border-l border-blue-300 bg-red-100 text-red-900 font-black">
+                      {filteredTotals.sumNetRem.toLocaleString()} ج.م
+                    </td>
+                    <td className="no-print" />
+                  </tr>
+                </tfoot>
               )}
-            </tbody>
-          </table>
+            </table>
+          </div>
         </div>
-      </div>
       </div>
 
       {/* Modal 1: Add / Edit Debt Record */}

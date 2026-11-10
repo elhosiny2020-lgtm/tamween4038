@@ -1,135 +1,95 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
-  Store,
-  Calculator,
-  FileBarChart,
-  Search,
-  Database,
-  Settings,
-  ChevronDown,
-  ChevronLeft,
-  PanelRightClose,
-  PanelRightOpen,
   Home,
   BarChart3,
   Activity,
   Clock,
-  FileText,
+  Store,
+  FileSpreadsheet,
   Wheat,
-  Coins,
-  Users,
-  Scale,
-  Percent,
-  TrendingUp,
   Layers,
-  GitCompare,
-  PieChart,
-  Filter,
-  MapPin,
+  ShieldCheck,
+  Users,
+  Calculator,
+  Percent,
+  TrendingDown,
+  RefreshCw,
+  FileText,
+  Printer,
+  Search,
   Hash,
+  MapPin,
+  Filter,
+  Database,
   PlusCircle,
   Edit3,
   Upload,
   Download,
   HardDrive,
-  ShieldCheck,
-  Sliders,
+  Settings,
+  Cloud,
   UserCheck,
-  Inbox,
-  Columns3,
-  LogOut,
-  CheckCircle2,
-  Receipt,
-  ListTodo,
+  Sliders,
+  CheckSquare,
+  ChevronDown,
+  ChevronLeft,
+  PanelRightClose,
+  PanelRightOpen,
+  ClipboardList,
+  BookOpen,
+  Mail,
+  Map,
+  Scale,
+  AlertTriangle,
+  Globe,
+  Save,
   Bell,
+  HelpCircle,
+  Eye,
+  LogOut,
+  RotateCcw,
 } from 'lucide-react';
 
-export type SidebarNavId =
-  // المجموعة الأولى: لوحة التحكم
-  | 'dashboard-home'
-  | 'dashboard-kpis'
-  | 'dashboard-summary'
-  | 'dashboard-updates'
-  // المجموعة الثانية: إدارة المخابز
-  | 'bakeries-all'
-  | 'bakeries-basic'
-  | 'bakeries-bread-types'
-  | 'bakeries-actual-quotas'
-  | 'bakeries-insurance'
-  | 'bakeries-beneficiaries'
-  | 'debts-records'
-  | 'debts-installments'
-  // المجموعة الثالثة: الحسابات والمعادلات
-  | 'calc-insurance-quota'
-  | 'calc-loaves'
-  | 'calc-avg-2023'
-  | 'calc-avg-2024'
-  | 'calc-avg-2025'
-  | 'calc-per-bakery'
-  | 'calc-cum-diff'
-  | 'calc-recalculate-all'
-  // المجموعة الرابعة: التقارير والإحصائيات
-  | 'report-detailed'
-  | 'report-summary'
-  | 'report-years-comparison'
-  | 'report-insurance-quotas'
-  | 'report-per-capita'
-  | 'report-differences'
-  // المجموعة الخامسة: البحث والاستعلام
-  | 'search-by-name'
-  | 'search-by-machine'
-  | 'search-by-area'
-  | 'search-by-bread'
-  | 'search-advanced'
-  // المجموعة السادسة: إدارة البيانات
-  | 'data-add-bakery'
-  | 'data-edit-master'
-  | 'data-import'
-  | 'data-export'
-  | 'data-backup'
-  | 'data-integrity'
-  // المجموعة السابعة: الإعدادات والإدارة
-  | 'settings-system'
-  | 'settings-users'
-  | 'settings-logs'
-  | 'settings-display'
-  | 'settings-daily-tasks'
-  | 'settings-alerts'
-  | 'settings-logout';
+export type SidebarNavId = string;
 
 export interface SidebarSubItem {
   id: SidebarNavId;
   label: string;
-  icon: React.FC<{ className?: string }>;
-  badge?: string | number;
-  badgeType?: 'default' | 'warning' | 'danger' | 'success';
+  icon: React.ReactNode;
+  badge?: number | string;
+  badgeColor?: 'blue' | 'amber' | 'red' | 'emerald';
 }
 
 export interface SidebarGroup {
   id: string;
-  shortTitle: string;
   title: string;
-  icon: React.FC<{ className?: string }>;
+  icon: React.ReactNode;
   items: SidebarSubItem[];
 }
 
-interface RightSidebarProps {
+export interface RightSidebarProps {
   activeNavId: SidebarNavId;
   onSelectNav: (navId: SidebarNavId, groupTitle: string, itemLabel: string) => void;
-  bakeriesCount: number;
-  debtsCount: number;
-  alertsCount: number;
-  unreadInboxCount: number;
-  pendingTasksCount: number;
-  largeDebtsCount: number;
-  logoBase64: string;
-  administrationTitle: string;
-  directorateTitle: string;
+  bakeriesCount?: number;
+  debtsCount?: number;
+  alertsCount?: number;
+  unreadInboxCount?: number;
+  pendingTasksCount?: number;
+  largeDebtsCount?: number;
+  logoBase64?: string;
+  administrationTitle?: string;
+  directorateTitle?: string;
+  totalBakeriesCount?: number;
+  totalDebtsCount?: number;
+  expiredLicensesCount?: number;
+  over20kBakeriesCount?: number;
+  uncompletedTasksCount?: number;
+  customLogoBase64?: string;
 }
 
-const STORAGE_KEY_GROUPS = 'TAMWEEN_SIDEBAR_OPEN_GROUPS_V1';
-const STORAGE_KEY_COLLAPSED = 'TAMWEEN_SIDEBAR_COLLAPSED_V1';
+const SIDEBAR_STORAGE_KEY = 'tamween_sidebar_open_groups_v2';
+const SIDEBAR_COLLAPSED_KEY = 'tamween_sidebar_collapsed_v2';
 
 export const RightSidebar: React.FC<RightSidebarProps> = ({
   activeNavId,
@@ -137,16 +97,27 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   bakeriesCount,
   debtsCount,
   alertsCount,
-  unreadInboxCount,
+  unreadInboxCount = 0,
   pendingTasksCount,
   largeDebtsCount,
   logoBase64,
   administrationTitle,
   directorateTitle,
+  totalBakeriesCount,
+  totalDebtsCount,
+  expiredLicensesCount,
+  over20kBakeriesCount,
+  uncompletedTasksCount,
+  customLogoBase64,
 }) => {
+  const bakeriesTotal = bakeriesCount ?? totalBakeriesCount ?? 0;
+  const debtsTotal = debtsCount ?? totalDebtsCount ?? 0;
+  const alertsTotal = alertsCount ?? expiredLicensesCount ?? 0;
+  const largeDebtsTotal = largeDebtsCount ?? over20kBakeriesCount ?? 0;
+  const tasksTotal = pendingTasksCount ?? uncompletedTasksCount ?? 0;
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY_COLLAPSED) === 'true';
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
     } catch {
       return false;
     }
@@ -154,31 +125,38 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY_GROUPS);
+      const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
       if (saved) return JSON.parse(saved);
-    } catch {}
+    } catch {
+      // ignore
+    }
     return {
-      group1: true,
-      group2: true,
-      group3: false,
-      group4: false,
-      group5: false,
-      group6: false,
-      group7: false,
+      'group-1': true,
+      'group-2': true,
+      'group-3': false,
+      'group-4': false,
+      'group-5': true,
+      'group-6': false,
+      'group-7': false,
+      'group-8': false,
     };
   });
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY_COLLAPSED, String(isCollapsed));
-    } catch {}
-  }, [isCollapsed]);
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(openGroups));
+    } catch {
+      // ignore
+    }
+  }, [openGroups]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY_GROUPS, JSON.stringify(openGroups));
-    } catch {}
-  }, [openGroups]);
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isCollapsed));
+    } catch {
+      // ignore
+    }
+  }, [isCollapsed]);
 
   const toggleGroup = (groupId: string) => {
     if (isCollapsed) {
@@ -191,135 +169,378 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
   const groups: SidebarGroup[] = [
     {
-      id: 'group1',
-      shortTitle: 'لوحة التحكم',
-      title: '1. لوحة التحكم',
-      icon: LayoutDashboard,
+      id: 'group-1',
+      title: '1. الرئيسية',
+      icon: <LayoutDashboard className="w-5 h-5 shrink-0" />,
       items: [
-        { id: 'dashboard-home', label: 'الصفحة الرئيسية', icon: Home },
-        { id: 'dashboard-kpis', label: 'المؤشرات والإحصائيات', icon: BarChart3 },
-        { id: 'dashboard-summary', label: 'ملخص حالة المخابز', icon: Activity, badge: bakeriesCount },
-        { id: 'dashboard-updates', label: 'آخر العمليات والتحديثات', icon: Clock },
+        { id: 'dashboard-home', label: 'لوحة التحكم', icon: <Home className="w-4 h-4 shrink-0" /> },
+        { id: 'dashboard-main', label: 'الصفحة الرئيسية', icon: <LayoutDashboard className="w-4 h-4 shrink-0" /> },
+        { id: 'dashboard-kpis', label: 'المؤشرات العامة', icon: <BarChart3 className="w-4 h-4 shrink-0" /> },
+        {
+          id: 'dashboard-status',
+          label: 'الإحصائيات وملخص المخابز',
+          icon: <Activity className="w-4 h-4 shrink-0" />,
+          badge: totalBakeriesCount,
+          badgeColor: 'blue',
+        },
+        { id: 'dashboard-recent', label: 'آخر التحديثات', icon: <Clock className="w-4 h-4 shrink-0" /> },
       ],
     },
     {
-      id: 'group2',
-      shortTitle: 'إدارة المخابز',
+      id: 'group-2',
       title: '2. إدارة المخابز',
-      icon: Store,
+      icon: <Store className="w-5 h-5 shrink-0" />,
       items: [
-        { id: 'bakeries-all', label: 'قاعدة بيانات المخابز', icon: Database, badge: bakeriesCount },
-        { id: 'bakeries-basic', label: 'بيانات المخابز الأساسية', icon: FileText },
-        { id: 'bakeries-bread-types', label: 'أنواع الخبز والتشغيل', icon: Wheat },
-        { id: 'bakeries-actual-quotas', label: 'الحصص الفعلية', icon: Layers },
-        { id: 'bakeries-insurance', label: 'بيانات المبالغ التأمينية', icon: Coins },
-        { id: 'bakeries-beneficiaries', label: 'بيانات المستفيدين', icon: Users },
-        { id: 'debts-records', label: 'سجل مديونيات المخابز', icon: Scale, badge: debtsCount, badgeType: 'danger' },
         {
-          id: 'debts-installments',
+          id: 'bakeries-all',
+          label: 'قاعدة بيانات المخابز',
+          icon: <Database className="w-4 h-4 shrink-0" />,
+          badge: totalBakeriesCount,
+          badgeColor: 'blue',
+        },
+        {
+          id: 'data-add-bakery',
+          label: 'إضافة مخبز جديد',
+          icon: <PlusCircle className="w-4 h-4 shrink-0" />,
+          badgeColor: 'emerald',
+        },
+        {
+          id: 'data-edit-master',
+          label: 'تعديل بيانات المخابز',
+          icon: <Edit3 className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'bakery-details-view',
+          label: 'عرض تفاصيل المخبز',
+          icon: <Eye className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'bakeries-basic',
+          label: 'تصنيف المخابز والبيانات',
+          icon: <FileText className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'bakeries-quotas',
+          label: 'بيانات الحصص الفعلية',
+          icon: <Layers className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'bakeries-bread',
+          label: 'أنواع الخبز والتشغيل',
+          icon: <Wheat className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'bakeries-insurance',
+          label: 'بيانات المبالغ التأمينية',
+          icon: <ShieldCheck className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'bakeries-beneficiaries',
+          label: 'بيانات المستفيدين',
+          icon: <Users className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'debts-main',
+          label: 'قاعدة بيانات مديونيات المخابز',
+          icon: <Scale className="w-4 h-4 shrink-0" />,
+          badge: debtsTotal > 0 ? debtsTotal : undefined,
+          badgeColor: 'red',
+        },
+        {
+          id: 'debts-weekly',
           label: 'جدول الدفعات الأسبوعية',
-          icon: Receipt,
-          badge: largeDebtsCount > 0 ? largeDebtsCount : undefined,
-          badgeType: 'warning',
+          icon: <FileSpreadsheet className="w-4 h-4 shrink-0" />,
+          badge: largeDebtsTotal > 0 ? largeDebtsTotal : undefined,
+          badgeColor: 'amber',
         },
       ],
     },
     {
-      id: 'group3',
-      shortTitle: 'الحسابات والمعادلات',
-      title: '3. الحسابات والمعادلات',
-      icon: Calculator,
+      id: 'group-3',
+      title: '3. الحسابات والمؤشرات',
+      icon: <Calculator className="w-5 h-5 shrink-0" />,
       items: [
-        { id: 'calc-insurance-quota', label: 'احتساب الحصة التأمينية', icon: Calculator },
-        { id: 'calc-loaves', label: 'احتساب عدد الأرغفة', icon: Wheat },
-        { id: 'calc-avg-2023', label: 'متوسط نصيب الفرد لعام 2023', icon: Percent },
-        { id: 'calc-avg-2024', label: 'متوسط نصيب الفرد لعام 2024', icon: Percent },
-        { id: 'calc-avg-2025', label: 'متوسط نصيب الفرد لعام 2025', icon: Percent },
-        { id: 'calc-per-bakery', label: 'متوسط نصيب الفرد للمخبز الواحد', icon: Store },
-        { id: 'calc-cum-diff', label: 'الفرق التراكمي لمتوسطات نصيب الفرد', icon: TrendingUp },
-        { id: 'calc-recalculate-all', label: 'تدقيق وإعادة احتساب الكل', icon: CheckCircle2, badge: '∑', badgeType: 'success' },
+        {
+          id: 'calc-insurance-quota',
+          label: 'الحصص التأمينية',
+          icon: <Calculator className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'calc-loaves-count',
+          label: 'عدد الأرغفة',
+          icon: <Wheat className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'calc-avg-2023',
+          label: 'متوسط نصيب الفرد 2023',
+          icon: <Percent className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'calc-avg-2024',
+          label: 'متوسط نصيب الفرد 2024',
+          icon: <Percent className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'calc-avg-2025',
+          label: 'متوسط نصيب الفرد 2025',
+          icon: <Percent className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'calc-avg-bakery',
+          label: 'متوسط نصيب الفرد للمخبز الواحد',
+          icon: <Store className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'calc-cum-diff',
+          label: 'الفرق التراكمي',
+          icon: <TrendingDown className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'calc-recalculate-all',
+          label: 'إعادة احتساب جميع المعادلات',
+          icon: <RefreshCw className="w-4 h-4 shrink-0" />,
+          badgeColor: 'emerald',
+        },
       ],
     },
     {
-      id: 'group4',
-      shortTitle: 'التقارير والإحصائيات',
-      title: '4. التقارير والإحصائيات',
-      icon: FileBarChart,
+      id: 'group-4',
+      title: '4. البحث والاستعلام',
+      icon: <Search className="w-5 h-5 shrink-0" />,
       items: [
-        { id: 'report-detailed', label: 'التقارير التفصيلية', icon: FileText },
-        { id: 'report-summary', label: 'التقارير الإجمالية والوحدات', icon: PieChart },
-        { id: 'report-years-comparison', label: 'مقارنة بيانات الأعوام', icon: GitCompare },
-        { id: 'report-insurance-quotas', label: 'تقارير الحصص التأمينية', icon: Coins },
-        { id: 'report-per-capita', label: 'تقارير متوسطات نصيب الفرد', icon: Users },
-        { id: 'report-differences', label: 'تقارير الفروق والتغيرات', icon: TrendingUp },
+        { id: 'search-quick', label: 'البحث السريع', icon: <Search className="w-4 h-4 shrink-0" /> },
+        { id: 'search-by-name', label: 'البحث باسم المخبز', icon: <Store className="w-4 h-4 shrink-0" /> },
+        { id: 'search-by-machine', label: 'البحث برقم المخبز', icon: <Hash className="w-4 h-4 shrink-0" /> },
+        { id: 'search-by-region', label: 'البحث حسب المنطقة', icon: <MapPin className="w-4 h-4 shrink-0" /> },
+        { id: 'search-by-bread', label: 'البحث حسب نوع الخبز', icon: <Wheat className="w-4 h-4 shrink-0" /> },
+        { id: 'search-by-quota', label: 'البحث المتقدم', icon: <Filter className="w-4 h-4 shrink-0" /> },
       ],
     },
     {
-      id: 'group5',
-      shortTitle: 'البحث والاستعلام',
-      title: '5. البحث والاستعلام',
-      icon: Search,
+      id: 'group-5',
+      title: '5. مركز التقارير والطباعة',
+      icon: <FileText className="w-5 h-5 shrink-0" />,
       items: [
-        { id: 'search-by-name', label: 'البحث باسم المخبز', icon: Search },
-        { id: 'search-by-machine', label: 'البحث برقم المخبز / الماكينة', icon: Hash },
-        { id: 'search-by-area', label: 'البحث حسب المنطقة والقرية', icon: MapPin },
-        { id: 'search-by-bread', label: 'البحث حسب نوع الخبز', icon: Wheat },
-        { id: 'search-advanced', label: 'البحث المتقدم متعدد المعايير', icon: Filter },
+        {
+          id: 'reports-center',
+          label: 'مركز التقارير والطباعة والتصدير',
+          icon: <FileText className="w-4 h-4 shrink-0" />,
+          badge: 24,
+          badgeColor: 'blue',
+        },
+        {
+          id: 'rep-comprehensive',
+          label: 'التقارير التفصيلية للمخابز',
+          icon: <FileText className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'rep-master-summary',
+          label: 'التقارير الإجمالية والملخص',
+          icon: <BarChart3 className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'rep-quotas-loaves',
+          label: 'تقارير الحصص والأرغفة',
+          icon: <Layers className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'rep-beneficiaries-comp',
+          label: 'تقارير المستفيدين (2023-2025)',
+          icon: <Users className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'rep-averages',
+          label: 'تقارير متوسط نصيب الفرد',
+          icon: <Percent className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'rep-cum-diff',
+          label: 'المقارنات السنوية والفروق',
+          icon: <TrendingDown className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'rep-local-units',
+          label: 'تقرير ملخص الوحدات المحلية',
+          icon: <MapPin className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'rep-expired-licenses',
+          label: 'تقرير التراخيص المنتهية',
+          icon: <AlertTriangle className="w-4 h-4 shrink-0" />,
+          badge: alertsTotal > 0 ? alertsTotal : undefined,
+          badgeColor: 'red',
+        },
+        {
+          id: 'rep-export-print',
+          label: 'الطباعة وتصدير PDF',
+          icon: <Printer className="w-4 h-4 shrink-0" />,
+        },
       ],
     },
     {
-      id: 'group6',
-      shortTitle: 'إدارة البيانات',
+      id: 'group-6',
       title: '6. إدارة البيانات',
-      icon: Database,
+      icon: <Database className="w-5 h-5 shrink-0" />,
       items: [
-        { id: 'data-add-bakery', label: 'إضافة بيانات جديدة', icon: PlusCircle },
-        { id: 'data-edit-master', label: 'تعديل البيانات والقوائم', icon: Edit3 },
-        { id: 'data-import', label: 'استيراد البيانات', icon: Upload },
-        { id: 'data-export', label: 'تصدير البيانات (Excel)', icon: Download },
-        { id: 'data-backup', label: 'النسخ الاحتياطي والنشر السحابي', icon: HardDrive },
-        { id: 'data-integrity', label: 'مراجعة سلامة البيانات', icon: ShieldCheck },
+        {
+          id: 'data-import',
+          label: 'استيراد Excel',
+          icon: <Upload className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'data-export',
+          label: 'تصدير Excel',
+          icon: <Download className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'ops-refresh-data',
+          label: 'تحديث البيانات',
+          icon: <RefreshCw className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'data-review-missing',
+          label: 'مراجعة البيانات',
+          icon: <CheckSquare className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'data-backup',
+          label: 'النسخ الاحتياطي',
+          icon: <HardDrive className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'data-restore',
+          label: 'استعادة البيانات',
+          icon: <RotateCcw className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'data-tasks',
+          label: 'المهام اليومية والزيارات',
+          icon: <ClipboardList className="w-4 h-4 shrink-0" />,
+          badge: tasksTotal > 0 ? tasksTotal : undefined,
+          badgeColor: 'amber',
+        },
+        {
+          id: 'data-notes',
+          label: 'سجل الملاحظات والردود',
+          icon: <BookOpen className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'data-inbox',
+          label: 'الوارد والصادر والردود',
+          icon: <Mail className="w-4 h-4 shrink-0" />,
+          badge: unreadInboxCount > 0 ? unreadInboxCount : undefined,
+          badgeColor: 'blue',
+        },
+        {
+          id: 'data-map',
+          label: 'خريطة مواقع المخابز',
+          icon: <Map className="w-4 h-4 shrink-0" />,
+        },
       ],
     },
     {
-      id: 'group7',
-      shortTitle: 'الإعدادات والإدارة',
-      title: '7. الإعدادات والإدارة',
-      icon: Settings,
+      id: 'group-7',
+      title: '7. أدوات التشغيل',
+      icon: <Sliders className="w-5 h-5 shrink-0" />,
       items: [
-        { id: 'settings-system', label: 'إعدادات المنظومة والترويسة', icon: Sliders },
-        { id: 'settings-users', label: 'إدارة المستخدمين والصلاحيات', icon: UserCheck },
         {
-          id: 'settings-logs',
-          label: 'سجل العمليات وصندوق الوارد',
-          icon: Inbox,
-          badge: unreadInboxCount > 0 ? unreadInboxCount : undefined,
-          badgeType: 'warning',
+          id: 'ops-save-data',
+          label: 'حفظ البيانات',
+          icon: <Save className="w-4 h-4 shrink-0" />,
+          badgeColor: 'emerald',
         },
         {
-          id: 'settings-daily-tasks',
-          label: 'إدارة المهام اليومية',
-          icon: ListTodo,
-          badge: pendingTasksCount > 0 ? pendingTasksCount : undefined,
+          id: 'ops-refresh-screen',
+          label: 'تحديث الشاشة',
+          icon: <RefreshCw className="w-4 h-4 shrink-0" />,
         },
         {
-          id: 'settings-alerts',
-          label: 'التنبيهات وانتهاء التراخيص',
-          icon: Bell,
-          badge: alertsCount > 0 ? alertsCount : undefined,
-          badgeType: 'danger',
+          id: 'ops-reload-data',
+          label: 'إعادة تحميل البيانات',
+          icon: <RotateCcw className="w-4 h-4 shrink-0" />,
         },
-        { id: 'settings-display', label: 'إعدادات العرض والأعمدة', icon: Columns3 },
-        { id: 'settings-logout', label: 'تسجيل الخروج', icon: LogOut },
+        {
+          id: 'settings-audit',
+          label: 'سجل العمليات والتدقيق',
+          icon: <CheckSquare className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'ops-alerts',
+          label: 'التنبيهات والإشعارات',
+          icon: <Bell className="w-4 h-4 shrink-0" />,
+          badge: alertsTotal + largeDebtsTotal > 0 ? alertsTotal + largeDebtsTotal : undefined,
+          badgeColor: 'amber',
+        },
+        {
+          id: 'ops-help',
+          label: 'المساعدة ودليل المعادلات',
+          icon: <HelpCircle className="w-4 h-4 shrink-0" />,
+        },
+      ],
+    },
+    {
+      id: 'group-8',
+      title: '8. الإعدادات',
+      icon: <Settings className="w-5 h-5 shrink-0" />,
+      items: [
+        {
+          id: 'settings-columns',
+          label: 'إعدادات المنظومة والأعمدة',
+          icon: <Sliders className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'settings-users',
+          label: 'إدارة المستخدمين',
+          icon: <UserCheck className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'settings-permissions',
+          label: 'الصلاحيات والأدوار',
+          icon: <ShieldCheck className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'settings-theme',
+          label: 'تخصيص الواجهة والشعار',
+          icon: <Settings className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'settings-gdrive',
+          label: 'ربط Google Drive',
+          icon: <Cloud className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'settings-database',
+          label: 'إعدادات قاعدة البيانات',
+          icon: <Database className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'settings-publish',
+          label: 'نشر وتحديث النظام (Publish)',
+          icon: <Globe className="w-4 h-4 shrink-0" />,
+          badgeColor: 'emerald',
+        },
+        {
+          id: 'settings-account',
+          label: 'إعدادات الحساب',
+          icon: <UserCheck className="w-4 h-4 shrink-0" />,
+        },
+        {
+          id: 'settings-logout',
+          label: 'تسجيل الخروج',
+          icon: <LogOut className="w-4 h-4 shrink-0" />,
+          badgeColor: 'red',
+        },
       ],
     },
   ];
 
-  // Find current active label for header inside sidebar
-  let activeItemLabel = 'الصفحة الرئيسية';
-  for (const g of groups) {
-    const found = g.items.find((i) => i.id === activeNavId);
+  // Find active group & item label
+  let activeGroupId = 'group-2';
+  let activeItemLabel = 'قاعدة بيانات المخابز';
+  for (const grp of groups) {
+    const found = grp.items.find((it) => it.id === activeNavId);
     if (found) {
+      activeGroupId = grp.id;
       activeItemLabel = found.label;
       break;
     }
@@ -328,57 +549,73 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   return (
     <aside
       aria-label="القائمة الجانبية الرئيسية"
-      className={`bg-[#0F2342] text-slate-100 shrink-0 border-l border-[#1E3A5F] shadow-lg transition-all duration-300 flex flex-col select-none no-print ${
-        isCollapsed ? 'w-full lg:w-20' : 'w-full lg:w-72 xl:w-76'
+      className={`bg-gradient-to-b from-[#08152C] via-[#0F2342] to-[#132C54] text-white border-l border-[#1E3A8A]/70 flex flex-col shrink-0 transition-all duration-300 ease-in-out select-none no-print shadow-2xl ${
+        isCollapsed ? 'w-[78px]' : 'w-[310px]'
       }`}
     >
-      {/* Top Sidebar Header & Collapse Toggle */}
-      <div className="p-3.5 border-b border-[#1E3A5F] flex items-center justify-between gap-2 bg-[#0B1B34]">
+      {/* Top Sidebar Identity & Collapse Button */}
+      <div className="px-4 py-3.5 border-b border-white/12 flex items-center justify-between gap-2 bg-[#071226]/70">
         {!isCollapsed && (
-          <div className="flex items-center gap-2.5 min-w-0">
-            <img
-              src={logoBase64}
-              alt="شعار المنظومة"
-              referrerPolicy="no-referrer"
-              className="w-9 h-9 rounded-full bg-white p-0.5 border border-slate-300 object-contain shrink-0"
-            />
-            <div className="min-w-0">
-              <div className="text-xs font-extrabold text-white truncate">{administrationTitle}</div>
-              <div className="text-[10px] text-slate-300 truncate">{directorateTitle}</div>
+          <div className="flex items-center gap-3 min-w-0">
+            {customLogoBase64 ? (
+              <img
+                src={customLogoBase64}
+                alt="شعار المنظومة"
+                className="w-10 h-10 rounded-xl object-contain bg-white p-0.5 shrink-0 border border-blue-300/30 shadow-sm"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-[#1E3A8A] flex items-center justify-center shrink-0 border border-blue-400/30">
+                <Store className="w-5 h-5 text-white" />
+              </div>
+            )}
+            <div className="truncate">
+              <div className="text-sm font-black text-white truncate tracking-tight">
+                إدارة تموين المحلة الكبرى
+              </div>
+              <div className="text-[11px] text-blue-200 font-bold truncate">
+                مركز التحكم الرئيسي للمنظومة
+              </div>
             </div>
           </div>
         )}
+
         <button
           type="button"
-          onClick={() => setIsCollapsed(!isCollapsed)}
+          onClick={() => setIsCollapsed((prev) => !prev)}
           title={isCollapsed ? 'توسيع القائمة الجانبية' : 'تصغير القائمة الجانبية'}
-          aria-label={isCollapsed ? 'توسيع القائمة الجانبية' : 'تصغير القائمة الجانبية'}
-          className="p-2 rounded-lg bg-[#16315B] hover:bg-[#1E40AF] text-slate-200 hover:text-white transition cursor-pointer mx-auto lg:mx-0 shrink-0"
+          className="p-2 rounded-xl bg-white/10 hover:bg-[#2563EB] text-white transition-all duration-200 cursor-pointer mx-auto sm:mx-0 border border-white/10 hover:border-blue-300/50 active:scale-95"
         >
-          {isCollapsed ? <PanelRightOpen className="w-4 h-4" /> : <PanelRightClose className="w-4 h-4" />}
+          {isCollapsed ? (
+            <PanelRightOpen className="w-5 h-5" />
+          ) : (
+            <PanelRightClose className="w-5 h-5" />
+          )}
         </button>
       </div>
 
-      {/* Active Section Indicator Banner */}
+      {/* Active Section Quick Indicator when expanded */}
       {!isCollapsed && (
-        <div className="px-3.5 py-2 bg-[#152E54] border-b border-[#1E3A5F] flex items-center justify-between text-[11px]">
-          <span className="text-slate-300 font-medium">القسم الحالي:</span>
-          <span className="font-bold text-sky-300 truncate max-w-[165px]">{activeItemLabel}</span>
+        <div className="px-4 py-2.5 bg-[#0A1931]/90 border-b border-white/10 flex items-center justify-between text-xs">
+          <span className="text-blue-200 font-bold">القسم النشط:</span>
+          <span className="text-white font-black truncate max-w-[185px] bg-[#1E40AF]/60 px-2.5 py-0.5 rounded-lg border border-blue-400/30">
+            {activeItemLabel}
+          </span>
         </div>
       )}
 
-      {/* Navigation Groups */}
-      <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-1.5 max-h-[calc(100vh-140px)]">
+      {/* Scrollable Navigation Groups */}
+      <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-2 custom-scrollbar">
         {groups.map((group) => {
-          const GroupIcon = group.icon;
           const isOpen = !!openGroups[group.id];
-          const hasActiveChild = group.items.some((i) => i.id === activeNavId);
+          const isGroupActive = activeGroupId === group.id;
 
           return (
             <div
               key={group.id}
-              className={`rounded-xl overflow-hidden transition-colors ${
-                hasActiveChild ? 'bg-[#152E54]/90 border border-[#2563EB]/40' : 'bg-transparent'
+              className={`rounded-2xl transition-all duration-200 ${
+                isGroupActive
+                  ? 'bg-[#152E59]/90 border border-blue-400/35 shadow-md'
+                  : 'bg-white/[0.04] border border-white/[0.07] hover:bg-white/[0.07]'
               }`}
             >
               {/* Group Header Button */}
@@ -386,75 +623,87 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                 type="button"
                 onClick={() => toggleGroup(group.id)}
                 title={group.title}
-                aria-expanded={isOpen}
-                className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-bold rounded-xl transition-colors cursor-pointer ${
-                  hasActiveChild
-                    ? 'bg-[#1E3A8A] text-white shadow-xs'
-                    : 'text-slate-200 hover:bg-[#16315B] hover:text-white'
+                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-right transition-all duration-200 cursor-pointer ${
+                  isGroupActive
+                    ? 'text-white font-black'
+                    : 'text-white font-bold hover:bg-white/10'
                 }`}
               >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <GroupIcon className={`w-4 h-4 shrink-0 ${hasActiveChild ? 'text-sky-300' : 'text-slate-300'}`} />
-                  {!isCollapsed && <span className="truncate">{group.title}</span>}
+                <div className="flex items-center gap-3 min-w-0">
+                  <span
+                    className={`p-1.5 rounded-xl transition-colors ${
+                      isGroupActive
+                        ? 'bg-[#2563EB] text-white shadow-sm'
+                        : 'bg-white/10 text-white'
+                    }`}
+                  >
+                    {group.icon}
+                  </span>
+                  {!isCollapsed && (
+                    <span className="text-[14px] font-black text-white truncate tracking-tight">
+                      {group.title}
+                    </span>
+                  )}
                 </div>
                 {!isCollapsed && (
-                  <ChevronDown
-                    className={`w-4 h-4 shrink-0 text-slate-300 transition-transform duration-200 ${
-                      isOpen ? 'rotate-180 text-sky-300' : ''
-                    }`}
-                  />
+                  <span className="text-white/80 shrink-0">
+                    {isOpen ? (
+                      <ChevronDown className="w-4 h-4 transition-transform duration-200" />
+                    ) : (
+                      <ChevronLeft className="w-4 h-4 transition-transform duration-200" />
+                    )}
+                  </span>
                 )}
               </button>
 
-              {/* Sub-Items List */}
-              {!isCollapsed && isOpen && (
-                <div className="mt-1 mb-1.5 mr-2 pr-2 border-r border-[#25477A] space-y-0.5">
+              {/* Group Sub-Items */}
+              {isOpen && !isCollapsed && (
+                <div className="px-2 pb-2.5 pt-1 space-y-1.5 border-t border-white/10">
                   {group.items.map((item) => {
-                    const ItemIcon = item.icon;
-                    const isActive = activeNavId === item.id;
-                    const isLogout = item.id === 'settings-logout';
-
+                    const isItemActive = activeNavId === item.id;
                     return (
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => onSelectNav(item.id, group.shortTitle, item.label)}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-[11.5px] font-semibold transition-all cursor-pointer ${
-                          isActive
-                            ? 'bg-[#2563EB] text-white font-bold shadow-xs'
-                            : isLogout
-                            ? 'text-red-300 hover:bg-red-950/50 hover:text-red-200'
-                            : 'text-slate-300 hover:bg-[#193561] hover:text-white'
+                        onClick={() =>
+                          onSelectNav(
+                            item.id,
+                            group.title.replace(/^\d+\.\s*/, ''),
+                            item.label
+                          )
+                        }
+                        className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl text-[13px] font-bold transition-all duration-200 cursor-pointer group ${
+                          isItemActive
+                            ? 'bg-gradient-to-l from-[#1D4ED8] to-[#2563EB] text-white font-black shadow-[0_4px_14px_rgba(37,99,235,0.45)] border border-blue-300/60 -translate-x-1'
+                            : 'text-white bg-white/[0.03] hover:bg-white/15 hover:-translate-x-1 hover:shadow-[0_0_12px_rgba(59,130,246,0.25)] border border-transparent hover:border-blue-400/30 active:scale-[0.98]'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <ItemIcon
-                            className={`w-3.5 h-3.5 shrink-0 ${
-                              isActive ? 'text-white' : isLogout ? 'text-red-400' : 'text-slate-400'
-                            }`}
-                          />
-                          <span className="truncate">{item.label}</span>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="text-white shrink-0 transition-transform duration-200 group-hover:scale-110">
+                            {item.icon}
+                          </span>
+                          <span className="truncate text-right text-white font-bold">
+                            {item.label}
+                          </span>
                         </div>
 
                         {item.badge !== undefined ? (
                           <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold shrink-0 ${
-                              isActive
-                                ? 'bg-white/20 text-white'
-                                : item.badgeType === 'danger'
-                                ? 'bg-red-600/90 text-white'
-                                : item.badgeType === 'warning'
-                                ? 'bg-amber-600/90 text-white'
-                                : item.badgeType === 'success'
-                                ? 'bg-emerald-700 text-white'
-                                : 'bg-[#0B1B34] text-slate-300'
+                            className={`px-2 py-0.5 text-[11px] font-black rounded-full shrink-0 font-mono text-white ${
+                              item.badgeColor === 'red'
+                                ? 'bg-red-600 shadow-xs'
+                                : item.badgeColor === 'amber'
+                                ? 'bg-amber-600 shadow-xs'
+                                : item.badgeColor === 'emerald'
+                                ? 'bg-emerald-600 shadow-xs'
+                                : 'bg-blue-600 shadow-xs'
                             }`}
                           >
                             {item.badge}
                           </span>
-                        ) : (
-                          isActive && <ChevronLeft className="w-3.5 h-3.5 text-white shrink-0" />
-                        )}
+                        ) : isItemActive ? (
+                          <ChevronLeft className="w-4 h-4 text-white shrink-0" />
+                        ) : null}
                       </button>
                     );
                   })}
@@ -465,11 +714,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         })}
       </nav>
 
-      {/* Bottom Status Footer */}
+      {/* Bottom Sidebar Status Footer */}
       {!isCollapsed && (
-        <div className="p-3 border-t border-[#1E3A5F] bg-[#0B1B34] text-[10px] text-slate-300 flex items-center justify-between">
-          <span>حالة القاعدة: متصلة ومؤمنة</span>
-          <span className="font-mono text-slate-400">RTL • v3.2</span>
+        <div className="px-4 py-3 border-t border-white/12 bg-[#071226]/90 text-[11px] text-white font-bold flex items-center justify-between">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>قاعدة البيانات نشطة ومؤمنة</span>
+          </span>
+          <span className="font-mono text-blue-200 font-black">RTL • v3.5</span>
         </div>
       )}
     </aside>
