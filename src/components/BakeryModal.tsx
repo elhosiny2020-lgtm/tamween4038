@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Bakery, VillageHierarchy, AppUser, BakeryActivityLogItem } from '../types';
+import { formatDateDDMMYYYY } from '../utils/auditHelper';
 import {
   X,
   Calculator,
@@ -1507,15 +1508,16 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
           <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
             <h4 className="text-xs font-black text-slate-800 pb-2 mb-3 border-b border-slate-200 flex items-center gap-1.5">
               <Calendar className="w-4 h-4 text-amber-600" />
-              6. التراخيص والعقود وتواريخ السريان (محرك التنبيه التلقائي قبل 15 يوماً)
+              6. التراخيص والعقود وتواريخ السريان (تنسيق التواريخ يوم / شهر / سنة DD/MM/YYYY)
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  تاريخ السجل التجاري *
+                  تاريخ السجل التجاري (يوم/شهر/سنة) *
                 </label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={commercialRegDate}
                   onChange={(e) => {
                     setCommercialRegDate(e.target.value);
@@ -1525,6 +1527,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                     errors.commercialRegDate ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
                   }`}
                 />
+                {commercialRegDate && (
+                  <span className="block text-[10px] font-black text-amber-900 bg-amber-100/70 border border-amber-300 rounded px-1.5 py-0.5 mt-1 text-center font-mono">
+                    📅 التاريخ المحدد: {formatDateDDMMYYYY(commercialRegDate)}
+                  </span>
+                )}
                 {errors.commercialRegDate && (
                   <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />
@@ -1535,10 +1542,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  تاريخ رخصة المخبز *
+                  تاريخ رخصة المخبز (يوم/شهر/سنة) *
                 </label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={bakeryLicenseDate}
                   onChange={(e) => {
                     setBakeryLicenseDate(e.target.value);
@@ -1548,6 +1556,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                     errors.bakeryLicenseDate ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
                   }`}
                 />
+                {bakeryLicenseDate && (
+                  <span className="block text-[10px] font-black text-amber-900 bg-amber-100/70 border border-amber-300 rounded px-1.5 py-0.5 mt-1 text-center font-mono">
+                    📅 التاريخ المحدد: {formatDateDDMMYYYY(bakeryLicenseDate)}
+                  </span>
+                )}
                 {errors.bakeryLicenseDate && (
                   <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />
@@ -1558,10 +1571,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  تاريخ عقد الإيجار *
+                  تاريخ عقد الإيجار (يوم/شهر/سنة) *
                 </label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={leaseAgreementDate}
                   onChange={(e) => {
                     setLeaseAgreementDate(e.target.value);
@@ -1571,6 +1585,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                     errors.leaseAgreementDate ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
                   }`}
                 />
+                {leaseAgreementDate && (
+                  <span className="block text-[10px] font-black text-amber-900 bg-amber-100/70 border border-amber-300 rounded px-1.5 py-0.5 mt-1 text-center font-mono">
+                    📅 التاريخ المحدد: {formatDateDDMMYYYY(leaseAgreementDate)}
+                  </span>
+                )}
                 {errors.leaseAgreementDate && (
                   <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />
@@ -1581,10 +1600,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  تاريخ البطاقة الضريبية *
+                  تاريخ البطاقة الضريبية (يوم/شهر/سنة) *
                 </label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={taxCardDate}
                   onChange={(e) => {
                     setTaxCardDate(e.target.value);
@@ -1594,6 +1614,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                     errors.taxCardDate ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
                   }`}
                 />
+                {taxCardDate && (
+                  <span className="block text-[10px] font-black text-amber-900 bg-amber-100/70 border border-amber-300 rounded px-1.5 py-0.5 mt-1 text-center font-mono">
+                    📅 التاريخ المحدد: {formatDateDDMMYYYY(taxCardDate)}
+                  </span>
+                )}
                 {errors.taxCardDate && (
                   <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />

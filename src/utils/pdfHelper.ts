@@ -132,7 +132,7 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
         background: #ffffff !important;
       }
 
-      /* Strict PDF Report Override: Pure Black (#000000) Text & Crisp Borders */
+      /* Strict PDF Report Override: Pure Black (#000000) Typography & Crisp Table Grid */
       .print-container,
       .print-container * {
         color: #000000 !important;
@@ -143,7 +143,8 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
         display: table !important;
         border-collapse: collapse !important;
         width: 100% !important;
-        border: 1.5px solid #000000 !important;
+        border: 2px solid #000000 !important;
+        margin-top: 6px !important;
       }
       .print-container thead {
         display: table-header-group !important;
@@ -156,27 +157,33 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
       }
       .print-container tr {
         display: table-row !important;
+        page-break-inside: avoid !important;
       }
       .print-container th {
         display: table-cell !important;
         background-color: #e2e8f0 !important;
         color: #000000 !important;
-        border: 1px solid #000000 !important;
+        border: 1.5px solid #000000 !important;
         font-weight: 900 !important;
-        padding: 3px 2px !important;
+        padding: 5px 3px !important;
+        text-align: center !important;
+        vertical-align: middle !important;
       }
       .print-container td {
         display: table-cell !important;
         color: #000000 !important;
-        border: 1px solid #000000 !important;
-        font-weight: 700 !important;
-        padding: 3px 2px !important;
+        border: 1.2px solid #000000 !important;
+        font-weight: 800 !important;
+        padding: 4px 3px !important;
+        text-align: center !important;
+        vertical-align: middle !important;
+        word-break: break-word !important;
       }
       .print-container tfoot tr,
       .print-container tfoot td {
         background-color: #cbd5e1 !important;
         color: #000000 !important;
-        border: 1.5px solid #000000 !important;
+        border: 2px solid #000000 !important;
         font-weight: 900 !important;
       }
       .print-container .no-print {

@@ -573,16 +573,22 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 className="flex items-center gap-1.5 text-[11px] font-black text-amber-200 mb-1"
               >
                 <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                <span>من تاريخ (بداية النطاق التاريخي):</span>
+                <span>من تاريخ (يوم/شهر/سنة DD/MM/YYYY):</span>
               </label>
               <input
                 id="debt-advanced-date-from"
                 aria-label="من تاريخ"
                 type="date"
+                lang="ar-EG"
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
                 className="w-full px-3 py-2 bg-black border-2 border-amber-500/50 focus:border-amber-400 rounded-xl font-mono font-black text-white text-xs cursor-pointer"
               />
+              {dateFrom && (
+                <span className="block text-[10px] font-black text-amber-300 bg-amber-950/80 border border-amber-500/40 rounded px-1.5 py-0.5 mt-1 text-center font-mono">
+                  📅 المحدد: {formatDateDDMMYYYY(dateFrom)}
+                </span>
+              )}
             </div>
 
             {/* 2. Date To (إلى تاريخ) */}
@@ -592,16 +598,22 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 className="flex items-center gap-1.5 text-[11px] font-black text-amber-200 mb-1"
               >
                 <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                <span>إلى تاريخ (نهاية النطاق التاريخي):</span>
+                <span>إلى تاريخ (يوم/شهر/سنة DD/MM/YYYY):</span>
               </label>
               <input
                 id="debt-advanced-date-to"
                 aria-label="إلى تاريخ"
                 type="date"
+                lang="ar-EG"
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
                 className="w-full px-3 py-2 bg-black border-2 border-amber-500/50 focus:border-amber-400 rounded-xl font-mono font-black text-white text-xs cursor-pointer"
               />
+              {dateTo && (
+                <span className="block text-[10px] font-black text-amber-300 bg-amber-950/80 border border-amber-500/40 rounded px-1.5 py-0.5 mt-1 text-center font-mono">
+                  📅 المحدد: {formatDateDDMMYYYY(dateTo)}
+                </span>
+              )}
             </div>
 
             {/* 3. Violation Type (حسب نوع المخالفة) */}
@@ -2493,13 +2505,19 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
               <div>
-                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ العملية</label>
+                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ العملية (يوم/شهر/سنة)</label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={violationDate}
                   onChange={(e) => setViolationDate(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
                 />
+                {violationDate && (
+                  <span className="block text-[10px] font-black text-amber-900 bg-amber-100/80 border border-amber-300 rounded px-1 mt-1 text-center font-mono">
+                    📅 {formatDateDDMMYYYY(violationDate)}
+                  </span>
+                )}
               </div>
 
               <div>
@@ -2620,13 +2638,19 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
-                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ السداد</label>
+                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ السداد (يوم/شهر/سنة)</label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={violationPaymentDate}
                   onChange={(e) => setViolationPaymentDate(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
                 />
+                {violationPaymentDate && (
+                  <span className="block text-[10px] font-black text-emerald-900 bg-emerald-100/80 border border-emerald-300 rounded px-1 mt-1 text-center font-mono">
+                    📅 {formatDateDDMMYYYY(violationPaymentDate)}
+                  </span>
+                )}
               </div>
 
               <div>
@@ -2687,13 +2711,19 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ السداد</label>
+                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ السداد (يوم/شهر/سنة)</label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={addedPaymentDate}
                   onChange={(e) => setAddedPaymentDate(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
                 />
+                {addedPaymentDate && (
+                  <span className="block text-[10px] font-black text-blue-900 bg-blue-100/80 border border-blue-300 rounded px-1 mt-1 text-center font-mono">
+                    📅 {formatDateDDMMYYYY(addedPaymentDate)}
+                  </span>
+                )}
               </div>
 
               <div>
@@ -2744,13 +2774,19 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
-                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ التصرف</label>
+                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ التصرف (يوم/شهر/سنة)</label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={disposalDate}
                   onChange={(e) => setDisposalDate(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
                 />
+                {disposalDate && (
+                  <span className="block text-[10px] font-black text-amber-900 bg-amber-100/80 border border-amber-300 rounded px-1 mt-1 text-center font-mono">
+                    📅 {formatDateDDMMYYYY(disposalDate)}
+                  </span>
+                )}
               </div>
 
               <div>
@@ -2791,13 +2827,19 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ سداد التصرف</label>
+                <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ سداد التصرف (يوم/شهر/سنة)</label>
                 <input
                   type="date"
+                  lang="ar-EG"
                   value={disposalPaymentDate}
                   onChange={(e) => setDisposalPaymentDate(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
                 />
+                {disposalPaymentDate && (
+                  <span className="block text-[10px] font-black text-amber-900 bg-amber-100/80 border border-amber-300 rounded px-1 mt-1 text-center font-mono">
+                    📅 {formatDateDDMMYYYY(disposalPaymentDate)}
+                  </span>
+                )}
               </div>
 
               <div>
