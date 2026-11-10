@@ -11,6 +11,8 @@ import {
 } from '../storage';
 import {
   signInWithGoogleWorkspace,
+  signOutGoogleWorkspace,
+  initGoogleAuthListener,
   uploadBackupToGoogleDriveDirect,
   downloadLatestBackupFromGoogleDriveDirect,
   sendBackupDirectToGmail,
@@ -99,6 +101,26 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [lastCloudDriveSyncTime, setLastCloudDriveSyncTime] = useState<string | null>(
     () => localStorage.getItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC') || null
   );
+
+  const [isGoogleConnected, setIsGoogleConnected] = useState<boolean>(() => !!auth.currentUser);
+  const [googleConnectedEmail, setGoogleConnectedEmail] = useState<string | null>(() => auth.currentUser?.email || null);
+
+  useEffect(() => {
+    const unsub = initGoogleAuthListener((user) => {
+      if (user) {
+        setIsGoogleConnected(true);
+        setGoogleConnectedEmail(user.email);
+        if (user.email) {
+          setGmailEmail(user.email);
+          localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', user.email);
+        }
+      } else {
+        setIsGoogleConnected(false);
+        setGoogleConnectedEmail(null);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   const { isInstallable, isInstalled, install } = usePWAInstall();
   const autoSaveInfo = getLatestAutoSaveInfo();
@@ -540,7 +562,66 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
-  // 10. Real Google OAuth + Direct Google Drive Upload + Firestore Cloud Sync
+  // 10-أ. ربط الحساب الرسمي عبر Google OAuth 2.0 بدون طلب كلمة المرور في النظام
+  const handleConnectGoogleAccount = async () => {
+    if (!gmailEmail.trim() || !gmailEmail.includes('@')) {
+      setStatusMsg({
+        text: 'يرجى إدخال بريد Gmail الصحيح للمتابعة (مثال: ELHOSINY2020@gmail.com).',
+        type: 'error',
+      });
+      return;
+    }
+    setIsProcessing(true);
+    setStatusMsg({
+      text: 'جاري فتح نافذة المصادقة الرسمية الآمنة لـ Google (OAuth 2.0)...',
+      type: 'info',
+    });
+    try {
+      const cleanEmail = gmailEmail.trim();
+      localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', cleanEmail);
+      localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
+      const authRes = await signInWithGoogleWorkspace();
+      const verifiedEmail = authRes.email || cleanEmail;
+      setGmailEmail(verifiedEmail);
+      setIsGoogleConnected(true);
+      setGoogleConnectedEmail(verifiedEmail);
+      localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', verifiedEmail);
+      setStatusMsg({
+        text: `تم بنجاح تسجيل الدخول وربط حساب Google (${verifiedEmail}) وتفعيل الوصول لـ Google Drive!`,
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      setStatusMsg({
+        text: `تعذر إتمام تسجيل الدخول عبر Google OAuth: ${(err as Error).message}`,
+        type: 'error',
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 10-ب. فصل الاتصال بحساب Google Drive
+  const handleDisconnectGoogleAccount = async () => {
+    setIsProcessing(true);
+    try {
+      await signOutGoogleWorkspace();
+      setIsGoogleConnected(false);
+      setGoogleConnectedEmail(null);
+      setStatusMsg({
+        text: 'تم فصل الاتصال بحساب Google وتأمين الجلسة بنجاح.',
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      setStatusMsg({
+        text: `تعذر فصل الاتصال: ${(err as Error).message}`,
+        type: 'error',
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 10-ج. Real Google OAuth + Direct Google Drive Upload + Firestore Cloud Sync (مزامنة البيانات)
   const handleDirectGoogleDriveOAuthUpload = async () => {
     if (!gmailEmail.trim() || !gmailEmail.includes('@')) {
       setStatusMsg({
@@ -1059,7 +1140,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             </div>
 
             <p className="text-[11px] text-slate-300 font-medium leading-relaxed">
-              قم بإدخال إيميل الجيميل وكلمة المرور للربط على Google Drive. عند التسجيل أو الدخول من أي مستخدم مربوط بالجيميل يتم عمل <strong className="text-amber-300">دمج لملفات JSON وإضافة البيانات الجديدة تلقائياً بدون حذف أي داتا</strong> سابقة.
+              قم بإدخال بريد Gmail والضغط على زر <strong className="text-amber-300">ربط الحساب</strong> للمصادقة الآمنة عبر صفحة Google الرسمية (OAuth 2.0). لا يُطلب أو يُخزن أي كلمة مرور داخل النظام نهائياً. استخدم الأزرار أدناه للربط، وفصل الاتصال، ومزامنة واستعادة البيانات عبر Google Drive API.
             </p>
 
             {/* Gmail Email & OAuth Connection Status (No plaintext password storage) */}
@@ -1076,7 +1157,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     setGmailEmail(e.target.value);
                     localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', e.target.value);
                   }}
-                  placeholder="example@gmail.com"
+                  placeholder="ELHOSINY2020@gmail.com"
                   className="w-full px-3 py-2 bg-slate-900 border border-cyan-400/50 rounded-xl font-bold text-white text-left text-xs focus:ring-2 focus:ring-cyan-400 outline-none"
                 />
               </div>
@@ -1084,8 +1165,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <div className="flex flex-col justify-between bg-slate-900/90 border border-cyan-500/30 rounded-xl p-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-black text-cyan-300">حالة الاتصال السحابي:</span>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${auth.currentUser ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40' : 'bg-amber-500/20 text-amber-300 border border-amber-400/40'}`}>
-                    {auth.currentUser ? `متصل (${auth.currentUser.email || 'OAuth نشط'})` : 'جاهز للربط عبر Google OAuth'}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${isGoogleConnected ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40' : 'bg-amber-500/20 text-amber-300 border border-amber-400/40'}`}>
+                    {isGoogleConnected ? `🟢 متصل (${googleConnectedEmail || auth.currentUser?.email || gmailEmail})` : '⚪ غير متصل (اضغط ربط الحساب)'}
                   </span>
                 </div>
                 <div className="text-[10px] text-slate-300 font-bold mt-1">
@@ -1094,27 +1175,70 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               </div>
             </div>
 
-            {/* Primary OAuth Google Drive & Gmail Direct Buttons */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <button
-                type="button"
-                disabled={isProcessing}
-                onClick={handleDirectGoogleDriveOAuthUpload}
-                className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition border border-amber-300 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 text-slate-950 ${isProcessing ? 'animate-spin' : ''}`} />
-                <span>ربط الجيميل ورفع النسخة على Google Drive مباشر ☁️</span>
-              </button>
+            {/* Required Action Buttons: ربط الحساب | فصل الاتصال | مزامنة البيانات */}
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {/* 1. ربط الحساب */}
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleConnectGoogleAccount}
+                  className="w-full py-2.5 px-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition border border-blue-400/40 disabled:opacity-50"
+                  title="تسجيل الدخول الآمن بحساب Google عبر نافذة OAuth 2.0"
+                >
+                  <Globe className="w-4 h-4 text-blue-200" />
+                  <span>ربط الحساب (Google OAuth) 🔗</span>
+                </button>
 
-              <button
-                type="button"
-                disabled={isProcessing}
-                onClick={handleSendBackupToGmailDirect}
-                className="w-full py-3 px-4 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition border border-cyan-300/50 disabled:opacity-50"
-              >
-                <Globe className="w-4 h-4 text-cyan-200" />
-                <span>إرسال النسخة الاحتياطية لبريد الجيميل مباشرة 📧</span>
-              </button>
+                {/* 2. فصل الاتصال */}
+                <button
+                  type="button"
+                  disabled={isProcessing || !isGoogleConnected}
+                  onClick={handleDisconnectGoogleAccount}
+                  className="w-full py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition border border-slate-600 disabled:opacity-40"
+                  title="تسجيل الخروج وفصل الاتصال بحساب Google"
+                >
+                  <X className="w-4 h-4 text-rose-400" />
+                  <span>فصل الاتصال 🔌</span>
+                </button>
+
+                {/* 3. مزامنة البيانات */}
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleDirectGoogleDriveOAuthUpload}
+                  className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition border border-amber-300 disabled:opacity-50"
+                  title="مزامنة وحفظ النسخة الاحتياطية مباشرة إلى Google Drive"
+                >
+                  <RefreshCw className={`w-4 h-4 text-slate-950 ${isProcessing ? 'animate-spin' : ''}`} />
+                  <span>مزامنة البيانات 🔄</span>
+                </button>
+              </div>
+
+              {/* Secondary Google Drive & Gmail Actions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleRestoreFromGoogleDriveSnapshot}
+                  className="w-full py-2 px-3 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-black shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition border border-emerald-500/50 disabled:opacity-50"
+                  title="استعادة وتحميل أحدث نسخة احتياطية من Google Drive ودمجها بدون حذف"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>استعادة أحدث نسخة من Google Drive 📥</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={handleSendBackupToGmailDirect}
+                  className="w-full py-2 px-3 bg-cyan-700 hover:bg-cyan-600 text-white rounded-xl text-xs font-black shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition border border-cyan-500/50 disabled:opacity-50"
+                  title="إرسال ملف النسخة الاحتياطية مباشرة إلى بريد الجيميل"
+                >
+                  <Globe className="w-3.5 h-3.5 text-cyan-200" />
+                  <span>إرسال النسخة لبريد الجيميل 📧</span>
+                </button>
+              </div>
             </div>
 
             {/* Conflict Log Viewer for Mandatory ADD ONLY Rule */}

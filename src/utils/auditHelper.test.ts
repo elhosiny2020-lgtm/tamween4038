@@ -5,6 +5,10 @@ import {
   calculateLoavesCount,
   calculateRawLoavesFromInsuranceValue,
   calculateLoavesFromInsuranceValue,
+  calculateInsuranceQuota,
+  calculateInsuranceValueFromQuota,
+  calculateLoavesCountFromFormula,
+  calculatePerCapitaAverageFromFormula,
   calculateAnnualWeightedAveragesReport,
   recalculateAllDatabaseEquations,
   runComprehensiveAudit,
@@ -275,5 +279,41 @@ test('filterDebtsByAdvancedCriteria filters debts accurately by date range (من
   });
   assert.equal(emptyRange.length, 0);
 });
+
+test('calculateInsuranceQuota computes insuranceValue / 235 / 3 accurately', () => {
+  // Example given by user: 7050 ÷ 235 ÷ 3 = 10
+  assert.equal(calculateInsuranceQuota(7050), 10);
+  assert.equal(calculateInsuranceQuota(14100), 20);
+  assert.equal(calculateInsuranceQuota(0), 0);
+  assert.equal(calculateInsuranceQuota(-500), 0);
+  // Reverse equation
+  assert.equal(calculateInsuranceValueFromQuota(10), 7050);
+  assert.equal(calculateInsuranceValueFromQuota(20), 14100);
+});
+
+test('calculateLoavesCountFromFormula computes (actualQuota * breadTypeCount) / villagePopulation with zero protection', () => {
+  // Formula: (actualQuota * breadTypeCount) / villagePopulation
+  const val1 = calculateLoavesCountFromFormula(20, 1, 30000);
+  assert.equal(val1, Number(((20 * 1) / 30000).toFixed(4)));
+
+  const val2 = calculateLoavesCountFromFormula(30, 2, 50000);
+  assert.equal(val2, Number(((30 * 2) / 50000).toFixed(4)));
+
+  // Division by zero protection
+  assert.equal(calculateLoavesCountFromFormula(20, 1, 0), 0);
+  assert.equal(calculateLoavesCountFromFormula(20, 1, -100), 0);
+});
+
+test('calculatePerCapitaAverageFromFormula computes (loavesCount * actualQuota) / villagePopulation to strictly 2 decimal places', () => {
+  // Formula: (loavesCount * actualQuota) / villagePopulation
+  const avg1 = calculatePerCapitaAverageFromFormula(100, 20, 5000);
+  assert.equal(avg1, ((100 * 20) / 5000).toFixed(2));
+  assert.equal(avg1, '0.40');
+
+  // Zero population protection
+  assert.equal(calculatePerCapitaAverageFromFormula(100, 20, 0), '0.00');
+  assert.equal(calculatePerCapitaAverageFromFormula(0, 0, 10000), '0.00');
+});
+
 
 

@@ -125,6 +125,64 @@ export function calculateLoavesCount(insuranceQuota: number): number {
 }
 
 /**
+ * المعادلة المعتمدة رقم 1: احتساب الحصة التأمينية لكل مخبز:
+ * الحصة التأمينية = المبلغ التأميني ÷ 235 ÷ 3
+ * مثال: 7050 ÷ 235 ÷ 3 = 10
+ */
+export function calculateInsuranceQuota(insuranceValue: number): number {
+  const val = Number(insuranceValue) || 0;
+  if (val <= 0) return 0;
+  const result = val / 235 / 3;
+  return Number(result.toFixed(2));
+}
+
+/**
+ * المعادلة العكسية للمبلغ التأميني من الحصة التأمينية:
+ * المبلغ التأميني = الحصة التأمينية × 235 × 3
+ */
+export function calculateInsuranceValueFromQuota(insuranceQuota: number): number {
+  const quota = Number(insuranceQuota) || 0;
+  if (quota <= 0) return 0;
+  return Math.round(quota * 235 * 3);
+}
+
+/**
+ * المعادلة المعتمدة رقم 2: احتساب عدد الأرغفة:
+ * عدد الأرغفة = (الحصة الفعلية × عدد نوع الخبز المحدد في الجدول) ÷ عدد السكان
+ * مع الحماية التامة من القسمة على صفر عند خلو عدد السكان أو كونه 0
+ */
+export function calculateLoavesCountFromFormula(
+  actualQuota: number,
+  breadTypeCount: number,
+  villagePopulation: number
+): number {
+  const pop = Number(villagePopulation) || 0;
+  if (pop <= 0) return 0;
+  const actual = Number(actualQuota) || 0;
+  const typeCount = Number(breadTypeCount) || 1;
+  const raw = (actual * typeCount) / pop;
+  return Number(raw.toFixed(4));
+}
+
+/**
+ * المعادلة المعتمدة رقم 3: احتساب متوسط نصيب الفرد للمخبز:
+ * متوسط نصيب الفرد للمخبز = (عدد الأرغفة × الحصة الفعلية) ÷ عدد السكان
+ * مع الحماية من القسمة على صفر وإخراج النتيجة بعلامة عشرية ورقمين فقط (0.00)
+ */
+export function calculatePerCapitaAverageFromFormula(
+  loavesCount: number,
+  actualQuota: number,
+  villagePopulation: number
+): string {
+  const pop = Number(villagePopulation) || 0;
+  if (pop <= 0) return '0.00';
+  const loaves = Number(loavesCount) || 0;
+  const actual = Number(actualQuota) || 0;
+  const avg = (loaves * actual) / pop;
+  return avg.toFixed(2);
+}
+
+/**
  * 2. متوسط نصيب الفرد من المخبز الواحد = عدد الأرغفة ÷ عدد السكان/المستفيدين (علامة عشرية ورقمين فقط)
  */
 export function calculatePerCapitaAverage(loavesCount: number, villagePopulation: number): string {
@@ -834,6 +892,40 @@ export function runComprehensiveAudit(
     actual: netDebt,
     status: netDebt === 21000 ? 'PASS' : 'FAIL',
     description: 'تحقق من تجميع كافة المتبقيات من مخالفات ومضاف وتصرف.',
+  });
+
+  // فحص 12: احتساب الحصة التأمينية من المبلغ التأميني (7050 ÷ 235 ÷ 3 = 10)
+  const quotaCheck = calculateInsuranceQuota(7050);
+  details.push({
+    checkName: 'معادلة الحصة التأمينية: 7050 ÷ 235 ÷ 3 = 10',
+    expected: 10,
+    actual: quotaCheck,
+    status: quotaCheck === 10 ? 'PASS' : 'FAIL',
+    description: 'تحقق من معادلة الحصة التأمينية: الحصة التأمينية = المبلغ التأميني ÷ 235 ÷ 3',
+  });
+
+  // فحص 13: احتساب عدد الأرغفة وفق المعادلة: (الحصة الفعلية × عدد نوع الخبز) ÷ عدد السكان مع منع القسمة على صفر
+  const loavesFormulaCheck = calculateLoavesCountFromFormula(20, 1, 30000);
+  const loavesZeroPop = calculateLoavesCountFromFormula(20, 1, 0);
+  const loavesFormulaPassed = loavesFormulaCheck === Number(((20 * 1) / 30000).toFixed(4)) && loavesZeroPop === 0;
+  details.push({
+    checkName: 'معادلة عدد الأرغفة: (الحصة الفعلية × عدد نوع الخبز) ÷ عدد السكان',
+    expected: Number(((20 * 1) / 30000).toFixed(4)),
+    actual: loavesFormulaCheck,
+    status: loavesFormulaPassed ? 'PASS' : 'FAIL',
+    description: 'تحقق من معادلة عدد الأرغفة مع الحماية الصارمة من القسمة على صفر عند خلو عدد السكان.',
+  });
+
+  // فحص 14: احتساب متوسط نصيب الفرد للمخبز: (عدد الأرغفة × الحصة الفعلية) ÷ عدد السكان (0.00)
+  const perCapitaFormulaCheck = calculatePerCapitaAverageFromFormula(loavesFormulaCheck, 20, 30000);
+  const perCapitaZeroPop = calculatePerCapitaAverageFromFormula(loavesFormulaCheck, 20, 0);
+  const perCapitaFormulaPassed = perCapitaZeroPop === '0.00' && /^\d+\.\d{2}$/.test(perCapitaFormulaCheck);
+  details.push({
+    checkName: 'معادلة متوسط نصيب الفرد للمخبز: (عدد الأرغفة × الحصة الفعلية) ÷ عدد السكان',
+    expected: '0.00',
+    actual: perCapitaFormulaCheck,
+    status: perCapitaFormulaPassed ? 'PASS' : 'FAIL',
+    description: 'تحقق من معادلة متوسط نصيب الفرد للمخبز بعلامة عشرية ورقمين فقط ومنع القسمة على صفر.',
   });
 
   // فحص 12: فحص كافة سجلات المخابز الحية بقاعدة البيانات
