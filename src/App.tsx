@@ -232,6 +232,7 @@ export default function App() {
   const [isVillageModalOpen, setIsVillageModalOpen] = useState(false);
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportModalInitialTab, setReportModalInitialTab] = useState<'bakeries' | 'debts' | 'bakery-debts' | 'users'>('bakeries');
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
@@ -800,6 +801,55 @@ export default function App() {
     setAppState((prev) => (prev ? { ...prev, currentUser: null } : null));
   }, []);
 
+  // Global fast Escape key listener to close any open modal immediately without lag
+  useEffect(() => {
+    const handleGlobalEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        if (isReportModalOpen) { setIsReportModalOpen(false); return; }
+        if (isInboxModalOpen) { setIsInboxModalOpen(false); return; }
+        if (isAdvancedPermissionsModalOpen) { setIsAdvancedPermissionsModalOpen(false); return; }
+        if (isUsersModalOpen) { setIsUsersModalOpen(false); return; }
+        if (isBackupModalOpen) { setIsBackupModalOpen(false); return; }
+        if (isMasterEditorModalOpen) { setIsMasterEditorModalOpen(false); return; }
+        if (isDailyTasksModalOpen) { setIsDailyTasksModalOpen(false); return; }
+        if (isAlertsModalOpen) { setIsAlertsModalOpen(false); return; }
+        if (isDailyBriefingModalOpen) { setIsDailyBriefingModalOpen(false); return; }
+        if (isWeeklyInstallmentsModalOpen) { setIsWeeklyInstallmentsModalOpen(false); return; }
+        if (isLocalUnitsModalOpen) { setIsLocalUnitsModalOpen(false); return; }
+        if (isAuditModalOpen) { setIsAuditModalOpen(false); return; }
+        if (isBudgetFrequencyModalOpen) { setIsBudgetFrequencyModalOpen(false); return; }
+        if (isBakeryModalOpen) { setIsBakeryModalOpen(false); return; }
+        if (isHeaderModalOpen) { setIsHeaderModalOpen(false); return; }
+        if (isVillageModalOpen) { setIsVillageModalOpen(false); return; }
+        if (isColumnModalOpen) { setIsColumnModalOpen(false); return; }
+        if (isActivityModalOpen) { setIsActivityModalOpen(false); return; }
+        if (isDailySettingsModalOpen) { setIsDailySettingsModalOpen(false); return; }
+      }
+    };
+    window.addEventListener('keydown', handleGlobalEscape, true);
+    return () => window.removeEventListener('keydown', handleGlobalEscape, true);
+  }, [
+    isReportModalOpen,
+    isInboxModalOpen,
+    isAdvancedPermissionsModalOpen,
+    isUsersModalOpen,
+    isBackupModalOpen,
+    isMasterEditorModalOpen,
+    isDailyTasksModalOpen,
+    isAlertsModalOpen,
+    isDailyBriefingModalOpen,
+    isWeeklyInstallmentsModalOpen,
+    isLocalUnitsModalOpen,
+    isAuditModalOpen,
+    isBudgetFrequencyModalOpen,
+    isBakeryModalOpen,
+    isHeaderModalOpen,
+    isVillageModalOpen,
+    isColumnModalOpen,
+    isActivityModalOpen,
+    isDailySettingsModalOpen,
+  ]);
+
   // Auto-logout when user leaves the computer / idle for 10 minutes (with automatic full pre-logout save)
   useEffect(() => {
     if (!appState?.currentUser) return;
@@ -1256,10 +1306,10 @@ export default function App() {
               </button>
 
               <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-slate-800/80 border border-slate-700 rounded-lg text-xs font-bold text-amber-100 shadow-inner">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 <span>{appState.currentUser.fullName}</span>
                 <span className="text-[10px] text-amber-300 bg-amber-950/80 px-1.5 py-0.2 rounded border border-amber-600/30">
-                  {appState.currentUser.role === 'admin' ? 'مدير' : appState.currentUser.role === 'auditor' ? 'مراجع' : 'مفتش'}
+                  {getRoleNameArabic(appState.currentUser.role, appState.systemConfig)}
                 </span>
               </div>
 
@@ -1525,11 +1575,14 @@ export default function App() {
             {/* 7. Printable Reports & A4 Export Button */}
             <button
               type="button"
-              onClick={() => setIsReportModalOpen(true)}
-              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-950 hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              onClick={() => {
+                setReportModalInitialTab(activeTab === 'debts' ? 'debts' : 'bakeries');
+                setIsReportModalOpen(true);
+              }}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-950 hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400 rounded-xl text-xs font-black transition-all duration-200 cursor-pointer"
             >
               <div className="flex items-center gap-2">
-                <Printer className="w-4 h-4 text-cyan-400 icon-animated" />
+                <Printer className="w-4 h-4 text-cyan-400" />
                 <span>التقارير وكشوف الطباعة A4</span>
               </div>
               <ChevronLeft className="w-3.5 h-3.5 text-cyan-400" />
@@ -1587,81 +1640,24 @@ export default function App() {
               </span>
             </button>
 
-            {/* UNIFIED BUTTON 2: ضم جميع قوائم الحفظ والاستيراد والنسخ على مفتاح واحد فقط */}
+            {/* UNIFIED BUTTON 2: ضم جميع قوائم الحفظ والاستيراد والنسخ (بما فيها النسخ التلقائي على Google Drive) على مفتاح واحد فقط */}
             <button
               type="button"
               onClick={() => setIsBackupModalOpen(true)}
-              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-emerald-950 via-slate-900 to-cyan-950 hover:from-emerald-900 hover:to-cyan-900 text-emerald-300 border-2 border-emerald-500/70 hover:border-emerald-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg"
-              title="مركز الحفظ والاستيراد والنسخ الاحتياطي الموحد (حفظ بارتيشن، القرص الصلب، Google Drive، حزمة GitHub، وتحميل التطبيق HTML/EXE)"
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-emerald-950 via-slate-900 to-cyan-950 hover:from-emerald-900 hover:to-cyan-900 text-emerald-300 border-2 border-emerald-500/70 hover:border-emerald-400 rounded-xl text-xs font-black transition-all duration-200 cursor-pointer shadow-lg"
+              title="مركز الحفظ والاستيراد والنسخ الاحتياطي الموحد (حفظ بارتيشن، القرص الصلب، نسخ تلقائي على Google Drive، حزمة GitHub، وتحميل التطبيق HTML/EXE)"
             >
               <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-emerald-400 icon-animated" />
+                <Database className="w-4 h-4 text-emerald-400" />
                 <div className="text-right">
                   <div className="leading-tight">الحفظ والاستيراد والنسخ</div>
                   <div className="text-[9.5px] text-emerald-200/90 font-bold">
-                    بارتيشن • Drive • GitHub • EXE
+                    بارتيشن • نسخ تلقائي Google Drive • EXE
                   </div>
                 </div>
               </div>
               <span className="text-[10px] bg-emerald-500 text-slate-950 px-2 py-0.5 rounded-full font-black shrink-0">
                 شامل 💾
-              </span>
-            </button>
-
-            {/* NEW BUTTON UNDER BACKUP: نسخ تلقائي على Google Drive */}
-            <button
-              type="button"
-              onClick={() => {
-                const linkedGmail =
-                  appState.currentUser?.gmailEmail ||
-                  localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
-                  appState.systemConfig.gmailEmail ||
-                  'ELHOSINY2020@gmail.com';
-                localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', linkedGmail);
-                localStorage.setItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC', 'true');
-                localStorage.setItem('TAMWEEN_CUSTOM_AUTOSYNC', 'true');
-
-                const mergedState = performGmailDriveAdditiveMerge(appState, {
-                  ...appState.currentUser!,
-                  gmailEmail: linkedGmail,
-                  googleDriveAutoSync: true,
-                });
-
-                const payload = {
-                  version: '3.5-gmail-google-drive-autosync',
-                  timestamp: new Date().toISOString(),
-                  destinationType: 'GOOGLE_DRIVE',
-                  gmailEmail: linkedGmail,
-                  bakeriesCount: mergedState.bakeries.length,
-                  debtsCount: mergedState.debts.length,
-                  data: mergedState,
-                };
-                localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(payload));
-                localStorage.setItem(
-                  `TAMWEEN_GMAIL_DRIVE_SYNC_${linkedGmail.toLowerCase()}`,
-                  JSON.stringify(payload)
-                );
-
-                triggerSave(
-                  mergedState,
-                  `تم تفعيل النسخ التلقائي على Google Drive لحساب (${linkedGmail}) ودمج ملفات JSON بدون حذف أي داتا!`
-                );
-                setIsBackupModalOpen(true);
-              }}
-              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-cyan-900 via-blue-950 to-indigo-950 hover:from-cyan-800 hover:to-indigo-900 text-cyan-200 border-2 border-cyan-400/70 hover:border-cyan-300 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg"
-              title="نسخ تلقائي على Google Drive مرتبط بإيميل الجيميل مع دمج ملفات JSON بدون حذف أي داتا"
-            >
-              <div className="flex items-center gap-2">
-                <RefreshCw className="w-4 h-4 text-cyan-300 icon-animated" />
-                <div className="text-right">
-                  <div className="leading-tight">نسخ تلقائي على Google Drive</div>
-                  <div className="text-[9.5px] text-amber-300 font-bold">
-                    ربط الجيميل • دمج JSON بدون حذف
-                  </div>
-                </div>
-              </div>
-              <span className="text-[10px] bg-cyan-400 text-slate-950 px-2 py-0.5 rounded-full font-black shrink-0">
-                Gmail ☁️
               </span>
             </button>
 
@@ -1931,6 +1927,10 @@ export default function App() {
             }}
             filterBakeryId={debtFilterBakeryId}
             onClearBakeryFilter={() => setDebtFilterBakeryId(undefined)}
+            onOpenReportModal={(tab) => {
+              setReportModalInitialTab(tab || 'debts');
+              setIsReportModalOpen(true);
+            }}
           />
         ) : (
           /* BAKERIES MAIN VIEW */
@@ -2080,11 +2080,14 @@ export default function App() {
 
                   {/* 5. Open Printable Report Center */}
                   <button
-                    onClick={() => setIsReportModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-slate-800 via-amber-950 to-slate-900 hover:from-slate-700 hover:to-amber-900 text-amber-200 rounded-xl text-xs font-black shadow-md border border-amber-500/50 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    onClick={() => {
+                      setReportModalInitialTab('bakeries');
+                      setIsReportModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-slate-800 via-amber-950 to-slate-900 hover:from-slate-700 hover:to-amber-900 text-amber-200 rounded-xl text-xs font-black shadow-md border border-amber-500/50 transition-all duration-200 cursor-pointer"
                     title="فتح مركز التقارير وكشوف الطباعة A4 بالعرض ونسب السداد"
                   >
-                    <Printer className="w-4 h-4 text-amber-400 icon-animated" />
+                    <Printer className="w-4 h-4 text-amber-400" />
                     <span>كشف الطباعة A4</span>
                   </button>
                 </div>
@@ -3156,11 +3159,14 @@ export default function App() {
           {/* Quick Print A4 / Reports Center */}
           <button
             type="button"
-            onClick={() => setIsReportModalOpen(true)}
-            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 hover:border-cyan-400 font-black text-xs rounded-xl shadow-md transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
-            title="طباعة كشف المخابز A4 رسمياً وفتح مركز التقارير"
+            onClick={() => {
+              setReportModalInitialTab(activeTab === 'debts' ? 'debts' : 'bakeries');
+              setIsReportModalOpen(true);
+            }}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 hover:border-cyan-400 font-black text-xs rounded-xl shadow-md transition-all duration-200 cursor-pointer"
+            title="طباعة الكشف A4 رسمياً وفتح مركز التقارير"
           >
-            <Printer className="w-4 h-4 text-cyan-400 transition-transform duration-300 group-hover:-translate-y-0.5" />
+            <Printer className="w-4 h-4 text-cyan-400" />
             <span className="hidden sm:inline">طباعة الكشف</span>
           </button>
         </div>
@@ -3381,6 +3387,8 @@ export default function App() {
           columnTitles={appState.columnTitles}
           systemConfig={appState.systemConfig}
           currentUser={appState.currentUser}
+          users={appState.users}
+          initialReportType={reportModalInitialTab}
         />
       )}
 
@@ -3429,7 +3437,7 @@ export default function App() {
         />
       )}
 
-      {/* 8.1 Advanced Role Permissions Modal (إعدادات الصلاحيات المتقدمة في SystemConfig) */}
+      {/* 8.1 Advanced Role Permissions & Users Management Modal (إعدادات الصلاحيات المتقدمة في SystemConfig) */}
       {isAdvancedPermissionsModalOpen && (
         <AdvancedPermissionsModal
           isOpen={isAdvancedPermissionsModalOpen}
@@ -3438,9 +3446,33 @@ export default function App() {
           onSaveSystemConfig={(updatedConfig: SystemConfig) =>
             triggerSave(
               { ...appState, systemConfig: updatedConfig },
-              'تم حفظ إعدادات الصلاحيات المتقدمة للأدوار (مفتش، مراجع، مدير) في SystemConfig بنجاح'
+              'تم حفظ إعدادات الصلاحيات المتقدمة والأدوار الوظيفية في SystemConfig بنجاح'
             )
           }
+          users={appState.users}
+          currentUser={appState.currentUser}
+          onAddUser={(newUser) =>
+            triggerSave({ ...appState, users: [...appState.users, newUser] }, `تم إضافة وحفظ المستخدم الجديد (${newUser.fullName}) بنجاح`)
+          }
+          onUpdateUser={(updatedUser) => {
+            const updatedUsers = appState.users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+            const isCurrent = appState.currentUser?.id === updatedUser.id;
+            if (isCurrent) {
+              saveSessionUser(updatedUser);
+            }
+            triggerSave(
+              {
+                ...appState,
+                users: updatedUsers,
+                currentUser: isCurrent ? updatedUser : appState.currentUser,
+              },
+              `تم حفظ تعديل بيانات الحساب والاسم بالكامل (${updatedUser.fullName}) واليوزر والباسورد والدور الوظيفي بنجاح`
+            );
+          }}
+          onDeleteUser={(userId) => {
+            const updatedUsers = appState.users.filter((u) => u.id !== userId);
+            triggerSave({ ...appState, users: updatedUsers }, 'تم حذف المستخدم وتحديث القائمة بنجاح');
+          }}
         />
       )}
 

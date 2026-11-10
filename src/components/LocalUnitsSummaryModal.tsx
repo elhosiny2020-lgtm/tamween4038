@@ -15,6 +15,7 @@ import {
   Filter,
   ExternalLink
 } from 'lucide-react';
+import { printHtmlElementA4 } from '../utils/pdfHelper';
 
 interface LocalUnitSummaryRow {
   localUnit: string;
@@ -53,6 +54,20 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
   const [selectedVillageFilter, setSelectedVillageFilter] = useState('ALL');
   const [sortField, setSortField] = useState<keyof LocalUnitSummaryRow>('bakeryCount');
   const [sortAsc, setSortAsc] = useState(false);
+  const summaryPrintRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, onClose]);
 
   // Map bakery debts accurately
   const debtsMap = useMemo(() => {
@@ -235,7 +250,10 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
   };
 
   const handlePrint = () => {
-    window.print();
+    printHtmlElementA4(
+      summaryPrintRef.current,
+      `ملخص_إحصائي_الوحدات_المحلية_${new Date().toISOString().split('T')[0]}`
+    );
   };
 
   if (!isOpen) return null;
@@ -374,7 +392,7 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
         </div>
 
         {/* Aggregated Table Body */}
-        <div className="overflow-x-auto flex-1 p-3">
+        <div ref={summaryPrintRef} className="overflow-x-auto flex-1 p-3">
           <table className="w-full text-center border-collapse text-xs">
             <thead>
               <tr className="bg-slate-900 border-b border-slate-700 text-slate-200 font-black">

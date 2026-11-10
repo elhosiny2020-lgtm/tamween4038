@@ -161,6 +161,13 @@ export interface DailyAlertConfig {
   lastAlertDate?: string; // YYYY-MM-DD
 }
 
+export interface CustomJobRole {
+  id: string;
+  title: string;
+  fullTitle?: string;
+  badgeColor?: string;
+}
+
 export interface SystemConfig {
   governorateTitle: string;
   directorateTitle: string;
@@ -169,12 +176,13 @@ export interface SystemConfig {
   logoBase64: string;
   dailyAlertConfig?: DailyAlertConfig;
   rolePermissions?: Record<string, string[]>;
+  customRoles?: CustomJobRole[];
   gmailEmail?: string;
   gmailPassword?: string;
   googleDriveAutoSync?: boolean;
 }
 
-export type UserRoleType = 'admin' | 'supervisor' | 'inspector' | 'auditor' | 'data_entry' | 'viewer';
+export type UserRoleType = 'admin' | 'supervisor' | 'inspector' | 'auditor' | 'data_entry' | 'viewer' | string;
 
 export interface AppUser {
   id: string;

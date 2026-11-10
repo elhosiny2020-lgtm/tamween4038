@@ -1,21 +1,25 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Bakery, DebtRecord, VillageHierarchy, ColumnTitles, SystemConfig, AppUser } from '../types';
-import { sanitizeClonedDocumentForPdf, sanitizeLiveStylesheets } from '../utils/pdfHelper';
+import {
+  sanitizeClonedDocumentForPdf,
+  sanitizeLiveStylesheets,
+  printHtmlElementA4,
+} from '../utils/pdfHelper';
+import {
+  ALL_PERMISSIONS_LIST,
+  getDefaultPermissionsForRole,
+  getRoleNameArabic,
+} from '../permissions';
 import {
   X,
   FileSpreadsheet,
   Printer,
   Download,
-  FileText,
   SlidersHorizontal,
   DollarSign,
-  AlertTriangle,
-  Building2,
-  Calendar,
   Layers,
   TrendingUp,
-  CheckCircle2,
-  Percent
+  Users,
 } from 'lucide-react';
 
 interface ReportModalProps {
@@ -27,6 +31,8 @@ interface ReportModalProps {
   columnTitles: ColumnTitles;
   systemConfig: SystemConfig;
   currentUser?: AppUser | null;
+  users?: AppUser[];
+  initialReportType?: 'bakeries' | 'debts' | 'bakery-debts' | 'users';
 }
 
 export const ReportModal: React.FC<ReportModalProps> = ({
@@ -38,9 +44,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   columnTitles,
   systemConfig,
   currentUser,
+  users = [],
+  initialReportType = 'bakeries',
 }) => {
-  // Report Mode: 'bakeries' (General Bakery registry), 'debts' (Detailed Debt Account Statement), or 'bakery-debts' (Per-bakery Debt & Repayment Summary)
-  const [reportType, setReportType] = useState<'bakeries' | 'debts' | 'bakery-debts'>('bakeries');
+  // Report Mode: 'bakeries' | 'debts' | 'bakery-debts' | 'users'
+  const [reportType, setReportType] = useState<'bakeries' | 'debts' | 'bakery-debts' | 'users'>(
+    initialReportType
+  );
+  const [includeUsersAppendix, setIncludeUsersAppendix] = useState<boolean>(false);
   const [selectedVillage, setSelectedVillage] = useState('ALL');
   const [selectedUnit, setSelectedUnit] = useState('ALL');
   const [selectedActivity, setSelectedActivity] = useState('ALL');
@@ -51,6 +62,12 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   const [zoomLevel, setZoomLevel] = useState<number>(100); // 100%, 85%, 75%
   const printAreaRef = useRef<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    if (isOpen && initialReportType) {
+      setReportType(initialReportType);
+    }
+  }, [isOpen, initialReportType]);
+
   const fontSizeClass =
     fontSizeMode === 'large'
       ? 'report-font-large text-[9.5pt] print:text-[9.5pt]'
@@ -58,23 +75,25 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       ? 'report-font-compact text-[7.5pt] print:text-[7.5pt]'
       : 'report-font-standard text-[8.5pt] print:text-[8.5pt]';
 
-  // Manage print isolation class on body and Escape key listener
+  // Manage print isolation class on body and Capture-Phase Escape key listener (0ms response)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
 
     if (isOpen) {
       document.body.classList.add('has-print-modal');
-      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keydown', handleKeyDown, true);
     } else {
       document.body.classList.remove('has-print-modal');
     }
     return () => {
       document.body.classList.remove('has-print-modal');
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [isOpen, onClose]);
 
@@ -143,6 +162,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   // Dynamic Title Construction
   const dynamicReportTitle = useMemo(() => {
+    if (reportType === 'users') {
+      return 'كشف حسابات المستخدمين والأدوار الوظيفية والصلاحيات (الاسم بالكامل • اليوزر • الباسورد)';
+    }
+
     const locationSuffix =
       selectedVillage === 'ALL'
         ? 'لكافة قرى ووحدات مركز المحلة الكبرى'
@@ -399,7 +422,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   };
 
   const deselectAllColumns = () => {
-    // Keep at least index and bakeryOwnerName so the report remains valid
     const allFalse: Record<string, boolean> = {};
     Object.keys(activeColumns).forEach((k) => (allFalse[k] = false));
     allFalse.index = true;
@@ -424,7 +446,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     const opt = {
       margin: [4, 4, 4, 4],
       filename: `${dynamicReportTitle.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`,
-      image: { type: 'jpeg', quality: 0.95 },
+      image: { type: 'jpeg', quality: 0.96 },
       html2canvas: {
         scale: 1.5,
         useCORS: true,
@@ -440,7 +462,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
     };
 
-    const win = window as unknown as { html2pdf?: () => { from: (el: HTMLElement) => { set: (o: typeof opt) => { save: () => Promise<void> } } } };
+    const win = window as unknown as {
+      html2pdf?: () => {
+        from: (el: HTMLElement) => { set: (o: typeof opt) => { save: () => Promise<void> } };
+      };
+    };
     if (typeof win.html2pdf === 'function') {
       const pdfTask = win
         .html2pdf()
@@ -448,7 +474,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         .set(opt)
         .save();
 
-      // 8-second safety timeout so UI never hangs permanently
       const timeoutTask = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('PDF generation timed out')), 8000)
       );
@@ -466,151 +491,60 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     }
   };
 
-  // Blazing Fast Isolated Print Engine (renders in <200ms without freezing UI)
+  // Blazing Fast Isolated Print Engine (Guaranteed Populated A4 Landscape)
   const handlePrint = () => {
-    if (!printAreaRef.current) {
-      window.print();
-      return;
-    }
+    const fontClass =
+      fontSizeMode === 'large'
+        ? 'report-font-large'
+        : fontSizeMode === 'compact'
+        ? 'report-font-compact'
+        : 'report-font-standard';
 
-    try {
-      let iframe = document.getElementById('report-fast-print-iframe') as HTMLIFrameElement | null;
-      if (iframe) {
-        iframe.remove();
-      }
-
-      iframe = document.createElement('iframe');
-      iframe.id = 'report-fast-print-iframe';
-      iframe.style.position = 'fixed';
-      iframe.style.right = '0';
-      iframe.style.bottom = '0';
-      iframe.style.width = '0px';
-      iframe.style.height = '0px';
-      iframe.style.border = 'none';
-      iframe.style.visibility = 'hidden';
-      document.body.appendChild(iframe);
-
-      const iframeDoc = iframe.contentWindow?.document;
-      if (!iframeDoc) {
-        window.print();
-        return;
-      }
-
-      const fontClass =
-        fontSizeMode === 'large'
-          ? 'report-font-large'
-          : fontSizeMode === 'compact'
-          ? 'report-font-compact'
-          : 'report-font-standard';
-
-      iframeDoc.open();
-      iframeDoc.write(`
-        <!DOCTYPE html>
-        <html dir="rtl" lang="ar">
-        <head>
-          <meta charset="utf-8">
-          <title>${dynamicReportTitle}</title>
-          <style>
-            @page {
-              size: A4 landscape;
-              margin: 4mm;
-            }
-            * {
-              box-sizing: border-box;
-              font-family: 'Cairo', system-ui, -apple-system, sans-serif;
-              color: #000000 !important;
-              -webkit-text-fill-color: #000000 !important;
-            }
-            body {
-              margin: 0;
-              padding: 0;
-              background: #ffffff;
-              color: #000000 !important;
-              direction: rtl;
-              font-weight: 700;
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-            .no-print {
-              display: none !important;
-            }
-            .print-container {
-              width: 100% !important;
-              max-width: 100% !important;
-              margin: 0 !important;
-              padding: 0 !important;
-              background: #ffffff !important;
-              color: #000000 !important;
-            }
-            table {
-              width: 100% !important;
-              border-collapse: collapse !important;
-              table-layout: fixed !important;
-              page-break-inside: auto;
-            }
-            tr {
-              page-break-inside: avoid;
-              page-break-after: auto;
-            }
-            thead {
-              display: table-header-group;
-            }
-            tfoot {
-              display: table-footer-group;
-            }
-            th, td {
-              border: 1px solid #000000 !important;
-              color: #000000 !important;
-              padding: 3px 2px !important;
-              word-break: break-word !important;
-              overflow-wrap: break-word !important;
-              line-height: 1.25 !important;
-              white-space: normal !important;
-              text-align: center !important;
-              vertical-align: middle !important;
-            }
-            .report-font-compact th, .report-font-compact td { font-size: 7.5pt !important; }
-            .report-font-standard th, .report-font-standard td { font-size: 8.5pt !important; }
-            .report-font-large th, .report-font-large td { font-size: 9.5pt !important; }
-            th {
-              background-color: #e2e8f0 !important;
-              color: #000000 !important;
-              font-weight: 900 !important;
-            }
-            tfoot tr, tfoot td {
-              background-color: #cbd5e1 !important;
-              color: #000000 !important;
-              font-weight: 900 !important;
-            }
-            .num-enlarged {
-              font-weight: 900 !important;
-              font-size: 1.05em !important;
-              color: #000000 !important;
-            }
-          </style>
-        </head>
-        <body class="${fontClass}">
-          ${printAreaRef.current.innerHTML}
-        </body>
-        </html>
-      `);
-      iframeDoc.close();
-
-      setTimeout(() => {
-        try {
-          iframe?.contentWindow?.focus();
-          iframe?.contentWindow?.print();
-        } catch {
-          window.print();
-        }
-      }, 120);
-    } catch {
-      window.print();
-    }
+    printHtmlElementA4(printAreaRef.current, dynamicReportTitle, fontClass);
   };
 
   // Export Report to CSV with UTF-8 BOM
   const handleExportCSV = () => {
+    if (reportType === 'users') {
+      const headers = [
+        'م',
+        'الاسم بالكامل (Full Name)',
+        'اسم المستخدم (اليوزر - Username)',
+        'كلمة المرور (الباسورد - Password)',
+        'الدور الوظيفي',
+        'المسمى الوظيفي',
+        'القسم / الإدارة',
+        'عدد الصلاحيات الممنوحة',
+      ];
+      const rows = users.map((u, idx) => {
+        const perms =
+          u.role === 'admin'
+            ? ALL_PERMISSIONS_LIST.map((p) => p.id)
+            : u.customPermissions && u.customPermissions.length > 0
+            ? u.customPermissions
+            : getDefaultPermissionsForRole(u.role);
+        return [
+          idx + 1,
+          `"${(u.fullName || '').replace(/"/g, '""')}"`,
+          `"${(u.username || '').replace(/"/g, '""')}"`,
+          `"${(u.password || 'admin').replace(/"/g, '""')}"`,
+          `"${getRoleNameArabic(u.role, systemConfig)}"`,
+          `"${u.jobTitle || 'مسئول تمويني'}"`,
+          `"${u.department || 'إدارة تموين مركز المحلة الكبرى'}"`,
+          `${perms.length} من ${ALL_PERMISSIONS_LIST.length}`,
+        ].join(',');
+      });
+      const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `كشف_المستخدمين_والصلاحيات_${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
     if (reportType === 'debts') {
       const headers = [
         'م',
@@ -885,7 +819,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   return (
     <div
-      className="report-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/90 overflow-y-auto cursor-pointer no-print"
+      className="report-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/90 overflow-y-auto cursor-pointer"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           e.preventDefault();
@@ -906,12 +840,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         }
         @media print {
           .no-print { display: none !important; }
-          .report-modal-dialog { width: 100% !important; max-width: none !important; margin: 0 !important; border: none !important; box-shadow: none !important; }
+          .report-modal-overlay { background: #ffffff !important; padding: 0 !important; position: static !important; display: block !important; }
+          .report-modal-dialog { width: 100% !important; max-width: none !important; max-height: none !important; margin: 0 !important; border: none !important; box-shadow: none !important; overflow: visible !important; }
           .report-table-compact { font-size: 8.5pt !important; }
           body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
       `}</style>
-      <div className="report-modal-dialog bg-white rounded-2xl shadow-2xl border-2 border-amber-600/50 w-[98vw] max-w-[1720px] my-2 flex flex-col max-h-[96vh] overflow-hidden">
+      <div className="report-modal-dialog bg-white rounded-2xl shadow-2xl border-2 border-amber-600/50 w-[98vw] max-w-[1720px] my-2 flex flex-col max-h-[96vh] overflow-hidden cursor-default">
         {/* Modal Top Controls (No-print) */}
         <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border-b border-amber-500/30 p-3 sm:p-4 text-white flex flex-wrap items-center justify-between gap-3 shrink-0 no-print">
           <div className="flex items-center gap-3">
@@ -924,7 +859,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-black text-amber-300">مركز كشوف وتقارير المخابز البلدية والمديونيات</h3>
+                <h3 className="text-base font-black text-amber-300">مركز كشوف وتقارير المخابز البلدية والمديونيات والمستخدمين</h3>
                 <span className="px-2 py-0.5 bg-amber-500 text-slate-950 rounded text-[10px] font-black">
                   طباعة A4 بالعرض (Landscape)
                 </span>
@@ -1041,21 +976,22 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                 e.stopPropagation();
                 onClose();
               }}
-              className="p-2 rounded-xl bg-red-900/60 hover:bg-red-600 text-white cursor-pointer border border-red-500/50 shadow-md flex items-center justify-center"
+              className="px-3 py-1.5 rounded-xl bg-red-700 hover:bg-red-600 text-white cursor-pointer border border-red-400 shadow-md flex items-center gap-1.5 font-black text-xs"
               title="إغلاق النافذة فوراً (Escape)"
             >
-              <X className="w-5 h-5 stroke-[2.5]" />
+              <X className="w-4 h-4 stroke-[2.5]" />
+              <span>إغلاق (ESC)</span>
             </button>
           </div>
         </div>
 
-        {/* Tab Switcher: General Bakeries vs Detailed Debts Statement vs Per-Bakery Debts & Repayment Summary (No-print) */}
+        {/* Tab Switcher: General Bakeries vs Detailed Debts vs Per-Bakery Debts vs Users & Passwords (No-print) */}
         <div className="bg-slate-900 border-b border-amber-600/30 px-3 py-2 flex flex-wrap items-center justify-between gap-2 no-print shrink-0">
           <div className="flex items-center flex-wrap gap-2">
             <button
               type="button"
               onClick={() => setReportType('bakeries')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
                 reportType === 'bakeries'
                   ? 'bg-amber-500 text-slate-950 shadow-md font-black'
                   : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'
@@ -1068,7 +1004,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             <button
               type="button"
               onClick={() => setReportType('debts')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
                 reportType === 'debts'
                   ? 'bg-red-600 text-white shadow-md font-black'
                   : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'
@@ -1077,7 +1013,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               <DollarSign className="w-4 h-4 text-amber-300" />
               كشف حساب المديونيات التفصيلي ({filteredDebts.length} قيد)
               {debtReportTotals.over20kCount > 0 && (
-                <span className="px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded text-[10px] font-black animate-pulse">
+                <span className="px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded text-[10px] font-black">
                   {debtReportTotals.over20kCount} كبرى &gt; 20 ألف
                 </span>
               )}
@@ -1086,7 +1022,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             <button
               type="button"
               onClick={() => setReportType('bakery-debts')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
                 reportType === 'bakery-debts'
                   ? 'bg-emerald-600 text-white shadow-md font-black ring-2 ring-emerald-300'
                   : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'
@@ -1094,25 +1030,48 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             >
               <TrendingUp className="w-4 h-4 text-emerald-300" />
               كشف مديونيات ونسب سداد المخابز ({filteredBakeryDebts.length} مخبز)
-              {bakeryDebtsTotals.over20kCount > 0 && (
-                <span className="px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded text-[10px] font-black animate-pulse">
-                  {bakeryDebtsTotals.over20kCount} كبرى &gt; 20 ألف
-                </span>
-              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setReportType('users')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                reportType === 'users'
+                  ? 'bg-indigo-600 text-white shadow-md font-black ring-2 ring-amber-300'
+                  : 'bg-slate-800 text-amber-300 hover:text-white hover:bg-slate-700 border border-amber-500/40'
+              }`}
+            >
+              <Users className="w-4 h-4 text-amber-300" />
+              كشف المستخدمين والصلاحيات (الاسم بالكامل • اليوزر • الباسورد) ({users.length})
             </button>
           </div>
 
-          <div className="text-[11px] font-bold text-amber-200">
-            {reportType === 'debts'
-              ? `إجمالي صافي المديونيات بالكشف: ${debtReportTotals.sumNetRemaining.toLocaleString()} ج.م`
-              : reportType === 'bakery-debts'
-              ? `إجمالي مديونيات المخابز: ${bakeryDebtsTotals.sumNetRemaining.toLocaleString()} ج.م | متوسط السداد: ${bakeryDebtsTotals.overallRepaymentRate.toFixed(1)}%`
-              : `إجمالي الحصة التأمينية: ${reportTotals.totalInsurance.toLocaleString()} شيكارة`}
+          <div className="flex items-center gap-3 flex-wrap">
+            {reportType !== 'users' && (
+              <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 border border-amber-500/50 text-[11px] font-black text-amber-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeUsersAppendix}
+                  onChange={(e) => setIncludeUsersAppendix(e.target.checked)}
+                  className="accent-amber-500 rounded w-3.5 h-3.5"
+                />
+                <span>إرفاق جدول المستخدمين (الاسم • اليوزر • الباسورد) بالكشف</span>
+              </label>
+            )}
+            <div className="text-[11px] font-bold text-amber-200">
+              {reportType === 'users'
+                ? `إجمالي المستخدمين المسجلين بالكشف: ${users.length} مستخدم`
+                : reportType === 'debts'
+                ? `إجمالي صافي المديونيات بالكشف: ${debtReportTotals.sumNetRemaining.toLocaleString()} ج.م`
+                : reportType === 'bakery-debts'
+                ? `إجمالي مديونيات المخابز: ${bakeryDebtsTotals.sumNetRemaining.toLocaleString()} ج.م | متوسط السداد: ${bakeryDebtsTotals.overallRepaymentRate.toFixed(1)}%`
+                : `إجمالي الحصة التأمينية: ${reportTotals.totalInsurance.toLocaleString()} شيكارة`}
+            </div>
           </div>
         </div>
 
         {/* Toolbar: Filters & Customizer (No-print) */}
-        <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2.5 no-print shrink-0">
+        <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2.5 no-print shrink-0 max-h-[34vh] overflow-y-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <label className="block text-[11px] font-black text-slate-700 mb-1">القرية</label>
@@ -1215,47 +1174,50 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             )}
           </div>
 
-          {/* Quick Village & Local Unit Selector & Column Visibility Across All Tables */}
-          <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="font-black text-amber-950 flex items-center gap-1">
-                📍 إظهار واختيار القرية والوحدة المحلية في جميع الجداول:
-              </span>
-              <label className="inline-flex items-center gap-1.5 font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-amber-400 cursor-pointer shadow-2xs">
-                <input
-                  type="checkbox"
-                  checked={Boolean(activeColumns.village)}
-                  onChange={() => toggleColumn('village')}
-                  className="accent-amber-600 w-3.5 h-3.5 rounded"
-                />
-                <span>إظهار عمود القرية ({columnTitles.village || 'القرية'})</span>
-              </label>
-              <label className="inline-flex items-center gap-1.5 font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-amber-400 cursor-pointer shadow-2xs">
-                <input
-                  type="checkbox"
-                  checked={Boolean(activeColumns.localUnit)}
-                  onChange={() => toggleColumn('localUnit')}
-                  className="accent-amber-600 w-3.5 h-3.5 rounded"
-                />
-                <span>إظهار عمود الوحدة المحلية ({columnTitles.localUnit || 'الوحدة المحلية'})</span>
-              </label>
+          {/* All Villages & All Local Units Visible Interactive Selector Bar */}
+          <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-2.5 space-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-black text-amber-950">
+                  📍 إظهار واختيار كافة القرى والوحدات المحلية في جميع الجداول:
+                </span>
+                <label className="inline-flex items-center gap-1.5 font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-amber-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(activeColumns.village)}
+                    onChange={() => toggleColumn('village')}
+                    className="accent-amber-600 w-3.5 h-3.5 rounded"
+                  />
+                  <span>إظهار عمود القرية ({columnTitles.village || 'القرية'})</span>
+                </label>
+                <label className="inline-flex items-center gap-1.5 font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-amber-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(activeColumns.localUnit)}
+                    onChange={() => toggleColumn('localUnit')}
+                    className="accent-amber-600 w-3.5 h-3.5 rounded"
+                  />
+                  <span>إظهار عمود الوحدة المحلية ({columnTitles.localUnit || 'الوحدة المحلية'})</span>
+                </label>
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-bold text-slate-600">اختيار سريع للقرية:</span>
+            {/* All Villages Buttons */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-amber-200/80">
+              <span className="text-[11px] font-black text-slate-700">كافة القرى ({villages.length}):</span>
               <button
                 type="button"
                 onClick={() => {
                   setSelectedVillage('ALL');
                   setSelectedUnit('ALL');
                 }}
-                className={`px-2 py-0.5 rounded-lg text-[11px] font-black cursor-pointer transition ${
+                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-black cursor-pointer transition ${
                   selectedVillage === 'ALL'
                     ? 'bg-amber-600 text-white'
                     : 'bg-white text-slate-700 border border-slate-300 hover:bg-amber-100'
                 }`}
               >
-                الكل
+                كافة القرى (الكل)
               </button>
               {villages.map((v) => (
                 <button
@@ -1265,7 +1227,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     setSelectedVillage(v.village);
                     setSelectedUnit('ALL');
                   }}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-black cursor-pointer transition ${
+                  className={`px-2.5 py-0.5 rounded-lg text-[11px] font-black cursor-pointer transition ${
                     selectedVillage === v.village
                       ? 'bg-amber-600 text-white'
                       : 'bg-white text-slate-700 border border-slate-300 hover:bg-amber-100'
@@ -1275,14 +1237,46 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                 </button>
               ))}
             </div>
+
+            {/* All Local Units Buttons */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-amber-200/80">
+              <span className="text-[11px] font-black text-indigo-900">
+                كافة الوحدات المحلية ({currentUnits.length}):
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedUnit('ALL')}
+                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-black cursor-pointer transition ${
+                  selectedUnit === 'ALL'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white text-slate-700 border border-slate-300 hover:bg-indigo-50'
+                }`}
+              >
+                كافة الوحدات المحلية (الكل)
+              </button>
+              {currentUnits.map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  onClick={() => setSelectedUnit(u)}
+                  className={`px-2.5 py-0.5 rounded-lg text-[11px] font-black cursor-pointer transition ${
+                    selectedUnit === u
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-white text-slate-700 border border-slate-300 hover:bg-indigo-50'
+                  }`}
+                >
+                  {u}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Column Checklist Accordion for All Report Tables */}
-          <details className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs">
-            <summary className="font-black text-slate-800 cursor-pointer flex items-center justify-between select-none">
+          {/* Column Checklist Accordion - Open by default so all 32 fields are visible */}
+          <details open className="bg-white border border-slate-300 rounded-xl p-2.5 text-xs">
+            <summary className="font-black text-slate-800 cursor-pointer flex flex-wrap items-center justify-between gap-2 select-none">
               <span className="flex items-center gap-1.5">
                 <SlidersHorizontal className="w-4 h-4 text-amber-700" />
-                تخصيص وإخفاء/إظهار أعمدة التقرير ({Object.values(activeColumns).filter(Boolean).length} من {Object.keys(activeColumns).length} عمود مفعل - يشمل القرية والوحدة المحلية في جميع الجداول)
+                كافة عناصر وخانات التقرير المعروضة ({Object.values(activeColumns).filter(Boolean).length} من {Object.keys(activeColumns).length} عمود مفعل - يشمل القرية والوحدة المحلية وكافة الخانات)
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -1293,7 +1287,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                   }}
                   className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black shadow-xs transition cursor-pointer"
                 >
-                  ✓ تحديد الكل ({Object.keys(activeColumns).length} عمود)
+                  ✓ إظهار كافة الخانات ({Object.keys(activeColumns).length} عمود)
                 </button>
                 <button
                   type="button"
@@ -1318,11 +1312,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               </div>
             </summary>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 mt-3 pt-2 border-t border-slate-100">
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-1.5 mt-2.5 pt-2 border-t border-slate-200">
               {Object.keys(activeColumns).map((colKey) => (
                 <label
                   key={colKey}
-                  className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer hover:text-amber-900"
+                  className="flex items-center gap-1.5 text-[11px] font-bold text-slate-800 cursor-pointer hover:text-amber-900 bg-slate-50 px-2 py-1 rounded border border-slate-200"
                 >
                   <input
                     type="checkbox"
@@ -1330,7 +1324,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     onChange={() => toggleColumn(colKey)}
                     className="accent-amber-600 rounded"
                   />
-                  <span>{(columnTitles as unknown as Record<string, string>)[colKey] || colKey}</span>
+                  <span className="truncate">{(columnTitles as unknown as Record<string, string>)[colKey] || colKey}</span>
                 </label>
               ))}
             </div>
@@ -1375,26 +1369,25 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     </p>
                   </div>
 
-                  {/* Left: Metadata, Date & Author */}
-                  <div className="text-left font-mono text-[10px] text-slate-800 space-y-0.5">
-                    <p className="font-bold">
-                      {reportType === 'debts'
+                  {/* Left: Metadata, Date & User Full Name / Username / Password */}
+                  <div className="text-left font-mono text-[10px] text-slate-900 space-y-0.5">
+                    <p className="font-black">
+                      {reportType === 'users'
+                        ? 'كشف حسابات المستخدمين والصلاحيات'
+                        : reportType === 'debts'
                         ? 'كشف حساب المديونيات والمخالفات'
                         : reportType === 'bakery-debts'
                         ? 'كشف مديونيات ونسب سداد المخابز'
                         : 'كشف حصر وتشغيل المخابز البلدية'}
                     </p>
                     <p>تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</p>
-                    <p>
-                      {reportType === 'debts'
-                        ? `إجمالي القيود: ${filteredDebts.length}`
-                        : reportType === 'bakery-debts'
-                        ? `إجمالي المخابز: ${filteredBakeryDebts.length} (منها ${bakeryDebtsTotals.indebtedCount} عليها مديونية)`
-                        : `إجمالي المخابز: ${filteredBakeries.length}`}
-                    </p>
-                    <p className="font-black text-amber-950 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300 inline-block text-[11px] mt-0.5">
-                      أعده: {currentUser?.fullName || 'أحمد الحسيني'}
-                    </p>
+                    <div className="font-black text-black bg-amber-100 px-2.5 py-1 rounded border border-black text-[10.5px] mt-1 space-y-0.5 text-right" dir="rtl">
+                      <div>الاسم بالكامل: {currentUser?.fullName || 'م/ أحمد الحسيني'}</div>
+                      <div>
+                        اليوزر: <span className="font-mono">{currentUser?.username || 'admin'}</span> | الباسورد:{' '}
+                        <span className="font-mono">{currentUser?.password || 'admin'}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1407,7 +1400,58 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               </div>
 
               {/* REPORT BODY ACCORDING TO SELECTED TAB */}
-              {reportType === 'debts' ? (
+              {reportType === 'users' ? (
+                <div className="w-full overflow-visible space-y-3">
+                  <table className={`report-table-compact w-full text-center border-collapse border border-black leading-tight ${fontSizeClass}`}>
+                    <thead>
+                      <tr className="bg-slate-900 text-white font-black border border-black">
+                        <th className="border border-black py-1.5 px-1 w-10">م</th>
+                        <th className="border border-black py-1.5 px-2">الاسم بالكامل (Full Name)</th>
+                        <th className="border border-black py-1.5 px-2">اسم المستخدم (اليوزر - Username)</th>
+                        <th className="border border-black py-1.5 px-2">كلمة المرور (الباسورد - Password)</th>
+                        <th className="border border-black py-1.5 px-2">الدور الوظيفي</th>
+                        <th className="border border-black py-1.5 px-2">المسمى الوظيفي</th>
+                        <th className="border border-black py-1.5 px-2">القسم / الإدارة</th>
+                        <th className="border border-black py-1.5 px-2">عدد وتفاصيل الصلاحيات الممنوحة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-black font-bold">
+                      {users.map((u, idx) => {
+                        const perms =
+                          u.role === 'admin'
+                            ? ALL_PERMISSIONS_LIST.map((p) => p.id)
+                            : u.customPermissions && u.customPermissions.length > 0
+                            ? u.customPermissions
+                            : getDefaultPermissionsForRole(u.role);
+                        const permLabels = ALL_PERMISSIONS_LIST.filter((p) => perms.includes(p.id))
+                          .map((p) => p.label)
+                          .join(' • ');
+                        return (
+                          <tr key={u.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="border border-black py-1.5 px-1 num-enlarged font-black">{idx + 1}</td>
+                            <td className="border border-black py-1.5 px-2 font-black text-right">{u.fullName}</td>
+                            <td className="border border-black py-1.5 px-2 font-mono font-black">{u.username}</td>
+                            <td className="border border-black py-1.5 px-2 font-mono font-black">{u.password || 'admin'}</td>
+                            <td className="border border-black py-1.5 px-2 font-black">
+                              {getRoleNameArabic(u.role, systemConfig)}
+                            </td>
+                            <td className="border border-black py-1.5 px-2">{u.jobTitle || 'مسئول تمويني'}</td>
+                            <td className="border border-black py-1.5 px-2">
+                              {u.department || 'إدارة تموين مركز المحلة الكبرى'}
+                            </td>
+                            <td className="border border-black py-1.5 px-2 text-right text-[7.5pt]">
+                              <span className="font-black underline ml-1">
+                                ({perms.length} من {ALL_PERMISSIONS_LIST.length} صلاحية):
+                              </span>
+                              <span>{permLabels}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : reportType === 'debts' ? (
                 /* DETAILED DEBTS ACCOUNT STATEMENT TABLE */
                 <div className="w-full overflow-visible space-y-3">
                   {/* Urgent Alert Banner on Printout for Over 20k (Hidden during print per instructions) */}
@@ -2234,12 +2278,57 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                 </div>
               )}
 
+              {/* Optional Attached Users & Permissions Table (when includeUsersAppendix is enabled) */}
+              {reportType !== 'users' && includeUsersAppendix && users.length > 0 && (
+                <div className="mt-6 pt-3 border-t-2 border-black space-y-2">
+                  <h3 className="text-xs font-black text-black underline">
+                    بيان حسابات المستخدمين والأدوار الوظيفية والصلاحيات (الاسم بالكامل • اليوزر • الباسورد):
+                  </h3>
+                  <table className={`report-table-compact w-full text-center border-collapse border border-black leading-tight ${fontSizeClass}`}>
+                    <thead>
+                      <tr className="bg-slate-900 text-white font-black border border-black">
+                        <th className="border border-black py-1 px-1 w-10">م</th>
+                        <th className="border border-black py-1 px-2">الاسم بالكامل</th>
+                        <th className="border border-black py-1 px-2">اسم المستخدم (اليوزر)</th>
+                        <th className="border border-black py-1 px-2">كلمة المرور (الباسورد)</th>
+                        <th className="border border-black py-1 px-2">الدور الوظيفي</th>
+                        <th className="border border-black py-1 px-2">المسمى الوظيفي</th>
+                        <th className="border border-black py-1 px-2">عدد الصلاحيات الممنوحة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-black font-bold">
+                      {users.map((u, idx) => {
+                        const perms =
+                          u.role === 'admin'
+                            ? ALL_PERMISSIONS_LIST.map((p) => p.id)
+                            : u.customPermissions && u.customPermissions.length > 0
+                            ? u.customPermissions
+                            : getDefaultPermissionsForRole(u.role);
+                        return (
+                          <tr key={u.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="border border-black py-1 px-1 font-black">{idx + 1}</td>
+                            <td className="border border-black py-1 px-2 font-black text-right">{u.fullName}</td>
+                            <td className="border border-black py-1 px-2 font-mono font-black">{u.username}</td>
+                            <td className="border border-black py-1 px-2 font-mono font-black">{u.password || 'admin'}</td>
+                            <td className="border border-black py-1 px-2 font-black">{getRoleNameArabic(u.role, systemConfig)}</td>
+                            <td className="border border-black py-1 px-2">{u.jobTitle || 'مسئول تمويني'}</td>
+                            <td className="border border-black py-1 px-2 font-black">
+                              {perms.length} من {ALL_PERMISSIONS_LIST.length} صلاحية
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {/* Official Stamps and Signatures Area */}
               <div className="mt-8 pt-4 grid grid-cols-3 text-center text-xs font-black text-slate-900 border-t border-slate-300">
                 <div>
                   <p>إعداد ومراجعة الإحصاء التمويني والمديونيات</p>
                   <p className="text-[11px] font-black text-amber-950 mt-1">
-                    أعده: {currentUser?.fullName || 'أحمد الحسيني'}
+                    الاسم بالكامل: {currentUser?.fullName || 'م/ أحمد الحسيني'} (اليوزر: {currentUser?.username || 'admin'})
                   </p>
                   <div className="h-8 flex items-end justify-center text-[10px] text-slate-400">
                     ................................

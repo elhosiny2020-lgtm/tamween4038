@@ -26,12 +26,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState<'admin' | 'inspector' | 'auditor'>('inspector');
-  const [gmailEmail, setGmailEmail] = useState(
-    () => localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') || ''
-  );
-  const [gmailPassword, setGmailPassword] = useState(
-    () => localStorage.getItem('TAMWEEN_GMAIL_DRIVE_PASSWORD') || ''
-  );
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -54,28 +48,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     );
 
     if (found) {
-      const effectiveGmail = gmailEmail.trim() || found.gmailEmail || '';
-      if (effectiveGmail) {
-        localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', effectiveGmail);
-        localStorage.setItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC', 'true');
-      }
-      if (gmailPassword) {
-        localStorage.setItem('TAMWEEN_GMAIL_DRIVE_PASSWORD', gmailPassword);
-      }
-      const enrichedUser: AppUser = {
-        ...found,
-        gmailEmail: effectiveGmail || found.gmailEmail,
-        gmailPassword: gmailPassword || found.gmailPassword,
-        googleDriveAutoSync: Boolean(effectiveGmail || found.googleDriveAutoSync),
-      };
-      setSuccessMsg(
-        effectiveGmail
-          ? `تم تسجيل الدخول ودمج ملفات JSON المرتبطة بجيميل (${effectiveGmail}) بدون حذف أي بيانات...`
-          : 'تم تسجيل الدخول بنجاح، جاري فتح المنظومة التموينية...'
-      );
+      setSuccessMsg('تم تسجيل الدخول بنجاح، جاري فتح المنظومة التموينية...');
       setTimeout(() => {
-        onLoginSuccess(enrichedUser);
-      }, 350);
+        onLoginSuccess(found);
+      }, 150);
     } else {
       setErrorMsg('بيانات الدخول غير صحيحة، يرجى التحقق من اسم المستخدم وكلمة المرور');
     }
@@ -104,13 +80,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
 
-    const cleanGmail = gmailEmail.trim();
-    if (cleanGmail) {
-      localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', cleanGmail);
-      localStorage.setItem('TAMWEEN_GMAIL_DRIVE_PASSWORD', gmailPassword);
-      localStorage.setItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC', 'true');
-    }
-
     const newUser: AppUser = {
       id: `u-${Date.now()}`,
       username: trimmedUser,
@@ -118,22 +87,15 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       password,
       role,
       createdAt: new Date().toISOString().split('T')[0],
-      gmailEmail: cleanGmail || undefined,
-      gmailPassword: gmailPassword || undefined,
-      googleDriveAutoSync: Boolean(cleanGmail),
     };
 
     onRegisterUser(newUser);
-    setSuccessMsg(
-      cleanGmail
-        ? `تم إنشاء الحساب وربطه بجيميل (${cleanGmail}) لدمج ملفات JSON تلقائياً بدون حذف أي بيانات!`
-        : 'تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول مباشرة.'
-    );
+    setSuccessMsg('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول مباشرة.');
     setTimeout(() => {
       setIsRegistering(false);
       setPassword('');
       setSuccessMsg('');
-    }, 700);
+    }, 500);
   };
 
   return (
@@ -306,31 +268,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   </div>
                 </div>
 
-                {/* Gmail Link for Google Drive Automatic JSON Merge */}
-                <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2">
-                  <p className="text-[11px] font-black text-indigo-950">
-                    ☁️ ربط إيميل الجيميل (Google Drive) لدمج ملفات JSON تلقائياً بدون حذف أي داتا:
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input
-                      type="email"
-                      dir="ltr"
-                      value={gmailEmail}
-                      onChange={(e) => setGmailEmail(e.target.value)}
-                      placeholder="Gmail Email (example@gmail.com)"
-                      className="w-full px-2.5 py-1.5 bg-white border border-indigo-300 rounded-lg text-[11px] font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none text-left"
-                    />
-                    <input
-                      type="password"
-                      dir="ltr"
-                      value={gmailPassword}
-                      onChange={(e) => setGmailPassword(e.target.value)}
-                      placeholder="Gmail Password"
-                      className="w-full px-2.5 py-1.5 bg-white border border-indigo-300 rounded-lg text-[11px] font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none text-left"
-                    />
-                  </div>
-                </div>
-
                 <button
                   type="submit"
                   className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-500 text-black rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-amber-300"
@@ -422,36 +359,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   </select>
                 </div>
 
-                <div className="p-2.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-2">
-                  <label className="block text-[11px] font-black text-indigo-950">
-                    ☁️ ربط الحساب بإيميل جيميل (Google Drive) لدمج ملفات JSON تلقائياً:
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input
-                      type="email"
-                      dir="ltr"
-                      value={gmailEmail}
-                      onChange={(e) => setGmailEmail(e.target.value)}
-                      placeholder="Gmail Email"
-                      className="w-full px-2.5 py-1.5 bg-white border border-indigo-300 rounded-lg text-[11px] font-bold text-slate-900 text-left"
-                    />
-                    <input
-                      type="password"
-                      dir="ltr"
-                      value={gmailPassword}
-                      onChange={(e) => setGmailPassword(e.target.value)}
-                      placeholder="Gmail Password"
-                      className="w-full px-2.5 py-1.5 bg-white border border-indigo-300 rounded-lg text-[11px] font-bold text-slate-900 text-left"
-                    />
-                  </div>
-                </div>
-
                 <button
                   type="submit"
                   className="w-full mt-2 py-2.5 px-4 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
                 >
                   <UserPlus className="w-4 h-4 text-amber-200" />
-                  تأكيد تسجيل الحساب الجديد وربط الجيميل
+                  تأكيد تسجيل الحساب الجديد
                 </button>
               </form>
             )}

@@ -1,6 +1,6 @@
 // Helper to sanitize modern CSS color functions (oklch, oklab, color-mix, light-dark)
 // in live and cloned documents before html2canvas parses stylesheets, preventing PDF export crashes,
-// and enforcing pure black (#000000) text for all report elements.
+// and enforcing pure black (#000000) text and populated tables for all PDF and Print operations.
 
 function createColorConverter() {
   const canvas = document.createElement('canvas');
@@ -60,7 +60,7 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
   try {
     const { sanitizeCssText } = createColorConverter();
 
-    // 1. Collect all rules from document.styleSheets (including external <link rel="stylesheet"> in production builds)
+    // 1. Collect all rules from document.styleSheets
     const collectedCss: string[] = [];
     try {
       Array.from(document.styleSheets).forEach((sheet) => {
@@ -92,11 +92,45 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
       }
     });
 
-    // 4. Inject the sanitized stylesheet rules + strict pure black (#000000) report override into clonedDoc.head
+    // 4. Remove .no-print class from any ancestor of .print-container so .print-container is NEVER hidden
+    const printContainer = clonedDoc.querySelector('.print-container') as HTMLElement | null;
+    if (printContainer) {
+      let curr: HTMLElement | null = printContainer;
+      while (curr) {
+        curr.classList.remove('no-print');
+        curr.style.display = 'block';
+        curr.style.visibility = 'visible';
+        curr.style.opacity = '1';
+        curr.style.overflow = 'visible';
+        curr.style.maxHeight = 'none';
+        curr.style.height = 'auto';
+        curr.style.zoom = '1';
+        curr.style.transform = 'none';
+        curr = curr.parentElement;
+      }
+    }
+
+    // 5. Inject the sanitized stylesheet rules + strict pure black (#000000) report override into clonedDoc.head
     const masterStyle = clonedDoc.createElement('style');
     const sanitizedAllRules = sanitizeCssText(collectedCss.join('\n'));
     masterStyle.textContent = `
       ${sanitizedAllRules}
+
+      .report-modal-overlay,
+      .report-modal-dialog,
+      .report-scroll-wrapper,
+      .report-zoom-wrapper,
+      .print-container {
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        overflow: visible !important;
+        max-height: none !important;
+        height: auto !important;
+        zoom: 1 !important;
+        transform: none !important;
+        background: #ffffff !important;
+      }
 
       /* Strict PDF Report Override: Pure Black (#000000) Text & Crisp Borders */
       .print-container,
@@ -105,26 +139,38 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
         -webkit-text-fill-color: #000000 !important;
         text-shadow: none !important;
       }
-      .print-container {
-        background-color: #ffffff !important;
-        zoom: 1 !important;
-        transform: none !important;
-      }
       .print-container table {
+        display: table !important;
         border-collapse: collapse !important;
         width: 100% !important;
         border: 1.5px solid #000000 !important;
       }
+      .print-container thead {
+        display: table-header-group !important;
+      }
+      .print-container tbody {
+        display: table-row-group !important;
+      }
+      .print-container tfoot {
+        display: table-footer-group !important;
+      }
+      .print-container tr {
+        display: table-row !important;
+      }
       .print-container th {
+        display: table-cell !important;
         background-color: #e2e8f0 !important;
         color: #000000 !important;
         border: 1px solid #000000 !important;
         font-weight: 900 !important;
+        padding: 3px 2px !important;
       }
       .print-container td {
+        display: table-cell !important;
         color: #000000 !important;
         border: 1px solid #000000 !important;
         font-weight: 700 !important;
+        padding: 3px 2px !important;
       }
       .print-container tfoot tr,
       .print-container tfoot td {
@@ -133,13 +179,13 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
         border: 1.5px solid #000000 !important;
         font-weight: 900 !important;
       }
-      .no-print {
+      .print-container .no-print {
         display: none !important;
       }
     `;
     clonedDoc.head.appendChild(masterStyle);
 
-    // 5. Sanitize any inline style attributes containing oklch/oklab or CSS zoom
+    // 6. Sanitize any inline style attributes containing oklch/oklab or CSS zoom
     const allElements = clonedDoc.querySelectorAll('*');
     allElements.forEach((el) => {
       const htmlEl = el as HTMLElement;
@@ -157,5 +203,167 @@ export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
     });
   } catch (err) {
     console.warn('PDF CSS sanitizer warning:', err);
+  }
+}
+
+// Universal, rock-solid A4 Landscape Print Engine for any HTML element or table
+export function printHtmlElementA4(
+  element: HTMLElement | null,
+  documentTitle: string,
+  fontClass: string = 'report-font-standard'
+) {
+  if (!element) {
+    window.print();
+    return;
+  }
+
+  try {
+    let iframe = document.getElementById('report-fast-print-iframe') as HTMLIFrameElement | null;
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'report-fast-print-iframe';
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '1px';
+      iframe.style.height = '1px';
+      iframe.style.border = 'none';
+      iframe.style.opacity = '0';
+      iframe.style.pointerEvents = 'none';
+      document.body.appendChild(iframe);
+    }
+
+    const iframeDoc = iframe.contentWindow?.document;
+    if (!iframeDoc) {
+      window.print();
+      return;
+    }
+
+    // Clone the element and remove any internal .no-print nodes so only pure report content is printed
+    const cloned = element.cloneNode(true) as HTMLElement;
+    cloned.querySelectorAll('.no-print').forEach((n) => n.remove());
+
+    iframeDoc.open();
+    iframeDoc.write(`
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+      <head>
+        <meta charset="utf-8">
+        <title>${documentTitle}</title>
+        <style>
+          @page {
+            size: A4 landscape;
+            margin: 5mm;
+          }
+          * {
+            box-sizing: border-box;
+            font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+            color: #000000 !important;
+            -webkit-text-fill-color: #000000 !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            direction: rtl !important;
+            font-weight: 700 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+          .print-container {
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 2mm !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            border: none !important;
+            box-shadow: none !important;
+          }
+          table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            table-layout: auto !important;
+            page-break-inside: auto;
+            border: 1.5px solid #000000 !important;
+            margin-top: 4px !important;
+          }
+          tr {
+            page-break-inside: avoid;
+            page-break-after: auto;
+          }
+          thead {
+            display: table-header-group !important;
+          }
+          tbody {
+            display: table-row-group !important;
+          }
+          tfoot {
+            display: table-footer-group !important;
+          }
+          th, td {
+            border: 1px solid #000000 !important;
+            color: #000000 !important;
+            padding: 3px 3px !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            line-height: 1.3 !important;
+            white-space: normal !important;
+            text-align: center !important;
+            vertical-align: middle !important;
+          }
+          .report-font-compact th, .report-font-compact td { font-size: 7.5pt !important; }
+          .report-font-standard th, .report-font-standard td { font-size: 8.5pt !important; }
+          .report-font-large th, .report-font-large td { font-size: 9.5pt !important; }
+          th {
+            background-color: #e2e8f0 !important;
+            color: #000000 !important;
+            font-weight: 900 !important;
+          }
+          tbody tr:nth-child(even) td {
+            background-color: #f8fafc !important;
+          }
+          tfoot tr, tfoot td {
+            background-color: #cbd5e1 !important;
+            color: #000000 !important;
+            font-weight: 900 !important;
+            border-top: 2px solid #000000 !important;
+          }
+          .num-enlarged {
+            font-weight: 900 !important;
+            font-size: 1.05em !important;
+            color: #000000 !important;
+          }
+          img {
+            max-width: 56px !important;
+            max-height: 56px !important;
+            object-fit: contain !important;
+          }
+        </style>
+      </head>
+      <body class="${fontClass}">
+        <div class="print-container">
+          ${cloned.innerHTML}
+        </div>
+      </body>
+      </html>
+    `);
+    iframeDoc.close();
+
+    setTimeout(() => {
+      try {
+        iframe?.contentWindow?.focus();
+        iframe?.contentWindow?.print();
+      } catch {
+        window.print();
+      }
+    }, 200);
+  } catch {
+    window.print();
   }
 }

@@ -8,6 +8,7 @@ import {
   editDropdownOption,
   deleteDropdownOption,
   filterAndSortDailyTasks,
+  filterDebtsByAdvancedCriteria,
 } from './auditHelper';
 import { DailyBakeryTask } from '../types';
 
@@ -192,4 +193,45 @@ test('mergeStates merges JSON files additively without deleting existing bakerie
   assert.equal(merged.users.some((u: AppUser) => u.username === 'gmail_inspector'), true);
   assert.equal(merged.users.some((u: AppUser) => u.username === 'admin'), true);
 });
+
+test('filterDebtsByAdvancedCriteria filters debts accurately by date range (من - إلى) and violationType', () => {
+  // INITIAL_DEBTS has:
+  // d-201: violationDate '2026-10-15', violationType 'نقص وزن الرغيف البلدي المدعم'
+  // d-202: violationDate '2026-10-02', violationType 'إنتاج خبز غير مطابق للمواصفات التموينية'
+  // d-203: violationDate '2026-10-20', violationType 'تصرف في دقيق بلدي مدعم (شكاير)'
+
+  // 1. Filter by date range: 2026-10-10 to 2026-10-18 -> should match only d-201
+  const range1 = filterDebtsByAdvancedCriteria(INITIAL_DEBTS, {
+    dateFrom: '2026-10-10',
+    dateTo: '2026-10-18',
+  });
+  assert.equal(range1.length, 1);
+  assert.equal(range1[0].id, 'd-201');
+
+  // 2. Filter by dateFrom only: >= 2026-10-15 -> should match d-201 and d-203
+  const range2 = filterDebtsByAdvancedCriteria(INITIAL_DEBTS, {
+    dateFrom: '2026-10-15',
+  });
+  assert.deepEqual(
+    range2.map((d) => d.id),
+    ['d-201', 'd-203']
+  );
+
+  // 3. Filter by combined date range AND violationType
+  const combined = filterDebtsByAdvancedCriteria(INITIAL_DEBTS, {
+    dateFrom: '2026-10-01',
+    dateTo: '2026-10-31',
+    violationType: 'تصرف في دقيق بلدي مدعم (شكاير)',
+  });
+  assert.equal(combined.length, 1);
+  assert.equal(combined[0].id, 'd-203');
+
+  // 4. Filter outside date range -> 0 results
+  const emptyRange = filterDebtsByAdvancedCriteria(INITIAL_DEBTS, {
+    dateFrom: '2025-01-01',
+    dateTo: '2025-12-31',
+  });
+  assert.equal(emptyRange.length, 0);
+});
+
 

@@ -14,6 +14,7 @@ import {
   Sliders,
   ChevronLeft
 } from 'lucide-react';
+import { printHtmlElementA4 } from '../utils/pdfHelper';
 
 interface WeeklyInstallmentsModalProps {
   isOpen: boolean;
@@ -92,23 +93,30 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
     return schedule;
   }, [currentTotalDebt, weeksCount, startDate]);
 
-  // Escape key listener
+  const schedulePrintRef = React.useRef<HTMLDivElement>(null);
+
+  // Escape key listener (capture phase for instant response)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
     if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keydown', handleKeyDown, true);
     }
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
   const handlePrintSchedule = () => {
-    window.print();
+    printHtmlElementA4(
+      schedulePrintRef.current,
+      `إخطار_وجدول_الدفعات_الأسبوعية_${selectedBakery?.bakeryOwnerName || 'مخبز'}`
+    );
   };
 
   return (
@@ -297,7 +305,7 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
               </div>
 
               {/* Printable Schedule & Official Document Container */}
-              <div className="bg-white border-2 border-slate-300 p-5 rounded-xl shadow-xs space-y-4 print-container">
+              <div ref={schedulePrintRef} className="bg-white border-2 border-slate-300 p-5 rounded-xl shadow-xs space-y-4 print-container">
                 {/* Official Letterhead */}
                 <div className="border-b-2 border-slate-900 pb-3 flex items-center justify-between">
                   <div className="text-right text-xs font-black text-slate-900 space-y-0.5">
@@ -323,9 +331,10 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                     <p className="font-bold">إخطار وجدولة سداد مديونية تموينية</p>
                     <p>تاريخ الإخطار: {new Date().toLocaleDateString('ar-EG')}</p>
                     <p className="text-red-700 font-black">مديونية كبرى &gt; 20,000 ج.م</p>
-                    <p className="font-black text-amber-950 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300 inline-block text-[11px] mt-0.5">
-                      أعده: {currentUser?.fullName || 'أحمد الحسيني'}
-                    </p>
+                    <div className="font-black text-black bg-amber-100/90 px-2 py-1 rounded border border-black inline-block text-[10px] mt-0.5 text-right space-y-0.5">
+                      <div>الاسم بالكامل: {currentUser?.fullName || 'أحمد الحسيني'}</div>
+                      <div>اليوزر: {currentUser?.username || 'admin'} | الباسورد: {currentUser?.password || 'admin'}</div>
+                    </div>
                   </div>
                 </div>
 

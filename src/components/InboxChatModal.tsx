@@ -11,7 +11,9 @@ import {
   Trash2,
   Search,
   User,
-  Clock
+  Clock,
+  Users,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface InboxChatModalProps {
@@ -26,13 +28,13 @@ interface InboxChatModalProps {
   onMarkAllRead: () => void;
 }
 
-const ROLE_LABELS: Record<UserRoleType, string> = {
+const ROLE_LABELS: Record<string, string> = {
   admin: 'مدير النظام',
   supervisor: 'مشرف عام',
-  auditor: 'مراجع',
+  auditor: 'مراجع حسابات',
   inspector: 'مفتش تموين',
   data_entry: 'مدخل بيانات',
-  viewer: 'مستخدم (عرض)'
+  viewer: 'مستخدم (عرض)',
 };
 
 export const InboxChatModal: React.FC<InboxChatModalProps> = ({
@@ -44,39 +46,66 @@ export const InboxChatModal: React.FC<InboxChatModalProps> = ({
   messages,
   onSendMessage,
   onDeleteMessage,
-  onMarkAllRead
+  onMarkAllRead,
 }) => {
   const [content, setContent] = useState('');
-  const [messageType, setMessageType] = useState<'instruction' | 'general' | 'alert'>('instruction');
-  const [recipientFilter, setRecipientFilter] = useState<string>('ALL');
-  const [selectedRecipient, setSelectedRecipient] = useState<string>('ALL');
+  const [messageType, setMessageType] = useState<'instruction' | 'general' | 'alert'>('general');
+  // Active user selected for direct written chat ('ALL' = group chat, or username of target user)
+  const [activeChatUser, setActiveChatUser] = useState<string>('ALL');
   const [relatedBakeryId, setRelatedBakeryId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'instruction' | 'general' | 'alert'>('all');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Instant ESC key support in capture phase
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (isOpen) {
       onMarkAllRead();
       setTimeout(() => {
-        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
+        chatEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      }, 50);
     }
   }, [isOpen, messages.length]);
 
+  const selectedUserObj = useMemo(() => {
+    if (activeChatUser === 'ALL' || activeChatUser.startsWith('ROLE:')) return null;
+    return users.find((u) => u.username === activeChatUser || u.id === activeChatUser) || null;
+  }, [activeChatUser, users]);
+
   const filteredMessages = useMemo(() => {
+    const myUsername = currentUser?.username || 'admin';
     return messages.filter((msg) => {
       if (categoryFilter !== 'all' && msg.messageType !== categoryFilter) {
         return false;
       }
-      if (recipientFilter !== 'ALL') {
-        if (
-          msg.recipientTarget !== 'ALL' &&
-          msg.recipientTarget !== recipientFilter &&
-          msg.senderId !== recipientFilter
-        ) {
-          return false;
+      if (activeChatUser !== 'ALL') {
+        if (activeChatUser.startsWith('ROLE:')) {
+          if (msg.recipientTarget !== activeChatUser && msg.recipientTarget !== 'ALL') {
+            return false;
+          }
+        } else {
+          // Show messages directed to this user, sent by this user, or between current user and selected user
+          const involvesSelectedUser =
+            msg.recipientTarget === activeChatUser ||
+            msg.senderId === activeChatUser ||
+            (msg.senderId === myUsername && msg.recipientTarget === activeChatUser) ||
+            msg.recipientTarget === 'ALL';
+          if (!involvesSelectedUser) return false;
         }
       }
       if (searchTerm.trim() !== '') {
@@ -84,17 +113,25 @@ export const InboxChatModal: React.FC<InboxChatModalProps> = ({
         const matchesText =
           msg.content.toLowerCase().includes(q) ||
           msg.senderName.toLowerCase().includes(q) ||
+          (msg.recipientLabel && msg.recipientLabel.toLowerCase().includes(q)) ||
           (msg.relatedBakeryName && msg.relatedBakeryName.toLowerCase().includes(q));
         if (!matchesText) return false;
       }
       return true;
     });
-  }, [messages, categoryFilter, recipientFilter, searchTerm]);
+  }, [messages, categoryFilter, activeChatUser, searchTerm, currentUser]);
 
   if (!isOpen) return null;
 
-  const handleSend = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSelectChatPartner = (targetUsername: string) => {
+    setActiveChatUser(targetUsername);
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 30);
+  };
+
+  const handleSend = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!content.trim()) return;
 
     const senderId = currentUser?.username || currentUser?.id || 'admin';
@@ -102,12 +139,12 @@ export const InboxChatModal: React.FC<InboxChatModalProps> = ({
     const senderRole: UserRoleType = currentUser?.role || 'viewer';
 
     let recipientLabel = 'جميع المستخدمين والأطراف بالمنظومة';
-    if (selectedRecipient.startsWith('ROLE:')) {
-      const r = selectedRecipient.replace('ROLE:', '') as UserRoleType;
+    if (activeChatUser.startsWith('ROLE:')) {
+      const r = activeChatUser.replace('ROLE:', '');
       recipientLabel = `دور: ${ROLE_LABELS[r] || r}`;
-    } else if (selectedRecipient !== 'ALL') {
-      const targetUser = users.find((u) => u.username === selectedRecipient || u.id === selectedRecipient);
-      recipientLabel = targetUser ? targetUser.fullName : selectedRecipient;
+    } else if (activeChatUser !== 'ALL') {
+      const targetUser = users.find((u) => u.username === activeChatUser || u.id === activeChatUser);
+      recipientLabel = targetUser ? `${targetUser.fullName} (@${targetUser.username})` : activeChatUser;
     }
 
     const selectedBakery = bakeries.find((b) => String(b.id) === String(relatedBakeryId));
@@ -116,12 +153,12 @@ export const InboxChatModal: React.FC<InboxChatModalProps> = ({
       senderId,
       senderName,
       senderRole,
-      recipientTarget: selectedRecipient,
+      recipientTarget: activeChatUser,
       recipientLabel,
       messageType,
       content: content.trim(),
       relatedBakeryId: selectedBakery ? String(selectedBakery.id) : undefined,
-      relatedBakeryName: selectedBakery ? `${selectedBakery.bakeryOwnerName} (${selectedBakery.village})` : undefined
+      relatedBakeryName: selectedBakery ? `${selectedBakery.bakeryOwnerName} (${selectedBakery.village})` : undefined,
     });
 
     setContent('');
@@ -130,33 +167,33 @@ export const InboxChatModal: React.FC<InboxChatModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 bg-slate-900/75 z-[9999] flex items-center justify-center p-2 sm:p-4 backdrop-blur-xs"
+      className="fixed inset-0 bg-slate-950/85 z-[9999] flex items-center justify-center p-2 sm:p-4"
       dir="rtl"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden border border-indigo-200"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[94vh] flex flex-col overflow-hidden border-2 border-indigo-400"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-l from-indigo-900 via-blue-900 to-slate-900 text-white px-5 py-4 flex items-center justify-between shrink-0">
+        <div className="bg-gradient-to-l from-indigo-950 via-blue-900 to-slate-900 text-white px-5 py-3.5 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-500/30 border border-indigo-400/40 flex items-center justify-center shadow-inner">
+            <div className="w-11 h-11 rounded-xl bg-amber-400/20 border border-amber-400/50 flex items-center justify-center">
               <Inbox className="w-6 h-6 text-amber-300" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg sm:text-xl font-black tracking-tight">
-                  صندوق الوارد والشات الإداري الداخلي للمنظومة
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-black tracking-tight">
+                  صندوق الوارد والشات الكتابي المباشر بين مستخدمي المنظومة
                 </h2>
                 <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 text-xs font-extrabold px-2.5 py-0.5 rounded-full">
-                  متصل بين جميع الأطراف ({messages.length} رسالة)
+                  متصل الآن ({messages.length} رسالة)
                 </span>
               </div>
-              <p className="text-xs text-indigo-200 mt-0.5 font-medium">
-                بوكس محادثة مباشر وتبادل تعليمات إدارية وتنبيهات المتابعة بين المدير والمراجعين والمفتشين وجميع مستخدمي المنظومة
+              <p className="text-xs text-indigo-200 mt-0.5 font-bold">
+                اختر أي مستخدم من القائمة بالأسفل للتحدث معه شات كتابة مباشرة أو أرسل تعليمات عامة لجميع المستخدمين
               </p>
             </div>
           </div>
@@ -164,193 +201,264 @@ export const InboxChatModal: React.FC<InboxChatModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs shadow-sm transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs shadow transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
-            <span>إغلاق النافذة</span>
+            <span>إغلاق (ESC)</span>
           </button>
         </div>
 
-        {/* Filters & Top Summary Bar */}
-        <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        {/* PROMINENT USER SELECTOR BAR FOR DIRECT WRITTEN CHAT (اختيار المستخدم المراد التحدث معه شات كتابة) */}
+        <div className="bg-indigo-50/90 border-b-2 border-indigo-200 px-4 py-3 shrink-0 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-black text-indigo-950">
+              <Users className="w-4 h-4 text-indigo-700" />
+              <span>اختر المستخدم المراد التحدث معه شات كتابة (اضغط على اسم المستخدم لبدء المحادثة الكتابية):</span>
+            </div>
+            {selectedUserObj ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-600 text-white text-xs font-black shadow-xs">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>
+                  محادثة كتابية نشطة مع: {selectedUserObj.fullName} (@{selectedUserObj.username})
+                </span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-700 text-white text-xs font-black shadow-xs">
+                <span>👥 محادثة جماعية مع جميع مستخدمي المنظومة</span>
+              </span>
+            )}
+          </div>
+
+          {/* Interactive Clickable User Cards */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <button
+              type="button"
+              onClick={() => handleSelectChatPartner('ALL')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-2 shrink-0 border-2 transition cursor-pointer ${
+                activeChatUser === 'ALL'
+                  ? 'bg-indigo-700 text-white border-amber-400 shadow-md'
+                  : 'bg-white text-slate-800 border-slate-300 hover:border-indigo-400'
+              }`}
+            >
+              <Users className="w-4 h-4 text-amber-300" />
+              <div className="text-right">
+                <div>جميع المستخدمين (عام)</div>
+                <div className="text-[10px] opacity-80">رسالة جماعية للكل</div>
+              </div>
+            </button>
+
+            {users.map((u) => {
+              const isSelected = activeChatUser === u.username;
+              const isMe = currentUser?.username === u.username;
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => handleSelectChatPartner(u.username)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-2.5 shrink-0 border-2 transition cursor-pointer ${
+                    isSelected
+                      ? 'bg-gradient-to-l from-emerald-600 to-teal-700 text-white border-amber-400 shadow-md'
+                      : 'bg-white text-slate-800 border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/40'
+                  }`}
+                >
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs ${
+                      isSelected ? 'bg-white text-emerald-900' : 'bg-slate-900 text-amber-300'
+                    }`}
+                  >
+                    {u.fullName.charAt(0)}
+                  </div>
+                  <div className="text-right">
+                    <div className="flex items-center gap-1">
+                      <span>{u.fullName}</span>
+                      {isMe && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-400 text-slate-950 font-black">
+                          أنت
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className={`text-[10px] font-bold ${
+                        isSelected ? 'text-emerald-100' : 'text-slate-500'
+                      }`}
+                    >
+                      @{u.username} • {ROLE_LABELS[u.role] || u.role}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Filters & Search Bar */}
+        <div className="bg-slate-100 border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={() => setCategoryFilter('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
                 categoryFilter === 'all'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
               }`}
             >
-              الكل ({messages.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setCategoryFilter('instruction')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 cursor-pointer ${
-                categoryFilter === 'instruction'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'bg-white text-amber-800 border border-amber-200 hover:bg-amber-50'
-              }`}
-            >
-              <Megaphone className="w-3.5 h-3.5" />
-              <span>تعليمات إدارية ({messages.filter((m) => m.messageType === 'instruction').length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setCategoryFilter('alert')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 cursor-pointer ${
-                categoryFilter === 'alert'
-                  ? 'bg-rose-600 text-white shadow-xs'
-                  : 'bg-white text-rose-800 border border-rose-200 hover:bg-rose-50'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>تنبيهات متابعة ({messages.filter((m) => m.messageType === 'alert').length})</span>
+              كل الرسائل ({filteredMessages.length})
             </button>
             <button
               type="button"
               onClick={() => setCategoryFilter('general')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 cursor-pointer ${
+              className={`px-3 py-1 rounded-lg text-xs font-black transition flex items-center gap-1 cursor-pointer ${
                 categoryFilter === 'general'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-white text-emerald-800 border border-emerald-200 hover:bg-emerald-50'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-white text-emerald-800 border border-emerald-300 hover:bg-emerald-50'
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span>محادثات عامة ({messages.filter((m) => m.messageType === 'general').length})</span>
+              <span>شات كتابة ومحادثات</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setCategoryFilter('instruction')}
+              className={`px-3 py-1 rounded-lg text-xs font-black transition flex items-center gap-1 cursor-pointer ${
+                categoryFilter === 'instruction'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-white text-amber-800 border border-amber-300 hover:bg-amber-50'
+              }`}
+            >
+              <Megaphone className="w-3.5 h-3.5" />
+              <span>تعليمات إدارية</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setCategoryFilter('alert')}
+              className={`px-3 py-1 rounded-lg text-xs font-black transition flex items-center gap-1 cursor-pointer ${
+                categoryFilter === 'alert'
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-white text-rose-800 border border-rose-300 hover:bg-rose-50'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>تنبيهات متابعة</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2 flex-1 sm:flex-initial min-w-[240px]">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="ابحث في الرسائل أو التعليمات أو اسم المخبز..."
-                className="w-full pr-9 pl-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-800"
-              />
-            </div>
-
-            <select
-              value={recipientFilter}
-              onChange={(e) => setRecipientFilter(e.target.value)}
-              className="py-1.5 px-2.5 text-xs bg-white border border-slate-300 rounded-xl font-bold text-slate-700 outline-none"
-              title="تصفية حسب الطرف"
-            >
-              <option value="ALL">جميع الأطراف والمستخدمين</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.username}>
-                  {u.fullName} ({ROLE_LABELS[u.role] || u.role})
-                </option>
-              ))}
-            </select>
+          <div className="relative min-w-[240px] flex-1 sm:flex-initial">
+            <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="ابحث في رسائل الشات أو اسم المستخدم..."
+              className="w-full pr-9 pl-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl font-bold text-slate-800"
+            />
           </div>
         </div>
 
         {/* Messages Stream */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gradient-to-b from-slate-50 to-indigo-50/30">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
           {filteredMessages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-16 h-16 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center mb-3">
-                <Inbox className="w-8 h-8" />
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="w-14 h-14 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center mb-2">
+                <MessageSquare className="w-7 h-7" />
               </div>
-              <p className="text-base font-black text-slate-700">لا توجد رسائل أو تعليمات مطابقة للبحث</p>
-              <p className="text-xs text-slate-500 mt-1">
-                يمكنك كتابة تعليمات جديدة بالأسفل وإرسالها لجميع المستخدمين والأطراف داخل المنظومة
+              <p className="text-sm font-black text-slate-800">
+                {selectedUserObj
+                  ? `ابدأ المحادثة الكتابية الآن مع ${selectedUserObj.fullName} (@${selectedUserObj.username})`
+                  : 'لا توجد رسائل مطابقة حالياً'}
+              </p>
+              <p className="text-xs text-slate-500 mt-1 font-bold">
+                اكتب رسالتك في المربع بالأسفل واضغط إرسال أو مفتاح Enter
               </p>
             </div>
           ) : (
             filteredMessages.map((msg) => {
-              const isMine = currentUser?.username === msg.senderId || currentUser?.id === msg.senderId;
+              const isMine =
+                currentUser?.username === msg.senderId || currentUser?.id === msg.senderId;
               const isInstruction = msg.messageType === 'instruction';
               const isAlert = msg.messageType === 'alert';
 
               return (
                 <div
                   key={msg.id}
-                  className={`rounded-2xl p-4 border shadow-xs transition-all ${
+                  className={`rounded-2xl p-3.5 border-2 shadow-2xs ${
                     isInstruction
-                      ? 'bg-amber-50/90 border-amber-300'
+                      ? 'bg-amber-50 border-amber-300'
                       : isAlert
-                      ? 'bg-rose-50/90 border-rose-300'
+                      ? 'bg-rose-50 border-rose-300'
                       : isMine
-                      ? 'bg-indigo-50/90 border-indigo-200'
+                      ? 'bg-emerald-50/90 border-emerald-300'
                       : 'bg-white border-slate-200'
                   }`}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-2 border-b border-black/5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5 pb-1.5 border-b border-black/5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span
-                        className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs text-white ${
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-xs text-white ${
                           isInstruction
                             ? 'bg-amber-600'
                             : isAlert
                             ? 'bg-rose-600'
                             : isMine
-                            ? 'bg-indigo-600'
+                            ? 'bg-emerald-600'
                             : 'bg-slate-700'
                         }`}
                       >
-                        {isInstruction ? (
-                          <Megaphone className="w-4 h-4" />
-                        ) : isAlert ? (
-                          <AlertTriangle className="w-4 h-4" />
-                        ) : (
-                          <User className="w-4 h-4" />
-                        )}
+                        <User className="w-4 h-4" />
                       </span>
-                      <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-black text-sm text-slate-900">{msg.senderName}</span>
-                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-slate-200/80 text-slate-700">
-                            {ROLE_LABELS[msg.senderRole] || msg.senderRole}
-                          </span>
-                          <span
-                            className={`text-[11px] font-black px-2 py-0.5 rounded-md ${
-                              isInstruction
-                                ? 'bg-amber-200 text-amber-900'
-                                : isAlert
-                                ? 'bg-rose-200 text-rose-900'
-                                : 'bg-emerald-100 text-emerald-800'
-                            }`}
-                          >
-                            {isInstruction ? '📌 تعليمات إدارية' : isAlert ? '⚠️ تنبيه متابعة' : '💬 رسالة محادثة'}
-                          </span>
-                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800">
-                            إلى: {msg.recipientLabel || 'جميع المستخدمين'}
-                          </span>
-                        </div>
-                      </div>
+                      <span className="font-black text-xs sm:text-sm text-slate-900">
+                        من: {msg.senderName}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-200 text-slate-700">
+                        {ROLE_LABELS[msg.senderRole] || msg.senderRole}
+                      </span>
+                      <span className="text-[11px] font-black px-2.5 py-0.5 rounded bg-indigo-600 text-white">
+                        إلى: {msg.recipientLabel || 'جميع المستخدمين'}
+                      </span>
+                      <span
+                        className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                          isInstruction
+                            ? 'bg-amber-200 text-amber-900'
+                            : isAlert
+                            ? 'bg-rose-200 text-rose-900'
+                            : 'bg-emerald-200 text-emerald-950'
+                        }`}
+                      >
+                        {isInstruction
+                          ? '📌 تعليمات إدارية'
+                          : isAlert
+                          ? '⚠️ تنبيه متابعة'
+                          : '💬 شات كتابة'}
+                      </span>
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1" dir="ltr">
+                      <span
+                        className="text-[11px] font-bold text-slate-500 flex items-center gap-1"
+                        dir="ltr"
+                      >
                         <Clock className="w-3 h-3" />
                         {msg.timestamp}
                       </span>
-                      {(currentUser?.role === 'admin' || isMine) && (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteMessage(msg.id)}
-                          className="p-1.5 text-rose-500 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer"
-                          title="حذف الرسالة"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => onDeleteMessage(msg.id)}
+                        className="p-1 text-rose-600 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer"
+                        title="حذف الرسالة"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
 
-                  <p className="text-sm font-bold text-slate-800 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                  <p className="text-xs sm:text-sm font-black text-slate-900 leading-relaxed whitespace-pre-wrap">
+                    {msg.content}
+                  </p>
 
                   {msg.relatedBakeryName && (
-                    <div className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white/90 border border-indigo-200 text-xs font-black text-indigo-800">
+                    <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-indigo-200 text-[11px] font-black text-indigo-900">
                       <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>مخبز مرتبط بالتعليمات: {msg.relatedBakeryName}</span>
+                      <span>مخبز مرتبط: {msg.relatedBakeryName}</span>
                     </div>
                   )}
                 </div>
@@ -360,60 +468,60 @@ export const InboxChatModal: React.FC<InboxChatModalProps> = ({
           <div ref={chatEndRef} />
         </div>
 
-        {/* Compose Box */}
+        {/* Written Chat Compose Box */}
         <form
           onSubmit={handleSend}
-          className="bg-white border-t border-slate-200 p-4 space-y-3 shrink-0"
+          className="bg-white border-t-2 border-indigo-200 p-3.5 space-y-2.5 shrink-0"
         >
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div>
-              <label className="block text-[11px] font-black text-slate-600 mb-1">
-                نوع الرسالة / التعليمات:
+              <label className="block text-[11px] font-black text-indigo-950 mb-1">
+                👤 اختيار المستخدم المراد التحدث معه شات كتابة:
               </label>
               <select
-                value={messageType}
-                onChange={(e) => setMessageType(e.target.value as 'instruction' | 'general' | 'alert')}
-                className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                value={activeChatUser}
+                onChange={(e) => handleSelectChatPartner(e.target.value)}
+                className="w-full px-3 py-1.5 text-xs font-black bg-indigo-50 border-2 border-indigo-400 rounded-xl text-slate-900 outline-none"
               >
-                <option value="instruction">📌 تعليمات إدارية وتوجيهات رسمية</option>
-                <option value="alert">⚠️ تنبيه متابعة مخبز / مديونية / ترخيص</option>
-                <option value="general">💬 محادثة عامة بين أطراف المنظومة</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-black text-slate-600 mb-1">
-                توجيه الرسالة إلى:
-              </label>
-              <select
-                value={selectedRecipient}
-                onChange={(e) => setSelectedRecipient(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
-              >
-                <option value="ALL">👥 جميع المستخدمين والأطراف بالمنظومة</option>
+                <option value="ALL">👥 جميع المستخدمين (رسالة جماعية للكل)</option>
+                <optgroup label="👤 اختر مستخدم محدد للشات الكتابي المباشر">
+                  {users.map((u) => (
+                    <option key={u.id} value={u.username}>
+                      👤 التحدث مع: {u.fullName} (اليوزر: {u.username}) - {ROLE_LABELS[u.role] || u.role}
+                    </option>
+                  ))}
+                </optgroup>
                 <optgroup label="توجيه حسب الدور الوظيفي">
                   <option value="ROLE:admin">المديرون فقط</option>
                   <option value="ROLE:auditor">المراجعون فقط</option>
                   <option value="ROLE:inspector">المفتشون فقط</option>
                 </optgroup>
-                <optgroup label="توجيه لمستخدم محدد">
-                  {users.map((u) => (
-                    <option key={u.id} value={u.username}>
-                      👤 {u.fullName} ({u.username})
-                    </option>
-                  ))}
-                </optgroup>
               </select>
             </div>
 
             <div>
-              <label className="block text-[11px] font-black text-slate-600 mb-1">
-                ربط بمخبز معين (اختياري):
+              <label className="block text-[11px] font-black text-slate-700 mb-1">
+                نوع الرسالة:
+              </label>
+              <select
+                value={messageType}
+                onChange={(e) => setMessageType(e.target.value as 'instruction' | 'general' | 'alert')}
+                className="w-full px-3 py-1.5 text-xs font-black bg-slate-50 border border-slate-300 rounded-xl text-slate-900 outline-none"
+              >
+                <option value="general">💬 شات كتابة ومحادثة مباشرة</option>
+                <option value="instruction">📌 تعليمات إدارية وتوجيهات رسمية</option>
+                <option value="alert">⚠️ تنبيه متابعة مخبز / مديونية / ترخيص</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-black text-slate-700 mb-1">
+                إرفاق اسم مخبز بالرسالة (اختياري):
               </label>
               <select
                 value={relatedBakeryId}
                 onChange={(e) => setRelatedBakeryId(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                className="w-full px-3 py-1.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl text-slate-800 outline-none"
               >
                 <option value="">-- بدون تحديد مخبز --</option>
                 {bakeries.map((b) => (
@@ -427,19 +535,32 @@ export const InboxChatModal: React.FC<InboxChatModalProps> = ({
 
           <div className="flex items-end gap-2">
             <textarea
+              ref={inputRef}
               rows={2}
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="اكتب التعليمات الإدارية أو رسالة المحادثة لجميع المستخدمين هنا..."
-              className="flex-1 p-3 text-sm font-bold bg-slate-50 border border-slate-300 rounded-2xl text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none resize-none"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder={
+                selectedUserObj
+                  ? `اكتب رسالة شات كتابة مباشرة إلى ${selectedUserObj.fullName} (@${selectedUserObj.username}) ثم اضغط Enter للإرسال...`
+                  : 'اكتب رسالة الشات أو التعليمات الإدارية لجميع المستخدمين ثم اضغط Enter للإرسال...'
+              }
+              className="flex-1 p-2.5 text-xs sm:text-sm font-black bg-slate-50 border-2 border-indigo-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none resize-none"
             />
             <button
               type="submit"
               disabled={!content.trim()}
-              className="px-6 py-3.5 rounded-2xl bg-gradient-to-l from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 disabled:opacity-50 text-white font-black text-sm shadow-md flex items-center gap-2 transition-all cursor-pointer shrink-0"
+              className="px-5 py-3 rounded-xl bg-gradient-to-l from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 disabled:opacity-50 text-white font-black text-xs sm:text-sm shadow-md flex items-center gap-2 transition cursor-pointer shrink-0"
             >
               <Send className="w-4 h-4" />
-              <span>إرسال لصندوق الوارد</span>
+              <span>
+                {selectedUserObj ? `إرسال إلى ${selectedUserObj.fullName.split(' ')[0]}` : 'إرسال الشات'}
+              </span>
             </button>
           </div>
         </form>

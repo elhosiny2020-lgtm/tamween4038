@@ -316,3 +316,92 @@ export function runComprehensiveAudit(
   };
 }
 
+/**
+ * 13. دالة نقية للبحث المتقدم عبر المديونيات (حسب النطاق التاريخي من - إلى، ونوع المخالفة، وباقي المعايير)
+ */
+export interface DebtAdvancedFilterCriteria {
+  dateFrom?: string;
+  dateTo?: string;
+  violationType?: string;
+  village?: string;
+  localUnit?: string;
+  issuingEntity?: string;
+  status?: 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE';
+  filterBakeryId?: string;
+  searchTerm?: string;
+  isOverdueCheck?: (dateStr?: string, netRemainingDebt?: number) => { isOverdue: boolean };
+}
+
+export function filterDebtsByAdvancedCriteria(
+  debts: DebtRecord[],
+  criteria: DebtAdvancedFilterCriteria = {}
+): DebtRecord[] {
+  const {
+    dateFrom = '',
+    dateTo = '',
+    violationType = 'ALL',
+    village = 'ALL',
+    localUnit = 'ALL',
+    issuingEntity = 'ALL',
+    status = 'ALL',
+    filterBakeryId,
+    searchTerm = '',
+    isOverdueCheck,
+  } = criteria;
+
+  const cleanFrom = dateFrom.trim();
+  const cleanTo = dateTo.trim();
+  const q = searchTerm.trim().toLowerCase();
+
+  return debts.filter((d) => {
+    if (filterBakeryId && d.bakeryId !== filterBakeryId) return false;
+    if (village !== 'ALL' && d.village !== village) return false;
+    if (localUnit !== 'ALL' && d.localUnit !== localUnit) return false;
+    if (issuingEntity !== 'ALL' && d.issuingEntity !== issuingEntity) return false;
+    if (violationType !== 'ALL' && d.violationType !== violationType) return false;
+
+    // Date range filter (من - إلى) matching primary violationDate or disposalDate
+    if (cleanFrom || cleanTo) {
+      const recordDates = [d.violationDate, d.disposalDate]
+        .map((dt) => (dt || '').trim())
+        .filter(Boolean);
+
+      if (recordDates.length === 0) return false;
+
+      const matchesDateRange = recordDates.some((rDate) => {
+        if (cleanFrom && rDate < cleanFrom) return false;
+        if (cleanTo && rDate > cleanTo) return false;
+        return true;
+      });
+
+      if (!matchesDateRange) return false;
+    }
+
+    if (status === 'UNPAID' && d.netRemainingDebt <= 0) return false;
+    if (status === 'PAID' && d.netRemainingDebt > 0) return false;
+    if (status === 'OVER_20K' && (d.netRemainingDebt || 0) <= 20000) return false;
+    if (status === 'OVERDUE' && isOverdueCheck) {
+      const { isOverdue } = isOverdueCheck(d.violationDate || d.disposalDate, d.netRemainingDebt);
+      if (!isOverdue) return false;
+    }
+
+    if (q) {
+      const match =
+        d.bakeryOwnerName.toLowerCase().includes(q) ||
+        d.machineNumber.includes(q) ||
+        d.village.toLowerCase().includes(q) ||
+        d.localUnit.toLowerCase().includes(q) ||
+        d.issuingEntity.toLowerCase().includes(q) ||
+        d.violationType.toLowerCase().includes(q) ||
+        d.violationReceiptNumber.includes(q) ||
+        d.addedReceiptNumber.includes(q) ||
+        d.disposalReceiptNumber.includes(q) ||
+        (d.violationDate || '').includes(q);
+      if (!match) return false;
+    }
+
+    return true;
+  });
+}
+
+

@@ -291,12 +291,14 @@ export function hasPermission(
   return defaults.includes(action);
 }
 
-export function getRoleNameArabic(role: UserRoleType | string): string {
+export function getRoleNameArabic(role: UserRoleType | string, systemConfig?: SystemConfig | null): string {
   if (role === 'admin') return 'مدير نظام (تحكم كامل في المنظومة 100%)';
   if (role === 'supervisor') return 'مشرف عام رقابة ومخابز (صلاحيات إشرافية موسعة)';
   if (role === 'auditor') return 'مراجع حسابات ومديونيات وتحصيل';
   if (role === 'inspector') return 'مفتش رقابة وتموين ميداني';
   if (role === 'data_entry') return 'مسئول إدخال وتحديث بيانات';
   if (role === 'viewer') return 'مشاهد / قارئ فقط (تصفح وطباعة بدون تعديلات)';
-  return 'مستخدم منظومة';
+  const foundCustom = systemConfig?.customRoles?.find((r) => r.id === role || r.title === role);
+  if (foundCustom) return foundCustom.fullTitle || foundCustom.title;
+  return role || 'مستخدم منظومة';
 }

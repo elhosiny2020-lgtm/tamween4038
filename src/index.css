@@ -62,44 +62,16 @@ button:hover .icon-spin-hover {
   transform: rotate(45deg) scale(1.15);
 }
 
-.icon-float {
-  animation: iconFloat 3.5s ease-in-out infinite;
-}
-@keyframes iconFloat {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-3.5px); }
-}
-
-.icon-spin-slow {
-  animation: spinSlow 14s linear infinite;
-}
-@keyframes spinSlow {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.pulse-glow {
-  animation: pulseGlow 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-@keyframes pulseGlow {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.5);
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 0 6px rgba(217, 119, 6, 0);
-    transform: scale(1.02);
-  }
-}
-
-.shimmer-banner {
-  background: linear-gradient(110deg, #1e293b 0%, #334155 35%, #1e293b 70%);
-  background-size: 200% 100%;
-  animation: shimmerAnim 5s infinite;
-}
-@keyframes shimmerAnim {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+.icon-float,
+.icon-spin-slow,
+.pulse-glow,
+.shimmer-banner,
+.btn-glow-gold,
+.btn-glow-emerald,
+.animate-ping,
+.animate-bounce,
+.animate-pulse {
+  animation: none !important;
 }
 
 /* Enlarged bold numbers */
@@ -132,29 +104,8 @@ tr.row-selected td {
 }
 
 /* Smooth Table Row Hover */
-tbody tr {
-  transition: background-color 0.15s ease, transform 0.15s ease;
-}
 tbody tr:hover {
   background-color: rgba(245, 158, 11, 0.12);
-}
-
-.btn-glow-gold {
-  box-shadow: 0 0 14px rgba(245, 158, 11, 0.35);
-  animation: goldPulse 3s infinite ease-in-out;
-}
-@keyframes goldPulse {
-  0%, 100% { box-shadow: 0 0 10px rgba(245, 158, 11, 0.3); transform: translateY(0); }
-  50% { box-shadow: 0 0 20px rgba(245, 158, 11, 0.6); transform: translateY(-1px); }
-}
-
-.btn-glow-emerald {
-  box-shadow: 0 0 14px rgba(16, 185, 129, 0.35);
-  animation: emeraldPulse 3s infinite ease-in-out;
-}
-@keyframes emeraldPulse {
-  0%, 100% { box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); transform: translateY(0); }
-  50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.6); transform: translateY(-1px); }
 }
 
 /* Force pure black (#000000) text inside all report containers (.print-container) both on screen and in print/PDF */
@@ -179,7 +130,10 @@ tbody tr:hover {
 
 /* Eliminate GPU compositing lag when opening/closing modal dialogs */
 .fixed.inset-0,
-.report-modal-overlay {
+.report-modal-overlay,
+.animate-in,
+.backdrop-blur-sm,
+.backdrop-blur-md {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   transition: none !important;

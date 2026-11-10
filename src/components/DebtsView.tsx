@@ -21,11 +21,14 @@ import {
   Clock,
   AlertTriangle,
   Settings,
-  Check
+  Check,
+  Calendar
 } from 'lucide-react';
 
 import { WeeklyInstallmentsModal } from './WeeklyInstallmentsModal';
 import { SupplyFinesCalculatorModal } from './SupplyFinesCalculatorModal';
+import { printHtmlElementA4 } from '../utils/pdfHelper';
+import { filterDebtsByAdvancedCriteria } from '../utils/auditHelper';
 
 export const getDebtOverdueInfo = (
   dateStr?: string,
@@ -68,6 +71,7 @@ interface DebtsViewProps {
   onRenameViolation?: (oldName: string, newName: string) => void;
   filterBakeryId?: string;
   onClearBakeryFilter?: () => void;
+  onOpenReportModal?: (tab?: 'bakeries' | 'debts' | 'bakery-debts' | 'users') => void;
 }
 
 export const DebtsView: React.FC<DebtsViewProps> = ({
@@ -86,7 +90,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   onRenameViolation,
   filterBakeryId,
   onClearBakeryFilter,
+  onOpenReportModal,
 }) => {
+  const debtsPrintRef = React.useRef<HTMLDivElement>(null);
   const isViewer = currentUser?.role === 'viewer';
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedVillage, setSelectedVillage] = useState('ALL');
@@ -94,6 +100,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [selectedEntity, setSelectedEntity] = useState('ALL');
   const [selectedViolationType, setSelectedViolationType] = useState('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE'>('ALL');
+  // Advanced Search Across Debts (البحث المتقدم عبر المديونيات: من تاريخ - إلى تاريخ)
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
 
   // Modals state
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
@@ -120,41 +129,24 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [editingViolationNewName, setEditingViolationNewName] = useState('');
   const [violationSearchQuery, setViolationSearchQuery] = useState('');
 
-  // Filtering
+  // Filtering using pure helper function (supports dateFrom - dateTo, violationType, etc.)
   const filteredDebts = useMemo(() => {
-    return debts.filter((d) => {
-      if (filterBakeryId && d.bakeryId !== filterBakeryId) return false;
-      if (selectedVillage !== 'ALL' && d.village !== selectedVillage) return false;
-      if (selectedUnit !== 'ALL' && d.localUnit !== selectedUnit) return false;
-      if (selectedEntity !== 'ALL' && d.issuingEntity !== selectedEntity) return false;
-      if (selectedViolationType !== 'ALL' && d.violationType !== selectedViolationType) return false;
-
-      if (selectedStatus === 'UNPAID' && d.netRemainingDebt <= 0) return false;
-      if (selectedStatus === 'PAID' && d.netRemainingDebt > 0) return false;
-      if (selectedStatus === 'OVER_20K' && (d.netRemainingDebt || 0) <= 20000) return false;
-      if (selectedStatus === 'OVERDUE') {
-        const { isOverdue } = getDebtOverdueInfo(d.violationDate || d.disposalDate, d.netRemainingDebt);
-        if (!isOverdue) return false;
-      }
-
-      if (searchTerm.trim()) {
-        const q = searchTerm.toLowerCase();
-        const match =
-          d.bakeryOwnerName.toLowerCase().includes(q) ||
-          d.machineNumber.includes(q) ||
-          d.village.toLowerCase().includes(q) ||
-          d.localUnit.toLowerCase().includes(q) ||
-          d.issuingEntity.toLowerCase().includes(q) ||
-          d.violationType.toLowerCase().includes(q) ||
-          d.violationReceiptNumber.includes(q) ||
-          d.addedReceiptNumber.includes(q) ||
-          d.disposalReceiptNumber.includes(q);
-        if (!match) return false;
-      }
-      return true;
+    return filterDebtsByAdvancedCriteria(debts, {
+      dateFrom,
+      dateTo,
+      violationType: selectedViolationType,
+      village: selectedVillage,
+      localUnit: selectedUnit,
+      issuingEntity: selectedEntity,
+      status: selectedStatus,
+      filterBakeryId,
+      searchTerm,
+      isOverdueCheck: getDebtOverdueInfo,
     });
   }, [
     debts,
+    dateFrom,
+    dateTo,
     filterBakeryId,
     selectedVillage,
     selectedUnit,
@@ -163,6 +155,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     selectedStatus,
     searchTerm,
   ]);
+
+  // Filtered period totals for the Advanced Search bar summary
+  const filteredPeriodNetDebt = useMemo(() => {
+    return filteredDebts.reduce((sum, d) => sum + (d.netRemainingDebt || 0), 0);
+  }, [filteredDebts]);
 
   // Statistics
   const stats = useMemo(() => {
@@ -272,7 +269,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   };
 
   const handlePrintDebts = () => {
-    window.print();
+    if (onOpenReportModal) {
+      onOpenReportModal('debts');
+      return;
+    }
+    printHtmlElementA4(
+      debtsPrintRef.current,
+      `كشف_مديونيات_أصحاب_المخابز_${new Date().toISOString().split('T')[0]}`
+    );
   };
 
   return (
@@ -464,10 +468,25 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
             <button
               onClick={handlePrintDebts}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 hover:border-cyan-400 rounded-xl text-xs font-black shadow-sm transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-950 hover:bg-slate-800 text-cyan-300 border border-cyan-500/50 hover:border-cyan-400 rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
+              title="فتح كشف طباعة المديونيات وتنزيل PDF A4 بالعرض"
             >
               <Printer className="w-4 h-4 text-cyan-400" />
               طباعة الكشف A4
+            </button>
+
+            <button
+              onClick={() =>
+                printHtmlElementA4(
+                  debtsPrintRef.current,
+                  `كشف_مديونيات_أصحاب_المخابز_${new Date().toISOString().split('T')[0]}`
+                )
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-500/50 hover:border-amber-400 rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
+              title="طباعة فورية للجدول المعروض حالياً على الطابعة"
+            >
+              <Printer className="w-4 h-4 text-amber-400" />
+              طباعة سريعة للجدول
             </button>
           </div>
 
@@ -481,6 +500,224 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               placeholder="بحث باسم صاحب المخبز، رقم الماكينة، رقم الإيصال..."
               className="w-full pr-9 pl-3 py-2 bg-black border border-slate-700 text-slate-100 placeholder:text-slate-500 rounded-xl text-xs font-black focus:ring-2 focus:ring-amber-500 text-right transition"
             />
+          </div>
+        </div>
+
+        {/* NEW: البحث المتقدم عبر المديونيات (نطاق تاريخي من - إلى + نوع المخالفة) */}
+        <div
+          role="region"
+          aria-label="البحث المتقدم عبر المديونيات"
+          className="p-3.5 bg-gradient-to-r from-slate-950 via-red-950/35 to-slate-950 border-2 border-amber-500/60 rounded-xl space-y-3 shadow-inner"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/25 pb-2.5">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-amber-500/20 border border-amber-400/50 rounded-lg">
+                <Filter className="w-4 h-4 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-xs sm:text-sm font-black text-amber-300 flex items-center gap-2">
+                  <span>البحث المتقدم عبر المديونيات</span>
+                  <span className="text-[10px] bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full font-black">
+                    نطاق تاريخي (من - إلى) + نوع المخالفة
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-300 font-bold mt-0.5">
+                  فلترة فورية للمديونيات المسجلة خلال فترة زمنية محددة (من تاريخ - إلى تاريخ) وحسب نوع المخالفة التموينية
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center flex-wrap gap-2">
+              <span className="px-2.5 py-1 bg-slate-900 border border-amber-500/40 text-amber-300 rounded-lg text-[11px] font-black">
+                القيود المطابقة: {filteredDebts.length} من {debts.length} قيد
+              </span>
+              <span className="px-2.5 py-1 bg-red-950/90 border border-red-500/50 text-rose-200 rounded-lg text-[11px] font-black">
+                صافي مديونيات الفترة: {filteredPeriodNetDebt.toLocaleString()} ج.م
+              </span>
+              {(dateFrom !== '' ||
+                dateTo !== '' ||
+                selectedViolationType !== 'ALL' ||
+                selectedVillage !== 'ALL' ||
+                selectedUnit !== 'ALL' ||
+                selectedEntity !== 'ALL' ||
+                selectedStatus !== 'ALL' ||
+                searchTerm.trim() !== '') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateFrom('');
+                    setDateTo('');
+                    setSelectedViolationType('ALL');
+                    setSelectedVillage('ALL');
+                    setSelectedUnit('ALL');
+                    setSelectedEntity('ALL');
+                    setSelectedStatus('ALL');
+                    setSearchTerm('');
+                  }}
+                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[11px] font-black cursor-pointer flex items-center gap-1 shadow-sm"
+                  title="إلغاء جميع فلاتر التاريخ ونوع المخالفة وعرض كافة المديونيات"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>إعادة تعيين البحث المتقدم</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Date Range (من - إلى) + Violation Type + Quick Presets */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs items-end">
+            {/* 1. Date From (من تاريخ) */}
+            <div>
+              <label
+                htmlFor="debt-advanced-date-from"
+                className="flex items-center gap-1.5 text-[11px] font-black text-amber-200 mb-1"
+              >
+                <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                <span>من تاريخ (بداية النطاق التاريخي):</span>
+              </label>
+              <input
+                id="debt-advanced-date-from"
+                aria-label="من تاريخ"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="w-full px-3 py-2 bg-black border-2 border-amber-500/50 focus:border-amber-400 rounded-xl font-mono font-black text-white text-xs cursor-pointer"
+              />
+            </div>
+
+            {/* 2. Date To (إلى تاريخ) */}
+            <div>
+              <label
+                htmlFor="debt-advanced-date-to"
+                className="flex items-center gap-1.5 text-[11px] font-black text-amber-200 mb-1"
+              >
+                <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                <span>إلى تاريخ (نهاية النطاق التاريخي):</span>
+              </label>
+              <input
+                id="debt-advanced-date-to"
+                aria-label="إلى تاريخ"
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="w-full px-3 py-2 bg-black border-2 border-amber-500/50 focus:border-amber-400 rounded-xl font-mono font-black text-white text-xs cursor-pointer"
+              />
+            </div>
+
+            {/* 3. Violation Type (حسب نوع المخالفة) */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label
+                  htmlFor="debt-advanced-violation-type"
+                  className="flex items-center gap-1.5 text-[11px] font-black text-rose-300"
+                >
+                  <Scale className="w-3.5 h-3.5 text-rose-400" />
+                  <span>حسب نوع المخالفة التموينية:</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsViolationsModalOpen(true)}
+                  className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
+                  title="إضافة أو تعديل أو حذف أنواع المخالفات"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  <span>تعديل/حذف</span>
+                </button>
+              </div>
+              <select
+                id="debt-advanced-violation-type"
+                aria-label="حسب نوع المخالفة التموينية"
+                value={selectedViolationType}
+                onChange={(e) => {
+                  if (e.target.value === '__MANAGE_VIOLATIONS__') {
+                    setIsViolationsModalOpen(true);
+                    return;
+                  }
+                  setSelectedViolationType(e.target.value);
+                }}
+                className="w-full px-3 py-2 bg-black border-2 border-rose-500/60 focus:border-rose-400 rounded-xl font-black text-rose-200 text-xs cursor-pointer"
+              >
+                <option value="ALL">كافة أنواع المخالفات ({debts.length} قيد)</option>
+                {Array.from(new Set([...violationTypes, ...debts.map((d) => d.violationType).filter(Boolean)])).map(
+                  (vType) => {
+                    const count = debts.filter((d) => d.violationType === vType).length;
+                    return (
+                      <option key={vType} value={vType}>
+                        {vType} ({count} قيد)
+                      </option>
+                    );
+                  }
+                )}
+                <option value="__MANAGE_VIOLATIONS__" className="text-amber-300 font-black bg-slate-900">
+                  ⚙️ إدارة وتعديل أنواع المخالفات...
+                </option>
+              </select>
+            </div>
+
+            {/* 4. Quick Date Range Presets (فترات زمنية سريعة) */}
+            <div>
+              <span className="block text-[11px] font-black text-cyan-300 mb-1">
+                فترات زمنية سريعة (نقرة واحدة):
+              </span>
+              <div className="flex items-center flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateFrom('');
+                    setDateTo('');
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black cursor-pointer border transition ${
+                    dateFrom === '' && dateTo === ''
+                      ? 'bg-amber-400 text-slate-950 border-amber-300'
+                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-400'
+                  }`}
+                >
+                  كل الفترات
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateFrom('2026-10-01');
+                    setDateTo('2026-10-15');
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black cursor-pointer border transition ${
+                    dateFrom === '2026-10-01' && dateTo === '2026-10-15'
+                      ? 'bg-amber-400 text-slate-950 border-amber-300'
+                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-400'
+                  }`}
+                >
+                  1 - 15 أكتوبر
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateFrom('2026-10-16');
+                    setDateTo('2026-10-31');
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black cursor-pointer border transition ${
+                    dateFrom === '2026-10-16' && dateTo === '2026-10-31'
+                      ? 'bg-amber-400 text-slate-950 border-amber-300'
+                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-400'
+                  }`}
+                >
+                  16 - 31 أكتوبر
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateFrom('2026-01-01');
+                    setDateTo('2026-12-31');
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black cursor-pointer border transition ${
+                    dateFrom === '2026-01-01' && dateTo === '2026-12-31'
+                      ? 'bg-amber-400 text-slate-950 border-amber-300'
+                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-400'
+                  }`}
+                >
+                  عام 2026
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -628,7 +865,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
       </div>
 
-      {/* Official Printable Header (Appears only during print) */}
+      {/* Printable Wrapper for Direct Table Print */}
+      <div ref={debtsPrintRef} className="space-y-3">
+      {/* Official Printable Header (Appears during print) */}
       <div className="hidden print:block print-container mb-4 text-center border-b-2 border-black pb-3">
         <div className="flex items-center justify-between">
           <div className="text-right">
@@ -643,6 +882,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           <div className="text-left font-mono text-[10px]">
             <p>كشف مديونيات ومخالفات المخابز</p>
             <p>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</p>
+            <p>الاسم بالكامل: {currentUser?.fullName || 'أحمد الحسيني'}</p>
+            <p>اليوزر: {currentUser?.username || 'admin'} | الباسورد: {currentUser?.password || 'admin'}</p>
           </div>
         </div>
         <h2 className="text-sm font-black mt-2 underline">
@@ -1014,6 +1255,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </tbody>
           </table>
         </div>
+      </div>
       </div>
 
       {/* Modal 1: Add / Edit Debt Record */}
