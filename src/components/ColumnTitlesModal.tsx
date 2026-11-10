@@ -48,30 +48,35 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
   };
 
   const fields: Array<{ key: keyof ColumnTitles; label: string; group: string }> = [
-    { key: 'index', label: 'الرقم التسلسلي', group: 'البيانات الأساسية' },
+    { key: 'index', label: 'الرقم التسلسلي (م)', group: 'البيانات الأساسية' },
     { key: 'bakeryOwnerName', label: 'اسم صاحب المخبز', group: 'البيانات الأساسية' },
     { key: 'machineNumber', label: 'رقم الماكينة', group: 'البيانات الأساسية' },
     { key: 'village', label: 'القرية', group: 'البيانات الأساسية' },
     { key: 'localUnit', label: 'الوحدة التابعة', group: 'البيانات الأساسية' },
     { key: 'remainingDebt', label: 'المتبقي على المخبز', group: 'البيانات الأساسية' },
 
+    // الحصص والبيانات التموينية
+    { key: 'insuranceValue', label: 'القيمة التأمينية', group: 'الحصص والبيانات التموينية' },
     { key: 'insuranceQuota', label: 'الحصة التأمينية', group: 'الحصص والبيانات التموينية' },
     { key: 'actualQuota', label: 'الحصة الفعلية', group: 'الحصص والبيانات التموينية' },
-    { key: 'insuranceValue', label: 'القيمة التأمينية', group: 'الحصص والبيانات التموينية' },
     { key: 'loavesCount', label: 'الأرغفة اليومية', group: 'الحصص والبيانات التموينية' },
+    { key: 'perCapitaAverage', label: 'متوسط نصيب الفرد للمخبز', group: 'الحصص والبيانات التموينية' },
 
+    // إحصائيات السكان والمستفيدين
     { key: 'villagePopulation', label: 'سكان القرية', group: 'إحصائيات السكان والمستفيدين' },
-    { key: 'perCapitaAverage', label: 'متوسط الفرد للمخبز', group: 'إحصائيات السكان والمستفيدين' },
-    { key: 'beneficiaries2023', label: 'مستفيدي 2023', group: 'إحصائيات السكان والمستفيدين' },
-    { key: 'avg2023', label: 'متوسط 2023', group: 'إحصائيات السكان والمستفيدين' },
-    { key: 'beneficiaries2024', label: 'مستفيدي 2024', group: 'إحصائيات السكان والمستفيدين' },
-    { key: 'avg2024', label: 'متوسط 2024', group: 'إحصائيات السكان والمستفيدين' },
-    { key: 'beneficiaries2025', label: 'مستفيدي 2025', group: 'إحصائيات السكان والمستفيدين' },
-    { key: 'avg2025', label: 'متوسط 2025', group: 'إحصائيات السكان والمستفيدين' },
+    { key: 'beneficiaries2023', label: 'مستفيد عام 2023', group: 'إحصائيات السكان والمستفيدين' },
+    { key: 'beneficiaries2024', label: 'مستفيدين عام 2024', group: 'إحصائيات السكان والمستفيدين' },
+    { key: 'beneficiaries2025', label: 'مستفيدين عام 2025', group: 'إحصائيات السكان والمستفيدين' },
+    { key: 'avg2023', label: 'متوسط عام 2023', group: 'إحصائيات السكان والمستفيدين' },
+    { key: 'avg2024', label: 'متوسط عام 2024', group: 'إحصائيات السكان والمستفيدين' },
+    { key: 'avg2025', label: 'متوسط عام 2025', group: 'إحصائيات السكان والمستفيدين' },
     { key: 'avgDiff', label: 'الفرق التراكمي', group: 'إحصائيات السكان والمستفيدين' },
 
+    // التصنيف والتشغيل
     { key: 'activityStatus', label: 'نشاط المخبز', group: 'التصنيف والتشغيل' },
+    { key: 'bakeryCategory', label: 'نوع المخابز', group: 'التصنيف والتشغيل' },
     { key: 'breadType', label: 'نوع الخبز', group: 'التصنيف والتشغيل' },
+    { key: 'flourBagPrice', label: 'سعر الشيكارة', group: 'التصنيف والتشغيل' },
     { key: 'breadTypeCount', label: 'عدد نوع الخبز', group: 'التصنيف والتشغيل' },
     { key: 'lineType', label: 'نوع خط الإنتاج', group: 'التصنيف والتشغيل' },
     { key: 'fuelType', label: 'نوع الوقود', group: 'التصنيف والتشغيل' },

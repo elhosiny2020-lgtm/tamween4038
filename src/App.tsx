@@ -6,7 +6,8 @@ import {
   ColumnTitles,
   SystemConfig,
   AppUser,
-  DailyAlertConfig
+  DailyAlertConfig,
+  InboxChatMessage
 } from './types';
 import {
   AppState,
@@ -18,7 +19,8 @@ import {
   autoDiscoverAndMergeAllDatabases,
   factoryReset,
   setupDiskAutoBackup,
-  getActiveDiskBackupInfo
+  getActiveDiskBackupInfo,
+  mergeStates
 } from './storage';
 import {
   DEFAULT_SYSTEM_CONFIG,
@@ -26,10 +28,19 @@ import {
   DEFAULT_ISSUING_ENTITIES,
   DEFAULT_VIOLATION_TYPES,
   DEFAULT_ACTIVITY_STATUSES,
+  DEFAULT_BAKERY_CATEGORIES,
+  DEFAULT_BREAD_TYPES,
+  DEFAULT_BREAD_TYPE_COUNTS,
+  DEFAULT_LINE_TYPES,
+  DEFAULT_FUEL_TYPES,
+  PAYMENT_METHODS,
   DEFAULT_COLUMN_TITLES,
   INITIAL_BAKERIES,
   INITIAL_DEBTS,
-  INITIAL_USERS
+  INITIAL_USERS,
+  INITIAL_DAILY_TASKS,
+  INITIAL_INBOX_MESSAGES,
+  DEFAULT_OFFICIAL_LOGO
 } from './defaultData';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
@@ -52,6 +63,11 @@ import { DailyAlertSettingsModal } from './components/DailyAlertSettingsModal';
 import { DailyAlertNotificationModal } from './components/DailyAlertNotificationModal';
 import { AnnualBudgetFrequencyModal } from './components/AnnualBudgetFrequencyModal';
 import { AdminNotificationsDrawer } from './components/AdminNotificationsDrawer';
+import { DailyTasksModal } from './components/DailyTasksModal';
+import { SystemMasterEditorModal, DropdownCategoryKey } from './components/SystemMasterEditorModal';
+import { AdvancedPermissionsModal } from './components/AdvancedPermissionsModal';
+import { InboxChatModal } from './components/InboxChatModal';
+import { DailyEntryBriefingModal } from './components/DailyEntryBriefingModal';
 import { HighDebtAlertNotification } from './types';
 import {
   downloadUpdatedAppHtml,
@@ -104,7 +120,11 @@ import {
   Globe,
   BarChart3,
   PieChart,
-  Table
+  Table,
+  ListTodo,
+  Sliders,
+  Inbox,
+  RefreshCw
 } from 'lucide-react';
 
 const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
@@ -120,7 +140,7 @@ const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
   insuranceValue: 'إجمالي القيمة المالية للحصة التأمينية بالجنيه المصري',
   loavesCount: 'عدد الأرغفة المنتجة بناءً على حصة الدقيق (معدل 1250 رغيف/شكارة)',
   villagePopulation: 'عدد السكان المستهدفين بالقرية المخدومة من قبل المخبز',
-  perCapitaAverage: 'متوسط نصيب الفرد بالجرام يومياً من حصة الخبز بالقرية',
+  perCapitaAverage: 'متوسط نصيب الفرد اليومي من حصة الخبز بالقرية (علامة عشرية ورقمين فقط 0.00)',
   beneficiaries2023: 'عدد البطاقات والمستفيدين المسجلين لعام 2023',
   avg2023: 'متوسط الصرف اليومي للمستفيدين لعام 2023',
   beneficiaries2024: 'عدد البطاقات والمستفيدين المسجلين لعام 2024',
@@ -129,8 +149,9 @@ const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
   avg2025: 'متوسط الصرف اليومي المستهدف لعام 2025',
   avgDiff: 'معدل التغير والتطور السنوي في متوسط الصرف بين الأعوام',
   activityStatus: 'حالة تشغيل المخبز الحالية (يعمل، متوقف، ميعاد تصفية، مغلق بقرار)',
-  bakeryCategory: 'التصنيف الفني للمخبز (بلدي مدعم، بلدي مطور، سياحي 72%، فينو وأفرنجي، طباقي)',
+  bakeryCategory: 'نوع المخابز (بلدي مدعم، بلدي مطور، سياحي 72%، فينو وأفرنجي، طباقي)',
   breadType: 'نوع الخبز المنتجة (ماكينة، آلي، نصف آلي، بلدي طري، طابونة)',
+  flourBagPrice: 'سعر شيكارة الدقيق التمويني المقررة للمخبز بالجنيه المصري',
   breadTypeCount: 'عدد خطوط السير والمجموعات الإنتاجية بالمخبز',
   lineType: 'نوع خط الإنتاج (ميكانيكي كامل، نصف آلي، يدوي)',
   fuelType: 'نوع الوقود المستخدم في الأفران (سولار، غاز طبيعي، مازوت)',
@@ -189,6 +210,9 @@ export default function App() {
   const [selectedLicenseExpiryFilter, setSelectedLicenseExpiryFilter] = useState<
     'ALL' | 'EXPIRED' | 'WITHIN_30' | 'WITHIN_60' | 'WITHIN_90' | 'VALID'
   >('ALL');
+  // Additional Dual/Multi-Filter Dropdowns (نوع الخبز + نوع الوقود وخط الإنتاج)
+  const [selectedBreadTypeFilter, setSelectedBreadTypeFilter] = useState<string>('ALL');
+  const [selectedFuelTypeFilter, setSelectedFuelTypeFilter] = useState<string>('ALL');
 
   // Expected Flour Bag Price (ج.م / شيكارة) for Annual Budget Estimation
   const [flourBagPrice, setFlourBagPrice] = useState<number>(750);
@@ -217,6 +241,12 @@ export default function App() {
   const [isBudgetFrequencyModalOpen, setIsBudgetFrequencyModalOpen] = useState(false);
   const [isLocalUnitsModalOpen, setIsLocalUnitsModalOpen] = useState(false);
   const [isDailySettingsModalOpen, setIsDailySettingsModalOpen] = useState(false);
+  const [isDailyTasksModalOpen, setIsDailyTasksModalOpen] = useState(false);
+  const [isMasterEditorModalOpen, setIsMasterEditorModalOpen] = useState(false);
+  const [isAdvancedPermissionsModalOpen, setIsAdvancedPermissionsModalOpen] = useState(false);
+  const [isInboxModalOpen, setIsInboxModalOpen] = useState(false);
+  const [isDailyBriefingModalOpen, setIsDailyBriefingModalOpen] = useState(false);
+  const [masterEditorInitialCategory, setMasterEditorInitialCategory] = useState<DropdownCategoryKey>('ALL');
   const [dailyNotificationData, setDailyNotificationData] = useState<{
     isOpen: boolean;
     alertTime: string;
@@ -308,6 +338,13 @@ export default function App() {
           issuingEntities: preloaded?.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
           violationTypes: preloaded?.violationTypes ?? DEFAULT_VIOLATION_TYPES,
           activityStatuses: preloaded?.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
+          bakeryCategories: preloaded?.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
+          breadTypes: preloaded?.breadTypes ?? DEFAULT_BREAD_TYPES,
+          breadTypeCounts: preloaded?.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
+          lineTypes: preloaded?.lineTypes ?? DEFAULT_LINE_TYPES,
+          fuelTypes: preloaded?.fuelTypes ?? DEFAULT_FUEL_TYPES,
+          paymentMethods: preloaded?.paymentMethods ?? PAYMENT_METHODS,
+          dailyTasks: preloaded?.dailyTasks ?? INITIAL_DAILY_TASKS,
           columnTitles: preloaded?.columnTitles ?? DEFAULT_COLUMN_TITLES,
           systemConfig: preloaded?.systemConfig ?? DEFAULT_SYSTEM_CONFIG,
           users: preloaded?.users ?? INITIAL_USERS,
@@ -338,6 +375,14 @@ export default function App() {
             issuingEntities: DEFAULT_ISSUING_ENTITIES,
             violationTypes: DEFAULT_VIOLATION_TYPES,
             activityStatuses: DEFAULT_ACTIVITY_STATUSES,
+            bakeryCategories: DEFAULT_BAKERY_CATEGORIES,
+            breadTypes: DEFAULT_BREAD_TYPES,
+            breadTypeCounts: DEFAULT_BREAD_TYPE_COUNTS,
+            lineTypes: DEFAULT_LINE_TYPES,
+            fuelTypes: DEFAULT_FUEL_TYPES,
+            paymentMethods: PAYMENT_METHODS,
+            dailyTasks: INITIAL_DAILY_TASKS,
+            inboxMessages: INITIAL_INBOX_MESSAGES,
             columnTitles: DEFAULT_COLUMN_TITLES,
             systemConfig: DEFAULT_SYSTEM_CONFIG,
             users: INITIAL_USERS,
@@ -349,6 +394,15 @@ export default function App() {
 
     return () => clearTimeout(failsafe);
   }, []);
+
+  // Open Daily Entry Briefing Modal automatically once when user enters the database
+  const [hasShownDailyBriefingSession, setHasShownDailyBriefingSession] = useState(false);
+  useEffect(() => {
+    if (appState?.currentUser && !hasShownDailyBriefingSession) {
+      setHasShownDailyBriefingSession(true);
+      setIsDailyBriefingModalOpen(true);
+    }
+  }, [appState?.currentUser, hasShownDailyBriefingSession]);
 
   // Save helper that updates storage, timestamp, visual pulse, and displays success toast
   const triggerSave = useCallback((newState: AppState, toastMessage?: string) => {
@@ -668,6 +722,20 @@ export default function App() {
         }
       }
 
+      // Dual/Multi Filter: Bread Type (نوع الخبز)
+      if (selectedBreadTypeFilter !== 'ALL' && b.breadType !== selectedBreadTypeFilter) {
+        return false;
+      }
+
+      // Dual/Multi Filter: Fuel Type / Line Type (نوع الوقود / خط الإنتاج)
+      if (
+        selectedFuelTypeFilter !== 'ALL' &&
+        b.fuelType !== selectedFuelTypeFilter &&
+        b.lineType !== selectedFuelTypeFilter
+      ) {
+        return false;
+      }
+
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase();
         const match =
@@ -689,6 +757,8 @@ export default function App() {
     selectedDebtFilter,
     selectedCategoryFilter,
     selectedLicenseExpiryFilter,
+    selectedBreadTypeFilter,
+    selectedFuelTypeFilter,
     searchTerm,
     bakeryRemainingDebtsMap,
   ]);
@@ -783,6 +853,49 @@ export default function App() {
     );
   }
 
+  // Helper to perform non-destructive Gmail / Google Drive JSON merge on user login or registration
+  const performGmailDriveAdditiveMerge = (baseState: AppState, user: AppUser): AppState => {
+    const gmail =
+      user.gmailEmail ||
+      localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
+      baseState.systemConfig.gmailEmail ||
+      '';
+    if (!gmail.trim()) {
+      return { ...baseState, currentUser: user };
+    }
+    const gmailKey = gmail.trim().toLowerCase();
+    let workingState = { ...baseState, currentUser: user };
+
+    const sources = [
+      localStorage.getItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`),
+      localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD'),
+    ].filter(Boolean) as string[];
+
+    sources.forEach((rawStr) => {
+      try {
+        const parsed = JSON.parse(rawStr);
+        const sourceData = parsed.data || parsed.state || parsed;
+        if (sourceData && (Array.isArray(sourceData.bakeries) || Array.isArray(sourceData.debts))) {
+          const merged = mergeStates(workingState, sourceData as Partial<AppState>);
+          workingState = {
+            ...merged,
+            currentUser: user,
+            systemConfig: {
+              ...merged.systemConfig,
+              gmailEmail: gmail.trim(),
+              googleDriveAutoSync: true,
+              logoBase64: DEFAULT_OFFICIAL_LOGO,
+            },
+          };
+        }
+      } catch {
+        // ignore invalid JSON cache
+      }
+    });
+
+    return workingState;
+  };
+
   // If not logged in, show Animated Login
   if (!appState.currentUser) {
     return (
@@ -793,15 +906,76 @@ export default function App() {
         onLoginSuccess={(user) => {
           setLogoutReason(null);
           saveSessionUser(user);
-          setAppState((prev) => (prev ? { ...prev, currentUser: user } : null));
+          const mergedState = performGmailDriveAdditiveMerge(appState, user);
+          const updatedUsers = mergedState.users.map((u) => (u.id === user.id ? { ...u, ...user } : u));
+          const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: user };
+          triggerSave(
+            finalState,
+            user.gmailEmail
+              ? `تم الدخول ودمج ملفات JSON المرتبطة بجيميل (${user.gmailEmail}) تلقائياً بدون حذف أي بيانات`
+              : 'تم تسجيل الدخول وفتح شاشة التنبيه اليومي بنجاح'
+          );
+          setIsDailyBriefingModalOpen(true);
         }}
         onRegisterUser={(newUser) => {
-          const updatedUsers = [...appState.users, newUser];
-          triggerSave({ ...appState, users: updatedUsers }, 'تم تسجيل وحفظ المستخدم الجديد بنجاح');
+          const baseWithUser: AppState = {
+            ...appState,
+            users: [...appState.users, newUser],
+          };
+          const mergedState = performGmailDriveAdditiveMerge(baseWithUser, newUser);
+          triggerSave(
+            { ...mergedState, currentUser: null },
+            newUser.gmailEmail
+              ? `تم تسجيل الحساب وربطه بجيميل (${newUser.gmailEmail}) ودمج ملفات JSON بدون حذف أي بيانات`
+              : 'تم تسجيل وحفظ المستخدم الجديد بنجاح'
+          );
         }}
       />
     );
   }
+
+  // Inbox Messages Helpers
+  const inboxMessages = appState.inboxMessages || INITIAL_INBOX_MESSAGES;
+  const unreadInboxCount = inboxMessages.filter(
+    (m) => !m.readBy || !m.readBy.includes(appState.currentUser?.username || 'admin')
+  ).length;
+
+  const handleSendInboxMessage = (msgInput: Omit<InboxChatMessage, 'id' | 'timestamp' | 'readBy'>) => {
+    const newMsg: InboxChatMessage = {
+      ...msgInput,
+      id: `msg-${Date.now()}`,
+      timestamp: new Date().toLocaleString('ar-EG', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      readBy: [appState.currentUser?.username || 'admin'],
+    };
+    const updatedMessages = [...inboxMessages, newMsg];
+    triggerSave(
+      { ...appState, inboxMessages: updatedMessages },
+      'تم إرسال الرسالة / التعليمات الإدارية إلى صندوق الوارد لجميع الأطراف بنجاح'
+    );
+  };
+
+  const handleDeleteInboxMessage = (msgId: string) => {
+    const updatedMessages = inboxMessages.filter((m) => m.id !== msgId);
+    triggerSave({ ...appState, inboxMessages: updatedMessages }, 'تم حذف الرسالة من صندوق الوارد');
+  };
+
+  const handleMarkAllInboxRead = () => {
+    const username = appState.currentUser?.username || 'admin';
+    const hasUnread = inboxMessages.some((m) => !m.readBy || !m.readBy.includes(username));
+    if (!hasUnread) return;
+    const updatedMessages = inboxMessages.map((m) => ({
+      ...m,
+      readBy: Array.from(new Set([...(m.readBy || []), username])),
+    }));
+    setAppState((prev) => (prev ? { ...prev, inboxMessages: updatedMessages } : null));
+    persistFullState({ ...appState, inboxMessages: updatedMessages });
+  };
 
   // Handlers for Bakery
   const handleSaveBakery = (bakery: Bakery) => {
@@ -820,7 +994,7 @@ export default function App() {
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
-    if (!hasPermission(appState.currentUser, 'DELETE_BAKERY')) {
+    if (!hasPermission(appState.currentUser, 'DELETE_BAKERY', appState.systemConfig)) {
       alert('عفواً، حذف المخبز يتطلب صلاحيات مدير النظام الصريحة.');
       return;
     }
@@ -859,7 +1033,7 @@ export default function App() {
   };
 
   const handleDeleteDebt = (debtId: string) => {
-    if (!hasPermission(appState.currentUser, 'DELETE_DEBT')) {
+    if (!hasPermission(appState.currentUser, 'DELETE_DEBT', appState.systemConfig)) {
       alert('عفواً، حذف قيد المديونية يتطلب صلاحيات مدير النظام الصريحة.');
       return;
     }
@@ -901,21 +1075,23 @@ export default function App() {
       ct.village,
       ct.localUnit,
       ct.remainingDebt,
+      ct.insuranceValue,
       ct.insuranceQuota,
       ct.actualQuota,
-      ct.insuranceValue,
       ct.loavesCount,
-      ct.villagePopulation,
       ct.perCapitaAverage,
+      ct.villagePopulation,
       ct.beneficiaries2023,
-      ct.avg2023,
       ct.beneficiaries2024,
-      ct.avg2024,
       ct.beneficiaries2025,
+      ct.avg2023,
+      ct.avg2024,
       ct.avg2025,
       ct.avgDiff,
       ct.activityStatus,
+      ct.bakeryCategory,
       ct.breadType,
+      ct.flourBagPrice || 'سعر الشيكارة',
       ct.breadTypeCount,
       ct.lineType,
       ct.fuelType,
@@ -934,21 +1110,23 @@ export default function App() {
       `"${b.village}"`,
       `"${b.localUnit}"`,
       bakeryRemainingDebtsMap[b.id] || 0,
+      b.insuranceValue,
       b.insuranceQuota,
       b.actualQuota,
-      b.insuranceValue,
       b.loavesCount,
+      Number(b.perCapitaAverage || 0).toFixed(2),
       b.villagePopulation,
-      b.perCapitaAverage,
       b.beneficiaries2023,
-      b.avg2023,
       b.beneficiaries2024,
-      b.avg2024,
       b.beneficiaries2025,
+      b.avg2023,
+      b.avg2024,
       b.avg2025,
       b.avgDiff,
       `"${b.activityStatus}"`,
+      `"${b.bakeryCategory || 'مخبز بلدي مدعم'}"`,
       `"${b.breadType}"`,
+      b.flourBagPrice ?? 950,
       b.breadTypeCount,
       `"${b.lineType}"`,
       `"${b.fuelType}"`,
@@ -1035,7 +1213,32 @@ export default function App() {
             </div>
 
             {/* User Badge with Lock on Computer Exit */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Inbox Chat & Instructions Button (صندوق الوارد) */}
+              <button
+                type="button"
+                onClick={() => setIsInboxModalOpen(true)}
+                className="relative inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-700 via-blue-700 to-indigo-800 hover:from-indigo-600 hover:to-blue-600 text-white rounded-lg text-xs font-black shadow border border-indigo-400/60 hover:scale-105 active:scale-95 transition cursor-pointer"
+                title="صندوق الوارد والشات الإداري الداخلي لتبادل التعليمات بين جميع المستخدمين والأطراف"
+              >
+                <Inbox className="w-4 h-4 text-amber-300" />
+                <span>صندوق الوارد</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black">
+                  {unreadInboxCount > 0 ? `${unreadInboxCount} جديد` : inboxMessages.length}
+                </span>
+              </button>
+
+              {/* Daily Entry Briefing Screen Button */}
+              <button
+                type="button"
+                onClick={() => setIsDailyBriefingModalOpen(true)}
+                className="relative inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-600 to-orange-700 hover:from-amber-500 hover:to-orange-600 text-white rounded-lg text-xs font-black shadow border border-amber-400/60 hover:scale-105 active:scale-95 transition cursor-pointer"
+                title="شاشة التنبيه اليومي الشاملة لجميع المديونيات والوثائق والتراخيص والعقود المنتهية"
+              >
+                <AlertTriangle className="w-4 h-4 text-amber-200" />
+                <span>شاشة التنبيه اليومي</span>
+              </button>
+
               {/* Manager Admin Notifications Sidebar Button */}
               <button
                 type="button"
@@ -1171,28 +1374,7 @@ export default function App() {
               <span>الأقسام الرئيسية والمديونيات</span>
             </div>
 
-            {/* 1. Dedicated Charts & Analytics Button (الرسوم البيانية) */}
-            <button
-              type="button"
-              onClick={() => setActiveTab('charts')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${
-                activeTab === 'charts'
-                  ? 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-950/50 border border-indigo-300'
-                  : 'bg-slate-950 hover:bg-slate-800 text-indigo-300 border border-indigo-900/40 hover:border-indigo-700/60'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 icon-animated text-indigo-300" />
-                <span>الرسوم البيانية</span>
-              </div>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-black ${
-                activeTab === 'charts' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-800 text-indigo-300'
-              }`}>
-                تحليل تفاعلي 📊
-              </span>
-            </button>
-
-            {/* 2. Bakeries Database Button */}
+            {/* 1. Bakeries Database Button */}
             <button
               type="button"
               onClick={() => setActiveTab('bakeries')}
@@ -1237,7 +1419,58 @@ export default function App() {
               </span>
             </button>
 
-            {/* 3. Alerts Button */}
+            {/* 3. Dedicated Animated Charts & Analytics Button (مفتاح الرسوم المتحركة / البيانية مثل باقي المفاتيح) */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('charts')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${
+                activeTab === 'charts'
+                  ? 'bg-gradient-to-r from-indigo-600 to-purple-700 text-white shadow-lg shadow-indigo-950/50 border border-indigo-300'
+                  : 'bg-slate-950 hover:bg-slate-800 text-indigo-300 border border-indigo-900/40 hover:border-indigo-700/60'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 icon-animated" />
+                <span>الرسوم المتحركة والبيانية</span>
+              </div>
+              <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono font-black ${
+                activeTab === 'charts' ? 'bg-indigo-950 text-indigo-200' : 'bg-slate-800 text-indigo-300'
+              }`}>
+                {appState.villages.length}
+              </span>
+            </button>
+
+            {/* 4. NEW: Daily Tasks Management Button (إدارة المهام اليومية) */}
+            <button
+              type="button"
+              onClick={() => setIsDailyTasksModalOpen(true)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/40 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-sm"
+            >
+              <div className="flex items-center gap-2">
+                <ListTodo className="w-4 h-4 text-amber-400 icon-animated" />
+                <span>إدارة المهام اليومية</span>
+              </div>
+              <span className="text-[11px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full font-mono font-black">
+                {(appState.dailyTasks || []).filter((t) => t.status !== 'completed').length}
+              </span>
+            </button>
+
+            {/* 4.5 NEW: Inbox Chat & Instructions Button (صندوق الوارد بين جميع المستخدمين) */}
+            <button
+              type="button"
+              onClick={() => setIsInboxModalOpen(true)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-indigo-900 via-blue-900 to-slate-900 hover:from-indigo-800 hover:to-blue-800 text-white border-2 border-indigo-400/60 hover:border-indigo-300 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-md"
+            >
+              <div className="flex items-center gap-2">
+                <Inbox className="w-4 h-4 text-amber-300 icon-animated" />
+                <span>صندوق الوارد (شات وتعليمات)</span>
+              </div>
+              <span className="text-[11px] bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full font-mono font-black">
+                {inboxMessages.length}
+              </span>
+            </button>
+
+            {/* 5. Alerts Button */}
             <button
               type="button"
               onClick={() => setIsAlertsModalOpen(true)}
@@ -1254,7 +1487,22 @@ export default function App() {
               )}
             </button>
 
-            {/* 4. Weekly Installments Button */}
+            {/* 5.5 Daily Entry Briefing Screen (تنبيه يومي للمديونيات والعقود المنتهية عند الدخول) */}
+            <button
+              type="button"
+              onClick={() => setIsDailyBriefingModalOpen(true)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-950 hover:bg-slate-800 text-rose-300 border border-rose-500/40 hover:border-rose-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <Bell className="w-4 h-4 text-rose-400 icon-animated" />
+                <span>تنبيه الدخول اليومي (مديونيات وعقود)</span>
+              </div>
+              <span className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full font-black">
+                شامل
+              </span>
+            </button>
+
+            {/* 6. Weekly Installments Button */}
             <button
               type="button"
               onClick={() => {
@@ -1274,7 +1522,7 @@ export default function App() {
               )}
             </button>
 
-            {/* 5. Printable Reports & A4 Export Button */}
+            {/* 7. Printable Reports & A4 Export Button */}
             <button
               type="button"
               onClick={() => setIsReportModalOpen(true)}
@@ -1288,11 +1536,11 @@ export default function App() {
             </button>
           </div>
 
-          {/* System Tools & Management Stack (أدوات النظام والنسخ الاحتياطي تحت بعضها على اليمين) */}
-          <div className="bg-slate-900/90 border-2 border-slate-800 rounded-2xl p-3 shadow-xl space-y-2">
+          {/* System Tools & Unified Management Stack (ضم التعديلات على مفتاح واحد وضم الحفظ والاستيراد والنسخ على مفتاح واحد) */}
+          <div className="bg-slate-900/90 border-2 border-slate-800 rounded-2xl p-3 shadow-xl space-y-2.5">
             <div className="px-2 py-1 text-[11px] font-black text-slate-300 flex items-center gap-1.5 border-b border-slate-800/80 pb-2">
               <Settings className="w-3.5 h-3.5 text-amber-400" />
-              <span>إدارة النظام والبيانات</span>
+              <span>لوحة التحكم الموحدة (التعديل والحفظ)</span>
             </div>
 
             {/* Quick Add Bakery */}
@@ -1303,143 +1551,155 @@ export default function App() {
                   setBakeryToEdit(null);
                   setIsBakeryModalOpen(true);
                 }}
-                className="w-full flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-md border border-amber-300 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
               >
-                <Plus className="w-4 h-4 stroke-[3]" />
-                <span>إضافة مخبز جديد للقاعدة</span>
+                <div className="flex items-center gap-2">
+                  <Plus className="w-4 h-4 stroke-[3]" />
+                  <span>إضافة مخبز جديد للقاعدة</span>
+                </div>
+                <span className="text-[10px] bg-slate-950 text-amber-300 px-2 py-0.5 rounded-full font-black">
+                  إضافة +
+                </span>
               </button>
             )}
+
+            {/* UNIFIED BUTTON 1: التعديل داخل المنظومة / التعديل على جميع القوائم المنسدلة */}
+            <button
+              type="button"
+              onClick={() => {
+                setMasterEditorInitialCategory('ALL');
+                setIsMasterEditorModalOpen(true);
+              }}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-amber-950 via-slate-900 to-amber-950 hover:from-amber-900 hover:to-slate-800 text-amber-300 border-2 border-amber-500/70 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg"
+              title="ضم جميع قوائم التعديل والحذف (نوع خط الإنتاج، نوع الوقود، عدد نوع الخبز، نوع الخبز، تصنيف المخبز، نشاط المخبز، القرى، الجهة المحررة، نوع المخالفة، رؤوس الخانات، الترويسة، التذكير، والمستخدمين)"
+            >
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-amber-400 icon-animated" />
+                <div className="text-right">
+                  <div className="leading-tight">التعديل داخل المنظومة</div>
+                  <div className="text-[9.5px] text-amber-200/90 font-bold">
+                    التعديل على جميع القوائم المنسدلة
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full font-black shrink-0">
+                10 قوائم ✏️
+              </span>
+            </button>
+
+            {/* UNIFIED BUTTON 2: ضم جميع قوائم الحفظ والاستيراد والنسخ على مفتاح واحد فقط */}
+            <button
+              type="button"
+              onClick={() => setIsBackupModalOpen(true)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-emerald-950 via-slate-900 to-cyan-950 hover:from-emerald-900 hover:to-cyan-900 text-emerald-300 border-2 border-emerald-500/70 hover:border-emerald-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg"
+              title="مركز الحفظ والاستيراد والنسخ الاحتياطي الموحد (حفظ بارتيشن، القرص الصلب، Google Drive، حزمة GitHub، وتحميل التطبيق HTML/EXE)"
+            >
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-400 icon-animated" />
+                <div className="text-right">
+                  <div className="leading-tight">الحفظ والاستيراد والنسخ</div>
+                  <div className="text-[9.5px] text-emerald-200/90 font-bold">
+                    بارتيشن • Drive • GitHub • EXE
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] bg-emerald-500 text-slate-950 px-2 py-0.5 rounded-full font-black shrink-0">
+                شامل 💾
+              </span>
+            </button>
+
+            {/* NEW BUTTON UNDER BACKUP: نسخ تلقائي على Google Drive */}
+            <button
+              type="button"
+              onClick={() => {
+                const linkedGmail =
+                  appState.currentUser?.gmailEmail ||
+                  localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
+                  appState.systemConfig.gmailEmail ||
+                  'ELHOSINY2020@gmail.com';
+                localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', linkedGmail);
+                localStorage.setItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC', 'true');
+                localStorage.setItem('TAMWEEN_CUSTOM_AUTOSYNC', 'true');
+
+                const mergedState = performGmailDriveAdditiveMerge(appState, {
+                  ...appState.currentUser!,
+                  gmailEmail: linkedGmail,
+                  googleDriveAutoSync: true,
+                });
+
+                const payload = {
+                  version: '3.5-gmail-google-drive-autosync',
+                  timestamp: new Date().toISOString(),
+                  destinationType: 'GOOGLE_DRIVE',
+                  gmailEmail: linkedGmail,
+                  bakeriesCount: mergedState.bakeries.length,
+                  debtsCount: mergedState.debts.length,
+                  data: mergedState,
+                };
+                localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(payload));
+                localStorage.setItem(
+                  `TAMWEEN_GMAIL_DRIVE_SYNC_${linkedGmail.toLowerCase()}`,
+                  JSON.stringify(payload)
+                );
+
+                triggerSave(
+                  mergedState,
+                  `تم تفعيل النسخ التلقائي على Google Drive لحساب (${linkedGmail}) ودمج ملفات JSON بدون حذف أي داتا!`
+                );
+                setIsBackupModalOpen(true);
+              }}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-cyan-900 via-blue-950 to-indigo-950 hover:from-cyan-800 hover:to-indigo-900 text-cyan-200 border-2 border-cyan-400/70 hover:border-cyan-300 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg"
+              title="نسخ تلقائي على Google Drive مرتبط بإيميل الجيميل مع دمج ملفات JSON بدون حذف أي داتا"
+            >
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 text-cyan-300 icon-animated" />
+                <div className="text-right">
+                  <div className="leading-tight">نسخ تلقائي على Google Drive</div>
+                  <div className="text-[9.5px] text-amber-300 font-bold">
+                    ربط الجيميل • دمج JSON بدون حذف
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] bg-cyan-400 text-slate-950 px-2 py-0.5 rounded-full font-black shrink-0">
+                Gmail ☁️
+              </span>
+            </button>
+
+            {/* Advanced Role Permissions Button (إعدادات الصلاحيات المتقدمة) inside Unified Control Panel */}
+            <button
+              type="button"
+              onClick={() => setIsAdvancedPermissionsModalOpen(true)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-indigo-950 via-slate-900 to-purple-950 hover:from-indigo-900 hover:to-purple-900 text-amber-300 border-2 border-amber-500/60 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg"
+              title="تحديد العمليات المسموح بها لكل دور (مفتش، مراجع، مدير) على مستوى المودالات والبيانات وحفظها في SystemConfig"
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-amber-400 icon-animated" />
+                <div className="text-right">
+                  <div className="leading-tight">إعدادات الصلاحيات المتقدمة</div>
+                  <div className="text-[9.5px] text-amber-200/90 font-bold">
+                    مفتش • مراجع • مدير (المودالات والبيانات)
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full font-black shrink-0">
+                أدوار 🛡️
+              </span>
+            </button>
 
             {/* Math Audit */}
             <button
               type="button"
               onClick={() => setIsAuditModalOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-purple-300 border border-purple-500/30 hover:border-purple-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Calculator className="w-3.5 h-3.5 text-purple-400" />
-              <span>تدقيق واختبار المعادلات</span>
-            </button>
-
-            {/* Villages & Local Units */}
-            <button
-              type="button"
-              onClick={() => setIsVillageModalOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Building2 className="w-3.5 h-3.5 text-amber-400" />
-              <span>القرى والوحدات المحلية ({appState.villages.length})</span>
-            </button>
-
-            {/* Hard Drive Auto Backup & GitHub Backup */}
-            <button
-              type="button"
-              onClick={() => setIsBackupModalOpen(true)}
-              className="w-full flex items-center justify-between px-3 py-2 bg-slate-950 hover:bg-slate-850 text-purple-200 border border-purple-500/50 hover:border-purple-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-sm"
-              title="حفظ واستيراد حزم النسخ الاحتياطية عبر حساب GitHub"
+              className="w-full flex items-center justify-between px-3.5 py-2 bg-slate-950 hover:bg-slate-800 text-purple-300 border border-purple-500/30 hover:border-purple-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
             >
               <div className="flex items-center gap-2">
-                <Globe className="w-3.5 h-3.5 text-purple-400" />
-                <span>نسخ واستيراد حزمة GitHub ☁️</span>
+                <Calculator className="w-3.5 h-3.5 text-purple-400" />
+                <span>تدقيق واختبار المعادلات</span>
               </div>
-              <span className="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded border border-purple-400/30">
-                استيراد/حفظ
+              <span className="text-[10px] bg-purple-950 text-purple-300 px-2 py-0.5 rounded-full font-mono">
+                0.00 ✓
               </span>
             </button>
-
-            <button
-              type="button"
-              onClick={() => setIsBackupModalOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-emerald-300 border border-emerald-500/30 hover:border-emerald-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
-              <span>النسخ التلقائي على القرص الصلب</span>
-            </button>
-
-            {/* Quick 1-Click Partition Save */}
-            <button
-              type="button"
-              onClick={handleQuickPartitionSave}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Database className="w-3.5 h-3.5 text-blue-400" />
-              <span>حفظ فوري في بارتشن D: / E:</span>
-            </button>
-
-            {/* Activity Status Management */}
-            <button
-              type="button"
-              onClick={() => setIsActivityModalOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-emerald-300 border border-emerald-500/30 hover:border-emerald-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Settings className="w-3.5 h-3.5 text-emerald-400" />
-              <span>أنشطة المخابز ({appState.activityStatuses.length})</span>
-            </button>
-
-            {/* Column Titles Customizer */}
-            <button
-              type="button"
-              onClick={() => setIsColumnModalOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Columns3 className="w-3.5 h-3.5 text-amber-400" />
-              <span>تعديل رؤوس الخانات</span>
-            </button>
-
-            {/* Download Standalone HTML App */}
-            <button
-              type="button"
-              onClick={async () => {
-                await downloadUpdatedAppHtml(appState);
-              }}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Globe className="w-3.5 h-3.5 text-amber-400" />
-              <span>تحميل التطبيق المستقل (HTML)</span>
-            </button>
-
-            {/* Download Windows EXE Launcher */}
-            <button
-              type="button"
-              onClick={async () => {
-                await downloadWindowsExeLauncher();
-              }}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-md border border-red-400/50 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 text-white" />
-              <span>تحميل مشغل الويندوز (EXE)</span>
-            </button>
-
-            {/* Open Standalone App in New Tab */}
-            <button
-              type="button"
-              onClick={() => openStandaloneAppInNewTab()}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-blue-300 border border-blue-500/30 hover:border-blue-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
-              <span>فتح صفحة البرنامج مستقلة</span>
-            </button>
-
-            {/* Customize Identity & Header */}
-            <button
-              type="button"
-              onClick={() => setIsHeaderModalOpen(true)}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-amber-200 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <FileText className="w-3.5 h-3.5 text-amber-400" />
-              <span>تخصيص الهوية والترويسة</span>
-            </button>
-
-            {/* Users & Inspectors Management (Admin Only) */}
-            {appState.currentUser.role === 'admin' && (
-              <button
-                type="button"
-                onClick={() => setIsUsersModalOpen(true)}
-                className="w-full flex items-center gap-2 px-3 py-2 bg-slate-950 hover:bg-slate-800 text-purple-300 border border-purple-500/30 hover:border-purple-400 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-              >
-                <Users className="w-3.5 h-3.5 text-purple-400" />
-                <span>إدارة المستخدمين والمفتشين</span>
-              </button>
-            )}
           </div>
         </aside>
 
@@ -1481,31 +1741,18 @@ export default function App() {
               </div>
             </div>
 
-            {/* Top View Switcher Navigation Tabs (الرسوم البيانية على اليمين أولاً) */}
+            {/* Top View Switcher Navigation Tabs (مفتاح الرسوم المتحركة مثل باقي المفاتيح) */}
             <div className="flex items-center flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setActiveTab('charts')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'charts'
-                    ? 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-950/40 border border-indigo-300'
-                    : 'bg-slate-950 text-indigo-300 hover:bg-slate-800 border border-indigo-900/40'
-                }`}
-              >
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>الرسوم البيانية</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setActiveTab('bakeries')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'bakeries'
                     ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-lg shadow-amber-900/40 border border-amber-300'
                     : 'bg-slate-950 text-amber-300 hover:bg-slate-800 border border-slate-800'
                 }`}
               >
-                <Building className="w-3.5 h-3.5" />
+                <Building className="w-3.5 h-3.5 icon-animated" />
                 <span>قاعدة بيانات المخابز ({appState.bakeries.length})</span>
               </button>
 
@@ -1515,14 +1762,27 @@ export default function App() {
                   setActiveTab('debts');
                   setDebtFilterBakeryId(undefined);
                 }}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'debts'
                     ? 'bg-gradient-to-r from-red-600 to-rose-700 text-white shadow-lg shadow-red-950/40 border border-red-400'
                     : 'bg-slate-950 text-rose-300 hover:bg-slate-800 border border-slate-800'
                 }`}
               >
-                <Scale className="w-3.5 h-3.5" />
+                <Scale className="w-3.5 h-3.5 icon-animated" />
                 <span>سجلات المديونيات ({appState.debts.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('charts')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'charts'
+                    ? 'bg-gradient-to-r from-indigo-600 to-purple-700 text-white shadow-lg shadow-indigo-950/40 border border-indigo-300'
+                    : 'bg-slate-950 text-indigo-300 hover:bg-slate-800 border border-slate-800'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5 icon-animated" />
+                <span>الرسوم المتحركة والبيانية ({appState.villages.length})</span>
               </button>
             </div>
           </div>
@@ -1785,24 +2045,27 @@ export default function App() {
                     </button>
                   )}
 
-                  {/* 2. Golden Modify Column Headers Button */}
+                  {/* 2. Unified Master Editor Button: التعديل داخل المنظومة / التعديل على جميع القوائم المنسدلة */}
                   <button
-                    onClick={() => setIsColumnModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-amber-300 font-black rounded-xl text-xs shadow-md border border-amber-500/40 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
-                    title="تخصيص وتعديل أسماء رؤوس أعمدة وخانات المخبز"
+                    onClick={() => {
+                      setMasterEditorInitialCategory('ALL');
+                      setIsMasterEditorModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-950 via-slate-900 to-amber-950 hover:from-amber-900 hover:to-slate-800 text-amber-300 font-black rounded-xl text-xs shadow-md border border-amber-500/60 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    title="فتح نافذة التعديل داخل المنظومة والتعديل على جميع القوائم المنسدلة (إضافة وتعديل وحذف فوري)"
                   >
-                    <Columns3 className="w-4 h-4 text-amber-400 icon-animated" />
-                    <span>تعديل رؤوس الخانات</span>
+                    <Sliders className="w-4 h-4 text-amber-400 icon-animated" />
+                    <span>التعديل على جميع القوائم المنسدلة</span>
                   </button>
 
-                  {/* 3. Activity Status Management Button */}
+                  {/* 3. Daily Tasks Manager Button: إدارة المهام اليومية */}
                   <button
-                    onClick={() => setIsActivityModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-950 to-slate-900 hover:from-emerald-900 hover:to-slate-800 text-emerald-300 font-black rounded-xl text-xs border border-emerald-500/40 shadow-sm transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
-                    title="تعديل وإضافة وتخصيص حالات نشاط المخابز"
+                    onClick={() => setIsDailyTasksModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-indigo-950 to-slate-900 hover:from-indigo-900 hover:to-slate-800 text-amber-300 font-black rounded-xl text-xs border border-amber-500/40 shadow-sm transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                    title="إدارة المهام اليومية وتتبع المهام الإدارية الفرعية المتعلقة بالمخابز"
                   >
-                    <Settings className="w-4 h-4 text-emerald-400 icon-spin-hover" />
-                    <span>أنشطة المخابز ({appState.activityStatuses.length})</span>
+                    <ListTodo className="w-4 h-4 text-amber-400 icon-animated" />
+                    <span>إدارة المهام اليومية ({(appState.dailyTasks || []).filter((t) => t.status !== 'completed').length})</span>
                   </button>
 
                   {/* 4. Export CSV */}
@@ -1839,130 +2102,327 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Dynamic Filtering Dropdowns Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 pt-2 border-t border-slate-800 text-xs">
-                <div>
-                  <label className="block text-[11px] font-black text-slate-300 mb-1">القرية</label>
-                  <select
-                    value={selectedVillage}
-                    onChange={(e) => {
-                      setSelectedVillage(e.target.value);
-                      setSelectedUnit('ALL');
-                    }}
-                    className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
-                  >
-                    <option value="ALL">كافة القرى ({appState.villages.length})</option>
-                    {appState.villages.map((v) => (
-                      <option key={v.village} value={v.village}>
-                        {v.village}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-black text-slate-300 mb-1">
-                    الوحدة المحلية التابعة
-                  </label>
-                  <select
-                    value={selectedUnit}
-                    onChange={(e) => setSelectedUnit(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
-                  >
-                    <option value="ALL">
-                      {selectedVillage === 'ALL'
-                        ? 'كافة الوحدات المحلية بالمركز'
-                        : `كافة الوحدات التابعة لـ (${selectedVillage})`}
-                    </option>
-                    {selectedVillage === 'ALL' ? (
-                      appState.villages.map((v) => (
-                        <optgroup key={v.village} label={`قرية ${v.village}`}>
-                          {v.localUnits.map((u) => (
-                            <option key={`${v.village}-${u}`} value={u}>
-                              {u}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))
-                    ) : (
-                      availableUnitsFilter.map((u) => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-black text-amber-300 mb-1 flex items-center gap-1">
-                    <Store className="w-3 h-3 text-amber-400" />
-                    <span>تصنيف المخبز</span>
-                  </label>
-                  <select
-                    value={selectedCategoryFilter}
-                    onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-black border border-amber-500/50 rounded-lg font-black text-amber-300 focus:ring-1 focus:ring-amber-500 cursor-pointer"
-                  >
-                    <option value="ALL">كافة التصنيفات ({appState.bakeries.length})</option>
-                    <option value="مدعم">🍞 مخبز بلدي مدعم ({categoryCounts.baladi})</option>
-                    <option value="مطور">⚡ مخبز بلدي مطور ({categoryCounts.baladiMotawar})</option>
-                    <option value="سياحي">🍕 مخبز سياحي 72% ({categoryCounts.tourist})</option>
-                    <option value="فينو">🥐 مخبز فينو وأفرنجي ({categoryCounts.fino})</option>
-                    <option value="طباقي">🥖 مخبز طباقي ({categoryCounts.tabaqi})</option>
-                  </select>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-black text-slate-300">نشاط المخبز</label>
-                    <button
-                      type="button"
-                      onClick={() => setIsActivityModalOpen(true)}
-                      className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
-                      title="تعديل قائمة أنشطة المخابز"
-                    >
-                      <Settings className="w-3 h-3" />
-                      <span>تعديل</span>
-                    </button>
+              {/* NEW: Advanced Dual-Filter Search Bar (شريط البحث المتقدم والفلترة المزدوجة: قرية معينة + حالة تشغيل معينة + قوائم منسدلة إضافية) */}
+              <div className="p-3 bg-gradient-to-r from-slate-950 via-amber-950/30 to-slate-950 border-2 border-amber-500/50 rounded-xl space-y-2.5 shadow-inner">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/20 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-black text-amber-300">
+                      شريط البحث المتقدم والفلترة المزدوجة (تصفية متزامنة بالقرية + حالة التشغيل + نوع الخبز والوقود):
+                    </span>
                   </div>
-                  <select
-                    value={selectedActivity}
-                    onChange={(e) => setSelectedActivity(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
-                  >
-                    <option value="ALL">كافة حالات النشاط ({appState.bakeries.length} مخبز)</option>
-                    {appState.activityStatuses.map((st) => {
-                      const count = appState.bakeries.filter((b) => b.activityStatus === st).length;
-                      return (
-                        <option key={st} value={st}>
-                          {st} ({count} مخبز)
-                        </option>
-                      );
-                    })}
-                  </select>
+                  <div className="flex items-center flex-wrap gap-2">
+                    <span className="px-2.5 py-0.5 bg-amber-500 text-slate-950 rounded-full text-[11px] font-black">
+                      نتائج التصفية المزدوجة: {filteredBakeries.length} من {appState.bakeries.length} مخبز
+                    </span>
+                    {(selectedVillage !== 'ALL' ||
+                      selectedUnit !== 'ALL' ||
+                      selectedActivity !== 'ALL' ||
+                      selectedCategoryFilter !== 'ALL' ||
+                      selectedDebtFilter !== 'ALL' ||
+                      selectedBreadTypeFilter !== 'ALL' ||
+                      selectedFuelTypeFilter !== 'ALL' ||
+                      selectedLicenseExpiryFilter !== 'ALL' ||
+                      searchTerm.trim() !== '') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedVillage('ALL');
+                          setSelectedUnit('ALL');
+                          setSelectedActivity('ALL');
+                          setSelectedCategoryFilter('ALL');
+                          setSelectedDebtFilter('ALL');
+                          setSelectedBreadTypeFilter('ALL');
+                          setSelectedFuelTypeFilter('ALL');
+                          setSelectedLicenseExpiryFilter('ALL');
+                          setSearchTerm('');
+                        }}
+                        className="px-3 py-0.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[11px] font-black cursor-pointer flex items-center gap-1 shadow-xs"
+                        title="إلغاء جميع الفلاتر وعرض كافة المخابز"
+                      >
+                        <X className="w-3 h-3" />
+                        <span>إعادة تعيين الفلترة المزدوجة</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-black text-slate-300 mb-1">موقف المديونية</label>
-                  <select
-                    value={selectedDebtFilter}
-                    onChange={(e) => setSelectedDebtFilter(e.target.value as 'ALL' | 'HAS_DEBT' | 'NO_DEBT')}
-                    className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
-                  >
-                    <option value="ALL">الكل (مديونيات وخالص)</option>
-                    <option value="HAS_DEBT">عليه مديونية متبقية فقط</option>
-                    <option value="NO_DEBT">خالص المديونية (0 ج.م)</option>
-                  </select>
+                {/* Dynamic Dual/Multi Filtering Dropdowns Grid (7 Simultaneous Dropdowns with inline Edit/Delete triggers) */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 text-xs">
+                  {/* 1. Village Filter */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-black text-amber-200">
+                        1. القرية (تصفية مزدوجة)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMasterEditorInitialCategory('villages');
+                          setIsMasterEditorModalOpen(true);
+                        }}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
+                        title="تعديل وحذف قائمة القرى"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>تعديل/حذف</span>
+                      </button>
+                    </div>
+                    <select
+                      value={selectedVillage}
+                      onChange={(e) => {
+                        setSelectedVillage(e.target.value);
+                        setSelectedUnit('ALL');
+                      }}
+                      className="w-full px-2.5 py-1.5 bg-black border border-amber-500/50 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                    >
+                      <option value="ALL">كافة القرى ({appState.villages.length})</option>
+                      {appState.villages.map((v) => {
+                        const vCount = appState.bakeries.filter((b) => b.village === v.village).length;
+                        return (
+                          <option key={v.village} value={v.village}>
+                            {v.village} ({vCount} مخبز)
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* 2. Operating Activity Status Filter */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-black text-emerald-300">
+                        2. حالة التشغيل والنشاط
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMasterEditorInitialCategory('activityStatuses');
+                          setIsMasterEditorModalOpen(true);
+                        }}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
+                        title="تعديل وحذف قائمة أنشطة المخابز"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>تعديل/حذف</span>
+                      </button>
+                    </div>
+                    <select
+                      value={selectedActivity}
+                      onChange={(e) => setSelectedActivity(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-black border border-emerald-500/50 rounded-lg font-black text-emerald-200 focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                    >
+                      <option value="ALL">كافة حالات التشغيل ({appState.bakeries.length})</option>
+                      {appState.activityStatuses.map((st) => {
+                        const count = appState.bakeries.filter(
+                          (b) =>
+                            b.activityStatus === st &&
+                            (selectedVillage === 'ALL' || b.village === selectedVillage)
+                        ).length;
+                        return (
+                          <option key={st} value={st}>
+                            {st} ({count} مخبز)
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* 3. Local Unit Filter */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-black text-slate-300">
+                        3. الوحدة المحلية التابعة
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setIsVillageModalOpen(true)}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
+                        title="تعديل وحذف الوحدات المحلية"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>تعديل/حذف</span>
+                      </button>
+                    </div>
+                    <select
+                      value={selectedUnit}
+                      onChange={(e) => setSelectedUnit(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-black border border-slate-700 rounded-lg font-black text-slate-100 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                    >
+                      <option value="ALL">
+                        {selectedVillage === 'ALL'
+                          ? 'كافة الوحدات المحلية'
+                          : `وحدات (${selectedVillage})`}
+                      </option>
+                      {selectedVillage === 'ALL' ? (
+                        appState.villages.map((v) => (
+                          <optgroup key={v.village} label={`قرية ${v.village}`}>
+                            {v.localUnits.map((u) => (
+                              <option key={`${v.village}-${u}`} value={u}>
+                                {u}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))
+                      ) : (
+                        availableUnitsFilter.map((u) => (
+                          <option key={u} value={u}>
+                            {u}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+
+                  {/* 4. Bread Type Additional Dropdown (قائمة منسدلة إضافية لنوع الخبز) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-black text-cyan-300">
+                        4. نوع الخبز (إضافي)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMasterEditorInitialCategory('breadTypes');
+                          setIsMasterEditorModalOpen(true);
+                        }}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
+                        title="تعديل وحذف قائمة نوع الخبز"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>تعديل/حذف</span>
+                      </button>
+                    </div>
+                    <select
+                      value={selectedBreadTypeFilter}
+                      onChange={(e) => setSelectedBreadTypeFilter(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-black border border-cyan-500/50 rounded-lg font-black text-cyan-200 focus:ring-1 focus:ring-cyan-500 cursor-pointer"
+                    >
+                      <option value="ALL">كافة أنواع الخبز</option>
+                      {Array.from(
+                        new Set([
+                          ...(appState.breadTypes || []),
+                          ...appState.bakeries.map((b) => b.breadType).filter(Boolean),
+                        ])
+                      ).map((bt) => (
+                        <option key={bt} value={bt}>
+                          {bt}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 5. Fuel & Line Type Additional Dropdown (قائمة منسدلة إضافية للوقود وخط الإنتاج) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-black text-purple-300">
+                        5. الوقود / خط الإنتاج
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMasterEditorInitialCategory('lineTypes');
+                          setIsMasterEditorModalOpen(true);
+                        }}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
+                        title="تعديل وحذف قائمتي نوع خط الإنتاج ونوع الوقود"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>تعديل/حذف</span>
+                      </button>
+                    </div>
+                    <select
+                      value={selectedFuelTypeFilter}
+                      onChange={(e) => setSelectedFuelTypeFilter(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-black border border-purple-500/50 rounded-lg font-black text-purple-200 focus:ring-1 focus:ring-purple-500 cursor-pointer"
+                    >
+                      <option value="ALL">كافة أنواع الوقود والخطوط</option>
+                      <optgroup label="نوع الوقود">
+                        {Array.from(
+                          new Set([
+                            ...(appState.fuelTypes || []),
+                            ...appState.bakeries.map((b) => b.fuelType).filter(Boolean),
+                          ])
+                        ).map((ft) => (
+                          <option key={`fuel-${ft}`} value={ft}>
+                            وقود: {ft}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="نوع خط الإنتاج">
+                        {Array.from(
+                          new Set([
+                            ...(appState.lineTypes || []),
+                            ...appState.bakeries.map((b) => b.lineType).filter(Boolean),
+                          ])
+                        ).map((lt) => (
+                          <option key={`line-${lt}`} value={lt}>
+                            خط: {lt}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
+
+                  {/* 6. Bakery Category Filter (نوع المخابز) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-black text-amber-300">
+                        6. نوع المخابز
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMasterEditorInitialCategory('bakeryCategories');
+                          setIsMasterEditorModalOpen(true);
+                        }}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-black flex items-center gap-0.5 cursor-pointer"
+                        title="تعديل وحذف قائمة نوع المخابز"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>تعديل/حذف</span>
+                      </button>
+                    </div>
+                    <select
+                      value={selectedCategoryFilter}
+                      onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-black border border-amber-500/50 rounded-lg font-black text-amber-300 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                    >
+                      <option value="ALL">كافة أنواع المخابز ({appState.bakeries.length})</option>
+                      <option value="مدعم">🍞 بلدي مدعم ({categoryCounts.baladi})</option>
+                      <option value="مطور">⚡ بلدي مطور ({categoryCounts.baladiMotawar})</option>
+                      <option value="سياحي">🍕 سياحي 72% ({categoryCounts.tourist})</option>
+                      <option value="فينو">🥐 فينو وأفرنجي ({categoryCounts.fino})</option>
+                      <option value="طباقي">🥖 طباقي ({categoryCounts.tabaqi})</option>
+                    </select>
+                  </div>
+
+                  {/* 7. Debt Status Filter */}
+                  <div>
+                    <label className="block text-[11px] font-black text-rose-300 mb-1">
+                      7. موقف المديونية
+                    </label>
+                    <select
+                      value={selectedDebtFilter}
+                      onChange={(e) =>
+                        setSelectedDebtFilter(e.target.value as 'ALL' | 'HAS_DEBT' | 'NO_DEBT')
+                      }
+                      className="w-full px-2.5 py-1.5 bg-black border border-rose-500/50 rounded-lg font-black text-rose-200 focus:ring-1 focus:ring-rose-500 cursor-pointer"
+                    >
+                      <option value="ALL">الكل (مديونيات وخالص)</option>
+                      <option value="HAS_DEBT">عليه مديونية متبقية فقط</option>
+                      <option value="NO_DEBT">خالص المديونية (0 ج.م)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              {/* Bakery Category Dashboard Filter Pills Bar (تصفية حية بتصنيف المخبز) */}
+              {/* Bakery Category Dashboard Filter Pills Bar (تصفية حية بنوع المخابز) */}
               <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
                 <div className="flex items-center gap-2">
                   <Store className="w-4 h-4 text-amber-400 animate-pulse" />
                   <span className="text-xs font-black text-amber-300">
-                    تصفية فورية بحسب تصنيف المخبز:
+                    تصفية فورية بحسب نوع المخابز:
                   </span>
                 </div>
 
@@ -2194,25 +2654,25 @@ export default function App() {
                         <ThHeaderTooltip label={ct.remainingDebt} tooltipKey="remainingDebt" />
                       </th>
 
-                      {/* 3. Quotas */}
+                      {/* 3. Quotas (5 columns: القيمة التأمينية -> الحصة التأمينية -> الحصة الفعلية -> الأرغفة اليومية -> متوسط نصيب الفرد للمخبز) */}
                       <th
-                        colSpan={4}
+                        colSpan={5}
                         className="py-2.5 px-2 bg-amber-950 border-l border-slate-800 text-amber-200"
                       >
                         الحصص والبيانات التموينية والتأمينية
                       </th>
 
-                      {/* 4. Demographics & Averages */}
+                      {/* 4. Demographics & Averages (8 columns: سكان القرية -> مستفيد 2023 -> مستفيدين 2024 -> مستفيدين 2025 -> متوسط 2023 -> متوسط 2024 -> متوسط 2025 -> الفرق التراكمي) */}
                       <th
-                        colSpan={9}
+                        colSpan={8}
                         className="py-2.5 px-2 bg-slate-900 border-l border-slate-800 text-blue-200"
                       >
                         إحصائيات السكان والمستفيدين والمتوسطات (2023 - 2025)
                       </th>
 
-                      {/* 5. Classification & Operations */}
+                      {/* 5. Classification & Operations (7 columns: نشاط المخبز -> نوع المخابز -> نوع الخبز -> سعر الشيكارة -> عدد نوع الخبز -> نوع خط الإنتاج -> نوع الوقود) */}
                       <th
-                        colSpan={6}
+                        colSpan={7}
                         className="py-2.5 px-2 bg-emerald-950 border-l border-slate-800 text-emerald-200"
                       >
                         التصنيف والتشغيل
@@ -2259,50 +2719,50 @@ export default function App() {
                         <ThHeaderTooltip label={ct.localUnit} tooltipKey="localUnit" />
                       </th>
 
-                      {/* 3. Quotas */}
+                      {/* 3. Quotas (القيمة التأمينية -> الحصة التأمينية -> الحصة الفعلية -> الأرغفة اليومية -> متوسط نصيب الفرد للمخبز) */}
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[100px]">
+                        <ThHeaderTooltip label={ct.insuranceValue} tooltipKey="insuranceValue" />
+                      </th>
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
                         <ThHeaderTooltip label={ct.insuranceQuota} tooltipKey="insuranceQuota" />
                       </th>
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
                         <ThHeaderTooltip label={ct.actualQuota} tooltipKey="actualQuota" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[100px]">
-                        <ThHeaderTooltip label={ct.insuranceValue} tooltipKey="insuranceValue" />
-                      </th>
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[95px] bg-amber-950/80 text-amber-300">
                         <ThHeaderTooltip label={ct.loavesCount} tooltipKey="loavesCount" />
                       </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[115px] bg-amber-950/50 text-amber-300">
+                        <ThHeaderTooltip label={ct.perCapitaAverage} tooltipKey="perCapitaAverage" />
+                      </th>
 
-                      {/* 4. Demographics & Averages */}
+                      {/* 4. Demographics & Averages (سكان القرية -> مستفيد عام 2023 -> مستفيدين عام 2024 -> مستفيدين عام 2025 -> متوسط عام 2023 -> متوسط عام 2024 -> متوسط عام 2025 -> الفرق التراكمي) */}
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[85px]">
                         <ThHeaderTooltip label={ct.villagePopulation} tooltipKey="villagePopulation" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px] bg-amber-950/50 text-amber-300">
-                        <ThHeaderTooltip label={ct.perCapitaAverage} tooltipKey="perCapitaAverage" />
-                      </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
                         <ThHeaderTooltip label={ct.beneficiaries2023} tooltipKey="beneficiaries2023" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">
-                        <ThHeaderTooltip label={ct.avg2023} tooltipKey="avg2023" />
-                      </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
                         <ThHeaderTooltip label={ct.beneficiaries2024} tooltipKey="beneficiaries2024" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">
-                        <ThHeaderTooltip label={ct.avg2024} tooltipKey="avg2024" />
-                      </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
                         <ThHeaderTooltip label={ct.beneficiaries2025} tooltipKey="beneficiaries2025" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[75px]">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px]">
+                        <ThHeaderTooltip label={ct.avg2023} tooltipKey="avg2023" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px]">
+                        <ThHeaderTooltip label={ct.avg2024} tooltipKey="avg2024" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px]">
                         <ThHeaderTooltip label={ct.avg2025} tooltipKey="avg2025" />
                       </th>
-                      <th className="py-2 px-2 border-l border-slate-800 min-w-[80px] bg-slate-900 text-amber-300">
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px] bg-slate-900 text-amber-300">
                         <ThHeaderTooltip label={ct.avgDiff} tooltipKey="avgDiff" />
                       </th>
 
-                      {/* 5. Classification & Operations */}
+                      {/* 5. Classification & Operations (نشاط المخبز -> نوع المخابز -> نوع الخبز -> سعر الشيكارة -> عدد نوع الخبز -> نوع خط الإنتاج -> نوع الوقود) */}
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[80px]">
                         <ThHeaderTooltip label={ct.activityStatus} tooltipKey="activityStatus" />
                       </th>
@@ -2311,6 +2771,9 @@ export default function App() {
                       </th>
                       <th className="py-2 px-2 border-l border-slate-800 min-w-[95px]">
                         <ThHeaderTooltip label={ct.breadType} tooltipKey="breadType" />
+                      </th>
+                      <th className="py-2 px-2 border-l border-slate-800 min-w-[90px] bg-emerald-950/50 text-emerald-300">
+                        <ThHeaderTooltip label={ct.flourBagPrice || 'سعر الشيكارة'} tooltipKey="flourBagPrice" />
                       </th>
                       <th className="py-2 px-1 border-l border-slate-800 min-w-[75px] text-amber-300">
                         <ThHeaderTooltip label={ct.breadTypeCount} tooltipKey="breadTypeCount" />
@@ -2456,44 +2919,44 @@ export default function App() {
                               )}
                             </td>
 
-                            {/* 3. Quotas */}
+                            {/* 3. Quotas (القيمة التأمينية -> الحصة التأمينية -> الحصة الفعلية -> الأرغفة اليومية -> متوسط نصيب الفرد للمخبز) */}
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
+                              {b.insuranceValue?.toLocaleString()}
+                            </td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-amber-400">
                               {b.insuranceQuota}
                             </td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-cyan-300">
                               {b.actualQuota}
                             </td>
-                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                              {b.insuranceValue?.toLocaleString()}
-                            </td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-amber-950/30 text-amber-200">
                               {b.loavesCount?.toLocaleString()}
                             </td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-amber-950/40 text-amber-300">
+                              {Number(b.perCapitaAverage || 0).toFixed(2)}
+                            </td>
 
-                            {/* 4. Demographics & Averages */}
+                            {/* 4. Demographics & Averages (سكان القرية -> مستفيد 2023 -> مستفيدين 2024 -> مستفيدين 2025 -> متوسط 2023 -> متوسط 2024 -> متوسط 2025 -> الفرق التراكمي) */}
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                               {b.villagePopulation?.toLocaleString()}
-                            </td>
-                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-amber-950/40 text-amber-300">
-                              {b.perCapitaAverage}
                             </td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-400">
                               {b.beneficiaries2023?.toLocaleString()}
                             </td>
-                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">{b.avg2023}</td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-400">
                               {b.beneficiaries2024?.toLocaleString()}
                             </td>
-                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">{b.avg2024}</td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-400">
                               {b.beneficiaries2025?.toLocaleString()}
                             </td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">{b.avg2023}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">{b.avg2024}</td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">{b.avg2025}</td>
                             <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black bg-slate-800 text-amber-300">
                               {b.avgDiff}
                             </td>
 
-                            {/* 5. Classification & Operations */}
+                            {/* 5. Classification & Operations (نشاط المخبز -> نوع المخابز -> نوع الخبز -> سعر الشيكارة -> عدد نوع الخبز -> نوع خط الإنتاج -> نوع الوقود) */}
                             <td className="py-2.5 px-2 border-l border-slate-800">
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-black ${
@@ -2523,6 +2986,9 @@ export default function App() {
                               </span>
                             </td>
                             <td className="py-2.5 px-2 border-l border-slate-800 text-slate-200">{b.breadType}</td>
+                            <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged font-black text-emerald-300 bg-emerald-950/20">
+                              {(b.flourBagPrice ?? 950).toLocaleString()} ج.م
+                            </td>
                             <td className="py-2.5 px-1 border-l border-slate-800 num-enlarged font-black text-amber-400 bg-amber-950/20">
                               {b.breadTypeCount || 1}
                             </td>
@@ -2640,6 +3106,53 @@ export default function App() {
             </button>
           )}
 
+          {/* Quick Animated Charts Button (مفتاح الرسوم المتحركة مثل باقي المفاتيح) */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('charts')}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-700 hover:from-indigo-500 hover:to-purple-600 text-white font-black text-xs rounded-xl shadow-lg border border-indigo-400/60 transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+            title="فتح الرسوم المتحركة والبيانية للمخابز والمديونيات"
+          >
+            <BarChart3 className="w-4 h-4 text-white transition-transform duration-300 group-hover:scale-110" />
+            <span className="hidden sm:inline">الرسوم المتحركة</span>
+          </button>
+
+          {/* Quick Daily Tasks Button */}
+          <button
+            type="button"
+            onClick={() => setIsDailyTasksModalOpen(true)}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/40 hover:border-amber-400 font-black text-xs rounded-xl shadow-md transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+            title="إدارة المهام اليومية للمخابز"
+          >
+            <ListTodo className="w-4 h-4 text-amber-400 transition-transform duration-300 group-hover:scale-110" />
+            <span className="hidden md:inline">المهام اليومية</span>
+          </button>
+
+          {/* Quick Master Editor Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setMasterEditorInitialCategory('ALL');
+              setIsMasterEditorModalOpen(true);
+            }}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/40 hover:border-amber-400 font-black text-xs rounded-xl shadow-md transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+            title="التعديل داخل المنظومة (التعديل على جميع القوائم المنسدلة)"
+          >
+            <Sliders className="w-4 h-4 text-amber-400 transition-transform duration-300 group-hover:scale-110" />
+            <span className="hidden md:inline">التعديل داخل المنظومة</span>
+          </button>
+
+          {/* Quick Unified Save, Import & Backup Center */}
+          <button
+            type="button"
+            onClick={() => setIsBackupModalOpen(true)}
+            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-emerald-500/40 hover:border-emerald-400 font-black text-xs rounded-xl shadow-md transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
+            title="الحفظ والاستيراد والنسخ الاحتياطي الموحد"
+          >
+            <Database className="w-4 h-4 text-emerald-400 transition-transform duration-300 group-hover:scale-110" />
+            <span className="hidden lg:inline">الحفظ والاستيراد والنسخ</span>
+          </button>
+
           {/* Quick Print A4 / Reports Center */}
           <button
             type="button"
@@ -2649,30 +3162,6 @@ export default function App() {
           >
             <Printer className="w-4 h-4 text-cyan-400 transition-transform duration-300 group-hover:-translate-y-0.5" />
             <span className="hidden sm:inline">طباعة الكشف</span>
-          </button>
-
-          {/* Quick Backup to Hard Drive */}
-          <button
-            type="button"
-            onClick={() => setIsBackupModalOpen(true)}
-            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-emerald-500/40 hover:border-emerald-400 font-black text-xs rounded-xl shadow-md transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
-            title="حفظ تلقائي للنسخة الاحتياطية على القرص الصلب (Hard Disk)"
-          >
-            <HardDrive className="w-4 h-4 text-emerald-400 transition-transform duration-300 group-hover:scale-110" />
-            <span className="hidden md:inline">النسخ التلقائي</span>
-          </button>
-
-          {/* Quick Download EXE / HTML App */}
-          <button
-            type="button"
-            onClick={async () => {
-              await downloadWindowsExeLauncher();
-            }}
-            className="group relative flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-black text-xs rounded-xl shadow-lg border border-red-400/60 transition-all duration-300 transform hover:scale-108 active:scale-95 cursor-pointer"
-            title="تحميل التطبيق المحدث (تشغيل مباشر مستقل بصيغة EXE / HTML)"
-          >
-            <Download className="w-4 h-4 text-white stroke-[2.5] transition-transform duration-300 group-hover:translate-y-0.5" />
-            <span className="hidden lg:inline">تحميل التطبيق</span>
           </button>
         </div>
       </aside>
@@ -2704,6 +3193,11 @@ export default function App() {
           existingBakeries={appState.bakeries}
           villages={appState.villages}
           activityStatuses={appState.activityStatuses}
+          bakeryCategories={appState.bakeryCategories}
+          breadTypes={appState.breadTypes}
+          breadTypeCounts={appState.breadTypeCounts}
+          lineTypes={appState.lineTypes}
+          fuelTypes={appState.fuelTypes}
           currentUser={appState.currentUser}
           onAddActivityStatus={(newStatus) => {
             if (!appState.activityStatuses.includes(newStatus)) {
@@ -2722,7 +3216,66 @@ export default function App() {
             });
             triggerSave({ ...appState, villages: updatedVillages });
           }}
+          onUpdateDropdownList={(listKey, updatedList) => {
+            triggerSave(
+              {
+                ...appState,
+                [listKey]: updatedList,
+              },
+              'تم تحديث وحفظ القائمة المنسدلة بنجاح'
+            );
+          }}
+          onOpenMasterDropdownEditor={() => {
+            setIsBakeryModalOpen(false);
+            setMasterEditorInitialCategory('ALL');
+            setIsMasterEditorModalOpen(true);
+          }}
           onSave={handleSaveBakery}
+        />
+      )}
+
+      {/* 1.1 Daily Tasks Manager Modal (إدارة المهام اليومية) */}
+      {isDailyTasksModalOpen && (
+        <DailyTasksModal
+          isOpen={isDailyTasksModalOpen}
+          onClose={() => setIsDailyTasksModalOpen(false)}
+          tasks={appState.dailyTasks || []}
+          bakeries={appState.bakeries}
+          currentUser={appState.currentUser}
+          onSaveTasks={(updatedTasks, toastMessage) =>
+            triggerSave({ ...appState, dailyTasks: updatedTasks }, toastMessage)
+          }
+        />
+      )}
+
+      {/* 1.2 Unified Master System & Dropdowns Editor Modal (التعديل داخل المنظومة / التعديل على جميع القوائم المنسدلة) */}
+      {isMasterEditorModalOpen && (
+        <SystemMasterEditorModal
+          isOpen={isMasterEditorModalOpen}
+          onClose={() => setIsMasterEditorModalOpen(false)}
+          appState={appState}
+          onUpdateState={(newState, toastMsg) => triggerSave(newState, toastMsg)}
+          initialCategory={masterEditorInitialCategory}
+          onOpenColumnTitles={() => {
+            setIsMasterEditorModalOpen(false);
+            setIsColumnModalOpen(true);
+          }}
+          onOpenHeaderCustomizer={() => {
+            setIsMasterEditorModalOpen(false);
+            setIsHeaderModalOpen(true);
+          }}
+          onOpenDailyReminders={() => {
+            setIsMasterEditorModalOpen(false);
+            setIsDailySettingsModalOpen(true);
+          }}
+          onOpenUsersManager={() => {
+            setIsMasterEditorModalOpen(false);
+            setIsUsersModalOpen(true);
+          }}
+          onOpenVillagesManager={() => {
+            setIsMasterEditorModalOpen(false);
+            setIsVillageModalOpen(true);
+          }}
         />
       )}
 
@@ -2745,6 +3298,10 @@ export default function App() {
           onClose={() => setIsAlertsModalOpen(false)}
           bakeries={appState.bakeries}
           debts={appState.debts}
+          onOpenDailySettings={() => {
+            setIsAlertsModalOpen(false);
+            setIsDailySettingsModalOpen(true);
+          }}
           onOpenWeeklyInstallments={(bakeryId) => {
             setSelectedInstallmentBakeryId(bakeryId);
             setIsWeeklyInstallmentsModalOpen(true);
@@ -2788,15 +3345,16 @@ export default function App() {
         />
       )}
 
-      {/* 4. Header Customizer Modal */}
+      {/* 4. Header & System Settings Customizer Modal (includes 'إعدادات التذكير') */}
       {isHeaderModalOpen && (
         <HeaderCustomizerModal
           isOpen={isHeaderModalOpen}
           onClose={() => setIsHeaderModalOpen(false)}
           config={appState.systemConfig}
           onSaveConfig={(updatedConfig) =>
-            triggerSave({ ...appState, systemConfig: updatedConfig }, 'تم حفظ وتحديث ترويسة وهوية المنظومة بنجاح')
+            triggerSave({ ...appState, systemConfig: updatedConfig }, 'تم حفظ وتحديث إعدادات النظام والترويسة وإعدادات التذكير بنجاح')
           }
+          onOpenDailyAlertSettings={() => setIsDailySettingsModalOpen(true)}
         />
       )}
 
@@ -2826,7 +3384,7 @@ export default function App() {
         />
       )}
 
-      {/* 7. Backup & Partition & Factory Reset Modal */}
+      {/* 7. Backup & Partition & Google Drive & Factory Reset Modal */}
       {isBackupModalOpen && (
         <BackupModal
           isOpen={isBackupModalOpen}
@@ -2851,12 +3409,38 @@ export default function App() {
           }
           onUpdateUser={(updatedUser) => {
             const updatedUsers = appState.users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
-            triggerSave({ ...appState, users: updatedUsers }, `تم تحديث صلاحية المستخدم (${updatedUser.fullName}) بنجاح`);
+            const isCurrent = appState.currentUser?.id === updatedUser.id;
+            if (isCurrent) {
+              saveSessionUser(updatedUser);
+            }
+            triggerSave(
+              {
+                ...appState,
+                users: updatedUsers,
+                currentUser: isCurrent ? updatedUser : appState.currentUser,
+              },
+              `تم حفظ تعديل بيانات الحساب والاسم بالكامل (${updatedUser.fullName}) والصلاحيات بنجاح`
+            );
           }}
           onDeleteUser={(userId) => {
             const updatedUsers = appState.users.filter((u) => u.id !== userId);
             triggerSave({ ...appState, users: updatedUsers }, 'تم حذف المستخدم وتحديث القائمة بنجاح');
           }}
+        />
+      )}
+
+      {/* 8.1 Advanced Role Permissions Modal (إعدادات الصلاحيات المتقدمة في SystemConfig) */}
+      {isAdvancedPermissionsModalOpen && (
+        <AdvancedPermissionsModal
+          isOpen={isAdvancedPermissionsModalOpen}
+          onClose={() => setIsAdvancedPermissionsModalOpen(false)}
+          systemConfig={appState.systemConfig}
+          onSaveSystemConfig={(updatedConfig: SystemConfig) =>
+            triggerSave(
+              { ...appState, systemConfig: updatedConfig },
+              'تم حفظ إعدادات الصلاحيات المتقدمة للأدوار (مفتش، مراجع، مدير) في SystemConfig بنجاح'
+            )
+          }
         />
       )}
 
@@ -2902,6 +3486,79 @@ export default function App() {
           }}
         />
       )}
+
+      {/* 12. Daily Alert & Reminder Settings Modal (إعدادات التنبيه اليومي والتذكير) */}
+      {isDailySettingsModalOpen && (
+        <DailyAlertSettingsModal
+          isOpen={isDailySettingsModalOpen}
+          onClose={() => setIsDailySettingsModalOpen(false)}
+          config={
+            appState.systemConfig?.dailyAlertConfig || {
+              enabled: true,
+              alertTime: '09:00',
+              notifyBrowser: true,
+              notifySound: true,
+              targetDocs: ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate'],
+              daysThreshold: 15,
+            }
+          }
+          bakeries={appState.bakeries}
+          currentUser={appState.currentUser}
+          onSaveConfig={handleSaveDailyAlertConfig}
+          onTriggerTestAlert={handleTriggerTestAlert}
+        />
+      )}
+
+      {/* 13. Daily Alert Notification Popup Modal */}
+      {dailyNotificationData.isOpen && (
+        <DailyAlertNotificationModal
+          isOpen={dailyNotificationData.isOpen}
+          onClose={() => setDailyNotificationData((prev) => ({ ...prev, isOpen: false }))}
+          expiredBakeries={dailyNotificationData.expiredBakeries}
+          alertTime={dailyNotificationData.alertTime}
+          onViewInBakeriesTable={() => {
+            setDailyNotificationData((prev) => ({ ...prev, isOpen: false }));
+            setActiveTab('bakeries');
+          }}
+          onOpenAlertsCenter={() => {
+            setDailyNotificationData((prev) => ({ ...prev, isOpen: false }));
+            setIsAlertsModalOpen(true);
+          }}
+        />
+      )}
+
+      {/* 14. Inbox Chat & Administrative Instructions Modal (صندوق الوارد) */}
+      <InboxChatModal
+        isOpen={isInboxModalOpen}
+        onClose={() => setIsInboxModalOpen(false)}
+        currentUser={appState.currentUser}
+        users={appState.users}
+        bakeries={appState.bakeries}
+        messages={inboxMessages}
+        onSendMessage={handleSendInboxMessage}
+        onDeleteMessage={handleDeleteInboxMessage}
+        onMarkAllRead={handleMarkAllInboxRead}
+      />
+
+      {/* 15. Daily Database Entry Comprehensive Briefing Modal (شاشة التنبيه اليومي للمديونيات والتراخيص والعقود المنتهية) */}
+      <DailyEntryBriefingModal
+        isOpen={isDailyBriefingModalOpen}
+        onClose={() => setIsDailyBriefingModalOpen(false)}
+        bakeries={appState.bakeries}
+        debts={appState.debts}
+        expiryLeadDays={appState.systemConfig?.dailyAlertConfig?.daysThreshold || 30}
+        onJumpToDebtsView={() => {
+          setActiveTab('debts');
+          setDebtFilterBakeryId(undefined);
+        }}
+        onOpenAlertsModal={() => setIsAlertsModalOpen(true)}
+        onOpenInboxModal={() => setIsInboxModalOpen(true)}
+        onEditBakery={(bakery) => {
+          setBakeryToEdit(bakery);
+          setIsBakeryModalOpen(true);
+        }}
+        unreadInboxCount={unreadInboxCount}
+      />
 
       {/* Real-time Floating Save Success Toast Notification */}
       {saveToast && (

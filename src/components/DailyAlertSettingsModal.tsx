@@ -168,11 +168,7 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
     };
 
     onSaveConfig(updated);
-    setToastMsg(`تم حفظ إعدادات التنبيه اليومي بنجاح (${alertTime})`);
-    setTimeout(() => {
-      setToastMsg('');
-      onClose();
-    }, 1200);
+    onClose();
   };
 
   const handleTestAlert = () => {
@@ -183,14 +179,14 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-sm overflow-y-auto cursor-pointer"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 overflow-y-auto cursor-pointer"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
         }
       }}
     >
-      <div className="bg-slate-950 text-white rounded-2xl shadow-2xl border-2 border-amber-500/50 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden cursor-default animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-slate-950 text-white rounded-2xl shadow-2xl border-2 border-amber-500/50 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden cursor-default">
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-900 via-amber-950 to-slate-900 p-4 border-b border-amber-500/40 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -199,13 +195,13 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
             </div>
             <div>
               <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                <span>إعدادات التنبيه اليومي لتراخيص المخابز</span>
+                <span>إعدادات التذكير والتنبيه اليومي لتراخيص المخابز</span>
                 <span className="text-[10px] bg-amber-400 text-slate-950 font-black px-2 py-0.5 rounded-full font-mono">
                   صلاحية الإدارة 👑
                 </span>
               </h3>
               <p className="text-xs text-amber-200/90 mt-0.5 font-medium">
-                تعيين وقت محدد يومياً لتذكير مسؤولي الإدارة تلقائياً بوجود مخابز منتهية التراخيص لضمان المتابعة الرقابية المستمرة
+                تحديد عدد الأيام قبل انتهاء أي ترخيص (السجل التجاري، البطاقة الضريبية، رخصة المخبز، عقد الإيجار) ووقت الإخطار اليومي وإشعارات المتصفح
               </p>
             </div>
           </div>
@@ -213,8 +209,8 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-xl bg-red-950/70 hover:bg-red-700 text-white transition cursor-pointer border border-red-500/40 hover:scale-105"
-            title="إغلاق النافذة (Escape)"
+            className="p-1.5 rounded-xl bg-red-950/70 hover:bg-red-700 text-white cursor-pointer border border-red-500/40"
+            title="إغلاق النافذة فوراً (Escape)"
           >
             <X className="w-5 h-5 stroke-[2.5]" />
           </button>
@@ -222,7 +218,7 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
 
         {/* Success Toast Bar */}
         {toastMsg && (
-          <div className="bg-emerald-600 text-white px-4 py-2 text-xs font-black flex items-center gap-2 animate-in fade-in shrink-0">
+          <div className="bg-emerald-600 text-white px-4 py-2 text-xs font-black flex items-center gap-2 shrink-0">
             <Check className="w-4 h-4" />
             <span>{toastMsg}</span>
           </div>
@@ -310,14 +306,29 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
             </div>
           </div>
 
-          {/* Section 3: Criteria & Days Threshold */}
+          {/* Section 3: Criteria & Days Threshold before License Expiry */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 shadow-md">
-            <h4 className="text-sm font-black text-white flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-amber-400" />
-              <span>معيار التنبيه ونطاق الصلاحية المشمول:</span>
-            </h4>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-sm font-black text-white flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-amber-400" />
+                <span>تحديد عدد الأيام قبل انتهاء أي ترخيص (السجل التجاري / البطاقة الضريبية / الرخصة):</span>
+              </h4>
+              <div className="flex items-center gap-2 bg-black px-3 py-1.5 rounded-xl border border-amber-500/60">
+                <span className="text-xs font-black text-amber-300">عدد الأيام قبل الانتهاء:</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={365}
+                  disabled={!isAdmin || !enabled}
+                  value={daysThreshold}
+                  onChange={(e) => setDaysThreshold(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-16 bg-slate-900 text-amber-300 font-black text-sm text-center rounded-lg border border-amber-400/50 py-0.5 font-mono focus:outline-none focus:border-amber-400"
+                />
+                <span className="text-xs font-bold text-slate-300">يوماً</span>
+              </div>
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <button
                 type="button"
                 disabled={!isAdmin || !enabled}
@@ -329,11 +340,30 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-black">المنتهية بالفعل فقط</span>
+                  <span className="text-xs font-black">المنتهية بالفعل (0 يوم)</span>
                   {daysThreshold === 0 && <Check className="w-3.5 h-3.5 text-red-400" />}
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  تنبيه عاجل فقط بالمخابز التي انقضى تاريخ صلاحيتها وتعتبر مخالفة
+                  تنبيه عاجل بالمخابز التي انقضى تاريخ صلاحيتها
+                </p>
+              </button>
+
+              <button
+                type="button"
+                disabled={!isAdmin || !enabled}
+                onClick={() => setDaysThreshold(7)}
+                className={`p-3 rounded-xl border text-right transition cursor-pointer disabled:opacity-50 ${
+                  daysThreshold === 7
+                    ? 'bg-gradient-to-r from-orange-950/80 to-slate-900 border-orange-500 text-white shadow-md'
+                    : 'bg-black/60 border-slate-800 text-slate-300 hover:bg-slate-850'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-black">قبل الانتهاء بـ 7 أيام</span>
+                  {daysThreshold === 7 && <Check className="w-3.5 h-3.5 text-orange-400" />}
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  تنبيه قبل أسبوع كامل من انتهاء الترخيص
                 </p>
               </button>
 
@@ -348,11 +378,11 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-black">المنتهية + خلال 15 يوماً</span>
+                  <span className="text-xs font-black">قبل الانتهاء بـ 15 يوماً</span>
                   {daysThreshold === 15 && <Check className="w-3.5 h-3.5 text-amber-400" />}
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  إنذار مبكر للمخابز المنتهية وتلك التي توشك على الانتهاء خلال أسبوعين
+                  إنذار مبكر للمخابز التي تنتهي خلال أسبوعين
                 </p>
               </button>
 
@@ -367,11 +397,11 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-black">المنتهية + خلال 30 يوماً</span>
+                  <span className="text-xs font-black">قبل الانتهاء بـ 30 يوماً</span>
                   {daysThreshold === 30 && <Check className="w-3.5 h-3.5 text-blue-400" />}
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  متابعة شاملة للمستندات المطلوب تجديدها خلال الشهر الجاري
+                  متابعة شاملة للمستندات المطلوب تجديدها خلال شهر
                 </p>
               </button>
             </div>

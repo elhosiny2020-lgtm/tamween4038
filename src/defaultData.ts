@@ -1,4 +1,4 @@
-import { Bakery, DebtRecord, VillageHierarchy, ColumnTitles, SystemConfig, AppUser } from './types';
+import { Bakery, DebtRecord, VillageHierarchy, ColumnTitles, SystemConfig, AppUser, DailyBakeryTask, InboxChatMessage } from './types';
 import { UPLOADED_OFFICIAL_LOGO } from './uploadedLogo';
 
 export const DEFAULT_OFFICIAL_LOGO = UPLOADED_OFFICIAL_LOGO;
@@ -9,6 +9,8 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   administrationTitle: 'إدارة تموين مركز المحلة الكبرى',
   englishSubtitle: 'MINISTRY OF SUPPLY AND INTERNAL TRADE',
   logoBase64: DEFAULT_OFFICIAL_LOGO,
+  gmailEmail: 'ELHOSINY2020@gmail.com',
+  googleDriveAutoSync: true,
   dailyAlertConfig: {
     enabled: true,
     alertTime: '09:00',
@@ -101,6 +103,35 @@ export const DEFAULT_BAKERY_CATEGORIES: string[] = [
   'مخبز طباقي'
 ];
 
+export const DEFAULT_BREAD_TYPES: string[] = [
+  'بلدي مدعم ماو',
+  'بلدي مجر',
+  'خبز آلي',
+  'طباقي'
+];
+
+export const DEFAULT_BREAD_TYPE_COUNTS: string[] = [
+  '1',
+  '2',
+  '3',
+  '4',
+  '5'
+];
+
+export const DEFAULT_LINE_TYPES: string[] = [
+  'نصف آلي',
+  'آلي كامل',
+  'يدوي',
+  'ميكانيكي كامل'
+];
+
+export const DEFAULT_FUEL_TYPES: string[] = [
+  'غاز طبيعي',
+  'سولار',
+  'مازوت',
+  'كهرباء'
+];
+
 export const DEFAULT_COLUMN_TITLES: ColumnTitles = {
   index: 'م',
   bakeryOwnerName: 'اسم صاحب المخبز',
@@ -108,22 +139,23 @@ export const DEFAULT_COLUMN_TITLES: ColumnTitles = {
   village: 'القرية',
   localUnit: 'الوحدة التابعة',
   remainingDebt: 'المتبقي على المخبز',
+  insuranceValue: 'القيمة التأمينية (ج.م)',
   insuranceQuota: 'الحصة التأمينية (شيكارة)',
   actualQuota: 'الحصة الفعلية (شيكارة)',
-  insuranceValue: 'القيمة التأمينية (ج.م)',
   loavesCount: 'الأرغفة اليومية',
+  perCapitaAverage: 'متوسط نصيب الفرد للمخبز',
   villagePopulation: 'سكان القرية',
-  perCapitaAverage: 'متوسط الفرد للمخبز',
-  beneficiaries2023: 'مستفيدي 2023',
-  avg2023: 'متوسط 2023',
-  beneficiaries2024: 'مستفيدي 2024',
-  avg2024: 'متوسط 2024',
-  beneficiaries2025: 'مستفيدي 2025',
-  avg2025: 'متوسط 2025',
+  beneficiaries2023: 'مستفيد عام 2023',
+  beneficiaries2024: 'مستفيدين عام 2024',
+  beneficiaries2025: 'مستفيدين عام 2025',
+  avg2023: 'متوسط عام 2023',
+  avg2024: 'متوسط عام 2024',
+  avg2025: 'متوسط عام 2025',
   avgDiff: 'الفرق التراكمي',
   activityStatus: 'نشاط المخبز',
-  bakeryCategory: 'تصنيف المخبز',
+  bakeryCategory: 'نوع المخابز',
   breadType: 'نوع الخبز',
+  flourBagPrice: 'سعر الشيكارة',
   breadTypeCount: 'عدد نوع الخبز',
   lineType: 'نوع خط الإنتاج',
   fuelType: 'نوع الوقود',
@@ -148,7 +180,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     insuranceValue: 18500,
     loavesCount: 24 * 1350, // 32400
     villagePopulation: 38500,
-    perCapitaAverage: (32400 / 38500).toFixed(3), // 0.842
+    perCapitaAverage: (32400 / 38500).toFixed(2), // 0.84
     beneficiaries2023: 34200,
     avg2023: (32400 / 34200).toFixed(3),
     beneficiaries2024: 35800,
@@ -157,7 +189,9 @@ export const INITIAL_BAKERIES: Bakery[] = [
     avg2025: (32400 / 37400).toFixed(3),
     avgDiff: ((32400 / 37400) - (32400 / 34200)).toFixed(3),
     activityStatus: 'شغال',
+    bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
+    flourBagPrice: 950,
     breadTypeCount: 1,
     lineType: 'نصف آلي',
     fuelType: 'غاز طبيعي',
@@ -180,7 +214,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     insuranceValue: 14200,
     loavesCount: 18 * 1350, // 24300
     villagePopulation: 29400,
-    perCapitaAverage: (24300 / 29400).toFixed(3),
+    perCapitaAverage: (24300 / 29400).toFixed(2), // 0.83
     beneficiaries2023: 26100,
     avg2023: (24300 / 26100).toFixed(3),
     beneficiaries2024: 27500,
@@ -189,7 +223,9 @@ export const INITIAL_BAKERIES: Bakery[] = [
     avg2025: (24300 / 28900).toFixed(3),
     avgDiff: ((24300 / 28900) - (24300 / 26100)).toFixed(3),
     activityStatus: 'شغال',
+    bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
+    flourBagPrice: 950,
     breadTypeCount: 1,
     lineType: 'آلي كامل',
     fuelType: 'سولار',
@@ -212,7 +248,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     insuranceValue: 16000,
     loavesCount: 20 * 1350, // 27000
     villagePopulation: 31200,
-    perCapitaAverage: (27000 / 31200).toFixed(3),
+    perCapitaAverage: (27000 / 31200).toFixed(2), // 0.87
     beneficiaries2023: 28000,
     avg2023: (27000 / 28000).toFixed(3),
     beneficiaries2024: 29500,
@@ -221,7 +257,9 @@ export const INITIAL_BAKERIES: Bakery[] = [
     avg2025: (27000 / 30800).toFixed(3),
     avgDiff: ((27000 / 30800) - (27000 / 28000)).toFixed(3),
     activityStatus: 'شغال',
+    bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
+    flourBagPrice: 950,
     breadTypeCount: 1,
     lineType: 'نصف آلي',
     fuelType: 'غاز طبيعي',
@@ -244,7 +282,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     insuranceValue: 17200,
     loavesCount: 22 * 1350, // 29700
     villagePopulation: 33400,
-    perCapitaAverage: (29700 / 33400).toFixed(3),
+    perCapitaAverage: (29700 / 33400).toFixed(2), // 0.89
     beneficiaries2023: 29800,
     avg2023: (29700 / 29800).toFixed(3),
     beneficiaries2024: 31200,
@@ -253,7 +291,9 @@ export const INITIAL_BAKERIES: Bakery[] = [
     avg2025: (29700 / 32900).toFixed(3),
     avgDiff: ((29700 / 32900) - (29700 / 29800)).toFixed(3),
     activityStatus: 'شغال',
+    bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مجر',
+    flourBagPrice: 950,
     breadTypeCount: 1,
     lineType: 'نصف آلي',
     fuelType: 'غاز طبيعي',
@@ -276,7 +316,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     insuranceValue: 12500,
     loavesCount: 16 * 1350, // 21600
     villagePopulation: 25800,
-    perCapitaAverage: (21600 / 25800).toFixed(3),
+    perCapitaAverage: (21600 / 25800).toFixed(2), // 0.84
     beneficiaries2023: 23000,
     avg2023: (21600 / 23000).toFixed(3),
     beneficiaries2024: 24200,
@@ -285,7 +325,9 @@ export const INITIAL_BAKERIES: Bakery[] = [
     avg2025: (21600 / 25100).toFixed(3),
     avgDiff: ((21600 / 25100) - (21600 / 23000)).toFixed(3),
     activityStatus: 'شغال',
+    bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
+    flourBagPrice: 950,
     breadTypeCount: 1,
     lineType: 'آلي كامل',
     fuelType: 'سولار',
@@ -422,6 +464,8 @@ export const INITIAL_USERS: AppUser[] = [
     fullName: 'مدير المنظومة التموينية',
     password: 'admin',
     role: 'admin',
+    gmailEmail: 'ELHOSINY2020@gmail.com',
+    googleDriveAutoSync: true,
     createdAt: '2026-01-01'
   },
   {
@@ -430,6 +474,8 @@ export const INITIAL_USERS: AppUser[] = [
     fullName: 'مفتش أول رقابة تموينية',
     password: '123',
     role: 'inspector',
+    gmailEmail: 'ELHOSINY2020@gmail.com',
+    googleDriveAutoSync: true,
     createdAt: '2026-02-15'
   },
   {
@@ -441,3 +487,89 @@ export const INITIAL_USERS: AppUser[] = [
     createdAt: '2026-03-01'
   }
 ];
+
+export const INITIAL_DAILY_TASKS: DailyBakeryTask[] = [
+  {
+    id: 'task-1',
+    title: 'متابعة تجديد رخصة المخبز المنتهية واستيفاء المستندات',
+    description: 'التنبيه على صاحب المخبز بسرعة تقديم شهادة تجديد الرخصة من مجلس المدينة',
+    bakeryId: 'b-105',
+    bakeryName: 'طارق مسعد الجوهري خضر',
+    village: 'العامرية',
+    priority: 'high',
+    dueDate: '2026-11-12',
+    status: 'pending',
+    assignedTo: 'مفتش أول رقابة تموينية',
+    createdAt: '2026-11-09'
+  },
+  {
+    id: 'task-2',
+    title: 'تحصيل الدفعة الأسبوعية المقررة من المديونية الكبرى',
+    description: 'استلام إيصال السداد الأسبوعي ومطابقته مع سجل المديونيات',
+    bakeryId: 'b-101',
+    bakeryName: 'أحمد محمود السعيد حسانين',
+    village: 'بشبيش',
+    priority: 'high',
+    dueDate: '2026-11-14',
+    status: 'in_progress',
+    assignedTo: 'مدير المنظومة التموينية',
+    createdAt: '2026-11-09'
+  },
+  {
+    id: 'task-3',
+    title: 'التفتيش الدوري على وزن ومواصفات الرغيف البلدي المدعم',
+    description: 'مراجعة الموازين الحساسة ونظافة أدوات العجن ولوحة مواعيد التشغيل',
+    bakeryId: 'b-102',
+    bakeryName: 'إبراهيم علي عبدالفتاح رضوان',
+    village: 'محلة حسن',
+    priority: 'medium',
+    dueDate: '2026-11-16',
+    status: 'pending',
+    assignedTo: 'مفتش أول رقابة تموينية',
+    createdAt: '2026-11-09'
+  },
+  {
+    id: 'task-4',
+    title: 'مراجعة مطابقة الحصة التأمينية والفعلية لشهر نوفمبر',
+    description: 'تحديث كشوف الحصص التموينية بالوحدات المحلية التابعة',
+    bakeryId: 'b-103',
+    bakeryName: 'محمد رفعت الشناوي البقلي',
+    village: 'صفط تراب',
+    priority: 'low',
+    dueDate: '2026-11-20',
+    status: 'completed',
+    assignedTo: 'مدير المنظومة التموينية',
+    createdAt: '2026-11-08'
+  }
+];
+
+export const INITIAL_INBOX_MESSAGES: InboxChatMessage[] = [
+  {
+    id: 'msg-1',
+    senderId: 'u-1',
+    senderName: 'مدير المنظومة التموينية',
+    senderRole: 'admin',
+    recipientTarget: 'ALL',
+    recipientLabel: 'جميع الأطراف والمستخدمين',
+    messageType: 'instruction',
+    content: 'تعليمات هامة لجميع مفتشي ومراجعي الإدارة: يرجى مراجعة كافة المديونيات التي تتجاوز 20,000 ج.م والتأكد من تحصيل الدفعات الأسبوعية وتجديد التراخيص والعقود المنتهية فوراً.',
+    timestamp: '2026-11-09 09:00 ص',
+    readBy: ['u-1']
+  },
+  {
+    id: 'msg-2',
+    senderId: 'u-2',
+    senderName: 'مفتش أول رقابة تموينية',
+    senderRole: 'inspector',
+    recipientTarget: 'ALL',
+    recipientLabel: 'جميع الأطراف والمستخدمين',
+    messageType: 'alert',
+    content: 'تم المرور الميداني على مخابز قرية بشبيش ومحلة حسن والتنبيه على أصحاب المخابز بسرعة استكمال تجديد السجل التجاري ورخصة التشغيل.',
+    relatedBakeryId: 'b-101',
+    relatedBakeryName: 'أحمد محمود السعيد حسانين',
+    timestamp: '2026-11-09 10:30 ص',
+    readBy: ['u-1', 'u-2']
+  }
+];
+
+

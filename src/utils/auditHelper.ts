@@ -1,4 +1,4 @@
-import { Bakery, DebtRecord } from '../types';
+import { Bakery, DebtRecord, DailyBakeryTask, TaskPriority } from '../types';
 
 /**
  * دالة الاختبار الشاملة والتدقيق البرمجي لكافة المعادلات التموينية والحسابية
@@ -26,11 +26,11 @@ export function calculateLoavesCount(insuranceQuota: number): number {
 }
 
 /**
- * 2. متوسط نصيب الفرد = عدد الأرغفة ÷ عدد سكان القرية
+ * 2. متوسط نصيب الفرد = عدد الأرغفة ÷ عدد سكان القرية (علامة عشرية ورقمين فقط)
  */
 export function calculatePerCapitaAverage(loavesCount: number, villagePopulation: number): string {
-  if (!villagePopulation || villagePopulation <= 0) return '0.000';
-  return (loavesCount / villagePopulation).toFixed(3);
+  if (!villagePopulation || villagePopulation <= 0) return '0.00';
+  return (loavesCount / villagePopulation).toFixed(2);
 }
 
 /**
@@ -105,7 +105,65 @@ export function calculateNetRemainingDebt(
 }
 
 /**
- * 10. تشغيل دالة الاختبار الشاملة والتحقق من دقة كافة المعادلات
+ * 10. دوال مساعدة نقية لإدارة القوائم المنسدلة (إضافة / تعديل / حذف)
+ */
+export function addDropdownOption(list: string[], newItem: string): string[] {
+  const clean = newItem.trim();
+  if (!clean || list.includes(clean)) return list;
+  return [...list, clean];
+}
+
+export function editDropdownOption(list: string[], oldItem: string, newItem: string): string[] {
+  const clean = newItem.trim();
+  if (!clean) return list;
+  return list.map((item) => (item === oldItem ? clean : item));
+}
+
+export function deleteDropdownOption(list: string[], itemToDelete: string): string[] {
+  return list.filter((item) => item !== itemToDelete);
+}
+
+/**
+ * 11. دوال مساعدة نقية لفرز وتصفية المهام اليومية حسب الأولوية وتاريخ الاستحقاق
+ */
+const PRIORITY_WEIGHT: Record<TaskPriority, number> = {
+  high: 3,
+  medium: 2,
+  low: 1,
+};
+
+export function filterAndSortDailyTasks(
+  tasks: DailyBakeryTask[],
+  options: {
+    priorityFilter?: 'ALL' | TaskPriority;
+    statusFilter?: 'ALL' | 'pending' | 'in_progress' | 'completed';
+    searchQuery?: string;
+  } = {}
+): DailyBakeryTask[] {
+  const { priorityFilter = 'ALL', statusFilter = 'ALL', searchQuery = '' } = options;
+  const q = searchQuery.trim().toLowerCase();
+
+  return tasks
+    .filter((t) => {
+      if (priorityFilter !== 'ALL' && t.priority !== priorityFilter) return false;
+      if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
+      if (q) {
+        const hay = `${t.title} ${t.description || ''} ${t.bakeryName || ''} ${t.village || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (a.status === 'completed' && b.status !== 'completed') return 1;
+      if (a.status !== 'completed' && b.status === 'completed') return -1;
+      const pDiff = PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority];
+      if (pDiff !== 0) return pDiff;
+      return (a.dueDate || '').localeCompare(b.dueDate || '');
+    });
+}
+
+/**
+ * 12. تشغيل دالة الاختبار الشاملة والتحقق من دقة كافة المعادلات
  */
 export function runComprehensiveAudit(
   sampleBakeries: Bakery[] = [],
@@ -133,14 +191,14 @@ export function runComprehensiveAudit(
     description: 'تحقق من حساب الأرغفة للحصص غير الصحيحة بدقة تقريبية.',
   });
 
-  // فحص 3: متوسط نصيب الفرد لسكان 30,000 نسمة بحصة 27,000 رغيف = 0.900
+  // فحص 3: متوسط نصيب الفرد لسكان 30,000 نسمة بحصة 27,000 رغيف = 0.90 (علامة عشرية ورقمين فقط)
   const perCapita = calculatePerCapitaAverage(27000, 30000);
   details.push({
     checkName: 'متوسط نصيب الفرد من الخبز (27,000 / 30,000)',
-    expected: '0.900',
+    expected: '0.90',
     actual: perCapita,
-    status: perCapita === '0.900' ? 'PASS' : 'FAIL',
-    description: 'تحقق من دقة قسمة الأرغفة على إجمالي سكان القرية بـ 3 أرقام عشرية.',
+    status: perCapita === '0.90' ? 'PASS' : 'FAIL',
+    description: 'تحقق من دقة قسمة الأرغفة على إجمالي سكان القرية بعلامة عشرية ورقمين فقط (0.90).',
   });
 
   // فحص 4: متوسط مستفيدي 2023 (27,000 / 27,000) = 1.000
@@ -257,3 +315,4 @@ export function runComprehensiveAudit(
     details,
   };
 }
+

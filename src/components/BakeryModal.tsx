@@ -25,10 +25,21 @@ interface BakeryModalProps {
   existingBakeries?: Bakery[];
   villages: VillageHierarchy[];
   activityStatuses?: string[];
+  bakeryCategories?: string[];
+  breadTypes?: string[];
+  breadTypeCounts?: string[];
+  lineTypes?: string[];
+  fuelTypes?: string[];
   currentUser?: AppUser | null;
   onSave: (bakery: Bakery) => void;
   onAddActivityStatus?: (status: string) => void;
   onAddLocalUnit?: (village: string, unit: string) => void;
+  onUpdateDropdownList?: (
+    listKey: 'activityStatuses' | 'bakeryCategories' | 'breadTypes' | 'breadTypeCounts' | 'lineTypes' | 'fuelTypes',
+    updatedList: string[]
+  ) => void;
+  onUpdateVillages?: (updatedVillages: VillageHierarchy[]) => void;
+  onOpenMasterDropdownEditor?: () => void;
 }
 
 export const BakeryModal: React.FC<BakeryModalProps> = ({
@@ -38,17 +49,41 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   existingBakeries = [],
   villages,
   activityStatuses = ['شغال', 'متوقف جزئي', 'متوقف كلي', 'ملغى'],
+  bakeryCategories = ['مخبز بلدي مدعم', 'مخبز بلدي مطور', 'مخبز سياحي 72%', 'مخبز فينو وأفرنجي', 'مخبز طباقي'],
+  breadTypes = ['بلدي مدعم ماو', 'بلدي مجر', 'خبز آلي', 'طباقي'],
+  breadTypeCounts = ['1', '2', '3', '4', '5'],
+  lineTypes = ['نصف آلي', 'آلي كامل', 'يدوي', 'ميكانيكي كامل'],
+  fuelTypes = ['غاز طبيعي', 'سولار', 'مازوت', 'كهرباء'],
   currentUser,
   onSave,
   onAddActivityStatus,
   onAddLocalUnit,
+  onUpdateDropdownList,
+  onUpdateVillages,
+  onOpenMasterDropdownEditor,
 }) => {
   const isReadOnly = currentUser?.role === 'viewer';
-  // Inline quick adds
+  // Inline quick adds & full inline edit/delete manager for any dropdown
   const [showAddUnitInput, setShowAddUnitInput] = useState(false);
   const [newUnitInput, setNewUnitInput] = useState('');
   const [showAddStatusInput, setShowAddStatusInput] = useState(false);
   const [newStatusInput, setNewStatusInput] = useState('');
+
+  // Which dropdown's inline Edit/Delete manager is currently open
+  const [openDropdownEditor, setOpenDropdownEditor] = useState<
+    | null
+    | 'village'
+    | 'localUnit'
+    | 'activityStatuses'
+    | 'bakeryCategories'
+    | 'breadTypes'
+    | 'breadTypeCounts'
+    | 'lineTypes'
+    | 'fuelTypes'
+  >(null);
+  const [dropdownNewItemText, setDropdownNewItemText] = useState('');
+  const [dropdownEditingItem, setDropdownEditingItem] = useState<{ oldVal: string; newVal: string } | null>(null);
+
   // Form State
   const [ownerName, setOwnerName] = useState('');
   const [machineNumber, setMachineNumber] = useState('');
@@ -61,9 +96,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [insuranceValue, setInsuranceValue] = useState<number>(15000);
   const [loavesCount, setLoavesCount] = useState<number>(20 * 1350);
 
-  // Demographics & Averages
+  // Demographics & Averages (متوسط نصيب الفرد بعلامة عشرية ورقمين فقط 0.00)
   const [villagePopulation, setVillagePopulation] = useState<number>(30000);
-  const [perCapitaAverage, setPerCapitaAverage] = useState<string>('0.900');
+  const [perCapitaAverage, setPerCapitaAverage] = useState<string>('0.90');
   const [beneficiaries2023, setBeneficiaries2023] = useState<number>(27000);
   const [avg2023, setAvg2023] = useState<string>('1.000');
   const [beneficiaries2024, setBeneficiaries2024] = useState<number>(28500);
@@ -76,6 +111,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [activityStatus, setActivityStatus] = useState('شغال');
   const [bakeryCategory, setBakeryCategory] = useState('مخبز بلدي مدعم');
   const [breadType, setBreadType] = useState('بلدي مدعم ماو');
+  const [flourBagPrice, setFlourBagPrice] = useState<number>(950);
   const [breadTypeCount, setBreadTypeCount] = useState<number>(1);
   const [lineType, setLineType] = useState('نصف آلي');
   const [fuelType, setFuelType] = useState('غاز طبيعي');
@@ -121,7 +157,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       avg2025,
       avgDiff,
       activityStatus,
+      bakeryCategory,
       breadType,
+      flourBagPrice,
       breadTypeCount,
       lineType,
       fuelType,
@@ -168,7 +206,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     avg2025,
     avgDiff,
     activityStatus,
+    bakeryCategory,
     breadType,
+    flourBagPrice,
     breadTypeCount,
     lineType,
     fuelType,
@@ -194,7 +234,8 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setLoavesCount(bakeryToEdit.loavesCount);
 
       setVillagePopulation(bakeryToEdit.villagePopulation);
-      setPerCapitaAverage(bakeryToEdit.perCapitaAverage);
+      const parsedPerCapita = parseFloat(String(bakeryToEdit.perCapitaAverage || '0'));
+      setPerCapitaAverage(!isNaN(parsedPerCapita) ? parsedPerCapita.toFixed(2) : '0.00');
       setBeneficiaries2023(bakeryToEdit.beneficiaries2023);
       setAvg2023(bakeryToEdit.avg2023);
       setBeneficiaries2024(bakeryToEdit.beneficiaries2024);
@@ -206,6 +247,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setActivityStatus(bakeryToEdit.activityStatus || 'شغال');
       setBakeryCategory(bakeryToEdit.bakeryCategory || 'مخبز بلدي مدعم');
       setBreadType(bakeryToEdit.breadType || 'بلدي مدعم ماو');
+      setFlourBagPrice(bakeryToEdit.flourBagPrice !== undefined ? Number(bakeryToEdit.flourBagPrice) : 950);
       setBreadTypeCount(bakeryToEdit.breadTypeCount || 1);
       setLineType(bakeryToEdit.lineType || 'نصف آلي');
       setFuelType(bakeryToEdit.fuelType || 'غاز طبيعي');
@@ -234,7 +276,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       const loaves = 20 * 1350;
       setLoavesCount(loaves);
       setVillagePopulation(30000);
-      setPerCapitaAverage((loaves / 30000).toFixed(3));
+      setPerCapitaAverage((loaves / 30000).toFixed(2));
       setBeneficiaries2023(27000);
       setAvg2023((loaves / 27000).toFixed(3));
       setBeneficiaries2024(28500);
@@ -247,6 +289,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setActivityStatus('شغال');
       setBakeryCategory('مخبز بلدي مدعم');
       setBreadType('بلدي مدعم ماو');
+      setFlourBagPrice(950);
       setBreadTypeCount(1);
       setLineType('نصف آلي');
       setFuelType('غاز طبيعي');
@@ -271,7 +314,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     setSelectedUnit(units[0] || '');
   };
 
-  // Dedicated Auto-Calculation Engine
+  // Dedicated Auto-Calculation Engine (متوسط نصيب الفرد بعلامة عشرية ورقمين فقط)
   const calculateAllAverages = (customQuota?: number, customPop?: number, customB23?: number, customB24?: number, customB25?: number) => {
     const q = customQuota !== undefined ? customQuota : insuranceQuota;
     const pop = customPop !== undefined ? customPop : villagePopulation;
@@ -282,7 +325,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     const calculatedLoaves = Math.round(Number(q || 0) * 1350);
     setLoavesCount(calculatedLoaves);
 
-    const calculatedPerCapita = pop > 0 ? (calculatedLoaves / pop).toFixed(3) : '0.000';
+    const calculatedPerCapita = pop > 0 ? (calculatedLoaves / pop).toFixed(2) : '0.00';
     setPerCapitaAverage(calculatedPerCapita);
 
     const cAvg23 = b23 > 0 ? (calculatedLoaves / b23).toFixed(3) : '0.000';
@@ -435,7 +478,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       insuranceValue: Number(insuranceValue) || 0,
       loavesCount: Number(loavesCount) || 0,
       villagePopulation: Number(villagePopulation) || 0,
-      perCapitaAverage: String(perCapitaAverage),
+      perCapitaAverage: !isNaN(parseFloat(perCapitaAverage))
+        ? parseFloat(perCapitaAverage).toFixed(2)
+        : '0.00',
       beneficiaries2023: Number(beneficiaries2023) || 0,
       avg2023: String(avg2023),
       beneficiaries2024: Number(beneficiaries2024) || 0,
@@ -446,6 +491,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       activityStatus,
       bakeryCategory: bakeryCategory.trim() || 'مخبز بلدي مدعم',
       breadType,
+      flourBagPrice: Number(flourBagPrice) || 950,
       breadTypeCount: Number(breadTypeCount) || 1,
       lineType,
       fuelType,
@@ -462,6 +508,70 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     onSave(bakery);
     onClose();
   };
+
+  // Helper for inline dropdown list management inside BakeryModal
+  const getActiveInlineList = (): {
+    key: 'activityStatuses' | 'bakeryCategories' | 'breadTypes' | 'breadTypeCounts' | 'lineTypes' | 'fuelTypes';
+    title: string;
+    items: string[];
+    currentVal: string;
+    setVal: (v: string) => void;
+  } | null => {
+    switch (openDropdownEditor) {
+      case 'activityStatuses':
+        return {
+          key: 'activityStatuses',
+          title: 'نشاط وحالة تشغيل المخبز',
+          items: activityStatuses,
+          currentVal: activityStatus,
+          setVal: setActivityStatus,
+        };
+      case 'bakeryCategories':
+        return {
+          key: 'bakeryCategories',
+          title: 'نوع المخابز',
+          items: bakeryCategories,
+          currentVal: bakeryCategory,
+          setVal: setBakeryCategory,
+        };
+      case 'breadTypes':
+        return {
+          key: 'breadTypes',
+          title: 'نوع الخبز',
+          items: breadTypes,
+          currentVal: breadType,
+          setVal: setBreadType,
+        };
+      case 'breadTypeCounts':
+        return {
+          key: 'breadTypeCounts',
+          title: 'عدد نوع الخبز',
+          items: breadTypeCounts,
+          currentVal: String(breadTypeCount),
+          setVal: (v) => setBreadTypeCount(Number(v) || 1),
+        };
+      case 'lineTypes':
+        return {
+          key: 'lineTypes',
+          title: 'نوع خط الإنتاج',
+          items: lineTypes,
+          currentVal: lineType,
+          setVal: setLineType,
+        };
+      case 'fuelTypes':
+        return {
+          key: 'fuelTypes',
+          title: 'نوع الوقود',
+          items: fuelTypes,
+          currentVal: fuelType,
+          setVal: setFuelType,
+        };
+      default:
+        return null;
+    }
+  };
+
+  const activeInlineList = getActiveInlineList();
 
   // Listen to Escape key to close modal
   useEffect(() => {
@@ -644,7 +754,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowAddUnitInput(!showAddUnitInput)}
-                    className="text-[10px] text-amber-700 hover:text-amber-900 font-black bg-amber-50 px-2 py-0.5 rounded border border-amber-200"
+                    className="text-[10px] text-amber-700 hover:text-amber-900 font-black bg-amber-50 px-2 py-0.5 rounded border border-amber-200 cursor-pointer"
                   >
                     {showAddUnitInput ? 'إلغاء' : '+ وحدة جديدة للقرية'}
                   </button>
@@ -671,7 +781,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                         setNewUnitInput('');
                         setShowAddUnitInput(false);
                       }}
-                      className="px-2.5 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-black"
+                      className="px-2.5 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-black cursor-pointer"
                     >
                       حفظ واختيار
                     </button>
@@ -696,58 +806,53 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             </div>
           </div>
 
-          {/* Section 2: Classification and Operations */}
-          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
-            <h4 className="text-xs font-black text-slate-800 pb-2 mb-3 border-b border-slate-200 flex items-center gap-1.5">
-              <Store className="w-4 h-4 text-amber-600" />
-              2. التصنيف والتشغيل
-            </h4>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3.5">
+          {/* Section 2: Classification and Operations (مع مفتاح تعديل وحذف لكل قائمة منسدلة) */}
+          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
+              <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                <Store className="w-4 h-4 text-amber-600" />
+                <span>2. التصنيف والتشغيل (إدارة وتعديل وحذف القوائم المنسدلة مباشرة)</span>
+              </h4>
+              {!isReadOnly && onOpenMasterDropdownEditor && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenMasterDropdownEditor();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/50 rounded-lg text-[11px] font-black cursor-pointer shadow-xs"
+                >
+                  <span>⚙️ التعديل على جميع القوائم المنسدلة</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-3">
+              {/* 1. نشاط المخبز */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-black text-slate-700">نشاط المخبز</label>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddStatusInput(!showAddStatusInput)}
-                    className="text-[10px] text-emerald-700 hover:text-emerald-900 font-black bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200"
-                    title="إضافة حالة نشاط جديدة"
-                  >
-                    {showAddStatusInput ? 'إلغاء' : '+ جديد'}
-                  </button>
-                </div>
-
-                {showAddStatusInput && (
-                  <div className="flex items-center gap-1 mb-1.5 animate-in fade-in">
-                    <input
-                      type="text"
-                      value={newStatusInput}
-                      onChange={(e) => setNewStatusInput(e.target.value)}
-                      placeholder="حالة النشاط"
-                      className="w-full px-2 py-0.5 bg-white border border-emerald-400 rounded text-[11px] font-bold"
-                    />
+                  {!isReadOnly && (
                     <button
                       type="button"
                       onClick={() => {
-                        const val = newStatusInput.trim();
-                        if (!val) return;
-                        if (onAddActivityStatus) {
-                          onAddActivityStatus(val);
-                        }
-                        setActivityStatus(val);
-                        setNewStatusInput('');
-                        setShowAddStatusInput(false);
+                        setOpenDropdownEditor(
+                          openDropdownEditor === 'activityStatuses' ? null : 'activityStatuses'
+                        );
+                        setDropdownEditingItem(null);
+                        setDropdownNewItemText('');
                       }}
-                      className="px-2 py-0.5 bg-emerald-700 text-white rounded text-[11px] font-black"
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-black bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 cursor-pointer"
+                      title="تعديل وحذف وإضافة في قائمة نشاط المخبز"
                     >
-                      حفظ
+                      {openDropdownEditor === 'activityStatuses' ? 'إغلاق القائمة' : '✏️ تعديل/حذف'}
                     </button>
-                  </div>
-                )}
-
+                  )}
+                </div>
                 <select
                   value={activityStatus}
                   onChange={(e) => setActivityStatus(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
                 >
                   {activityStatuses.map((st) => (
                     <option key={st} value={st}>
@@ -760,72 +865,347 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </select>
               </div>
 
+              {/* 2. نوع المخابز */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">تصنيف المخبز *</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">نوع المخابز *</label>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenDropdownEditor(
+                          openDropdownEditor === 'bakeryCategories' ? null : 'bakeryCategories'
+                        );
+                        setDropdownEditingItem(null);
+                        setDropdownNewItemText('');
+                      }}
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-black bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 cursor-pointer"
+                      title="تعديل وحذف وإضافة في قائمة نوع المخابز"
+                    >
+                      {openDropdownEditor === 'bakeryCategories' ? 'إغلاق القائمة' : '✏️ تعديل/حذف'}
+                    </button>
+                  )}
+                </div>
                 <select
                   value={bakeryCategory}
                   onChange={(e) => setBakeryCategory(e.target.value)}
-                  className="w-full px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                  className="w-full px-2.5 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 cursor-pointer"
                 >
-                  <option value="مخبز بلدي مدعم">مخبز بلدي مدعم</option>
-                  <option value="مخبز بلدي مطور">مخبز بلدي مطور</option>
-                  <option value="مخبز سياحي 72%">مخبز سياحي 72%</option>
-                  <option value="مخبز فينو وأفرنجي">مخبز فينو وأفرنجي</option>
-                  <option value="مخبز طباقي">مخبز طباقي</option>
+                  {bakeryCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                  {bakeryCategory && !bakeryCategories.includes(bakeryCategory) && (
+                    <option value={bakeryCategory}>{bakeryCategory}</option>
+                  )}
                 </select>
               </div>
 
+              {/* 3. نوع الخبز */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">نوع الخبز</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">نوع الخبز</label>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenDropdownEditor(
+                          openDropdownEditor === 'breadTypes' ? null : 'breadTypes'
+                        );
+                        setDropdownEditingItem(null);
+                        setDropdownNewItemText('');
+                      }}
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-black bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 cursor-pointer"
+                      title="تعديل وحذف وإضافة في قائمة نوع الخبز"
+                    >
+                      {openDropdownEditor === 'breadTypes' ? 'إغلاق القائمة' : '✏️ تعديل/حذف'}
+                    </button>
+                  )}
+                </div>
                 <select
                   value={breadType}
                   onChange={(e) => setBreadType(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
                 >
-                  <option value="بلدي مدعم ماو">بلدي مدعم ماو</option>
-                  <option value="بلدي مجر">بلدي مجر</option>
-                  <option value="خبز آلي">خبز آلي</option>
-                  <option value="طباقي">طباقي</option>
+                  {breadTypes.map((bt) => (
+                    <option key={bt} value={bt}>
+                      {bt}
+                    </option>
+                  ))}
+                  {breadType && !breadTypes.includes(breadType) && (
+                    <option value={breadType}>{breadType}</option>
+                  )}
                 </select>
               </div>
 
+              {/* 4. سعر الشيكارة (بجانب خانة نوع الخبز) */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">عدد نوع الخبز</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">سعر الشيكارة (ج.م)</label>
+                </div>
                 <input
                   type="number"
-                  min="1"
-                  max="10"
-                  value={breadTypeCount}
-                  onChange={(e) => setBreadTypeCount(Number(e.target.value) || 1)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  value={flourBagPrice}
+                  onChange={(e) => setFlourBagPrice(parseFloat(e.target.value) || 0)}
+                  placeholder="950"
+                  className="w-full px-2.5 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
                 />
               </div>
 
+              {/* 5. عدد نوع الخبز */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">نوع خط الإنتاج</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">عدد نوع الخبز</label>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenDropdownEditor(
+                          openDropdownEditor === 'breadTypeCounts' ? null : 'breadTypeCounts'
+                        );
+                        setDropdownEditingItem(null);
+                        setDropdownNewItemText('');
+                      }}
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-black bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 cursor-pointer"
+                      title="تعديل وحذف وإضافة في قائمة عدد نوع الخبز"
+                    >
+                      {openDropdownEditor === 'breadTypeCounts' ? 'إغلاق القائمة' : '✏️ تعديل/حذف'}
+                    </button>
+                  )}
+                </div>
                 <select
-                  value={lineType}
-                  onChange={(e) => setLineType(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  value={String(breadTypeCount)}
+                  onChange={(e) => setBreadTypeCount(Number(e.target.value) || 1)}
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
                 >
-                  <option value="نصف آلي">نصف آلي</option>
-                  <option value="آلي كامل">آلي كامل</option>
-                  <option value="يدوي">يدوي</option>
+                  {breadTypeCounts.map((cnt) => (
+                    <option key={cnt} value={cnt}>
+                      {cnt}
+                    </option>
+                  ))}
+                  {!breadTypeCounts.includes(String(breadTypeCount)) && (
+                    <option value={String(breadTypeCount)}>{breadTypeCount}</option>
+                  )}
                 </select>
               </div>
 
+              {/* 6. نوع خط الإنتاج */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">نوع الوقود</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">نوع خط الإنتاج</label>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenDropdownEditor(
+                          openDropdownEditor === 'lineTypes' ? null : 'lineTypes'
+                        );
+                        setDropdownEditingItem(null);
+                        setDropdownNewItemText('');
+                      }}
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-black bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 cursor-pointer"
+                      title="تعديل وحذف وإضافة في قائمة نوع خط الإنتاج"
+                    >
+                      {openDropdownEditor === 'lineTypes' ? 'إغلاق القائمة' : '✏️ تعديل/حذف'}
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={lineType}
+                  onChange={(e) => setLineType(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
+                >
+                  {lineTypes.map((lt) => (
+                    <option key={lt} value={lt}>
+                      {lt}
+                    </option>
+                  ))}
+                  {lineType && !lineTypes.includes(lineType) && (
+                    <option value={lineType}>{lineType}</option>
+                  )}
+                </select>
+              </div>
+
+              {/* 7. نوع الوقود */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">نوع الوقود</label>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenDropdownEditor(
+                          openDropdownEditor === 'fuelTypes' ? null : 'fuelTypes'
+                        );
+                        setDropdownEditingItem(null);
+                        setDropdownNewItemText('');
+                      }}
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-black bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 cursor-pointer"
+                      title="تعديل وحذف وإضافة في قائمة نوع الوقود"
+                    >
+                      {openDropdownEditor === 'fuelTypes' ? 'إغلاق القائمة' : '✏️ تعديل/حذف'}
+                    </button>
+                  )}
+                </div>
                 <select
                   value={fuelType}
                   onChange={(e) => setFuelType(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
                 >
-                  <option value="غاز طبيعي">غاز طبيعي</option>
-                  <option value="سولار">سولار</option>
+                  {fuelTypes.map((ft) => (
+                    <option key={ft} value={ft}>
+                      {ft}
+                    </option>
+                  ))}
+                  {fuelType && !fuelTypes.includes(fuelType) && (
+                    <option value={fuelType}>{fuelType}</option>
+                  )}
                 </select>
               </div>
             </div>
+
+            {/* Inline Dropdown List Editor Drawer (يظهر داخل المفتاح للتعديل والحذف والإضافة فوراً) */}
+            {activeInlineList && !isReadOnly && (
+              <div className="mt-3 p-3.5 bg-white border-2 border-amber-400 rounded-xl shadow-md space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <span className="text-xs font-black text-amber-950">
+                    ⚙️ إدارة وتعديل وحذف عناصر القائمة المنسدلة: ({activeInlineList.title})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setOpenDropdownEditor(null)}
+                    className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-[11px] font-black cursor-pointer"
+                  >
+                    إغلاق القائمة ✕
+                  </button>
+                </div>
+
+                {/* Add New Option */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={dropdownNewItemText}
+                    onChange={(e) => setDropdownNewItemText(e.target.value)}
+                    placeholder={`إضافة خيار جديد في (${activeInlineList.title})...`}
+                    className="flex-1 px-3 py-1.5 bg-slate-50 border border-amber-400 rounded-lg text-xs font-black text-slate-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const clean = dropdownNewItemText.trim();
+                      if (!clean) return;
+                      if (!activeInlineList.items.includes(clean)) {
+                        const updated = [...activeInlineList.items, clean];
+                        if (onUpdateDropdownList) {
+                          onUpdateDropdownList(activeInlineList.key, updated);
+                        }
+                      }
+                      activeInlineList.setVal(clean);
+                      setDropdownNewItemText('');
+                    }}
+                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black cursor-pointer"
+                  >
+                    + إضافة واختيار
+                  </button>
+                </div>
+
+                {/* Existing Items List with Edit & Delete */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-44 overflow-y-auto">
+                  {activeInlineList.items.map((item) => {
+                    const isEditing = dropdownEditingItem?.oldVal === item;
+                    return (
+                      <div
+                        key={item}
+                        className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                      >
+                        {isEditing ? (
+                          <div className="flex items-center gap-1 flex-1">
+                            <input
+                              type="text"
+                              value={dropdownEditingItem.newVal}
+                              onChange={(e) =>
+                                setDropdownEditingItem({
+                                  ...dropdownEditingItem,
+                                  newVal: e.target.value,
+                                })
+                              }
+                              className="flex-1 px-2 py-0.5 bg-white border border-amber-500 rounded text-xs font-black"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const clean = dropdownEditingItem.newVal.trim();
+                                if (clean && clean !== item) {
+                                  const updated = activeInlineList.items.map((x) =>
+                                    x === item ? clean : x
+                                  );
+                                  if (onUpdateDropdownList) {
+                                    onUpdateDropdownList(activeInlineList.key, updated);
+                                  }
+                                  if (activeInlineList.currentVal === item) {
+                                    activeInlineList.setVal(clean);
+                                  }
+                                }
+                                setDropdownEditingItem(null);
+                              }}
+                              className="px-2 py-0.5 bg-emerald-600 text-white rounded text-[10px] font-black cursor-pointer"
+                            >
+                              حفظ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDropdownEditingItem(null)}
+                              className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[10px] font-black cursor-pointer"
+                            >
+                              إلغاء
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span
+                              onClick={() => activeInlineList.setVal(item)}
+                              className="font-black text-slate-900 cursor-pointer hover:text-amber-700 flex-1 truncate"
+                              title="اضغط لاختيار هذا العنصر"
+                            >
+                              {item}
+                            </span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDropdownEditingItem({ oldVal: item, newVal: item })
+                                }
+                                className="px-1.5 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded text-[10px] font-black cursor-pointer"
+                              >
+                                تعديل
+                              </button>
+                              <button
+                                type="button"
+                                disabled={activeInlineList.items.length <= 1}
+                                onClick={() => {
+                                  if (activeInlineList.items.length <= 1) return;
+                                  const updated = activeInlineList.items.filter((x) => x !== item);
+                                  if (onUpdateDropdownList) {
+                                    onUpdateDropdownList(activeInlineList.key, updated);
+                                  }
+                                  if (activeInlineList.currentVal === item && updated.length > 0) {
+                                    activeInlineList.setVal(updated[0]);
+                                  }
+                                }}
+                                className="px-1.5 py-0.5 bg-red-100 hover:bg-red-200 disabled:opacity-40 text-red-800 rounded text-[10px] font-black cursor-pointer"
+                              >
+                                حذف
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section 3: Contact and Identity */}
@@ -905,13 +1285,39 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             </div>
           </div>
 
-          {/* Section 4: Quotas and Loaves */}
+          {/* Section 4: Quotas and Loaves (الترتيب المعتمد: القيمة التأمينية -> الحصة التأمينية -> الحصة الفعلية -> الأرغفة اليومية -> متوسط نصيب الفرد للمخبز) */}
           <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
             <h4 className="text-xs font-black text-slate-800 pb-2 mb-3 border-b border-slate-200 flex items-center gap-1.5">
               <Hash className="w-4 h-4 text-amber-600" />
               4. الحصص والبيانات التموينية والتأمينية
             </h4>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3.5">
+              {/* 1. القيمة التأمينية */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  القيمة التأمينية (بالجنيه) *
+                </label>
+                <input
+                  type="number"
+                  value={insuranceValue}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value) || 0;
+                    setInsuranceValue(v);
+                    if (v >= 0) setErrors((prev) => ({ ...prev, insuranceValue: '' }));
+                  }}
+                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
+                    errors.insuranceValue ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
+                  }`}
+                />
+                {errors.insuranceValue && (
+                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.insuranceValue}
+                  </p>
+                )}
+              </div>
+
+              {/* 2. الحصة التأمينية */}
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
                   الحصة التأمينية (بالشيكارة) *
@@ -938,6 +1344,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 )}
               </div>
 
+              {/* 3. الحصة الفعلية */}
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
                   الحصة الفعلية (بالشيكارة) *
@@ -963,33 +1370,10 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 )}
               </div>
 
+              {/* 4. الأرغفة اليومية */}
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  القيمة التأمينية (بالجنيه) *
-                </label>
-                <input
-                  type="number"
-                  value={insuranceValue}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value) || 0;
-                    setInsuranceValue(v);
-                    if (v >= 0) setErrors((prev) => ({ ...prev, insuranceValue: '' }));
-                  }}
-                  className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
-                    errors.insuranceValue ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
-                  }`}
-                />
-                {errors.insuranceValue && (
-                  <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    {errors.insuranceValue}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">
-                  عدد الأرغفة اليومية (الحصة × 1350) *
+                  الأرغفة اليومية (الحصة × 1350) *
                 </label>
                 <input
                   type="number"
@@ -1010,19 +1394,33 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                   </p>
                 )}
               </div>
+
+              {/* 5. متوسط نصيب الفرد للمخبز */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  متوسط نصيب الفرد للمخبز
+                </label>
+                <input
+                  type="text"
+                  value={perCapitaAverage}
+                  onChange={(e) => setPerCapitaAverage(e.target.value)}
+                  className="w-full px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-black text-amber-950 num-enlarged text-center"
+                />
+              </div>
             </div>
           </div>
 
-          {/* Section 5: Demographics & Yearly Averages */}
+          {/* Section 5: Demographics & Yearly Averages (الترتيب المعتمد: سكان القرية -> مستفيد عام 2023 -> مستفيدين عام 2024 -> مستفيدين عام 2025 -> متوسط عام 2023 -> متوسط عام 2024 -> متوسط عام 2025 -> الفرق التراكمي) */}
           <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
             <h4 className="text-xs font-black text-slate-800 pb-2 mb-3 border-b border-slate-200 flex items-center gap-1.5">
               <Calculator className="w-4 h-4 text-amber-600" />
               5. إحصائيات السكان والمستفيدين والمتوسطات (2023 - 2025)
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
+              {/* 1. سكان القرية */}
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  عدد سكان القرية
+                  سكان القرية
                 </label>
                 <input
                   type="number"
@@ -1036,20 +1434,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 />
               </div>
 
+              {/* 2. مستفيد عام 2023 */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">
-                  متوسط الفرد للمخبز (الأرغفة ÷ السكان)
-                </label>
-                <input
-                  type="text"
-                  value={perCapitaAverage}
-                  onChange={(e) => setPerCapitaAverage(e.target.value)}
-                  className="w-full px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-black text-amber-950 num-enlarged text-center"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">مستفيدي 2023</label>
+                <label className="block text-xs font-black text-slate-700 mb-1">مستفيد عام 2023</label>
                 <input
                   type="number"
                   value={beneficiaries2023}
@@ -1062,20 +1449,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 />
               </div>
 
+              {/* 3. مستفيدين عام 2024 */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">
-                  متوسط 2023 (الأرغفة ÷ مستفيدي 23)
-                </label>
-                <input
-                  type="text"
-                  value={avg2023}
-                  onChange={(e) => setAvg2023(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">مستفيدي 2024</label>
+                <label className="block text-xs font-black text-slate-700 mb-1">مستفيدين عام 2024</label>
                 <input
                   type="number"
                   value={beneficiaries2024}
@@ -1088,20 +1464,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 />
               </div>
 
+              {/* 4. مستفيدين عام 2025 */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">
-                  متوسط 2024 (الأرغفة ÷ مستفيدي 24)
-                </label>
-                <input
-                  type="text"
-                  value={avg2024}
-                  onChange={(e) => setAvg2024(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">مستفيدي 2025</label>
+                <label className="block text-xs font-black text-slate-700 mb-1">مستفيدين عام 2025</label>
                 <input
                   type="number"
                   value={beneficiaries2025}
@@ -1114,9 +1479,36 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 />
               </div>
 
+              {/* 5. متوسط عام 2023 */}
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  متوسط 2025 (الأرغفة ÷ مستفيدي 25)
+                  متوسط عام 2023
+                </label>
+                <input
+                  type="text"
+                  value={avg2023}
+                  onChange={(e) => setAvg2023(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
+                />
+              </div>
+
+              {/* 6. متوسط عام 2024 */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  متوسط عام 2024
+                </label>
+                <input
+                  type="text"
+                  value={avg2024}
+                  onChange={(e) => setAvg2024(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
+                />
+              </div>
+
+              {/* 7. متوسط عام 2025 */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  متوسط عام 2025
                 </label>
                 <input
                   type="text"
@@ -1126,15 +1518,16 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 />
               </div>
 
-              <div className="md:col-span-4 bg-amber-100/60 p-3 rounded-lg flex items-center justify-between border border-amber-200">
-                <span className="text-xs font-black text-amber-950">
-                  الفرق التراكمي بين متوسط 2025 ومتوسط 2023:
-                </span>
+              {/* 8. الفرق التراكمي */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  الفرق التراكمي
+                </label>
                 <input
                   type="text"
                   value={avgDiff}
                   onChange={(e) => setAvgDiff(e.target.value)}
-                  className="px-3 py-1 bg-white border-2 border-amber-500 rounded-lg text-xs font-black text-amber-900 num-enlarged text-center w-36"
+                  className="w-full px-3 py-2 bg-amber-100/70 border-2 border-amber-500 rounded-lg text-xs font-black text-amber-900 num-enlarged text-center"
                 />
               </div>
             </div>

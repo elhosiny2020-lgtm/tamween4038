@@ -1,165 +1,161 @@
-/**
- * Utility to sanitize CSS Color 4 functions (oklch, oklab, lch, lab, color, color-mix)
- * into standard rgb() / rgba() values so html2canvas / html2pdf.js can render without errors.
- */
+// Helper to sanitize modern CSS color functions (oklch, oklab, color-mix, light-dark)
+// in live and cloned documents before html2canvas parses stylesheets, preventing PDF export crashes,
+// and enforcing pure black (#000000) text for all report elements.
 
-let sharedCanvasCtx: CanvasRenderingContext2D | null = null;
-
-function getCanvasContext(): CanvasRenderingContext2D | null {
-  if (sharedCanvasCtx) return sharedCanvasCtx;
-  if (typeof document === 'undefined') return null;
+function createColorConverter() {
   const canvas = document.createElement('canvas');
   canvas.width = 1;
   canvas.height = 1;
-  sharedCanvasCtx = canvas.getContext('2d', { willReadFrequently: true });
-  return sharedCanvasCtx;
+  const ctx = canvas.getContext('2d');
+  const colorCache = new Map<string, string>();
+
+  const convertColorToRgb = (colorStr: string): string => {
+    if (colorCache.has(colorStr)) return colorCache.get(colorStr)!;
+    if (!ctx) return '#000000';
+    try {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = '#000000';
+      ctx.fillStyle = colorStr;
+      const computed = ctx.fillStyle;
+      if (computed && !computed.includes('oklch') && !computed.includes('oklab')) {
+        colorCache.set(colorStr, computed);
+        return computed;
+      }
+    } catch {
+      // fallback
+    }
+    colorCache.set(colorStr, '#000000');
+    return '#000000';
+  };
+
+  const sanitizeCssText = (css: string): string => {
+    let cleaned = css.replace(/(?:oklch|oklab|lch|lab)\([^)]+\)/gi, (match) => convertColorToRgb(match));
+    cleaned = cleaned.replace(/color-mix\([^)]+\)/gi, '#1e293b');
+    return cleaned;
+  };
+
+  return { sanitizeCssText };
 }
 
-const colorCache = new Map<string, string>();
-
-/**
- * Converts a single CSS color token (e.g. oklch(...), oklab(...), color(srgb ...))
- * into standard rgb(r, g, b) or rgba(r, g, b, a) using a 1x1 2D canvas pixel read.
- */
-export function convertColorTokenToRgb(token: string): string {
-  const trimmed = token.trim();
-  const cached = colorCache.get(trimmed);
-  if (cached) return cached;
-
-  const ctx = getCanvasContext();
-  if (!ctx) return 'rgb(0, 0, 0)';
-
+export function sanitizeLiveStylesheets() {
   try {
-    ctx.clearRect(0, 0, 1, 1);
-    // Reset to transparent black first to detect invalid assignments
-    ctx.fillStyle = 'rgba(0, 0, 0, 0)';
-    ctx.fillStyle = trimmed;
-    ctx.fillRect(0, 0, 1, 1);
-    const data = ctx.getImageData(0, 0, 1, 1).data;
-    const r = data[0];
-    const g = data[1];
-    const b = data[2];
-    const a = data[3];
-
-    let result: string;
-    if (a === 0) {
-      result = 'rgba(0, 0, 0, 0)';
-    } else if (a === 255) {
-      result = `rgb(${r}, ${g}, ${b})`;
-    } else {
-      result = `rgba(${r}, ${g}, ${b}, ${ Number((a / 255).toFixed(3)) })`;
-    }
-
-    colorCache.set(trimmed, result);
-    return result;
-  } catch {
-    return 'rgb(0, 0, 0)';
+    const { sanitizeCssText } = createColorConverter();
+    const styleElements = document.querySelectorAll('style');
+    styleElements.forEach((styleEl) => {
+      if (
+        styleEl.textContent &&
+        (styleEl.textContent.includes('oklch') ||
+          styleEl.textContent.includes('oklab') ||
+          styleEl.textContent.includes('color-mix'))
+      ) {
+        styleEl.textContent = sanitizeCssText(styleEl.textContent);
+      }
+    });
+  } catch (err) {
+    console.warn('Live stylesheet sanitizer warning:', err);
   }
 }
 
-const UNSUPPORTED_COLOR_REGEX = /(?:oklch|oklab|lch|lab|color)\([^)]+\)/gi;
-const GRADIENT_INTERPOLATION_REGEX = /\s+in\s+(?:oklab|oklch|srgb-linear|display-p3|srgb|hsl|hwb|lch|lab)(?:\s+(?:shorter|longer|increasing|decreasing)\s+hue)?/gi;
+export function sanitizeClonedDocumentForPdf(clonedDoc: Document) {
+  try {
+    const { sanitizeCssText } = createColorConverter();
 
-/**
- * Sanitizes any CSS property value string that may contain oklch(), oklab(), color(),
- * or gradient color-space interpolation (e.g. "linear-gradient(to right in oklab, ...)").
- */
-export function sanitizeCssValue(value: string): string {
-  if (!value) return value;
-  const lower = value.toLowerCase();
-  if (
-    !lower.includes('oklch') &&
-    !lower.includes('oklab') &&
-    !lower.includes('lch(') &&
-    !lower.includes('lab(') &&
-    !lower.includes('color(') &&
-    !lower.includes('color-mix(')
-  ) {
-    return value;
+    // 1. Collect all rules from document.styleSheets (including external <link rel="stylesheet"> in production builds)
+    const collectedCss: string[] = [];
+    try {
+      Array.from(document.styleSheets).forEach((sheet) => {
+        try {
+          const rules = sheet.cssRules || sheet.rules;
+          if (!rules) return;
+          for (let i = 0; i < rules.length; i++) {
+            collectedCss.push(rules[i].cssText);
+          }
+        } catch {
+          // Cross-origin stylesheet, ignore
+        }
+      });
+    } catch {
+      // ignore
+    }
+
+    // 2. Remove external <link rel="stylesheet"> from clonedDoc so html2canvas doesn't re-parse raw oklch() files
+    const linkElements = clonedDoc.querySelectorAll('link[rel="stylesheet"]');
+    linkElements.forEach((linkEl) => {
+      linkEl.parentNode?.removeChild(linkEl);
+    });
+
+    // 3. Sanitize all existing <style> tags inside clonedDoc
+    const styleElements = clonedDoc.querySelectorAll('style');
+    styleElements.forEach((styleEl) => {
+      if (styleEl.textContent) {
+        styleEl.textContent = sanitizeCssText(styleEl.textContent);
+      }
+    });
+
+    // 4. Inject the sanitized stylesheet rules + strict pure black (#000000) report override into clonedDoc.head
+    const masterStyle = clonedDoc.createElement('style');
+    const sanitizedAllRules = sanitizeCssText(collectedCss.join('\n'));
+    masterStyle.textContent = `
+      ${sanitizedAllRules}
+
+      /* Strict PDF Report Override: Pure Black (#000000) Text & Crisp Borders */
+      .print-container,
+      .print-container * {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        text-shadow: none !important;
+      }
+      .print-container {
+        background-color: #ffffff !important;
+        zoom: 1 !important;
+        transform: none !important;
+      }
+      .print-container table {
+        border-collapse: collapse !important;
+        width: 100% !important;
+        border: 1.5px solid #000000 !important;
+      }
+      .print-container th {
+        background-color: #e2e8f0 !important;
+        color: #000000 !important;
+        border: 1px solid #000000 !important;
+        font-weight: 900 !important;
+      }
+      .print-container td {
+        color: #000000 !important;
+        border: 1px solid #000000 !important;
+        font-weight: 700 !important;
+      }
+      .print-container tfoot tr,
+      .print-container tfoot td {
+        background-color: #cbd5e1 !important;
+        color: #000000 !important;
+        border: 1.5px solid #000000 !important;
+        font-weight: 900 !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+    `;
+    clonedDoc.head.appendChild(masterStyle);
+
+    // 5. Sanitize any inline style attributes containing oklch/oklab or CSS zoom
+    const allElements = clonedDoc.querySelectorAll('*');
+    allElements.forEach((el) => {
+      const htmlEl = el as HTMLElement;
+      const styleAttr = htmlEl.getAttribute('style');
+      if (styleAttr) {
+        let updatedStyle = styleAttr;
+        if (updatedStyle.includes('oklch') || updatedStyle.includes('oklab') || updatedStyle.includes('color-mix')) {
+          updatedStyle = sanitizeCssText(updatedStyle);
+        }
+        if (updatedStyle.includes('zoom')) {
+          updatedStyle = updatedStyle.replace(/zoom\s*:\s*[^;]+;?/gi, 'zoom: 1;');
+        }
+        htmlEl.setAttribute('style', updatedStyle);
+      }
+    });
+  } catch (err) {
+    console.warn('PDF CSS sanitizer warning:', err);
   }
-
-  let sanitized = value.replace(GRADIENT_INTERPOLATION_REGEX, '');
-  sanitized = sanitized.replace(UNSUPPORTED_COLOR_REGEX, (match) => convertColorTokenToRgb(match));
-
-  // Also handle any remaining color-mix(...) without nested parens
-  if (sanitized.toLowerCase().includes('color-mix(')) {
-    sanitized = sanitized.replace(/color-mix\([^()]+\)/gi, (match) => convertColorTokenToRgb(match));
-  }
-
-  return sanitized;
-}
-
-const COLOR_PROPERTIES = [
-  'color',
-  'background-color',
-  'background-image',
-  'border-top-color',
-  'border-right-color',
-  'border-bottom-color',
-  'border-left-color',
-  'outline-color',
-  'text-decoration-color',
-  'column-rule-color',
-  'caret-color',
-  '-webkit-text-stroke-color',
-  '-webkit-text-fill-color',
-  'box-shadow',
-  'text-shadow',
-  'fill',
-  'stroke',
-  'stop-color',
-  'flood-color',
-  'lighting-color',
-];
-
-/**
- * Sanitizes a cloned Document by rewriting stylesheets and inlining resolved RGB styles 
- * on all elements within the print-container specifically to improve performance.
- */
-export function sanitizeClonedDocumentForPdf(clonedDoc: Document): void {
-  // 1. Sanitize all <style> elements in the cloned document
-  const styleElements = clonedDoc.querySelectorAll('style');
-  styleElements.forEach((styleEl) => {
-    if (styleEl.textContent) {
-      styleEl.textContent = sanitizeCssValue(styleEl.textContent);
-    }
-  });
-
-  // 2. Sanitize only elements with inline style attributes containing modern color functions (avoids 50,000 layout reflows)
-  const printContainer = clonedDoc.querySelector('.print-container');
-  if (!printContainer) return;
-
-  const styledElements = Array.from(printContainer.querySelectorAll<HTMLElement>('[style]'));
-  styledElements.forEach((el) => {
-    const styleAttr = el.getAttribute('style');
-    if (
-      styleAttr &&
-      (styleAttr.includes('oklch') ||
-        styleAttr.includes('oklab') ||
-        styleAttr.includes('lch(') ||
-        styleAttr.includes('lab(') ||
-        styleAttr.includes('color(') ||
-        styleAttr.includes('color-mix('))
-    ) {
-      el.setAttribute('style', sanitizeCssValue(styleAttr));
-    }
-  });
-}
-
-/**
- * Sanitizes live <style> tags in the main document so that even before onclone runs,
- * getComputedStyle in the main document resolves to standard RGB colors.
- */
-export function sanitizeLiveStylesheets(): void {
-  if (typeof document === 'undefined') return;
-  const styleElements = document.querySelectorAll('style');
-  styleElements.forEach((styleEl) => {
-    const content = styleEl.textContent;
-    if (
-      content &&
-      (content.includes('oklch') || content.includes('oklab') || content.includes('in oklab'))
-    ) {
-      styleEl.textContent = sanitizeCssValue(content);
-    }
-  });
 }

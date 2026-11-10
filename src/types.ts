@@ -35,8 +35,9 @@ export interface Bakery {
 
   // التصنيف والتشغيل
   activityStatus: string; // نشاط المخبز (شغال، متوقف كلي، متوقف جزئي، ملغى، إلخ)
-  bakeryCategory?: string; // تصنيف المخبز (مخبز بلدي مدعم، مخبز بلدي مطور، مخبز سياحي 72%، مخبز فينو وأفرنجي، مخبز طباقي)
+  bakeryCategory?: string; // نوع المخابز (مخبز بلدي مدعم، مخبز بلدي مطور، مخبز سياحي 72%، مخبز فينو وأفرنجي، مخبز طباقي)
   breadType: string; // نوع الخبز (بلدي مدعم ماو، بلدي مجر، خبز آلي، طباقي)
+  flourBagPrice?: number; // سعر الشيكارة (بالجنيه)
   breadTypeCount: number; // عدد نوع الخبز (افتراضي 1)
   lineType: string; // نوع خط الإنتاج (نصف آلي، آلي كامل، يدوي)
   fuelType: string; // نوع الوقود (غاز طبيعي، سولار)
@@ -137,6 +138,7 @@ export interface ColumnTitles {
   activityStatus: string;
   bakeryCategory: string;
   breadType: string;
+  flourBagPrice: string;
   breadTypeCount: string;
   lineType: string;
   fuelType: string;
@@ -166,15 +168,43 @@ export interface SystemConfig {
   englishSubtitle: string;
   logoBase64: string;
   dailyAlertConfig?: DailyAlertConfig;
+  rolePermissions?: Record<string, string[]>;
+  gmailEmail?: string;
+  gmailPassword?: string;
+  googleDriveAutoSync?: boolean;
 }
+
+export type UserRoleType = 'admin' | 'supervisor' | 'inspector' | 'auditor' | 'data_entry' | 'viewer';
 
 export interface AppUser {
   id: string;
   username: string;
   fullName: string;
   password?: string;
-  role: 'admin' | 'inspector' | 'auditor' | 'viewer';
+  role: UserRoleType;
+  jobTitle?: string;
+  department?: string;
+  phone?: string;
+  gmailEmail?: string;
+  gmailPassword?: string;
+  googleDriveAutoSync?: boolean;
+  customPermissions?: string[];
   createdAt?: string;
+}
+
+export interface InboxChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderRole: UserRoleType;
+  recipientTarget: string; // 'ALL' or specific username/role
+  recipientLabel: string;
+  messageType: 'instruction' | 'general' | 'alert';
+  content: string;
+  relatedBakeryId?: string;
+  relatedBakeryName?: string;
+  timestamp: string;
+  readBy?: string[];
 }
 
 export interface ExpirationAlertItem {
@@ -232,3 +262,22 @@ export interface CustomBackupConfig {
   autoSyncEnabled: boolean;
   lastBackupTime?: string;
 }
+
+export type TaskPriority = 'high' | 'medium' | 'low';
+export type TaskStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface DailyBakeryTask {
+  id: string;
+  title: string;
+  description?: string;
+  bakeryId?: string;
+  bakeryName?: string;
+  village?: string;
+  priority: TaskPriority; // 'high' = عالية, 'medium' = متوسطة, 'low' = منخفضة
+  dueDate: string; // YYYY-MM-DD
+  status: TaskStatus;
+  assignedTo?: string;
+  createdAt: string;
+}
+
+

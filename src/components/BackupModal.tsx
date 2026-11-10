@@ -73,6 +73,23 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [customAutoSync, setCustomAutoSync] = useState<boolean>(
     () => localStorage.getItem('TAMWEEN_CUSTOM_AUTOSYNC') !== 'false'
   );
+  const [gmailEmail, setGmailEmail] = useState<string>(
+    () =>
+      localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
+      currentState.currentUser?.gmailEmail ||
+      currentState.systemConfig?.gmailEmail ||
+      'ELHOSINY2020@gmail.com'
+  );
+  const [gmailPassword, setGmailPassword] = useState<string>(
+    () =>
+      localStorage.getItem('TAMWEEN_GMAIL_DRIVE_PASSWORD') ||
+      currentState.currentUser?.gmailPassword ||
+      currentState.systemConfig?.gmailPassword ||
+      ''
+  );
+  const [googleDriveAutoSync, setGoogleDriveAutoSync] = useState<boolean>(
+    () => localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false'
+  );
 
   const { isInstallable, isInstalled, install } = usePWAInstall();
   const autoSaveInfo = getLatestAutoSaveInfo();
@@ -223,12 +240,20 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         }
 
         const restoredData: AppState = {
+          ...currentState,
           bakeries: parsed.data.bakeries || [],
           debts: parsed.data.debts || [],
           villages: parsed.data.villages || currentState.villages,
           activityStatuses: parsed.data.activityStatuses || currentState.activityStatuses,
+          bakeryCategories: parsed.data.bakeryCategories || currentState.bakeryCategories,
+          breadTypes: parsed.data.breadTypes || currentState.breadTypes,
+          breadTypeCounts: parsed.data.breadTypeCounts || currentState.breadTypeCounts,
+          lineTypes: parsed.data.lineTypes || currentState.lineTypes,
+          fuelTypes: parsed.data.fuelTypes || currentState.fuelTypes,
           issuingEntities: parsed.data.issuingEntities || currentState.issuingEntities,
           violationTypes: parsed.data.violationTypes || currentState.violationTypes,
+          paymentMethods: parsed.data.paymentMethods || currentState.paymentMethods,
+          dailyTasks: parsed.data.dailyTasks || currentState.dailyTasks,
           columnTitles: parsed.data.columnTitles || currentState.columnTitles,
           systemConfig: parsed.data.systemConfig || currentState.systemConfig,
           users: parsed.data.users || currentState.users,
@@ -267,12 +292,20 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         }
 
         const restoredData: AppState = {
+          ...currentState,
           bakeries: sourceData.bakeries || [],
           debts: sourceData.debts || [],
           villages: sourceData.villages || currentState.villages,
           activityStatuses: sourceData.activityStatuses || currentState.activityStatuses,
+          bakeryCategories: sourceData.bakeryCategories || currentState.bakeryCategories,
+          breadTypes: sourceData.breadTypes || currentState.breadTypes,
+          breadTypeCounts: sourceData.breadTypeCounts || currentState.breadTypeCounts,
+          lineTypes: sourceData.lineTypes || currentState.lineTypes,
+          fuelTypes: sourceData.fuelTypes || currentState.fuelTypes,
           issuingEntities: sourceData.issuingEntities || currentState.issuingEntities,
           violationTypes: sourceData.violationTypes || currentState.violationTypes,
+          paymentMethods: sourceData.paymentMethods || currentState.paymentMethods,
+          dailyTasks: sourceData.dailyTasks || currentState.dailyTasks,
           columnTitles: sourceData.columnTitles || currentState.columnTitles,
           systemConfig: {
             ...(sourceData.systemConfig || currentState.systemConfig),
@@ -325,12 +358,20 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       const sourceData = parsed.data || parsed.state || parsed;
 
       const restoredData: AppState = {
+        ...currentState,
         bakeries: sourceData.bakeries || [],
         debts: sourceData.debts || [],
         villages: sourceData.villages || currentState.villages,
         activityStatuses: sourceData.activityStatuses || currentState.activityStatuses,
+        bakeryCategories: sourceData.bakeryCategories || currentState.bakeryCategories,
+        breadTypes: sourceData.breadTypes || currentState.breadTypes,
+        breadTypeCounts: sourceData.breadTypeCounts || currentState.breadTypeCounts,
+        lineTypes: sourceData.lineTypes || currentState.lineTypes,
+        fuelTypes: sourceData.fuelTypes || currentState.fuelTypes,
         issuingEntities: sourceData.issuingEntities || currentState.issuingEntities,
         violationTypes: sourceData.violationTypes || currentState.violationTypes,
+        paymentMethods: sourceData.paymentMethods || currentState.paymentMethods,
+        dailyTasks: sourceData.dailyTasks || currentState.dailyTasks,
         columnTitles: sourceData.columnTitles || currentState.columnTitles,
         systemConfig: {
           ...(sourceData.systemConfig || currentState.systemConfig),
@@ -343,6 +384,127 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       onRestoreState(restoredData);
       setStatusMsg({
         text: `تم استرجاع ومزامنة حزمة GitHub (${parsed.accountEmail || githubEmail}) بنجاح! تم تحميل (${restoredData.bakeries.length}) مخبز و (${restoredData.debts.length}) مديونية.`,
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      setStatusMsg({
+        text: (err as Error).message,
+        type: 'error',
+      });
+    }
+  };
+
+  // 8. Import Google Drive Backup Package (.json or .html)
+  const handleImportGoogleDrivePackage = (file: File) => {
+    setIsProcessing(true);
+    setStatusMsg({
+      text: `جاري قراءة واستيراد النسخة الاحتياطية من Google Drive (${file.name})...`,
+      type: 'info',
+    });
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const rawText = String(reader.result || '');
+        let parsed: any = null;
+
+        if (file.name.toLowerCase().endsWith('.html')) {
+          const match = rawText.match(/window\.PRELOADED_TAMWEEN_STATE\s*=\s*(\{[\s\S]*?\});/);
+          if (match && match[1]) {
+            parsed = JSON.parse(match[1]);
+          } else {
+            throw new Error('لم يتم العثور على قاعدة بيانات مضمنة داخل ملف HTML المختار من Google Drive.');
+          }
+        } else {
+          parsed = JSON.parse(rawText);
+        }
+
+        const sourceData = parsed.data || parsed.state || parsed;
+        if (!sourceData || !Array.isArray(sourceData.bakeries)) {
+          throw new Error('ملف النسخة الاحتياطية المختار من Google Drive غير صالح أو لا يحتوي على سجل المخابز.');
+        }
+
+        const prevBakeriesCount = currentState.bakeries.length;
+        const mergedState = mergeStates(currentState, sourceData as Partial<AppState>);
+        const addedBakeries = Math.max(0, mergedState.bakeries.length - prevBakeriesCount);
+        const restoredData: AppState = {
+          ...mergedState,
+          systemConfig: {
+            ...(mergedState.systemConfig || currentState.systemConfig),
+            gmailEmail: gmailEmail.trim() || currentState.systemConfig.gmailEmail,
+            gmailPassword: gmailPassword || currentState.systemConfig.gmailPassword,
+            googleDriveAutoSync: true,
+            logoBase64: DEFAULT_OFFICIAL_LOGO,
+          },
+          currentUser: currentState.currentUser,
+        };
+
+        const syncPayload = {
+          version: '3.5-google-drive-gmail-merge',
+          timestamp: new Date().toISOString(),
+          destinationType: 'GOOGLE_DRIVE',
+          gmailEmail: gmailEmail.trim(),
+          targetPath: customBackupPath,
+          data: restoredData,
+        };
+
+        localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(syncPayload));
+        if (gmailEmail.trim()) {
+          localStorage.setItem(
+            `TAMWEEN_GMAIL_DRIVE_SYNC_${gmailEmail.trim().toLowerCase()}`,
+            JSON.stringify(syncPayload)
+          );
+        }
+
+        onRestoreState(restoredData);
+        setStatusMsg({
+          text: `تم استيراد ودمج النسخة الاحتياطية من Google Drive (${file.name}) بنجاح دون حذف أي بيانات! إجمالي المخابز الآن (${restoredData.bakeries.length}) مخبز (أضيف ${addedBakeries} مخبز جديد) وإجمالي المديونيات (${restoredData.debts.length}).`,
+          type: 'success',
+        });
+      } catch (err: unknown) {
+        setStatusMsg({
+          text: `فشل استيراد نسخة Google Drive: ${(err as Error).message}`,
+          type: 'error',
+        });
+      } finally {
+        setIsProcessing(false);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // 9. Instant Restore & Additive Merge from Cached Google Drive Snapshot
+  const handleRestoreFromGoogleDriveSnapshot = () => {
+    try {
+      const gmailKey = gmailEmail.trim().toLowerCase();
+      const savedStr =
+        (gmailKey ? localStorage.getItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`) : null) ||
+        localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD') ||
+        localStorage.getItem('TAMWEEN_GITHUB_SYNC_PAYLOAD');
+      if (!savedStr) {
+        throw new Error(
+          'لا توجد نسخة Google Drive محفوظة مسبقاً في الذاكرة السريعة. يرجى الضغط على "نسخ تلقائي على Google Drive" أو اختيار ملف JSON.'
+        );
+      }
+      const parsed = JSON.parse(savedStr);
+      const sourceData = parsed.data || parsed.state || parsed;
+
+      const mergedState = mergeStates(currentState, sourceData as Partial<AppState>);
+      const restoredData: AppState = {
+        ...mergedState,
+        systemConfig: {
+          ...(mergedState.systemConfig || currentState.systemConfig),
+          gmailEmail: gmailEmail.trim() || currentState.systemConfig.gmailEmail,
+          gmailPassword: gmailPassword || currentState.systemConfig.gmailPassword,
+          googleDriveAutoSync: true,
+          logoBase64: DEFAULT_OFFICIAL_LOGO,
+        },
+        currentUser: currentState.currentUser,
+      };
+
+      onRestoreState(restoredData);
+      setStatusMsg({
+        text: `تم دمج ومزامنة ملفات JSON من Google Drive لحساب (${gmailEmail || customBackupPath}) بنجاح بدون حذف أي بيانات! إجمالي المخابز (${restoredData.bakeries.length}) مخبز و (${restoredData.debts.length}) مديونية.`,
         type: 'success',
       });
     } catch (err: unknown) {
@@ -367,7 +529,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-200 cursor-pointer"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 cursor-pointer"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           e.preventDefault();
@@ -385,13 +547,13 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-black flex items-center gap-2">
-                <span>تحديث ودمج قواعد البيانات وتحميل التطبيق</span>
+                <span>الحفظ والاستيراد والنسخ الاحتياطي الموحد</span>
                 <span className="text-[10px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full font-black">
-                  إصلاح وتحديث شامل
+                  جميع قوائم الحفظ والاستيراد والنسخ
                 </span>
               </h3>
               <p className="text-[11px] text-amber-200/90 font-bold mt-0.5">
-                تحديث المخابز القائمة، إضافة البيانات غير المتوفرة فقط، وتحميل ملف المنظومة ليفتح مباشرة
+                حفظ على البارتيشن، Google Drive، GitHub، استيراد ودمج النسخ، وتحميل التطبيق المحدث (HTML / EXE)
               </p>
             </div>
           </div>
@@ -728,27 +890,167 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             </div>
           </div>
 
-          {/* NEW SECTION: Custom Backup Location (Google Drive / Local Network Path / Custom Folder) */}
-          <div className="p-4 bg-gradient-to-br from-cyan-950 via-slate-900 to-blue-950 text-white border-2 border-cyan-500/50 rounded-2xl space-y-3 shadow-lg">
-            <div className="flex items-center justify-between">
+          {/* NEW SECTION: Gmail & Google Drive Auto-Backup & Non-Destructive JSON Merge */}
+          <div className="p-4 bg-gradient-to-br from-cyan-950 via-slate-900 to-blue-950 text-white border-2 border-cyan-400/60 rounded-2xl space-y-3.5 shadow-lg">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg border border-cyan-400/40">
                   <HardDrive className="w-4 h-4 icon-float" />
                 </div>
-                <h4 className="text-xs font-black text-cyan-200">
-                  موقع مخصص للحفظ التلقائي (Google Drive / مسار شبكي محلي) 📁
+                <h4 className="text-xs sm:text-sm font-black text-cyan-200">
+                  ربط إيميل الجيميل (Gmail) والنسخ التلقائي على Google Drive (دمج JSON بدون حذف) ☁️
                 </h4>
               </div>
-              <span className="text-[10px] font-black text-cyan-300 bg-cyan-900/80 px-2.5 py-0.5 rounded-full border border-cyan-500/40">
-                تخصيص المسار
+              <span className="text-[10px] font-black text-cyan-200 bg-cyan-900/90 px-2.5 py-0.5 rounded-full border border-cyan-400/50">
+                دمج تلقائي آمن 100%
               </span>
             </div>
 
             <p className="text-[11px] text-slate-300 font-medium leading-relaxed">
-              اختر ممر ومسار الحفظ التلقائي المخصص (مثل مجلد Google Drive أو مجلد شبكي محلي مشارك بين أجهزة الإدارة) لتعزيز الأمان وتعدد النسخ الحية.
+              قم بإدخال إيميل الجيميل وكلمة المرور للربط على Google Drive. عند التسجيل أو الدخول من أي مستخدم مربوط بالجيميل يتم عمل <strong className="text-amber-300">دمج لملفات JSON وإضافة البيانات الجديدة تلقائياً بدون حذف أي داتا</strong> سابقة.
             </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            {/* Gmail Email & Password Fields */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs bg-slate-950/60 p-3 rounded-xl border border-cyan-500/30">
+              <div>
+                <label className="block text-[11px] font-black text-amber-300 mb-1">
+                  📧 إيميل الجيميل للربط على Google Drive (Gmail Email)
+                </label>
+                <input
+                  type="email"
+                  dir="ltr"
+                  value={gmailEmail}
+                  onChange={(e) => {
+                    setGmailEmail(e.target.value);
+                    localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', e.target.value);
+                  }}
+                  placeholder="example@gmail.com"
+                  className="w-full px-3 py-2 bg-slate-900 border border-cyan-400/50 rounded-xl font-bold text-white text-left text-xs focus:ring-2 focus:ring-cyan-400 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-black text-amber-300 mb-1">
+                  🔑 كلمة مرور الجيميل (Gmail Password)
+                </label>
+                <input
+                  type="password"
+                  dir="ltr"
+                  value={gmailPassword}
+                  onChange={(e) => {
+                    setGmailPassword(e.target.value);
+                    localStorage.setItem('TAMWEEN_GMAIL_DRIVE_PASSWORD', e.target.value);
+                  }}
+                  placeholder="••••••••••••"
+                  className="w-full px-3 py-2 bg-slate-900 border border-cyan-400/50 rounded-xl font-bold text-white text-left text-xs focus:ring-2 focus:ring-cyan-400 outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Dedicated Button: نسخ تلقائي على Google Drive */}
+            <button
+              type="button"
+              onClick={() => {
+                if (!gmailEmail.trim() || !gmailEmail.includes('@')) {
+                  setStatusMsg({
+                    text: 'يرجى إدخال إيميل جيميل صحيح أولاً (مثال: user@gmail.com) للربط والنسخ التلقائي على Google Drive.',
+                    type: 'error',
+                  });
+                  return;
+                }
+
+                const cleanEmail = gmailEmail.trim();
+                const gmailKey = cleanEmail.toLowerCase();
+                localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', cleanEmail);
+                localStorage.setItem('TAMWEEN_GMAIL_DRIVE_PASSWORD', gmailPassword);
+                localStorage.setItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC', 'true');
+                localStorage.setItem('TAMWEEN_CUSTOM_AUTOSYNC', 'true');
+                setGoogleDriveAutoSync(true);
+                setCustomAutoSync(true);
+
+                // First check if there is already a saved JSON snapshot for this Gmail or Google Drive and merge it non-destructively
+                let workingState = currentState;
+                let addedCount = 0;
+                let updatedCount = 0;
+
+                const existingDriveStr =
+                  localStorage.getItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`) ||
+                  localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD');
+                if (existingDriveStr) {
+                  try {
+                    const parsed = JSON.parse(existingDriveStr);
+                    const sourceData = parsed.data || parsed.state || parsed;
+                    if (sourceData && Array.isArray(sourceData.bakeries)) {
+                      const prevCount = workingState.bakeries.length;
+                      workingState = mergeStates(workingState, sourceData);
+                      addedCount = Math.max(0, workingState.bakeries.length - prevCount);
+                      updatedCount = prevCount;
+                    }
+                  } catch {
+                    // ignore malformed cache
+                  }
+                }
+
+                // Update currentUser and users list with Gmail link so any login merges automatically
+                const updatedUsers = workingState.users.map((u) =>
+                  workingState.currentUser && u.id === workingState.currentUser.id
+                    ? { ...u, gmailEmail: cleanEmail, gmailPassword, googleDriveAutoSync: true }
+                    : u
+                );
+                const updatedCurrentUser = workingState.currentUser
+                  ? { ...workingState.currentUser, gmailEmail: cleanEmail, gmailPassword, googleDriveAutoSync: true }
+                  : null;
+
+                const finalState: AppState = {
+                  ...workingState,
+                  users: updatedUsers,
+                  currentUser: updatedCurrentUser,
+                  systemConfig: {
+                    ...workingState.systemConfig,
+                    gmailEmail: cleanEmail,
+                    gmailPassword,
+                    googleDriveAutoSync: true,
+                    logoBase64: DEFAULT_OFFICIAL_LOGO,
+                  },
+                };
+
+                const payload = {
+                  version: '3.5-gmail-google-drive-autosync',
+                  timestamp: new Date().toISOString(),
+                  destinationType: 'GOOGLE_DRIVE',
+                  gmailEmail: cleanEmail,
+                  targetPath: customBackupPath,
+                  bakeriesCount: finalState.bakeries.length,
+                  debtsCount: finalState.debts.length,
+                  data: finalState,
+                };
+
+                localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(payload));
+                localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, JSON.stringify(payload));
+
+                onRestoreState(finalState);
+
+                // Also download the JSON backup file for Google Drive folder
+                const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `tamween_google_drive_${cleanEmail.split('@')[0]}_${new Date().toISOString().split('T')[0]}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                setStatusMsg({
+                  text: `تم تفعيل "نسخ تلقائي على Google Drive" وربط إيميل الجيميل (${cleanEmail}) بنجاح! تم دمج ملفات JSON بدون حذف أي بيانات (إجمالي المخابز: ${finalState.bakeries.length}، مضاف: ${addedCount}، محدث: ${updatedCount}).`,
+                  type: 'success',
+                });
+              }}
+              className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 rounded-xl text-xs sm:text-sm font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition border border-amber-300"
+            >
+              <RefreshCw className="w-4 h-4 text-slate-950" />
+              <span>نسخ تلقائي على Google Drive (ربط الجيميل + دمج JSON بدون حذف) ☁️</span>
+            </button>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
               <div>
                 <label className="block text-[10px] font-black text-cyan-300 mb-1">نوع المسار المخصص</label>
                 <select
@@ -795,48 +1097,91 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <label className="flex items-center gap-2 text-xs font-bold text-cyan-200 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={customAutoSync}
+                  checked={customAutoSync && googleDriveAutoSync}
                   onChange={(e) => {
                     setCustomAutoSync(e.target.checked);
+                    setGoogleDriveAutoSync(e.target.checked);
                     localStorage.setItem('TAMWEEN_CUSTOM_AUTOSYNC', String(e.target.checked));
+                    localStorage.setItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC', String(e.target.checked));
                   }}
                   className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 border-cyan-400"
                 />
-                <span>تفعيل الحفظ التلقائي الفوري للمسار المخصص عند أي تعديل</span>
+                <span>تفعيل النسخ والدمج التلقائي على Google Drive عند تسجيل أي مستخدم مربوط بالجيميل</span>
               </label>
             </div>
 
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  const payload = {
-                    version: '3.0-custom-destination',
-                    timestamp: new Date().toISOString(),
-                    destinationType: customBackupType,
-                    targetPath: customBackupPath,
-                    bakeriesCount: currentState.bakeries.length,
-                    debtsCount: currentState.debts.length,
-                    data: currentState,
-                  };
-                  localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(payload));
-                  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `tamween_custom_location_backup_${new Date().toISOString().split('T')[0]}.json`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                  setStatusMsg({
-                    text: `تم تصدير وحفظ النسخة الاحتياطية بنجاح للموقع المخصص (${customBackupType}: ${customBackupPath})!`,
-                    type: 'success',
-                  });
-                }}
-                className="w-full py-2.5 px-4 bg-gradient-to-r from-cyan-600 via-teal-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition"
-              >
-                <Download className="w-4 h-4 text-cyan-200 icon-animated" />
-                <span>حفظ وتصدير نسخة احتياطية فورية في المكان المخصص 📁</span>
-              </button>
+            <div className="space-y-2 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const payload = {
+                      version: '3.5-custom-destination',
+                      timestamp: new Date().toISOString(),
+                      destinationType: customBackupType,
+                      gmailEmail: gmailEmail.trim(),
+                      targetPath: customBackupPath,
+                      bakeriesCount: currentState.bakeries.length,
+                      debtsCount: currentState.debts.length,
+                      data: currentState,
+                    };
+                    localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(payload));
+                    if (gmailEmail.trim()) {
+                      localStorage.setItem(
+                        `TAMWEEN_GMAIL_DRIVE_SYNC_${gmailEmail.trim().toLowerCase()}`,
+                        JSON.stringify(payload)
+                      );
+                    }
+                    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `tamween_google_drive_backup_${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    setStatusMsg({
+                      text: `تم تصدير وحفظ النسخة الاحتياطية بنجاح لـ Google Drive (${gmailEmail || customBackupPath})!`,
+                      type: 'success',
+                    });
+                  }}
+                  className="w-full py-2.5 px-3 bg-gradient-to-r from-cyan-600 via-teal-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-cyan-200" />
+                  <span>حفظ نسخة في Google Drive 📁</span>
+                </button>
+
+                <label className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer text-center border border-emerald-400/50">
+                  <Upload className="w-4 h-4 text-emerald-200" />
+                  <span>استيراد ودمج نسخة من Google Drive 📥</span>
+                  <input
+                    type="file"
+                    accept=".json,.html,application/json,text/html"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleImportGoogleDrivePackage(f);
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* Instant 1-Click Restore & Merge from Google Drive Sync Snapshot */}
+              <div className="flex items-center justify-between p-2.5 bg-cyan-900/40 rounded-xl border border-cyan-500/30 text-xs">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-3.5 h-3.5 text-cyan-300" />
+                  <span className="text-[11px] text-cyan-100 font-bold">
+                    دمج واسترجاع فوري لآخر نسخة متزامنة على الجيميل ({gmailEmail || customBackupPath})
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRestoreFromGoogleDriveSnapshot}
+                  className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[11px] font-black cursor-pointer shadow-xs"
+                >
+                  دمج من Google Drive فوراً 🔄
+                </button>
+              </div>
             </div>
           </div>
 

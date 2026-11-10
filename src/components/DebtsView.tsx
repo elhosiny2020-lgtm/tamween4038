@@ -1799,6 +1799,29 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [lastAutoSaveTime, setLastAutoSaveTime] = useState<string>('');
 
+  // Mini Fine Calculator inside Debt Modal ("مفتاح حساب الغرامة")
+  const [showFineCalc, setShowFineCalc] = useState(false);
+  const [calcViolationType, setCalcViolationType] = useState(
+    debtToEdit?.violationType || violationTypes[0] || 'نقص وزن الرغيف البلدي المدعم'
+  );
+  const [calcLoavesCount, setCalcLoavesCount] = useState<number>(1000);
+  const [calcFinePerLoaf, setCalcFinePerLoaf] = useState<number>(1.5);
+  const [fineAppliedNotice, setFineAppliedNotice] = useState<string>('');
+  const calculatedFineTotal =
+    Math.round((Number(calcLoavesCount) || 0) * (Number(calcFinePerLoaf) || 0) * 100) / 100;
+
+  const handleApplyCalculatedFine = () => {
+    setViolationAmount(calculatedFineTotal);
+    if (calcViolationType) {
+      setViolationType(calcViolationType);
+    }
+    const calcSummary = `حساب الغرامة (${calcViolationType}): ${calcLoavesCount.toLocaleString()} رغيف × ${calcFinePerLoaf} ج.م = ${calculatedFineTotal.toLocaleString()} ج.م`;
+    setNotes((prev) => (prev ? `${prev} | ${calcSummary}` : calcSummary));
+    setFineAppliedNotice(`تم حساب وإدراج مبلغ (${calculatedFineTotal.toLocaleString()} ج.م) تلقائياً في خانة قيمة المخالفة والمديونية!`);
+    setShowFineCalc(false);
+    setTimeout(() => setFineAppliedNotice(''), 5000);
+  };
+
   // Auto-calculated values
   const totalViolations = (Number(violationAmount) || 0) + (Number(oldViolations) || 0);
   const remainingViolations = Math.max(0, totalViolations - (Number(paidViolationAmount) || 0));
@@ -2083,13 +2106,149 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
           </div>
 
           {/* Section 2: Violations */}
-          <div className="border border-red-200 rounded-xl p-4 bg-red-50/20">
-            <h4 className="text-xs font-black text-red-900 pb-2 mb-3 border-b border-red-200 flex items-center justify-between">
-              <span>2. مخالفات المخبز</span>
+          <div className="border border-red-200 rounded-xl p-4 bg-red-50/20 space-y-3">
+            <h4 className="text-xs font-black text-red-900 pb-2 border-b border-red-200 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span>2. مخالفات المخبز</span>
+                <button
+                  type="button"
+                  onClick={() => setShowFineCalc((prev) => !prev)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-slate-950 rounded-lg text-xs font-black shadow-md border border-amber-300 cursor-pointer transition transform hover:scale-105 active:scale-95"
+                  title="فتح حاسبة الغرامة السريعة لحساب (عدد الأرغفة × سعر الغرامة للرغيف) وإدراج المبلغ تلقائياً في خانة المديونية"
+                >
+                  <Calculator className="w-3.5 h-3.5 text-slate-950 stroke-[2.5]" />
+                  <span>حساب الغرامة 🧮</span>
+                </button>
+              </div>
               <span className="text-[11px] text-red-700 font-black">
                 إجمالي المخالفات: {totalViolations.toLocaleString()} ج.م
               </span>
             </h4>
+
+            {/* Confirmation Notice when fine is calculated & applied */}
+            {fineAppliedNotice && (
+              <div className="p-2.5 bg-emerald-100 border border-emerald-400 text-emerald-950 rounded-xl text-xs font-black flex items-center justify-between">
+                <span>✅ {fineAppliedNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setFineAppliedNotice('')}
+                  className="text-emerald-800 hover:text-emerald-950 font-black px-1 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Inline Mini Fine Calculator ("حساب الغرامة") */}
+            {showFineCalc && (
+              <div className="bg-gradient-to-r from-amber-50 via-yellow-50/80 to-amber-50 border-2 border-amber-400 rounded-xl p-3.5 shadow-lg space-y-3">
+                <div className="flex items-center justify-between border-b border-amber-300 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Calculator className="w-4 h-4 text-amber-700" />
+                    <span className="text-xs font-black text-amber-950">
+                      حاسبة الغرامة الفورية (نوع المخالفة × عدد الأرغفة × سعر الغرامة للرغيف)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowFineCalc(false)}
+                    className="text-xs font-black text-red-700 hover:text-red-900 bg-red-100 px-2 py-0.5 rounded border border-red-300 cursor-pointer"
+                  >
+                    إغلاق الحاسبة ✕
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                  <div>
+                    <label className="block text-[11px] font-black text-slate-800 mb-1">
+                      1. نوع المخالفة
+                    </label>
+                    <select
+                      value={calcViolationType}
+                      onChange={(e) => setCalcViolationType(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-amber-400 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
+                    >
+                      {violationTypes.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-black text-slate-800 mb-1">
+                      2. عدد الأرغفة (رغيف)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={calcLoavesCount}
+                      onChange={(e) => setCalcLoavesCount(Math.max(0, parseFloat(e.target.value) || 0))}
+                      placeholder="أدخل عدد الأرغفة"
+                      className="w-full px-2.5 py-1.5 bg-white border border-amber-400 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-black text-slate-800">
+                        3. سعر الغرامة للرغيف (ج.م)
+                      </label>
+                      <div className="flex items-center gap-1">
+                        {[1, 1.25, 1.5, 2].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setCalcFinePerLoaf(preset)}
+                            className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-black border cursor-pointer ${
+                              calcFinePerLoaf === preset
+                                ? 'bg-amber-500 text-slate-950 border-amber-600'
+                                : 'bg-white text-slate-700 border-slate-300 hover:bg-amber-100'
+                            }`}
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.05"
+                      value={calcFinePerLoaf}
+                      onChange={(e) => setCalcFinePerLoaf(Math.max(0, parseFloat(e.target.value) || 0))}
+                      placeholder="سعر الغرامة للرغيف"
+                      className="w-full px-2.5 py-1.5 bg-white border border-amber-400 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  <div className="bg-amber-950 text-white p-2 rounded-xl border border-amber-500 flex flex-col items-center justify-center">
+                    <span className="text-[10px] text-amber-200 font-bold">إجمالي المبلغ المحسوب</span>
+                    <span className="text-base font-black text-amber-300 num-enlarged">
+                      {calculatedFineTotal.toLocaleString()} ج.م
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-amber-200">
+                  <span className="text-[11px] font-bold text-amber-900">
+                    المعادلة: {calcLoavesCount.toLocaleString()} رغيف × {calcFinePerLoaf} ج.م ={' '}
+                    <strong className="font-black text-red-700">{calculatedFineTotal.toLocaleString()} ج.م</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleApplyCalculatedFine}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white rounded-lg text-xs font-black shadow-md cursor-pointer border border-emerald-400"
+                  >
+                    <Save className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>إدراج المبلغ تلقائياً في خانة المديونية ({calculatedFineTotal.toLocaleString()} ج.م) ✓</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
               <div>
                 <label className="block text-[11px] font-black text-slate-700 mb-1">تاريخ العملية</label>
@@ -2178,7 +2337,17 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-black text-slate-700 mb-1">قيمة المخالفة (ج.م)</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-black text-slate-700">قيمة المخالفة (ج.م)</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowFineCalc((prev) => !prev)}
+                    className="text-[10px] font-black text-amber-800 hover:text-amber-950 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.2 rounded border border-amber-300 cursor-pointer"
+                    title="حساب الغرامة تلقائياً"
+                  >
+                    🧮 حساب الغرامة
+                  </button>
+                </div>
                 <input
                   type="number"
                   value={violationAmount}

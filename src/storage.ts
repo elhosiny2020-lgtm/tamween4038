@@ -4,7 +4,9 @@ import {
   VillageHierarchy,
   ColumnTitles,
   SystemConfig,
-  AppUser
+  AppUser,
+  DailyBakeryTask,
+  InboxChatMessage
 } from './types';
 import {
   DEFAULT_SYSTEM_CONFIG,
@@ -13,10 +15,18 @@ import {
   DEFAULT_ISSUING_ENTITIES,
   DEFAULT_VIOLATION_TYPES,
   DEFAULT_ACTIVITY_STATUSES,
+  DEFAULT_BAKERY_CATEGORIES,
+  DEFAULT_BREAD_TYPES,
+  DEFAULT_BREAD_TYPE_COUNTS,
+  DEFAULT_LINE_TYPES,
+  DEFAULT_FUEL_TYPES,
+  PAYMENT_METHODS,
   DEFAULT_COLUMN_TITLES,
   INITIAL_BAKERIES,
   INITIAL_DEBTS,
-  INITIAL_USERS
+  INITIAL_USERS,
+  INITIAL_DAILY_TASKS,
+  INITIAL_INBOX_MESSAGES
 } from './defaultData';
 
 export interface AppState {
@@ -26,6 +36,14 @@ export interface AppState {
   issuingEntities: string[];
   violationTypes: string[];
   activityStatuses: string[];
+  bakeryCategories?: string[];
+  breadTypes?: string[];
+  breadTypeCounts?: string[];
+  lineTypes?: string[];
+  fuelTypes?: string[];
+  paymentMethods?: string[];
+  dailyTasks?: DailyBakeryTask[];
+  inboxMessages?: InboxChatMessage[];
   columnTitles: ColumnTitles;
   systemConfig: SystemConfig;
   users: AppUser[];
@@ -45,12 +63,35 @@ const KEYS = {
   ENTITIES: 'TAMWEEN_ENTITIES_V3',
   VIOLATIONS: 'TAMWEEN_VIOLATIONS_V3',
   ACTIVITY_STATUSES: 'TAMWEEN_ACTIVITY_STATUSES_V3',
+  BAKERY_CATEGORIES: 'TAMWEEN_BAKERY_CATEGORIES_V3',
+  BREAD_TYPES: 'TAMWEEN_BREAD_TYPES_V3',
+  BREAD_TYPE_COUNTS: 'TAMWEEN_BREAD_TYPE_COUNTS_V3',
+  LINE_TYPES: 'TAMWEEN_LINE_TYPES_V3',
+  FUEL_TYPES: 'TAMWEEN_FUEL_TYPES_V3',
+  PAYMENT_METHODS: 'TAMWEEN_PAYMENT_METHODS_V3',
+  DAILY_TASKS: 'TAMWEEN_DAILY_TASKS_V3',
+  INBOX_MESSAGES: 'TAMWEEN_INBOX_MESSAGES_V3',
   COLUMNS: 'TAMWEEN_COLUMNS_V3',
   CONFIG: 'TAMWEEN_CONFIG_V3',
   USERS: 'TAMWEEN_USERS_V3',
   AUTOSAVE_BACKUP: 'TAMWEEN_AUTOSAVE_BACKUP_V3',
   AUTOSAVE_TIMESTAMP: 'TAMWEEN_AUTOSAVE_TIMESTAMP_V3',
 };
+
+function normalizeBakeryPerCapita(b: Bakery): Bakery {
+  const num = parseFloat(String(b.perCapitaAverage ?? ''));
+  const formatted = !isNaN(num)
+    ? num.toFixed(2)
+    : b.villagePopulation > 0
+    ? ((b.loavesCount || 0) / b.villagePopulation).toFixed(2)
+    : '0.00';
+  return {
+    ...b,
+    bakeryCategory: b.bakeryCategory || 'مخبز بلدي مدعم',
+    flourBagPrice: b.flourBagPrice !== undefined && b.flourBagPrice !== null ? Number(b.flourBagPrice) : 950,
+    perCapitaAverage: formatted,
+  };
+}
 
 // IndexedDB Helper with safety timeout for file:/// and offline environments
 function openIndexedDB(): Promise<IDBDatabase> {
@@ -122,7 +163,7 @@ async function idbSet(key: string, val: unknown): Promise<void> {
 // Merge two application states (merges bakeries without losing existing ones on original device)
 export function mergeStates(base: AppState, incoming: Partial<AppState>): AppState {
   const bakeryMap = new Map<string, Bakery>();
-  base.bakeries.forEach((b) => bakeryMap.set(b.id, b));
+  base.bakeries.forEach((b) => bakeryMap.set(b.id, normalizeBakeryPerCapita(b)));
   (incoming.bakeries || []).forEach((b) => {
     let matchedId: string | null = bakeryMap.has(b.id) ? b.id : null;
     if (!matchedId) {
@@ -134,9 +175,9 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
       }
     }
     if (matchedId) {
-      bakeryMap.set(matchedId, { ...bakeryMap.get(matchedId)!, ...b });
+      bakeryMap.set(matchedId, normalizeBakeryPerCapita({ ...bakeryMap.get(matchedId)!, ...b }));
     } else {
-      bakeryMap.set(b.id, b);
+      bakeryMap.set(b.id, normalizeBakeryPerCapita(b));
     }
   });
 
@@ -162,7 +203,24 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
 
   const userMap = new Map<string, AppUser>();
   base.users.forEach((u) => userMap.set(u.id, u));
-  (incoming.users || []).forEach((u) => userMap.set(u.id, u));
+  (incoming.users || []).forEach((u) => {
+    const existingByUsername = Array.from(userMap.values()).find(
+      (ex) => ex.username.toLowerCase() === u.username.toLowerCase()
+    );
+    if (existingByUsername) {
+      userMap.set(existingByUsername.id, { ...existingByUsername, ...u, id: existingByUsername.id });
+    } else {
+      userMap.set(u.id, u);
+    }
+  });
+
+  const taskMap = new Map<string, DailyBakeryTask>();
+  (base.dailyTasks || INITIAL_DAILY_TASKS).forEach((t) => taskMap.set(t.id, t));
+  (incoming.dailyTasks || []).forEach((t) => taskMap.set(t.id, t));
+
+  const msgMap = new Map<string, InboxChatMessage>();
+  (base.inboxMessages || INITIAL_INBOX_MESSAGES).forEach((m) => msgMap.set(m.id, m));
+  (incoming.inboxMessages || []).forEach((m) => msgMap.set(m.id, m));
 
   return {
     ...base,
@@ -173,8 +231,17 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
     issuingEntities: Array.from(new Set([...base.issuingEntities, ...(incoming.issuingEntities || [])])),
     violationTypes: Array.from(new Set([...base.violationTypes, ...(incoming.violationTypes || [])])),
     activityStatuses: Array.from(new Set([...base.activityStatuses, ...(incoming.activityStatuses || [])])),
+    bakeryCategories: Array.from(new Set([...(base.bakeryCategories || DEFAULT_BAKERY_CATEGORIES), ...(incoming.bakeryCategories || [])])),
+    breadTypes: Array.from(new Set([...(base.breadTypes || DEFAULT_BREAD_TYPES), ...(incoming.breadTypes || [])])),
+    breadTypeCounts: Array.from(new Set([...(base.breadTypeCounts || DEFAULT_BREAD_TYPE_COUNTS), ...(incoming.breadTypeCounts || [])])),
+    lineTypes: Array.from(new Set([...(base.lineTypes || DEFAULT_LINE_TYPES), ...(incoming.lineTypes || [])])),
+    fuelTypes: Array.from(new Set([...(base.fuelTypes || DEFAULT_FUEL_TYPES), ...(incoming.fuelTypes || [])])),
+    paymentMethods: Array.from(new Set([...(base.paymentMethods || PAYMENT_METHODS), ...(incoming.paymentMethods || [])])),
+    dailyTasks: Array.from(taskMap.values()),
+    inboxMessages: Array.from(msgMap.values()),
     systemConfig: {
-      ...(incoming.systemConfig || base.systemConfig),
+      ...(base.systemConfig || {}),
+      ...(incoming.systemConfig || {}),
       logoBase64: DEFAULT_OFFICIAL_LOGO,
     },
     columnTitles: incoming.columnTitles || base.columnTitles,
@@ -197,6 +264,14 @@ export async function loadInitialState(): Promise<AppState> {
     let issuingEntities: string[] | null = null;
     let violationTypes: string[] | null = null;
     let activityStatuses: string[] | null = null;
+    let bakeryCategories: string[] | null = null;
+    let breadTypes: string[] | null = null;
+    let breadTypeCounts: string[] | null = null;
+    let lineTypes: string[] | null = null;
+    let fuelTypes: string[] | null = null;
+    let paymentMethods: string[] | null = null;
+    let dailyTasks: DailyBakeryTask[] | null = null;
+    let inboxMessages: InboxChatMessage[] | null = null;
     let columnTitles: ColumnTitles | null = null;
     let systemConfig: SystemConfig | null = null;
     let users: AppUser[] | null = null;
@@ -223,6 +298,30 @@ export async function loadInitialState(): Promise<AppState> {
       if (localStorage.getItem(KEYS.ACTIVITY_STATUSES)) {
         activityStatuses = JSON.parse(localStorage.getItem(KEYS.ACTIVITY_STATUSES)!);
       }
+      if (localStorage.getItem(KEYS.BAKERY_CATEGORIES)) {
+        bakeryCategories = JSON.parse(localStorage.getItem(KEYS.BAKERY_CATEGORIES)!);
+      }
+      if (localStorage.getItem(KEYS.BREAD_TYPES)) {
+        breadTypes = JSON.parse(localStorage.getItem(KEYS.BREAD_TYPES)!);
+      }
+      if (localStorage.getItem(KEYS.BREAD_TYPE_COUNTS)) {
+        breadTypeCounts = JSON.parse(localStorage.getItem(KEYS.BREAD_TYPE_COUNTS)!);
+      }
+      if (localStorage.getItem(KEYS.LINE_TYPES)) {
+        lineTypes = JSON.parse(localStorage.getItem(KEYS.LINE_TYPES)!);
+      }
+      if (localStorage.getItem(KEYS.FUEL_TYPES)) {
+        fuelTypes = JSON.parse(localStorage.getItem(KEYS.FUEL_TYPES)!);
+      }
+      if (localStorage.getItem(KEYS.PAYMENT_METHODS)) {
+        paymentMethods = JSON.parse(localStorage.getItem(KEYS.PAYMENT_METHODS)!);
+      }
+      if (localStorage.getItem(KEYS.DAILY_TASKS)) {
+        dailyTasks = JSON.parse(localStorage.getItem(KEYS.DAILY_TASKS)!);
+      }
+      if (localStorage.getItem(KEYS.INBOX_MESSAGES)) {
+        inboxMessages = JSON.parse(localStorage.getItem(KEYS.INBOX_MESSAGES)!);
+      }
       if (localStorage.getItem(KEYS.COLUMNS)) {
         columnTitles = JSON.parse(localStorage.getItem(KEYS.COLUMNS)!);
       }
@@ -243,12 +342,20 @@ export async function loadInitialState(): Promise<AppState> {
 
       if (isNewFileImport || !bakeries || bakeries.length === 0) {
         const existingBase: AppState = {
-          bakeries: bakeries ?? INITIAL_BAKERIES,
+          bakeries: (bakeries ?? INITIAL_BAKERIES).map(normalizeBakeryPerCapita),
           debts: debts ?? INITIAL_DEBTS,
           villages: villages ?? DEFAULT_VILLAGES_HIERARCHY,
           issuingEntities: issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
           violationTypes: violationTypes ?? DEFAULT_VIOLATION_TYPES,
           activityStatuses: activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
+          bakeryCategories: bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
+          breadTypes: breadTypes ?? DEFAULT_BREAD_TYPES,
+          breadTypeCounts: breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
+          lineTypes: lineTypes ?? DEFAULT_LINE_TYPES,
+          fuelTypes: fuelTypes ?? DEFAULT_FUEL_TYPES,
+          paymentMethods: paymentMethods ?? PAYMENT_METHODS,
+          dailyTasks: dailyTasks ?? INITIAL_DAILY_TASKS,
+          inboxMessages: inboxMessages ?? INITIAL_INBOX_MESSAGES,
           columnTitles: columnTitles ?? DEFAULT_COLUMN_TITLES,
           systemConfig: systemConfig ?? DEFAULT_SYSTEM_CONFIG,
           users: users ?? INITIAL_USERS,
@@ -261,6 +368,14 @@ export async function loadInitialState(): Promise<AppState> {
         issuingEntities = merged.issuingEntities;
         violationTypes = merged.violationTypes;
         activityStatuses = merged.activityStatuses;
+        bakeryCategories = merged.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES;
+        breadTypes = merged.breadTypes ?? DEFAULT_BREAD_TYPES;
+        breadTypeCounts = merged.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
+        lineTypes = merged.lineTypes ?? DEFAULT_LINE_TYPES;
+        fuelTypes = merged.fuelTypes ?? DEFAULT_FUEL_TYPES;
+        paymentMethods = merged.paymentMethods ?? PAYMENT_METHODS;
+        dailyTasks = merged.dailyTasks ?? INITIAL_DAILY_TASKS;
+        inboxMessages = merged.inboxMessages ?? INITIAL_INBOX_MESSAGES;
         columnTitles = merged.columnTitles;
         systemConfig = merged.systemConfig;
         users = merged.users;
@@ -280,6 +395,14 @@ export async function loadInitialState(): Promise<AppState> {
           issuingEntities,
           violationTypes,
           activityStatuses,
+          bakeryCategories,
+          breadTypes,
+          breadTypeCounts,
+          lineTypes,
+          fuelTypes,
+          paymentMethods,
+          dailyTasks,
+          inboxMessages,
           columnTitles,
           systemConfig,
           users,
@@ -288,12 +411,20 @@ export async function loadInitialState(): Promise<AppState> {
       }
     } else if (!isInitialized && (!bakeries || bakeries.length === 0)) {
       // First run default seed
-      bakeries = INITIAL_BAKERIES;
+      bakeries = INITIAL_BAKERIES.map(normalizeBakeryPerCapita);
       debts = INITIAL_DEBTS;
       villages = DEFAULT_VILLAGES_HIERARCHY;
       issuingEntities = DEFAULT_ISSUING_ENTITIES;
       violationTypes = DEFAULT_VIOLATION_TYPES;
       activityStatuses = DEFAULT_ACTIVITY_STATUSES;
+      bakeryCategories = DEFAULT_BAKERY_CATEGORIES;
+      breadTypes = DEFAULT_BREAD_TYPES;
+      breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS;
+      lineTypes = DEFAULT_LINE_TYPES;
+      fuelTypes = DEFAULT_FUEL_TYPES;
+      paymentMethods = PAYMENT_METHODS;
+      dailyTasks = INITIAL_DAILY_TASKS;
+      inboxMessages = INITIAL_INBOX_MESSAGES;
       columnTitles = DEFAULT_COLUMN_TITLES;
       systemConfig = DEFAULT_SYSTEM_CONFIG;
       users = INITIAL_USERS;
@@ -309,6 +440,14 @@ export async function loadInitialState(): Promise<AppState> {
         issuingEntities,
         violationTypes,
         activityStatuses,
+        bakeryCategories,
+        breadTypes,
+        breadTypeCounts,
+        lineTypes,
+        fuelTypes,
+        paymentMethods,
+        dailyTasks,
+        inboxMessages,
         columnTitles,
         systemConfig,
         users,
@@ -317,25 +456,64 @@ export async function loadInitialState(): Promise<AppState> {
     }
 
     // 3. Fallback defaults if any section is empty
-    bakeries = bakeries ?? INITIAL_BAKERIES;
+    bakeries = (bakeries ?? INITIAL_BAKERIES).map(normalizeBakeryPerCapita);
     debts = debts ?? INITIAL_DEBTS;
     villages = villages ?? DEFAULT_VILLAGES_HIERARCHY;
     issuingEntities = issuingEntities ?? DEFAULT_ISSUING_ENTITIES;
     violationTypes = violationTypes ?? DEFAULT_VIOLATION_TYPES;
     activityStatuses = activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
+    bakeryCategories = bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES;
+    breadTypes = breadTypes ?? DEFAULT_BREAD_TYPES;
+    breadTypeCounts = breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
+    lineTypes = lineTypes ?? DEFAULT_LINE_TYPES;
+    fuelTypes = fuelTypes ?? DEFAULT_FUEL_TYPES;
+    paymentMethods = paymentMethods ?? PAYMENT_METHODS;
+    dailyTasks = dailyTasks ?? INITIAL_DAILY_TASKS;
+    inboxMessages = inboxMessages ?? INITIAL_INBOX_MESSAGES;
     columnTitles = columnTitles ?? DEFAULT_COLUMN_TITLES;
-    systemConfig = systemConfig ? { ...systemConfig } : { ...DEFAULT_SYSTEM_CONFIG };
+    systemConfig = systemConfig ? { ...DEFAULT_SYSTEM_CONFIG, ...systemConfig } : { ...DEFAULT_SYSTEM_CONFIG };
     // Permanently lock and maintain official Egyptian Ministry logo from GitHub in database
     systemConfig.logoBase64 = DEFAULT_OFFICIAL_LOGO;
     users = users ?? INITIAL_USERS;
 
-    // Sanitize 'شوال' to 'شيكارة'
+    // Sanitize and normalize column titles to ensure new required names are applied
     if (columnTitles) {
+      columnTitles = {
+        ...DEFAULT_COLUMN_TITLES,
+        ...columnTitles,
+      };
       if (columnTitles.insuranceQuota && columnTitles.insuranceQuota.includes('شوال')) {
         columnTitles.insuranceQuota = columnTitles.insuranceQuota.replace(/شوال/g, 'شيكارة');
       }
       if (columnTitles.actualQuota && columnTitles.actualQuota.includes('شوال')) {
         columnTitles.actualQuota = columnTitles.actualQuota.replace(/شوال/g, 'شيكارة');
+      }
+      if (!columnTitles.bakeryCategory || columnTitles.bakeryCategory === 'تصنيف المخبز' || columnTitles.bakeryCategory === 'مخبز بلدي مدعم') {
+        columnTitles.bakeryCategory = 'نوع المخابز';
+      }
+      if (!columnTitles.flourBagPrice) {
+        columnTitles.flourBagPrice = 'سعر الشيكارة';
+      }
+      if (!columnTitles.perCapitaAverage || columnTitles.perCapitaAverage === 'متوسط الفرد للمخبز') {
+        columnTitles.perCapitaAverage = 'متوسط نصيب الفرد للمخبز';
+      }
+      if (columnTitles.beneficiaries2023 === 'مستفيدي 2023') {
+        columnTitles.beneficiaries2023 = 'مستفيد عام 2023';
+      }
+      if (columnTitles.beneficiaries2024 === 'مستفيدي 2024') {
+        columnTitles.beneficiaries2024 = 'مستفيدين عام 2024';
+      }
+      if (columnTitles.beneficiaries2025 === 'مستفيدي 2025') {
+        columnTitles.beneficiaries2025 = 'مستفيدين عام 2025';
+      }
+      if (columnTitles.avg2023 === 'متوسط 2023') {
+        columnTitles.avg2023 = 'متوسط عام 2023';
+      }
+      if (columnTitles.avg2024 === 'متوسط 2024') {
+        columnTitles.avg2024 = 'متوسط عام 2024';
+      }
+      if (columnTitles.avg2025 === 'متوسط 2025') {
+        columnTitles.avg2025 = 'متوسط عام 2025';
       }
     }
 
@@ -363,6 +541,14 @@ export async function loadInitialState(): Promise<AppState> {
       issuingEntities,
       violationTypes,
       activityStatuses,
+      bakeryCategories,
+      breadTypes,
+      breadTypeCounts,
+      lineTypes,
+      fuelTypes,
+      paymentMethods,
+      dailyTasks,
+      inboxMessages,
       columnTitles,
       systemConfig,
       users: activeUsers,
@@ -371,12 +557,20 @@ export async function loadInitialState(): Promise<AppState> {
   } catch (criticalErr) {
     console.error('Critical fallback in loadInitialState:', criticalErr);
     return {
-      bakeries: INITIAL_BAKERIES,
+      bakeries: INITIAL_BAKERIES.map(normalizeBakeryPerCapita),
       debts: INITIAL_DEBTS,
       villages: DEFAULT_VILLAGES_HIERARCHY,
       issuingEntities: DEFAULT_ISSUING_ENTITIES,
       violationTypes: DEFAULT_VIOLATION_TYPES,
       activityStatuses: DEFAULT_ACTIVITY_STATUSES,
+      bakeryCategories: DEFAULT_BAKERY_CATEGORIES,
+      breadTypes: DEFAULT_BREAD_TYPES,
+      breadTypeCounts: DEFAULT_BREAD_TYPE_COUNTS,
+      lineTypes: DEFAULT_LINE_TYPES,
+      fuelTypes: DEFAULT_FUEL_TYPES,
+      paymentMethods: PAYMENT_METHODS,
+      dailyTasks: INITIAL_DAILY_TASKS,
+      inboxMessages: INITIAL_INBOX_MESSAGES,
       columnTitles: DEFAULT_COLUMN_TITLES,
       systemConfig: DEFAULT_SYSTEM_CONFIG,
       users: INITIAL_USERS,
@@ -394,10 +588,20 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     issuingEntities,
     violationTypes,
     activityStatuses,
+    bakeryCategories = DEFAULT_BAKERY_CATEGORIES,
+    breadTypes = DEFAULT_BREAD_TYPES,
+    breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS,
+    lineTypes = DEFAULT_LINE_TYPES,
+    fuelTypes = DEFAULT_FUEL_TYPES,
+    paymentMethods = PAYMENT_METHODS,
+    dailyTasks = INITIAL_DAILY_TASKS,
+    inboxMessages = INITIAL_INBOX_MESSAGES,
     columnTitles,
     systemConfig,
     users
   } = state;
+
+  const normalizedBakeries = (bakeries || []).map(normalizeBakeryPerCapita);
 
   // Guarantee official Egyptian Ministry logo from GitHub is permanently locked in saved config
   const lockedConfig: SystemConfig = {
@@ -407,12 +611,20 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
 
   // LocalStorage
   try {
-    localStorage.setItem(KEYS.BAKERIES, JSON.stringify(bakeries));
+    localStorage.setItem(KEYS.BAKERIES, JSON.stringify(normalizedBakeries));
     localStorage.setItem(KEYS.DEBTS, JSON.stringify(debts));
     localStorage.setItem(KEYS.VILLAGES, JSON.stringify(villages));
     localStorage.setItem(KEYS.ENTITIES, JSON.stringify(issuingEntities));
     localStorage.setItem(KEYS.VIOLATIONS, JSON.stringify(violationTypes));
     localStorage.setItem(KEYS.ACTIVITY_STATUSES, JSON.stringify(activityStatuses));
+    localStorage.setItem(KEYS.BAKERY_CATEGORIES, JSON.stringify(bakeryCategories));
+    localStorage.setItem(KEYS.BREAD_TYPES, JSON.stringify(breadTypes));
+    localStorage.setItem(KEYS.BREAD_TYPE_COUNTS, JSON.stringify(breadTypeCounts));
+    localStorage.setItem(KEYS.LINE_TYPES, JSON.stringify(lineTypes));
+    localStorage.setItem(KEYS.FUEL_TYPES, JSON.stringify(fuelTypes));
+    localStorage.setItem(KEYS.PAYMENT_METHODS, JSON.stringify(paymentMethods));
+    localStorage.setItem(KEYS.DAILY_TASKS, JSON.stringify(dailyTasks));
+    localStorage.setItem(KEYS.INBOX_MESSAGES, JSON.stringify(inboxMessages));
     localStorage.setItem(KEYS.COLUMNS, JSON.stringify(columnTitles));
     localStorage.setItem(KEYS.CONFIG, JSON.stringify(lockedConfig));
     localStorage.setItem(KEYS.USERS, JSON.stringify(users));
@@ -422,28 +634,45 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
 
   // IndexedDB (No 5MB limit, stores large logos and thousands of entries safely)
   await Promise.all([
-    idbSet(KEYS.BAKERIES, bakeries),
+    idbSet(KEYS.BAKERIES, normalizedBakeries),
     idbSet(KEYS.DEBTS, debts),
     idbSet(KEYS.VILLAGES, villages),
     idbSet(KEYS.ENTITIES, issuingEntities),
     idbSet(KEYS.VIOLATIONS, violationTypes),
     idbSet(KEYS.ACTIVITY_STATUSES, activityStatuses),
+    idbSet(KEYS.BAKERY_CATEGORIES, bakeryCategories),
+    idbSet(KEYS.BREAD_TYPES, breadTypes),
+    idbSet(KEYS.BREAD_TYPE_COUNTS, breadTypeCounts),
+    idbSet(KEYS.LINE_TYPES, lineTypes),
+    idbSet(KEYS.FUEL_TYPES, fuelTypes),
+    idbSet(KEYS.PAYMENT_METHODS, paymentMethods),
+    idbSet(KEYS.DAILY_TASKS, dailyTasks),
+    idbSet(KEYS.INBOX_MESSAGES, inboxMessages),
     idbSet(KEYS.COLUMNS, columnTitles),
     idbSet(KEYS.CONFIG, lockedConfig),
     idbSet(KEYS.USERS, users)
   ]);
 
-  // Automated snapshot backup for instant merging across sessions
+  // Automated snapshot backup for instant merging across sessions & Google Drive Gmail auto-sync
   try {
     const backupSnapshot = {
       timestamp: new Date().toISOString(),
+      gmailEmail: lockedConfig.gmailEmail || localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') || 'ELHOSINY2020@gmail.com',
       state: {
-        bakeries,
+        bakeries: normalizedBakeries,
         debts,
         villages,
         issuingEntities,
         violationTypes,
         activityStatuses,
+        bakeryCategories,
+        breadTypes,
+        breadTypeCounts,
+        lineTypes,
+        fuelTypes,
+        paymentMethods,
+        dailyTasks,
+        inboxMessages,
         columnTitles,
         systemConfig: lockedConfig,
         users,
@@ -452,6 +681,32 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     localStorage.setItem(KEYS.AUTOSAVE_BACKUP, JSON.stringify(backupSnapshot));
     localStorage.setItem(KEYS.AUTOSAVE_TIMESTAMP, backupSnapshot.timestamp);
     await idbSet(KEYS.AUTOSAVE_BACKUP, backupSnapshot);
+
+    // If Google Drive auto-sync is enabled, automatically update the Google Drive JSON snapshot
+    const driveAutoSync =
+      lockedConfig.googleDriveAutoSync !== false &&
+      localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
+    if (driveAutoSync) {
+      const gmailKey = (
+        lockedConfig.gmailEmail ||
+        localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
+        'ELHOSINY2020@gmail.com'
+      )
+        .trim()
+        .toLowerCase();
+      const drivePayload = {
+        version: '3.0-google-drive-autosync',
+        timestamp: backupSnapshot.timestamp,
+        gmailEmail: gmailKey,
+        destinationType: 'GOOGLE_DRIVE',
+        targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
+        bakeriesCount: normalizedBakeries.length,
+        debtsCount: debts.length,
+        data: backupSnapshot.state,
+      };
+      localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(drivePayload));
+      localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, JSON.stringify(drivePayload));
+    }
 
     // Continuous auto-backup to selected hard disk file
     writeStateToDiskBackupFile(backupSnapshot).catch(() => {});

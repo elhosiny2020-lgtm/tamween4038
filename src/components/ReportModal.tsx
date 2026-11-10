@@ -92,7 +92,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     return villages.find((v) => v.village === selectedVillage)?.localUnits || [];
   }, [selectedVillage, villages]);
 
-  // Column Selector State for Bakeries Report - All 30 columns enabled by default
+  // Column Selector State for Bakeries Report - All 32 columns enabled by default in exact required order
   const [activeColumns, setActiveColumns] = useState<Record<string, boolean>>({
     index: true,
     bakeryOwnerName: true,
@@ -100,24 +100,30 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     village: true,
     localUnit: true,
     remainingDebt: true,
+    // الحصص والبيانات التموينية
+    insuranceValue: true,
     insuranceQuota: true,
     actualQuota: true,
-    insuranceValue: true,
     loavesCount: true,
-    villagePopulation: true,
     perCapitaAverage: true,
+    // إحصائيات السكان
+    villagePopulation: true,
     beneficiaries2023: true,
-    avg2023: true,
     beneficiaries2024: true,
-    avg2024: true,
     beneficiaries2025: true,
+    avg2023: true,
+    avg2024: true,
     avg2025: true,
     avgDiff: true,
+    // التصنيف والتشغيل
     activityStatus: true,
+    bakeryCategory: true,
     breadType: true,
+    flourBagPrice: true,
     breadTypeCount: true,
     lineType: true,
     fuelType: true,
+    // الاتصال والتراخيص
     phone: true,
     nationalId: true,
     commercialRegDate: true,
@@ -197,17 +203,19 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   // Summary totals for bakeries report
   const reportTotals = useMemo(() => {
+    let totalInsuranceValue = 0;
     let totalInsurance = 0;
     let totalActual = 0;
     let totalLoaves = 0;
     let totalDebt = 0;
     filteredBakeries.forEach((b) => {
+      totalInsuranceValue += b.insuranceValue || 0;
       totalInsurance += b.insuranceQuota || 0;
       totalActual += b.actualQuota || 0;
       totalLoaves += b.loavesCount || 0;
       totalDebt += bakeryDebtMap[b.id] || 0;
     });
-    return { totalInsurance, totalActual, totalLoaves, totalDebt };
+    return { totalInsuranceValue, totalInsurance, totalActual, totalLoaves, totalDebt };
   }, [filteredBakeries, bakeryDebtMap]);
 
   // Summary totals for detailed debts report
@@ -423,6 +431,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         logging: false,
         backgroundColor: '#ffffff',
         windowWidth: 1440,
+        scrollX: 0,
+        scrollY: 0,
         onclone: (clonedDoc: Document) => {
           sanitizeClonedDocumentForPdf(clonedDoc);
         },
@@ -508,12 +518,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             * {
               box-sizing: border-box;
               font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+              color: #000000 !important;
+              -webkit-text-fill-color: #000000 !important;
             }
             body {
               margin: 0;
               padding: 0;
               background: #ffffff;
-              color: #000000;
+              color: #000000 !important;
               direction: rtl;
               font-weight: 700;
               -webkit-print-color-adjust: exact !important;
@@ -528,6 +540,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               margin: 0 !important;
               padding: 0 !important;
               background: #ffffff !important;
+              color: #000000 !important;
             }
             table {
               width: 100% !important;
@@ -547,6 +560,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             }
             th, td {
               border: 1px solid #000000 !important;
+              color: #000000 !important;
               padding: 3px 2px !important;
               word-break: break-word !important;
               overflow-wrap: break-word !important;
@@ -559,13 +573,19 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             .report-font-standard th, .report-font-standard td { font-size: 8.5pt !important; }
             .report-font-large th, .report-font-large td { font-size: 9.5pt !important; }
             th {
-              background-color: #f1f5f9 !important;
+              background-color: #e2e8f0 !important;
+              color: #000000 !important;
+              font-weight: 900 !important;
+            }
+            tfoot tr, tfoot td {
+              background-color: #cbd5e1 !important;
               color: #000000 !important;
               font-weight: 900 !important;
             }
             .num-enlarged {
               font-weight: 900 !important;
               font-size: 1.05em !important;
+              color: #000000 !important;
             }
           </style>
         </head>
@@ -583,7 +603,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         } catch {
           window.print();
         }
-      }, 180);
+      }, 120);
     } catch {
       window.print();
     }
@@ -726,7 +746,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       return;
     }
 
-    // Bakeries CSV
+    // Bakeries CSV (in exact requested order)
     const headers: string[] = [];
     if (activeColumns.index) headers.push(columnTitles.index);
     if (activeColumns.bakeryOwnerName) headers.push(columnTitles.bakeryOwnerName);
@@ -734,24 +754,30 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     if (activeColumns.village) headers.push(columnTitles.village);
     if (activeColumns.localUnit) headers.push(columnTitles.localUnit);
     if (activeColumns.remainingDebt) headers.push(columnTitles.remainingDebt);
+    // الحصص والبيانات التموينية
+    if (activeColumns.insuranceValue) headers.push(columnTitles.insuranceValue);
     if (activeColumns.insuranceQuota) headers.push(columnTitles.insuranceQuota);
     if (activeColumns.actualQuota) headers.push(columnTitles.actualQuota);
-    if (activeColumns.insuranceValue) headers.push(columnTitles.insuranceValue);
     if (activeColumns.loavesCount) headers.push(columnTitles.loavesCount);
-    if (activeColumns.villagePopulation) headers.push(columnTitles.villagePopulation);
     if (activeColumns.perCapitaAverage) headers.push(columnTitles.perCapitaAverage);
+    // إحصائيات السكان
+    if (activeColumns.villagePopulation) headers.push(columnTitles.villagePopulation);
     if (activeColumns.beneficiaries2023) headers.push(columnTitles.beneficiaries2023);
-    if (activeColumns.avg2023) headers.push(columnTitles.avg2023);
     if (activeColumns.beneficiaries2024) headers.push(columnTitles.beneficiaries2024);
-    if (activeColumns.avg2024) headers.push(columnTitles.avg2024);
     if (activeColumns.beneficiaries2025) headers.push(columnTitles.beneficiaries2025);
+    if (activeColumns.avg2023) headers.push(columnTitles.avg2023);
+    if (activeColumns.avg2024) headers.push(columnTitles.avg2024);
     if (activeColumns.avg2025) headers.push(columnTitles.avg2025);
     if (activeColumns.avgDiff) headers.push(columnTitles.avgDiff);
+    // التصنيف والتشغيل
     if (activeColumns.activityStatus) headers.push(columnTitles.activityStatus);
+    if (activeColumns.bakeryCategory) headers.push(columnTitles.bakeryCategory || 'نوع المخابز');
     if (activeColumns.breadType) headers.push(columnTitles.breadType);
+    if (activeColumns.flourBagPrice) headers.push(columnTitles.flourBagPrice || 'سعر الشيكارة');
     if (activeColumns.breadTypeCount) headers.push(columnTitles.breadTypeCount);
     if (activeColumns.lineType) headers.push(columnTitles.lineType);
     if (activeColumns.fuelType) headers.push(columnTitles.fuelType);
+    // الاتصال والتراخيص
     if (activeColumns.phone) headers.push(columnTitles.phone);
     if (activeColumns.nationalId) headers.push(columnTitles.nationalId);
     if (activeColumns.commercialRegDate) headers.push(columnTitles.commercialRegDate);
@@ -768,24 +794,30 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       if (activeColumns.village) row.push(`"${b.village || ''}"`);
       if (activeColumns.localUnit) row.push(`"${b.localUnit || ''}"`);
       if (activeColumns.remainingDebt) row.push(debtVal);
+      // الحصص والبيانات التموينية
+      if (activeColumns.insuranceValue) row.push(b.insuranceValue || 0);
       if (activeColumns.insuranceQuota) row.push(b.insuranceQuota || 0);
       if (activeColumns.actualQuota) row.push(b.actualQuota || 0);
-      if (activeColumns.insuranceValue) row.push(b.insuranceValue || 0);
       if (activeColumns.loavesCount) row.push(b.loavesCount || 0);
-      if (activeColumns.villagePopulation) row.push(b.villagePopulation || 0);
       if (activeColumns.perCapitaAverage) row.push(b.perCapitaAverage || 0);
+      // إحصائيات السكان
+      if (activeColumns.villagePopulation) row.push(b.villagePopulation || 0);
       if (activeColumns.beneficiaries2023) row.push(b.beneficiaries2023 || 0);
-      if (activeColumns.avg2023) row.push(b.avg2023 || 0);
       if (activeColumns.beneficiaries2024) row.push(b.beneficiaries2024 || 0);
-      if (activeColumns.avg2024) row.push(b.avg2024 || 0);
       if (activeColumns.beneficiaries2025) row.push(b.beneficiaries2025 || 0);
+      if (activeColumns.avg2023) row.push(b.avg2023 || 0);
+      if (activeColumns.avg2024) row.push(b.avg2024 || 0);
       if (activeColumns.avg2025) row.push(b.avg2025 || 0);
       if (activeColumns.avgDiff) row.push(b.avgDiff || 0);
+      // التصنيف والتشغيل
       if (activeColumns.activityStatus) row.push(`"${b.activityStatus || ''}"`);
+      if (activeColumns.bakeryCategory) row.push(`"${b.bakeryCategory || 'مخبز بلدي مدعم'}"`);
       if (activeColumns.breadType) row.push(`"${b.breadType || ''}"`);
+      if (activeColumns.flourBagPrice) row.push(b.flourBagPrice ?? 950);
       if (activeColumns.breadTypeCount) row.push(b.breadTypeCount || 0);
       if (activeColumns.lineType) row.push(`"${b.lineType || ''}"`);
       if (activeColumns.fuelType) row.push(`"${b.fuelType || ''}"`);
+      // الاتصال والتراخيص
       if (activeColumns.phone) row.push(`"\t${b.phone || ''}"`);
       if (activeColumns.nationalId) row.push(`"\t${b.nationalId || ''}"`);
       if (activeColumns.commercialRegDate) row.push(`"${b.commercialRegDate || ''}"`);
@@ -816,25 +848,27 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   const debtsSpan = activeColumns.remainingDebt ? 1 : 0;
 
   const quotasSpan =
+    (activeColumns.insuranceValue ? 1 : 0) +
     (activeColumns.insuranceQuota ? 1 : 0) +
     (activeColumns.actualQuota ? 1 : 0) +
-    (activeColumns.insuranceValue ? 1 : 0) +
-    (activeColumns.loavesCount ? 1 : 0);
+    (activeColumns.loavesCount ? 1 : 0) +
+    (activeColumns.perCapitaAverage ? 1 : 0);
 
   const populationSpan =
     (activeColumns.villagePopulation ? 1 : 0) +
-    (activeColumns.perCapitaAverage ? 1 : 0) +
     (activeColumns.beneficiaries2023 ? 1 : 0) +
-    (activeColumns.avg2023 ? 1 : 0) +
     (activeColumns.beneficiaries2024 ? 1 : 0) +
-    (activeColumns.avg2024 ? 1 : 0) +
     (activeColumns.beneficiaries2025 ? 1 : 0) +
+    (activeColumns.avg2023 ? 1 : 0) +
+    (activeColumns.avg2024 ? 1 : 0) +
     (activeColumns.avg2025 ? 1 : 0) +
     (activeColumns.avgDiff ? 1 : 0);
 
   const specsSpan =
     (activeColumns.activityStatus ? 1 : 0) +
+    (activeColumns.bakeryCategory ? 1 : 0) +
     (activeColumns.breadType ? 1 : 0) +
+    (activeColumns.flourBagPrice ? 1 : 0) +
     (activeColumns.breadTypeCount ? 1 : 0) +
     (activeColumns.lineType ? 1 : 0) +
     (activeColumns.fuelType ? 1 : 0);
@@ -851,7 +885,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   return (
     <div
-      className="report-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto cursor-pointer no-print"
+      className="report-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/90 overflow-y-auto cursor-pointer no-print"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           e.preventDefault();
@@ -861,6 +895,15 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       }}
     >
       <style>{`
+        .print-container, .print-container * {
+          color: #000000 !important;
+          -webkit-text-fill-color: #000000 !important;
+        }
+        .print-container th {
+          background-color: #e2e8f0 !important;
+          color: #000000 !important;
+          border-color: #000000 !important;
+        }
         @media print {
           .no-print { display: none !important; }
           .report-modal-dialog { width: 100% !important; max-width: none !important; margin: 0 !important; border: none !important; box-shadow: none !important; }
@@ -965,7 +1008,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
             <button
               onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-sm transition transform hover:scale-105 active:scale-95 cursor-pointer border border-emerald-600/60"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-sm cursor-pointer border border-emerald-600/60"
               title="تصدير كشف إكسيل متكامل بترميز عربي UTF-8"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
@@ -975,8 +1018,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             <button
               onClick={handleDownloadPdf}
               disabled={isGeneratingPdf}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-red-800 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-sm transition transform hover:scale-105 active:scale-95 cursor-pointer border border-red-600/60"
-              title="تنزيل ملف PDF فوري بعرض الصفحة A4"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-red-800 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-sm cursor-pointer border border-red-600/60"
+              title="تنزيل ملف PDF فوري بعرض الصفحة A4 باللون الأسود الصريح"
             >
               <Download className="w-4 h-4 text-red-200" />
               {isGeneratingPdf ? 'جاري تجهيز PDF...' : 'تنزيل PDF'}
@@ -984,7 +1027,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
             <button
               onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-lg hover:shadow-amber-500/40 transition-all duration-300 transform hover:scale-105 active:scale-95 cursor-pointer border border-amber-300"
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-lg cursor-pointer border border-amber-300"
               title="طباعة فورية سريعة ومنسقة لكامل التقرير بعرض ورق A4 Landscape بدون أي تهنيج"
             >
               <Printer className="w-4 h-4 text-slate-950 stroke-[2.5]" />
@@ -998,8 +1041,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                 e.stopPropagation();
                 onClose();
               }}
-              className="p-2 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md flex items-center justify-center"
-              title="إغلاق النافذة (Escape)"
+              className="p-2 rounded-xl bg-red-900/60 hover:bg-red-600 text-white cursor-pointer border border-red-500/50 shadow-md flex items-center justify-center"
+              title="إغلاق النافذة فوراً (Escape)"
             >
               <X className="w-5 h-5 stroke-[2.5]" />
             </button>
@@ -1172,66 +1215,126 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             )}
           </div>
 
-          {/* Column Checklist Accordion for Bakeries */}
-          {reportType === 'bakeries' && (
-            <details className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs">
-              <summary className="font-black text-slate-800 cursor-pointer flex items-center justify-between select-none">
-                <span className="flex items-center gap-1.5">
-                  <SlidersHorizontal className="w-4 h-4 text-amber-700" />
-                  تخصيص وإخفاء/إظهار أعمدة التقرير ({Object.values(activeColumns).filter(Boolean).length} من 30 عمود مفعل)
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      selectAllColumns();
-                    }}
-                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black shadow-xs transition cursor-pointer"
-                  >
-                    ✓ تحديد الكل (30 عمود)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      deselectAllColumns();
-                    }}
-                    className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-black shadow-xs transition cursor-pointer"
-                  >
-                    ✕ إلغاء الكل
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      resetDefaultColumns();
-                    }}
-                    className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-[10px] font-black transition cursor-pointer"
-                  >
-                    استعادة الافتراضي
-                  </button>
-                </div>
-              </summary>
+          {/* Quick Village & Local Unit Selector & Column Visibility Across All Tables */}
+          <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="font-black text-amber-950 flex items-center gap-1">
+                📍 إظهار واختيار القرية والوحدة المحلية في جميع الجداول:
+              </span>
+              <label className="inline-flex items-center gap-1.5 font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-amber-400 cursor-pointer shadow-2xs">
+                <input
+                  type="checkbox"
+                  checked={Boolean(activeColumns.village)}
+                  onChange={() => toggleColumn('village')}
+                  className="accent-amber-600 w-3.5 h-3.5 rounded"
+                />
+                <span>إظهار عمود القرية ({columnTitles.village || 'القرية'})</span>
+              </label>
+              <label className="inline-flex items-center gap-1.5 font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-amber-400 cursor-pointer shadow-2xs">
+                <input
+                  type="checkbox"
+                  checked={Boolean(activeColumns.localUnit)}
+                  onChange={() => toggleColumn('localUnit')}
+                  className="accent-amber-600 w-3.5 h-3.5 rounded"
+                />
+                <span>إظهار عمود الوحدة المحلية ({columnTitles.localUnit || 'الوحدة المحلية'})</span>
+              </label>
+            </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 mt-3 pt-2 border-t border-slate-100">
-                {Object.keys(activeColumns).map((colKey) => (
-                  <label
-                    key={colKey}
-                    className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer hover:text-amber-900"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={activeColumns[colKey]}
-                      onChange={() => toggleColumn(colKey)}
-                      className="accent-amber-600 rounded"
-                    />
-                    <span>{(columnTitles as unknown as Record<string, string>)[colKey] || colKey}</span>
-                  </label>
-                ))}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-bold text-slate-600">اختيار سريع للقرية:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedVillage('ALL');
+                  setSelectedUnit('ALL');
+                }}
+                className={`px-2 py-0.5 rounded-lg text-[11px] font-black cursor-pointer transition ${
+                  selectedVillage === 'ALL'
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-white text-slate-700 border border-slate-300 hover:bg-amber-100'
+                }`}
+              >
+                الكل
+              </button>
+              {villages.map((v) => (
+                <button
+                  key={v.village}
+                  type="button"
+                  onClick={() => {
+                    setSelectedVillage(v.village);
+                    setSelectedUnit('ALL');
+                  }}
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-black cursor-pointer transition ${
+                    selectedVillage === v.village
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-white text-slate-700 border border-slate-300 hover:bg-amber-100'
+                  }`}
+                >
+                  {v.village}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Column Checklist Accordion for All Report Tables */}
+          <details className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs">
+            <summary className="font-black text-slate-800 cursor-pointer flex items-center justify-between select-none">
+              <span className="flex items-center gap-1.5">
+                <SlidersHorizontal className="w-4 h-4 text-amber-700" />
+                تخصيص وإخفاء/إظهار أعمدة التقرير ({Object.values(activeColumns).filter(Boolean).length} من {Object.keys(activeColumns).length} عمود مفعل - يشمل القرية والوحدة المحلية في جميع الجداول)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    selectAllColumns();
+                  }}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black shadow-xs transition cursor-pointer"
+                >
+                  ✓ تحديد الكل ({Object.keys(activeColumns).length} عمود)
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    deselectAllColumns();
+                  }}
+                  className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-black shadow-xs transition cursor-pointer"
+                >
+                  ✕ إلغاء الكل
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    resetDefaultColumns();
+                  }}
+                  className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-[10px] font-black transition cursor-pointer"
+                >
+                  استعادة الافتراضي
+                </button>
               </div>
-            </details>
-          )}
+            </summary>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 mt-3 pt-2 border-t border-slate-100">
+              {Object.keys(activeColumns).map((colKey) => (
+                <label
+                  key={colKey}
+                  className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer hover:text-amber-900"
+                >
+                  <input
+                    type="checkbox"
+                    checked={activeColumns[colKey]}
+                    onChange={() => toggleColumn(colKey)}
+                    className="accent-amber-600 rounded"
+                  />
+                  <span>{(columnTitles as unknown as Record<string, string>)[colKey] || colKey}</span>
+                </label>
+              ))}
+            </div>
+          </details>
         </div>
 
         {/* Printable Sheet View - Full Landscape Canvas */}
@@ -1241,11 +1344,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               zoom: `${zoomLevel}%`,
               minWidth: '1350px',
             }}
-            className="report-zoom-wrapper w-full transition-all duration-150"
+            className="report-zoom-wrapper w-full"
           >
             <div
               ref={printAreaRef}
-              className="print-container bg-white p-4 sm:p-6 mx-auto rounded-xl shadow-lg border border-slate-300 print:border-none print:shadow-none print:p-2 print:m-0 w-full"
+              className="print-container bg-white text-black p-4 sm:p-6 mx-auto rounded-xl shadow-lg border border-slate-300 print:border-none print:shadow-none print:p-2 print:m-0 w-full"
             >
               {/* OFFICIAL GOVERNMENTAL HEADER */}
               <div className="border-b-2 border-black pb-3 mb-3">
@@ -1320,8 +1423,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                       <col style={{ width: '2.5%' }} />
                       <col style={{ width: '12%' }} />
                       <col style={{ width: '5.5%' }} />
-                      <col style={{ width: '5%' }} />
-                      <col style={{ width: '5%' }} />
+                      {activeColumns.village && <col style={{ width: '5%' }} />}
+                      {activeColumns.localUnit && <col style={{ width: '5%' }} />}
                       <col style={{ width: '5%' }} />
                       <col style={{ width: '6%' }} />
                       <col style={{ width: '8%' }} />
@@ -1341,7 +1444,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     <thead>
                       {/* Top Grouped Header */}
                       <tr className="bg-slate-900 text-white font-black border border-black">
-                        <th colSpan={5} className="border border-black py-1 px-1 bg-slate-900 text-amber-200">
+                        <th
+                          colSpan={3 + (activeColumns.village ? 1 : 0) + (activeColumns.localUnit ? 1 : 0)}
+                          className="border border-black py-1 px-1 bg-slate-900 text-amber-200"
+                        >
                           البيانات الأساسية وموقع المخبز
                         </th>
                         <th colSpan={3} className="border border-black py-1 px-1 bg-slate-800 text-slate-100">
@@ -1366,8 +1472,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         <th className="border border-black py-1 px-0.5">م</th>
                         <th className="border border-black py-1 px-1">اسم صاحب المخبز</th>
                         <th className="border border-black py-1 px-0.5">رقم الماكينة</th>
-                        <th className="border border-black py-1 px-0.5">القرية</th>
-                        <th className="border border-black py-1 px-0.5">الوحدة المحلية</th>
+                        {activeColumns.village && <th className="border border-black py-1 px-0.5">{columnTitles.village || 'القرية'}</th>}
+                        {activeColumns.localUnit && <th className="border border-black py-1 px-0.5">{columnTitles.localUnit || 'الوحدة المحلية'}</th>}
                         <th className="border border-black py-1 px-0.5">تاريخ المحضر</th>
                         <th className="border border-black py-1 px-0.5">الجهة المحررة</th>
                         <th className="border border-black py-1 px-0.5">نوع المخالفة</th>
@@ -1406,8 +1512,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                               {d.bakeryOwnerName}
                             </td>
                             <td className="border border-black py-1 px-0.5 num-enlarged font-black">{d.machineNumber}</td>
-                            <td className="border border-black py-1 px-0.5">{d.village}</td>
-                            <td className="border border-black py-1 px-0.5">{d.localUnit}</td>
+                            {activeColumns.village && <td className="border border-black py-1 px-0.5">{d.village}</td>}
+                            {activeColumns.localUnit && <td className="border border-black py-1 px-0.5">{d.localUnit}</td>}
                             <td className="border border-black py-1 px-0.5 font-mono">{d.violationDate}</td>
                             <td className="border border-black py-1 px-0.5">{d.issuingEntity}</td>
                             <td className="border border-black py-1 px-0.5">{d.violationType}</td>
@@ -1445,7 +1551,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
                     <tfoot>
                       <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt]">
-                        <td colSpan={8} className="border border-black py-1.5 px-2 text-right">
+                        <td
+                          colSpan={6 + (activeColumns.village ? 1 : 0) + (activeColumns.localUnit ? 1 : 0)}
+                          className="border border-black py-1.5 px-2 text-right"
+                        >
                           إجمالي كشف حساب المديونيات ({filteredDebts.length} قيد)
                         </td>
                         <td className="border border-black py-1 px-0.5 num-enlarged">
@@ -1554,8 +1663,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                       <col style={{ width: '2.5%' }} />
                       <col style={{ width: '15%' }} />
                       <col style={{ width: '6.5%' }} />
-                      <col style={{ width: '5.5%' }} />
-                      <col style={{ width: '5.5%' }} />
+                      {activeColumns.village && <col style={{ width: '5.5%' }} />}
+                      {activeColumns.localUnit && <col style={{ width: '5.5%' }} />}
                       <col style={{ width: '4.5%' }} />
                       <col style={{ width: '8.5%' }} />
                       <col style={{ width: '6%' }} />
@@ -1569,7 +1678,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
                     <thead>
                       <tr className="bg-slate-900 text-white font-black border border-black">
-                        <th colSpan={5} className="border border-black py-1 px-1 bg-slate-900 text-amber-200">
+                        <th
+                          colSpan={3 + (activeColumns.village ? 1 : 0) + (activeColumns.localUnit ? 1 : 0)}
+                          className="border border-black py-1 px-1 bg-slate-900 text-amber-200"
+                        >
                           البيانات الأساسية وموقع المخبز
                         </th>
                         <th colSpan={5} className="border border-black py-1 px-1 bg-amber-950 text-amber-200">
@@ -1587,8 +1699,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         <th className="border border-black py-1 px-0.5">م</th>
                         <th className="border border-black py-1 px-1">اسم صاحب المخبز</th>
                         <th className="border border-black py-1 px-0.5">رقم الماكينة</th>
-                        <th className="border border-black py-1 px-0.5">القرية</th>
-                        <th className="border border-black py-1 px-0.5">الوحدة المحلية</th>
+                        {activeColumns.village && <th className="border border-black py-1 px-0.5">{columnTitles.village || 'القرية'}</th>}
+                        {activeColumns.localUnit && <th className="border border-black py-1 px-0.5">{columnTitles.localUnit || 'الوحدة المحلية'}</th>}
                         <th className="border border-black py-1 px-0.5">عدد المحاضر</th>
                         <th className="border border-black py-1 px-0.5 bg-amber-900 text-amber-100">إجمالي المستحق</th>
                         <th className="border border-black py-1 px-0.5">المخالفات</th>
@@ -1624,8 +1736,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                               {b.bakeryOwnerName}
                             </td>
                             <td className="border border-black py-1 px-0.5 num-enlarged font-black">{b.machineNumber}</td>
-                            <td className="border border-black py-1 px-0.5">{b.village}</td>
-                            <td className="border border-black py-1 px-0.5">{b.localUnit}</td>
+                            {activeColumns.village && <td className="border border-black py-1 px-0.5">{b.village}</td>}
+                            {activeColumns.localUnit && <td className="border border-black py-1 px-0.5">{b.localUnit}</td>}
                             <td className="border border-black py-1 px-0.5 num-enlarged">
                               {item.recordCount > 0 ? `${item.recordCount} قيد` : '-'}
                             </td>
@@ -1706,7 +1818,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
                     <tfoot>
                       <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt]">
-                        <td colSpan={5} className="border border-black py-1.5 px-2 text-right">
+                        <td
+                          colSpan={3 + (activeColumns.village ? 1 : 0) + (activeColumns.localUnit ? 1 : 0)}
+                          className="border border-black py-1.5 px-2 text-right"
+                        >
                           إجمالي كشف مديونيات ونسب سداد المخابز ({filteredBakeryDebts.length} مخبز)
                         </td>
                         <td className="border border-black py-1 px-0.5 num-enlarged">
@@ -1750,36 +1865,42 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     <colgroup>
                       {(() => {
                         const baseWeights: Record<string, number> = {
-                          index: 2.5,
-                          bakeryOwnerName: 10.5,
-                          machineNumber: 4.8,
-                          village: 4.5,
-                          localUnit: 4.5,
-                          remainingDebt: 4.8,
-                          insuranceQuota: 3.8,
-                          actualQuota: 3.8,
-                          insuranceValue: 4.0,
-                          loavesCount: 4.2,
-                          villagePopulation: 4.0,
-                          perCapitaAverage: 3.8,
-                          beneficiaries2023: 3.5,
+                          index: 2.2,
+                          bakeryOwnerName: 9.5,
+                          machineNumber: 4.5,
+                          village: 4.2,
+                          localUnit: 4.2,
+                          remainingDebt: 4.5,
+                          // الحصص والبيانات التموينية
+                          insuranceValue: 3.8,
+                          insuranceQuota: 3.5,
+                          actualQuota: 3.5,
+                          loavesCount: 4.0,
+                          perCapitaAverage: 3.6,
+                          // إحصائيات السكان
+                          villagePopulation: 3.8,
+                          beneficiaries2023: 3.4,
+                          beneficiaries2024: 3.4,
+                          beneficiaries2025: 3.4,
                           avg2023: 3.2,
-                          beneficiaries2024: 3.5,
                           avg2024: 3.2,
-                          beneficiaries2025: 3.5,
                           avg2025: 3.2,
-                          avgDiff: 3.5,
-                          activityStatus: 3.8,
-                          breadType: 4.0,
-                          breadTypeCount: 2.8,
-                          lineType: 3.5,
-                          fuelType: 3.2,
-                          phone: 4.5,
-                          nationalId: 5.8,
-                          commercialRegDate: 3.8,
-                          bakeryLicenseDate: 3.8,
-                          leaseAgreementDate: 3.8,
-                          taxCardDate: 3.8,
+                          avgDiff: 3.4,
+                          // التصنيف والتشغيل
+                          activityStatus: 3.5,
+                          bakeryCategory: 4.0,
+                          breadType: 3.8,
+                          flourBagPrice: 3.2,
+                          breadTypeCount: 2.6,
+                          lineType: 3.4,
+                          fuelType: 3.0,
+                          // الاتصال والتراخيص
+                          phone: 4.2,
+                          nationalId: 5.5,
+                          commercialRegDate: 3.6,
+                          bakeryLicenseDate: 3.6,
+                          leaseAgreementDate: 3.6,
+                          taxCardDate: 3.6,
                         };
 
                         const activeKeys = Object.keys(activeColumns).filter((k) => activeColumns[k]);
@@ -1807,17 +1928,17 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         )}
                         {quotasSpan > 0 && (
                           <th colSpan={quotasSpan} className="border border-black py-1 px-1 bg-amber-950 text-amber-200">
-                            الحصص التموينية والتأمينية
+                            الحصص والبيانات التموينية
                           </th>
                         )}
                         {populationSpan > 0 && (
                           <th colSpan={populationSpan} className="border border-black py-1 px-1 bg-cyan-950 text-cyan-200">
-                            إحصائيات السكان والمستفيدين والبطاقات (2023 - 2025)
+                            إحصائيات السكان والمستفيدين (2023 - 2025)
                           </th>
                         )}
                         {specsSpan > 0 && (
                           <th colSpan={specsSpan} className="border border-black py-1 px-1 bg-emerald-950 text-emerald-200">
-                            التشغيل والمواصفات
+                            التصنيف والتشغيل
                           </th>
                         )}
                         {contactSpan > 0 && (
@@ -1832,7 +1953,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         )}
                       </tr>
 
-                      {/* Sub Header Row */}
+                      {/* Sub Header Row (in exact requested order) */}
                       <tr className="bg-slate-800 text-white font-black border-b border-black text-[7.5px] print:text-[6.8pt]">
                         {activeColumns.index && <th className="border border-black py-1 px-0.5">م</th>}
                         {activeColumns.bakeryOwnerName && (
@@ -1850,40 +1971,42 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                             {columnTitles.remainingDebt}
                           </th>
                         )}
+                        {/* 1. الحصص والبيانات التموينية: القيمة التأمينية -> الحصة التأمينية -> الحصة الفعلية -> الأرغفة اليومية -> متوسط نصيب الفرد للمخبز */}
+                        {activeColumns.insuranceValue && (
+                          <th className="border border-black py-1 px-0.5">{columnTitles.insuranceValue}</th>
+                        )}
                         {activeColumns.insuranceQuota && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.insuranceQuota}</th>
                         )}
                         {activeColumns.actualQuota && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.actualQuota}</th>
                         )}
-                        {activeColumns.insuranceValue && (
-                          <th className="border border-black py-1 px-0.5">{columnTitles.insuranceValue}</th>
-                        )}
                         {activeColumns.loavesCount && (
                           <th className="border border-black py-1 px-0.5 bg-amber-900 text-white">
                             {columnTitles.loavesCount}
                           </th>
                         )}
-                        {activeColumns.villagePopulation && (
-                          <th className="border border-black py-1 px-0.5">{columnTitles.villagePopulation}</th>
-                        )}
                         {activeColumns.perCapitaAverage && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.perCapitaAverage}</th>
+                        )}
+                        {/* 2. إحصائيات السكان: سكان القرية -> مستفيد عام 2023 -> مستفيدين عام 2024 -> مستفيدين عام 2025 -> متوسط عام 2023 -> متوسط عام 2024 -> متوسط عام 2025 -> الفرق التراكمي */}
+                        {activeColumns.villagePopulation && (
+                          <th className="border border-black py-1 px-0.5">{columnTitles.villagePopulation}</th>
                         )}
                         {activeColumns.beneficiaries2023 && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.beneficiaries2023}</th>
                         )}
-                        {activeColumns.avg2023 && (
-                          <th className="border border-black py-1 px-0.5">{columnTitles.avg2023}</th>
-                        )}
                         {activeColumns.beneficiaries2024 && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.beneficiaries2024}</th>
                         )}
-                        {activeColumns.avg2024 && (
-                          <th className="border border-black py-1 px-0.5">{columnTitles.avg2024}</th>
-                        )}
                         {activeColumns.beneficiaries2025 && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.beneficiaries2025}</th>
+                        )}
+                        {activeColumns.avg2023 && (
+                          <th className="border border-black py-1 px-0.5">{columnTitles.avg2023}</th>
+                        )}
+                        {activeColumns.avg2024 && (
+                          <th className="border border-black py-1 px-0.5">{columnTitles.avg2024}</th>
                         )}
                         {activeColumns.avg2025 && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.avg2025}</th>
@@ -1891,11 +2014,18 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         {activeColumns.avgDiff && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.avgDiff}</th>
                         )}
+                        {/* 3. التصنيف والتشغيل: نشاط المخبز -> نوع المخابز -> نوع الخبز -> سعر الشيكارة -> عدد نوع الخبز -> نوع خط الإنتاج -> نوع الوقود */}
                         {activeColumns.activityStatus && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.activityStatus}</th>
                         )}
+                        {activeColumns.bakeryCategory && (
+                          <th className="border border-black py-1 px-0.5">{columnTitles.bakeryCategory || 'نوع المخابز'}</th>
+                        )}
                         {activeColumns.breadType && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.breadType}</th>
+                        )}
+                        {activeColumns.flourBagPrice && (
+                          <th className="border border-black py-1 px-0.5">{columnTitles.flourBagPrice || 'سعر الشيكارة'}</th>
                         )}
                         {activeColumns.breadTypeCount && (
                           <th className="border border-black py-1 px-0.5">{columnTitles.breadTypeCount}</th>
@@ -1962,40 +2092,42 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                                 {debtVal > 0 ? `${debtVal.toLocaleString()}` : 'خالص'}
                               </td>
                             )}
+                            {/* 1. الحصص والبيانات التموينية */}
+                            {activeColumns.insuranceValue && (
+                              <td className="border border-black py-1 px-0.5 num-enlarged">{b.insuranceValue?.toLocaleString()}</td>
+                            )}
                             {activeColumns.insuranceQuota && (
                               <td className="border border-black py-1 px-0.5 num-enlarged">{b.insuranceQuota}</td>
                             )}
                             {activeColumns.actualQuota && (
                               <td className="border border-black py-1 px-0.5 num-enlarged">{b.actualQuota}</td>
                             )}
-                            {activeColumns.insuranceValue && (
-                              <td className="border border-black py-1 px-0.5 num-enlarged">{b.insuranceValue?.toLocaleString()}</td>
-                            )}
                             {activeColumns.loavesCount && (
                               <td className="border border-black py-1 px-0.5 num-enlarged font-black bg-amber-50/40">
                                 {b.loavesCount?.toLocaleString()}
                               </td>
                             )}
-                            {activeColumns.villagePopulation && (
-                              <td className="border border-black py-1 px-0.5 num-enlarged">{b.villagePopulation?.toLocaleString()}</td>
-                            )}
                             {activeColumns.perCapitaAverage && (
                               <td className="border border-black py-1 px-0.5 num-enlarged font-black">{b.perCapitaAverage}</td>
+                            )}
+                            {/* 2. إحصائيات السكان */}
+                            {activeColumns.villagePopulation && (
+                              <td className="border border-black py-1 px-0.5 num-enlarged">{b.villagePopulation?.toLocaleString()}</td>
                             )}
                             {activeColumns.beneficiaries2023 && (
                               <td className="border border-black py-1 px-0.5 num-enlarged">{b.beneficiaries2023?.toLocaleString()}</td>
                             )}
-                            {activeColumns.avg2023 && (
-                              <td className="border border-black py-1 px-0.5 num-enlarged">{b.avg2023}</td>
-                            )}
                             {activeColumns.beneficiaries2024 && (
                               <td className="border border-black py-1 px-0.5 num-enlarged">{b.beneficiaries2024?.toLocaleString()}</td>
                             )}
-                            {activeColumns.avg2024 && (
-                              <td className="border border-black py-1 px-0.5 num-enlarged">{b.avg2024}</td>
-                            )}
                             {activeColumns.beneficiaries2025 && (
                               <td className="border border-black py-1 px-0.5 num-enlarged">{b.beneficiaries2025?.toLocaleString()}</td>
+                            )}
+                            {activeColumns.avg2023 && (
+                              <td className="border border-black py-1 px-0.5 num-enlarged">{b.avg2023}</td>
+                            )}
+                            {activeColumns.avg2024 && (
+                              <td className="border border-black py-1 px-0.5 num-enlarged">{b.avg2024}</td>
                             )}
                             {activeColumns.avg2025 && (
                               <td className="border border-black py-1 px-0.5 num-enlarged">{b.avg2025}</td>
@@ -2003,11 +2135,18 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                             {activeColumns.avgDiff && (
                               <td className="border border-black py-1 px-0.5 num-enlarged font-black">{b.avgDiff}</td>
                             )}
+                            {/* 3. التصنيف والتشغيل */}
                             {activeColumns.activityStatus && (
                               <td className="border border-black py-1 px-0.5 font-bold">{b.activityStatus}</td>
                             )}
+                            {activeColumns.bakeryCategory && (
+                              <td className="border border-black py-1 px-0.5 font-bold">{b.bakeryCategory || 'مخبز بلدي مدعم'}</td>
+                            )}
                             {activeColumns.breadType && (
                               <td className="border border-black py-1 px-0.5">{b.breadType}</td>
+                            )}
+                            {activeColumns.flourBagPrice && (
+                              <td className="border border-black py-1 px-0.5 num-enlarged font-black">{(b.flourBagPrice ?? 950).toLocaleString()}</td>
                             )}
                             {activeColumns.breadTypeCount && (
                               <td className="border border-black py-1 px-0.5 num-enlarged">{b.breadTypeCount}</td>
@@ -2053,6 +2192,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                             {reportTotals.totalDebt.toLocaleString()} ج.م
                           </td>
                         )}
+                        {activeColumns.insuranceValue && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {reportTotals.totalInsuranceValue.toLocaleString()} ج.م
+                          </td>
+                        )}
                         {activeColumns.insuranceQuota && (
                           <td className="border border-black py-1 px-0.5 num-enlarged font-black">
                             {reportTotals.totalInsurance} شيكارة
@@ -2063,7 +2207,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                             {reportTotals.totalActual} شيكارة
                           </td>
                         )}
-                        {activeColumns.insuranceValue && <td className="border border-black" />}
                         {activeColumns.loavesCount && (
                           <td className="border border-black py-1 px-0.5 num-enlarged font-black">
                             {reportTotals.totalLoaves.toLocaleString()}
@@ -2078,9 +2221,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                             (activeColumns.village ? 1 : 0) -
                             (activeColumns.localUnit ? 1 : 0) -
                             (activeColumns.remainingDebt ? 1 : 0) -
+                            (activeColumns.insuranceValue ? 1 : 0) -
                             (activeColumns.insuranceQuota ? 1 : 0) -
                             (activeColumns.actualQuota ? 1 : 0) -
-                            (activeColumns.insuranceValue ? 1 : 0) -
                             (activeColumns.loavesCount ? 1 : 0)
                           }
                           className="border border-black bg-slate-100"

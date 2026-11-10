@@ -157,6 +157,35 @@ tbody tr:hover {
   50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.6); transform: translateY(-1px); }
 }
 
+/* Force pure black (#000000) text inside all report containers (.print-container) both on screen and in print/PDF */
+.print-container,
+.print-container * {
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+}
+
+.print-container th {
+  background-color: #e2e8f0 !important;
+  color: #000000 !important;
+  border-color: #000000 !important;
+}
+
+.print-container tfoot tr,
+.print-container tfoot td {
+  background-color: #cbd5e1 !important;
+  color: #000000 !important;
+  border-color: #000000 !important;
+}
+
+/* Eliminate GPU compositing lag when opening/closing modal dialogs */
+.fixed.inset-0,
+.report-modal-overlay {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transition: none !important;
+  animation: none !important;
+}
+
 /* Print Styles for A4 Landscape & Full Print Isolation */
 @media print {
   @page {
@@ -229,6 +258,12 @@ tbody tr:hover {
     padding: 0 !important;
   }
 
+  .print-container,
+  .print-container * {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+  }
+
   .print-container {
     width: 100% !important;
     max-width: 100% !important;
@@ -264,6 +299,7 @@ tbody tr:hover {
   .report-table-compact th,
   .report-table-compact td {
     border: 1px solid #000000 !important;
+    color: #000000 !important;
     padding: 3px 2px !important;
     word-break: break-word !important;
     overflow-wrap: break-word !important;
@@ -274,7 +310,7 @@ tbody tr:hover {
   }
 
   .report-table-compact th {
-    background-color: #f1f5f9 !important;
+    background-color: #e2e8f0 !important;
     color: #000000 !important;
     font-weight: 900 !important;
   }
