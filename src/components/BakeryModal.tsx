@@ -314,7 +314,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     setSelectedUnit(units[0] || '');
   };
 
-  // Dedicated Auto-Calculation Engine (متوسط نصيب الفرد بعلامة عشرية ورقمين فقط)
+  // Dedicated Auto-Calculation Engine (جميع المتوسطات بعلامة عشرية ورقمين فقط 0.00)
   const calculateAllAverages = (customQuota?: number, customPop?: number, customB23?: number, customB24?: number, customB25?: number) => {
     const q = customQuota !== undefined ? customQuota : insuranceQuota;
     const pop = customPop !== undefined ? customPop : villagePopulation;
@@ -328,16 +328,16 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     const calculatedPerCapita = pop > 0 ? (calculatedLoaves / pop).toFixed(2) : '0.00';
     setPerCapitaAverage(calculatedPerCapita);
 
-    const cAvg23 = b23 > 0 ? (calculatedLoaves / b23).toFixed(3) : '0.000';
+    const cAvg23 = b23 > 0 ? (calculatedLoaves / b23).toFixed(2) : '0.00';
     setAvg2023(cAvg23);
 
-    const cAvg24 = b24 > 0 ? (calculatedLoaves / b24).toFixed(3) : '0.000';
+    const cAvg24 = b24 > 0 ? (calculatedLoaves / b24).toFixed(2) : '0.00';
     setAvg2024(cAvg24);
 
-    const cAvg25 = b25 > 0 ? (calculatedLoaves / b25).toFixed(3) : '0.000';
+    const cAvg25 = b25 > 0 ? (calculatedLoaves / b25).toFixed(2) : '0.00';
     setAvg2025(cAvg25);
 
-    const diff = (parseFloat(cAvg25) - parseFloat(cAvg23)).toFixed(3);
+    const diff = (parseFloat(cAvg25) - parseFloat(cAvg23)).toFixed(2);
     setAvgDiff(diff);
   };
 
@@ -348,11 +348,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     const cleanOwnerName = ownerName.trim();
     if (!cleanOwnerName) {
       newErrors.ownerName = 'اسم صاحب المخبز مطلوب ولا يمكن تركه فارغاً';
-    } else if (cleanOwnerName.length < 3) {
-      newErrors.ownerName = 'اسم صاحب المخبز قصير جداً (يرجى إدخال الاسم الثلاثي أو الرباعي)';
+    } else if (cleanOwnerName.length < 2) {
+      newErrors.ownerName = 'اسم صاحب المخبز قصير جداً';
     }
 
-    // 2. Duplicate Machine Number Check
+    // 2. Machine Number Check
     const cleanMachine = machineNumber.trim();
     if (!cleanMachine) {
       newErrors.machineNumber = 'رقم الماكينة (POS) مطلوب ولا يمكن تركه فارغاً';
@@ -367,59 +367,29 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       }
     }
 
-    // 3. Strict 11-digit Phone Check
+    // 3. Phone Check (Warning/Optional for existing data)
     const cleanPhone = phone.trim().replace(/\D/g, '');
-    if (!phone.trim()) {
-      newErrors.phone = 'رقم الهاتف المحمول مطلوب للتواصل الفوري';
-    } else if (cleanPhone.length !== 11) {
-      newErrors.phone = `رقم الهاتف غير صحيح! يتكون حالياً من (${cleanPhone.length}) أرقام بدلاً من 11 رقماً بالضبط`;
-    } else if (!cleanPhone.startsWith('01')) {
-      newErrors.phone = 'رقم الهاتف المحمول يجب أن يبدأ بـ (01)';
+    if (phone.trim() && cleanPhone.length > 0 && cleanPhone.length < 7) {
+      newErrors.phone = 'رقم الهاتف قصير جداً وغير مكتمل';
     }
 
-    // 4. Strict 14-digit National ID Check
+    // 4. National ID Check (Forgiving for legacy imports)
     const cleanNid = nationalId.trim().replace(/\D/g, '');
-    if (!nationalId.trim()) {
-      newErrors.nationalId = 'الرقم القومي لصاحب المخبز مطلوب';
-    } else if (cleanNid.length !== 14) {
-      newErrors.nationalId = `الرقم القومي غير صحيح! يتكون حالياً من (${cleanNid.length}) أرقام بدلاً من 14 رقماً بالضبط`;
+    if (nationalId.trim() && cleanNid.length > 0 && cleanNid.length < 10) {
+      newErrors.nationalId = 'الرقم القومي غير مكتمل';
     }
 
     // 5. Quotas & Numeric Values Validation
     if (insuranceQuota <= 0) {
       newErrors.insuranceQuota = 'الحصة التأمينية يجب أن تكون قيمة موجبة أكبر من الصفر (شكارة)';
     }
-    if (actualQuota < 0) {
-      newErrors.actualQuota = 'الحصة الفعلية لا يمكن أن تكون قيمة سالبة';
-    }
-    if (insuranceValue < 0) {
-      newErrors.insuranceValue = 'القيمة التأمينية بالجنيه لا يمكن أن تكون قيمة سالبة';
-    }
-    if (loavesCount <= 0) {
-      newErrors.loavesCount = 'عدد الأرغفة اليومية يجب أن يكون رقماً موجباً أكبر من الصفر';
-    }
-    if (villagePopulation <= 0) {
-      newErrors.villagePopulation = 'عدد سكان القرية يجب أن يكون رقماً موجباً أكبر من الصفر';
-    }
-    if (beneficiaries2023 < 0) {
-      newErrors.beneficiaries2023 = 'عدد مستفيدي 2023 لا يمكن أن يكون سالباً';
-    }
-    if (beneficiaries2024 < 0) {
-      newErrors.beneficiaries2024 = 'عدد مستفيدي 2024 لا يمكن أن يكون سالباً';
-    }
-    if (beneficiaries2025 < 0) {
-      newErrors.beneficiaries2025 = 'عدد مستفيدي 2025 لا يمكن أن يكون سالباً';
-    }
 
-    // 6. Dates Validation
+    // 6. Dates Validation (Optional if empty, validate format if provided)
     const validateDate = (dStr: string, fieldName: string, label: string) => {
-      if (!dStr) {
-        newErrors[fieldName] = `تاريخ انتهاء ${label} مطلوب`;
-        return;
-      }
+      if (!dStr || !dStr.trim()) return; // optional
       const d = new Date(dStr);
       if (isNaN(d.getTime())) {
-        newErrors[fieldName] = `تاريخ ${label} غير صالح، يرجى اختيار تاريخ صحيح من النتيجة`;
+        newErrors[fieldName] = `تاريخ ${label} غير صالح`;
       } else {
         const year = d.getFullYear();
         if (year < 1980 || year > 2100) {

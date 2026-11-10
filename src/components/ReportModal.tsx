@@ -5,6 +5,7 @@ import {
   sanitizeLiveStylesheets,
   printHtmlElementA4,
 } from '../utils/pdfHelper';
+import { formatDateDDMMYYYY } from '../utils/auditHelper';
 import {
   ALL_PERMISSIONS_LIST,
   getDefaultPermissionsForRole,
@@ -1558,7 +1559,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                             <td className="border border-black py-1 px-0.5 num-enlarged font-black">{d.machineNumber}</td>
                             {activeColumns.village && <td className="border border-black py-1 px-0.5">{d.village}</td>}
                             {activeColumns.localUnit && <td className="border border-black py-1 px-0.5">{d.localUnit}</td>}
-                            <td className="border border-black py-1 px-0.5 font-mono">{d.violationDate}</td>
+                            <td className="border border-black py-1 px-0.5 font-mono">{formatDateDDMMYYYY(d.violationDate)}</td>
                             <td className="border border-black py-1 px-0.5">{d.issuingEntity}</td>
                             <td className="border border-black py-1 px-0.5">{d.violationType}</td>
                             <td className="border border-black py-1 px-0.5 num-enlarged">{d.totalViolations?.toLocaleString()}</td>
@@ -2208,16 +2209,16 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                               <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{b.nationalId}</td>
                             )}
                             {activeColumns.commercialRegDate && (
-                              <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{b.commercialRegDate}</td>
+                              <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{formatDateDDMMYYYY(b.commercialRegDate)}</td>
                             )}
                             {activeColumns.bakeryLicenseDate && (
-                              <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{b.bakeryLicenseDate}</td>
+                              <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{formatDateDDMMYYYY(b.bakeryLicenseDate)}</td>
                             )}
                             {activeColumns.leaseAgreementDate && (
-                              <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{b.leaseAgreementDate}</td>
+                              <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{formatDateDDMMYYYY(b.leaseAgreementDate)}</td>
                             )}
                             {activeColumns.taxCardDate && (
-                              <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{b.taxCardDate}</td>
+                              <td className="border border-black py-1 px-0.5 num-enlarged font-mono">{formatDateDDMMYYYY(b.taxCardDate)}</td>
                             )}
                           </tr>
                         );

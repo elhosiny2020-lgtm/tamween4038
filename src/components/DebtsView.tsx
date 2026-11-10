@@ -28,7 +28,7 @@ import {
 import { WeeklyInstallmentsModal } from './WeeklyInstallmentsModal';
 import { SupplyFinesCalculatorModal } from './SupplyFinesCalculatorModal';
 import { printHtmlElementA4 } from '../utils/pdfHelper';
-import { filterDebtsByAdvancedCriteria } from '../utils/auditHelper';
+import { filterDebtsByAdvancedCriteria, formatDateDDMMYYYY } from '../utils/auditHelper';
 
 export const getDebtOverdueInfo = (
   dateStr?: string,
@@ -1052,7 +1052,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       {/* 2. Violations */}
                       <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
                         <div>
-                          <span>{d.violationDate || '-'}</span>
+                          <span>{formatDateDDMMYYYY(d.violationDate) || '-'}</span>
                           {(() => {
                             const { isOverdue, daysElapsed } = getDebtOverdueInfo(
                               d.violationDate || d.disposalDate,
@@ -1090,7 +1090,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
                       {/* 3. Violation Payment */}
                       <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {d.violationPaymentDate || '-'}
+                        {formatDateDDMMYYYY(d.violationPaymentDate) || '-'}
                       </td>
                       <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
                         {d.violationReceiptNumber || '-'}
@@ -1112,7 +1112,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                         {d.addedAmount?.toLocaleString()}
                       </td>
                       <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {d.addedPaymentDate || '-'}
+                        {formatDateDDMMYYYY(d.addedPaymentDate) || '-'}
                       </td>
                       <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
                         {d.addedReceiptNumber || '-'}
@@ -1131,7 +1131,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
                       {/* 5. Disposal (التصرف) */}
                       <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {d.disposalDate || '-'}
+                        {formatDateDDMMYYYY(d.disposalDate) || '-'}
                       </td>
                       <td className="py-2.5 px-1 border-l border-slate-800 num-enlarged text-slate-200">{d.disposalBags}</td>
                       <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
@@ -1149,7 +1149,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                         {d.disposalValue?.toLocaleString()}
                       </td>
                       <td className="py-2.5 px-2 border-l border-slate-800 num-enlarged text-slate-300">
-                        {d.disposalPaymentDate || '-'}
+                        {formatDateDDMMYYYY(d.disposalPaymentDate) || '-'}
                       </td>
                       <td className="py-2.5 px-2 border-l border-slate-800 text-slate-300">
                         {d.disposalReceiptNumber || '-'}

@@ -42,6 +42,7 @@ import {
   INITIAL_INBOX_MESSAGES,
   DEFAULT_OFFICIAL_LOGO
 } from './defaultData';
+import { formatDateDDMMYYYY } from './utils/auditHelper';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
 import { HeaderCustomizerModal } from './components/HeaderCustomizerModal';
@@ -3018,28 +3019,28 @@ export default function App() {
                                 hasCommWarning ? 'bg-red-950/80 text-red-300 font-black border border-red-700' : 'text-slate-300'
                               }`}
                             >
-                              {b.commercialRegDate || '-'}
+                              {formatDateDDMMYYYY(b.commercialRegDate) || '-'}
                             </td>
                             <td
                               className={`py-2.5 px-2 border-l border-slate-800 num-enlarged ${
                                 hasLicenseWarning ? 'bg-red-950/80 text-red-300 font-black border border-red-700' : 'text-slate-300'
                               }`}
                             >
-                              {b.bakeryLicenseDate || '-'}
+                              {formatDateDDMMYYYY(b.bakeryLicenseDate) || '-'}
                             </td>
                             <td
                               className={`py-2.5 px-2 border-l border-slate-800 num-enlarged ${
                                 hasLeaseWarning ? 'bg-red-950/80 text-red-300 font-black border border-red-700' : 'text-slate-300'
                               }`}
                             >
-                              {b.leaseAgreementDate || '-'}
+                              {formatDateDDMMYYYY(b.leaseAgreementDate) || '-'}
                             </td>
                             <td
                               className={`py-2.5 px-2 border-l border-slate-800 num-enlarged ${
                                 hasTaxWarning ? 'bg-red-950/80 text-red-300 font-black border border-red-700' : 'text-slate-300'
                               }`}
                             >
-                              {b.taxCardDate || '-'}
+                              {formatDateDDMMYYYY(b.taxCardDate) || '-'}
                             </td>
 
                             {/* Actions Column moved to the END of the table (Left side in RTL) */}

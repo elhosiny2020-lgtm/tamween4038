@@ -34,20 +34,46 @@ export function calculatePerCapitaAverage(loavesCount: number, villagePopulation
 }
 
 /**
- * 3. متوسط المستفيدين لعام محدد = عدد الأرغفة ÷ عدد المستفيدين
+ * 3. متوسط المستفيدين لعام محدد = عدد الأرغفة ÷ عدد المستفيدين (علامة عشرية ورقمين فقط)
  */
 export function calculateYearlyAverage(loavesCount: number, beneficiariesCount: number): string {
-  if (!beneficiariesCount || beneficiariesCount <= 0) return '0.000';
-  return (loavesCount / beneficiariesCount).toFixed(3);
+  if (!beneficiariesCount || beneficiariesCount <= 0) return '0.00';
+  return (loavesCount / beneficiariesCount).toFixed(2);
 }
 
 /**
- * 4. الفرق التراكمي = متوسط 2025 - متوسط 2023
+ * 4. الفرق التراكمي = متوسط 2025 - متوسط 2023 (علامة عشرية ورقمين فقط)
  */
 export function calculateAverageDifference(avg2025: string, avg2023: string): string {
   const v25 = parseFloat(avg2025) || 0;
   const v23 = parseFloat(avg2023) || 0;
-  return (v25 - v23).toFixed(3);
+  return (v25 - v23).toFixed(2);
+}
+
+/**
+ * دالة مساعدة لتنسيق التواريخ بالمنظومة إلى صيغة (يوم/شهر/سنة DD/MM/YYYY)
+ */
+export function formatDateDDMMYYYY(dateStr?: string): string {
+  if (!dateStr || !dateStr.trim()) return '';
+  const trimmed = dateStr.trim();
+  // If YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split('-');
+    return `${d}/${m}/${y}`;
+  }
+  // If already DD/MM/YYYY
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+    return trimmed;
+  }
+  // Fallback to JS Date parsing
+  const d = new Date(trimmed);
+  if (!isNaN(d.getTime())) {
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+  return trimmed;
 }
 
 /**
@@ -201,34 +227,34 @@ export function runComprehensiveAudit(
     description: 'تحقق من دقة قسمة الأرغفة على إجمالي سكان القرية بعلامة عشرية ورقمين فقط (0.90).',
   });
 
-  // فحص 4: متوسط مستفيدي 2023 (27,000 / 27,000) = 1.000
+  // فحص 4: متوسط مستفيدي 2023 (27,000 / 27,000) = 1.00 (علامة عشرية ورقمين فقط)
   const avg23 = calculateYearlyAverage(27000, 27000);
   details.push({
     checkName: 'متوسط مستفيدي 2023 (27,000 / 27,000)',
-    expected: '1.000',
+    expected: '1.00',
     actual: avg23,
-    status: avg23 === '1.000' ? 'PASS' : 'FAIL',
-    description: 'تحقق من قسمة الأرغفة على مستفيدي 2023.',
+    status: avg23 === '1.00' ? 'PASS' : 'FAIL',
+    description: 'تحقق من قسمة الأرغفة على مستفيدي 2023 بعلامة عشرية ورقمين فقط.',
   });
 
-  // فحص 5: متوسط مستفيدي 2025 (27,000 / 29,800) = 0.906
+  // فحص 5: متوسط مستفيدي 2025 (27,000 / 29,800) = 0.91 (علامة عشرية ورقمين فقط)
   const avg25 = calculateYearlyAverage(27000, 29800);
   details.push({
     checkName: 'متوسط مستفيدي 2025 (27,000 / 29,800)',
-    expected: '0.906',
+    expected: '0.91',
     actual: avg25,
-    status: avg25 === '0.906' ? 'PASS' : 'FAIL',
-    description: 'تحقق من قسمة الأرغفة على مستفيدي 2025 والتقريب لأقرب 3 أرقام عشرية.',
+    status: avg25 === '0.91' ? 'PASS' : 'FAIL',
+    description: 'تحقق من قسمة الأرغفة على مستفيدي 2025 والتقريب لأقرب رقمين عشريين (0.91).',
   });
 
-  // فحص 6: الفرق التراكمي (0.906 - 1.000 = -0.094)
-  const diff = calculateAverageDifference('0.906', '1.000');
+  // فحص 6: الفرق التراكمي (0.91 - 1.00 = -0.09)
+  const diff = calculateAverageDifference('0.91', '1.00');
   details.push({
     checkName: 'الفرق التراكمي بين متوسطي 2025 و 2023',
-    expected: '-0.094',
+    expected: '-0.09',
     actual: diff,
-    status: diff === '-0.094' ? 'PASS' : 'FAIL',
-    description: 'تحقق من طرح متوسط 2023 من متوسط 2025.',
+    status: diff === '-0.09' ? 'PASS' : 'FAIL',
+    description: 'تحقق من طرح متوسط 2023 من متوسط 2025 بعلامة عشرية ورقمين فقط.',
   });
 
   // فحص 7: حساب إجمالي ومتبقي المخالفات (5000 + 2000 - 3000 = 4000)
