@@ -99,6 +99,23 @@ export interface AnnualWeightedReport {
 }
 
 /**
+ * استخراج معامل عدد الأرغفة (660 أو 725) من خانة نوع عدد الخبز
+ * إذا كانت القيمة 660 رغيفاً، يكون المعامل 660
+ * إذا كانت القيمة 725 رغيفاً، يكون المعامل 725
+ */
+export function extractBreadLoafMultiplier(breadTypeCount: number | string | undefined | null): number {
+  if (breadTypeCount === undefined || breadTypeCount === null) return 660;
+  const str = String(breadTypeCount).trim();
+  if (str.includes('725')) return 725;
+  if (str.includes('660')) return 660;
+  const num = parseFloat(str.replace(/[^\d.]/g, ''));
+  if (num === 725) return 725;
+  if (num === 660) return 660;
+  if (num > 10) return num;
+  return 660;
+}
+
+/**
  * 1-أ. احتساب عدد الأرغفة الخام (بدون أي تقريب في المراحل الوسيطة) من المبلغ التأميني
  * المعادلة المعتمدة: عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3) = (المبلغ التأميني × 3) ÷ 235
  */
@@ -118,15 +135,33 @@ export function calculateLoavesFromInsuranceValue(insuranceValue: number): numbe
 }
 
 /**
- * 1-ج. احتساب عدد الأرغفة من الحصة التأمينية بالشكاير (معادلة رديفة عند عدم إدخال المبلغ التأميني)
+ * المعادلة المعتمدة ثانياً: احتساب عدد الأرغفة:
+ * عدد الأرغفة = حصة المخبز الفعلية × معامل عدد الأرغفة (660 أو 725)
  */
-export function calculateLoavesCount(insuranceQuota: number): number {
-  return Math.round(Number(insuranceQuota || 0) * 1350);
+export function calculateLoavesCount(
+  actualQuota: number,
+  breadTypeCount: number | string = 660
+): number {
+  const actual = Number(actualQuota) || 0;
+  if (actual <= 0) return 0;
+  const mult = extractBreadLoafMultiplier(breadTypeCount);
+  return Math.round(actual * mult);
 }
 
 /**
- * المعادلة المعتمدة رقم 1: احتساب الحصة التأمينية لكل مخبز:
- * الحصة التأمينية = المبلغ التأميني ÷ 235 ÷ 3
+ * دالة مساعدة متوافقة لاحتساب عدد الأرغفة
+ */
+export function calculateLoavesCountFromFormula(
+  actualQuota: number,
+  breadTypeCount: number | string,
+  _villagePopulation?: number
+): number {
+  return calculateLoavesCount(actualQuota, breadTypeCount);
+}
+
+/**
+ * المعادلة المعتمدة أولاً: احتساب الحصة التأمينية:
+ * الحصة التأمينية = المبلغ التأميني بالجنيه ÷ 235 ÷ 3
  * مثال: 7050 ÷ 235 ÷ 3 = 10
  */
 export function calculateInsuranceQuota(insuranceValue: number): number {
@@ -147,64 +182,84 @@ export function calculateInsuranceValueFromQuota(insuranceQuota: number): number
 }
 
 /**
- * المعادلة المعتمدة رقم 2: احتساب عدد الأرغفة:
- * عدد الأرغفة = (الحصة الفعلية × عدد نوع الخبز المحدد في الجدول) ÷ عدد السكان
- * مع الحماية التامة من القسمة على صفر عند خلو عدد السكان أو كونه 0
+ * المعادلة المعتمدة تاسعاً: احتساب خانة متوسط نصيب الفرد للمخبز الواحد:
+ * متوسط نصيب الفرد للمخبز الواحد = إجمالي عدد الأرغفة ÷ عدد المستفيدين عام 2025
+ * averagePerBakery = totalLoaves / beneficiaries2025
  */
-export function calculateLoavesCountFromFormula(
-  actualQuota: number,
-  breadTypeCount: number,
-  villagePopulation: number
-): number {
-  const pop = Number(villagePopulation) || 0;
-  if (pop <= 0) return 0;
-  const actual = Number(actualQuota) || 0;
-  const typeCount = Number(breadTypeCount) || 1;
-  const raw = (actual * typeCount) / pop;
-  return Number(raw.toFixed(4));
+export function calculatePerBakeryAverage(
+  totalLoaves: number,
+  beneficiaries2025: number
+): string {
+  const ben25 = Number(beneficiaries2025) || 0;
+  if (ben25 <= 0) return '0.00';
+  const loaves = Number(totalLoaves) || 0;
+  return (loaves / ben25).toFixed(2);
 }
 
 /**
- * المعادلة المعتمدة رقم 3: احتساب متوسط نصيب الفرد للمخبز:
- * متوسط نصيب الفرد للمخبز = (عدد الأرغفة × الحصة الفعلية) ÷ عدد السكان
- * مع الحماية من القسمة على صفر وإخراج النتيجة بعلامة عشرية ورقمين فقط (0.00)
+ * دالة مساعدة متوافقة لمتوسط نصيب الفرد للمخبز
  */
 export function calculatePerCapitaAverageFromFormula(
   loavesCount: number,
-  actualQuota: number,
-  villagePopulation: number
+  actualQuotaOrBen2025: number,
+  _villagePopulation?: number
 ): string {
-  const pop = Number(villagePopulation) || 0;
-  if (pop <= 0) return '0.00';
+  return calculatePerBakeryAverage(loavesCount, actualQuotaOrBen2025);
+}
+
+/**
+ * متوسط نصيب الفرد من المخبز الواحد (احتساب نسبة إلى المستفيدين عام 2025)
+ */
+export function calculatePerCapitaAverage(
+  loavesCount: number,
+  beneficiariesCount: number
+): string {
+  return calculatePerBakeryAverage(loavesCount, beneficiariesCount);
+}
+
+/**
+ * المعادلات ثالثاً ورابعاً وخامساً: احتساب متوسط نصيب الفرد السنوي:
+ * متوسط نصيب الفرد = عدد الأرغفة ÷ عدد المستفيدين للسنة المحددة (2023 / 2024 / 2025)
+ */
+export function calculateYearlyAverage(
+  loavesCount: number,
+  beneficiariesCount: number
+): string {
+  const ben = Number(beneficiariesCount) || 0;
+  if (ben <= 0) return '0.00';
   const loaves = Number(loavesCount) || 0;
-  const actual = Number(actualQuota) || 0;
-  const avg = (loaves * actual) / pop;
-  return avg.toFixed(2);
+  return (loaves / ben).toFixed(2);
 }
 
 /**
- * 2. متوسط نصيب الفرد من المخبز الواحد = عدد الأرغفة ÷ عدد السكان/المستفيدين (علامة عشرية ورقمين فقط)
+ * المعادلة المعتمدة سادساً: احتساب الفرق التراكمي لمتوسطات نصيب الفرد:
+ * الفرق التراكمي = متوسط نصيب الفرد عام 2023 - متوسط نصيب الفرد عام 2024 - متوسط نصيب الفرد عام 2025
+ * ف = م_2023 - م_2024 - م_2025
+ * مع الحفاظ على الدقة الحسابية الكاملة داخلياً وعرض منزلتين عشريتين فقط.
  */
-export function calculatePerCapitaAverage(loavesCount: number, villagePopulation: number): string {
-  if (!villagePopulation || villagePopulation <= 0) return '0.00';
-  return (Number(loavesCount || 0) / Number(villagePopulation)).toFixed(2);
+export function calculateCumulativeDifference(
+  avg2023: number | string,
+  avg2024: number | string,
+  avg2025: number | string
+): string {
+  const a23 = typeof avg2023 === 'number' ? avg2023 : parseFloat(String(avg2023)) || 0;
+  const a24 = typeof avg2024 === 'number' ? avg2024 : parseFloat(String(avg2024)) || 0;
+  const a25 = typeof avg2025 === 'number' ? avg2025 : parseFloat(String(avg2025)) || 0;
+  const diff = a23 - a24 - a25;
+  return diff.toFixed(2);
 }
 
-/**
- * 3. متوسط المستفيدين لعام محدد بشكل مستقل = عدد الأرغفة ÷ عدد المستفيدين المعتمد للسنة (علامة عشرية ورقمين فقط)
- */
-export function calculateYearlyAverage(loavesCount: number, beneficiariesCount: number): string {
-  if (!beneficiariesCount || beneficiariesCount <= 0) return '0.00';
-  return (Number(loavesCount || 0) / Number(beneficiariesCount)).toFixed(2);
-}
-
-/**
- * 4. الفرق بين سنتين (بدون تقريب وسيط عند توفر القيم الخام، أو طرح المتوسطين المعتمدين بعلامة عشرية ورقمين فقط)
- */
-export function calculateAverageDifference(avgNew: string, avgOld: string): string {
-  const vNew = parseFloat(avgNew) || 0;
-  const vOld = parseFloat(avgOld) || 0;
-  return (vNew - vOld).toFixed(2);
+export function calculateAverageDifference(
+  avg1: number | string,
+  avg2: number | string,
+  avg3?: number | string
+): string {
+  if (avg3 !== undefined) {
+    return calculateCumulativeDifference(avg1, avg2, avg3);
+  }
+  const a = typeof avg1 === 'number' ? avg1 : parseFloat(String(avg1)) || 0;
+  const b = typeof avg2 === 'number' ? avg2 : parseFloat(String(avg2)) || 0;
+  return (a - b).toFixed(2);
 }
 
 /**
@@ -285,76 +340,93 @@ export function calculateNetRemainingDebt(
 }
 
 /**
- * 9-ب. تطبيع وإعادة احتساب كافة المعادلات التموينية للمخبز بدقة
- * - عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3) (عند وجود مبلغ تأميني > 0، مع عدم التقريب في المراحل الوسيطة)
- * - احتساب متوسط نصيب الفرد للمخبز بصورة مستقلة
- * - احتساب متوسط نصيب الفرد لكل سنة (2023، 2024، 2025) بصورة مستقلة تماماً
+ * 9-ب. تطبيع وإعادة احتساب كافة المعادلات التموينية للمخبز بدقة بنسبة 100% وفق المحددات المعتمدة:
+ * 1. الحصة التأمينية = المبلغ التأميني بالجنيه ÷ 235 ÷ 3
+ * 2. عدد الأرغفة = حصة المخبز الفعلية × معامل عدد الأرغفة (660 أو 725)
+ * 3. متوسط نصيب الفرد لعام 2023 = عدد الأرغفة ÷ مستفيدي 2023
+ * 4. متوسط نصيب الفرد لعام 2024 = عدد الأرغفة ÷ مستفيدي 2024
+ * 5. متوسط نصيب الفرد لعام 2025 = عدد الأرغفة ÷ مستفيدي 2025
+ * 6. الفرق التراكمي = متوسط 2023 - متوسط 2024 - متوسط 2025 (ف = م_2023 - م_2024 - م_2025)
+ * 7. متوسط نصيب الفرد للمخبز الواحد = إجمالي عدد الأرغفة ÷ مستفيدي عام 2025
  */
 export function normalizeBakeryCalculations(b: Bakery): Bakery {
-  const insuranceQuota = Number(b.insuranceQuota) || 0;
   const actualQuota = Number(b.actualQuota) || 0;
-  const insuranceValue = Number(b.insuranceValue) || 0;
+  const rawInsVal = Number(b.insuranceValue) || 0;
+  const rawInsQuota = Number(b.insuranceQuota) || 0;
 
-  // القاعدة المعتمدة: عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3)
-  // إذا كان المبلغ التأميني مدخلاً (> 0) يتم الاحتساب منه مباشرة بدون تقريب وسيط ثم التقريب النهائي
-  const loavesCount =
-    insuranceValue > 0
-      ? calculateLoavesFromInsuranceValue(insuranceValue)
+  // 1. الحصة التأمينية والمبلغ التأميني:
+  // الحصة التأمينية = المبلغ التأميني بالجنيه ÷ 235 ÷ 3
+  const insuranceQuota =
+    rawInsVal > 0
+      ? calculateInsuranceQuota(rawInsVal)
+      : rawInsQuota > 0
+      ? rawInsQuota
+      : 0;
+
+  const insuranceValue =
+    rawInsVal > 0
+      ? rawInsVal
       : insuranceQuota > 0
-      ? calculateLoavesCount(insuranceQuota)
-      : Math.round(Number(b.loavesCount) || 0);
+      ? calculateInsuranceValueFromQuota(insuranceQuota)
+      : 0;
+
+  // 2. احتساب عدد الأرغفة = حصة المخبز الفعلية × معامل عدد الأرغفة (660 أو 725)
+  const breadTypeCount = b.breadTypeCount !== undefined && b.breadTypeCount !== null ? b.breadTypeCount : 660;
+  const multiplier = extractBreadLoafMultiplier(breadTypeCount);
+  const loavesCount = Math.round(actualQuota * multiplier);
 
   const villagePopulation = Number(b.villagePopulation) || 0;
   const beneficiaries2023 = Number(b.beneficiaries2023) || 0;
   const beneficiaries2024 = Number(b.beneficiaries2024) || 0;
   const beneficiaries2025 = Number(b.beneficiaries2025) || 0;
 
+  // 3. متوسط نصيب الفرد لعام 2023 = عدد الأرغفة ÷ عدد المستفيدين عام 2023
+  const rawAvg2023 = beneficiaries2023 > 0 ? loavesCount / beneficiaries2023 : 0;
+  const avg2023 = beneficiaries2023 > 0 ? rawAvg2023.toFixed(2) : '0.00';
+
+  // 4. متوسط نصيب الفرد لعام 2024 = عدد الأرغفة ÷ عدد المستفيدين عام 2024
+  const rawAvg2024 = beneficiaries2024 > 0 ? loavesCount / beneficiaries2024 : 0;
+  const avg2024 = beneficiaries2024 > 0 ? rawAvg2024.toFixed(2) : '0.00';
+
+  // 5. متوسط نصيب الفرد لعام 2025 = عدد الأرغفة ÷ عدد المستفيدين عام 2025
+  const rawAvg2025 = beneficiaries2025 > 0 ? loavesCount / beneficiaries2025 : 0;
+  const avg2025 = beneficiaries2025 > 0 ? rawAvg2025.toFixed(2) : '0.00';
+
+  // 6. الفرق التراكمي لمتوسطات نصيب الفرد = متوسط 2023 - متوسط 2024 - متوسط 2025
+  // ف = م_2023 - م_2024 - م_2025 (مع الحفاظ على الدقة الحسابية الكاملة داخلياً)
+  const rawDiff = rawAvg2023 - rawAvg2024 - rawAvg2025;
+  const avgDiff =
+    beneficiaries2023 > 0 || beneficiaries2024 > 0 || beneficiaries2025 > 0
+      ? rawDiff.toFixed(2)
+      : '0.00';
+
+  // 7. متوسط نصيب الفرد للمخبز الواحد = إجمالي عدد الأرغفة ÷ عدد المستفيدين عام 2025
+  // averagePerBakery = totalLoaves / beneficiaries2025
   const perCapitaAverage =
-    villagePopulation > 0
-      ? calculatePerCapitaAverage(loavesCount, villagePopulation)
-      : !isNaN(parseFloat(String(b.perCapitaAverage ?? '')))
-      ? parseFloat(String(b.perCapitaAverage)).toFixed(2)
-      : '0.00';
-
-  const avg2023 =
-    beneficiaries2023 > 0
-      ? calculateYearlyAverage(loavesCount, beneficiaries2023)
-      : !isNaN(parseFloat(String(b.avg2023 ?? '')))
-      ? parseFloat(String(b.avg2023)).toFixed(2)
-      : '0.00';
-
-  const avg2024 =
-    beneficiaries2024 > 0
-      ? calculateYearlyAverage(loavesCount, beneficiaries2024)
-      : !isNaN(parseFloat(String(b.avg2024 ?? '')))
-      ? parseFloat(String(b.avg2024)).toFixed(2)
-      : '0.00';
-
-  const avg2025 =
     beneficiaries2025 > 0
-      ? calculateYearlyAverage(loavesCount, beneficiaries2025)
-      : !isNaN(parseFloat(String(b.avg2025 ?? '')))
-      ? parseFloat(String(b.avg2025)).toFixed(2)
+      ? rawAvg2025.toFixed(2)
+      : villagePopulation > 0
+      ? (loavesCount / villagePopulation).toFixed(2)
       : '0.00';
-
-  const avgDiff = calculateAverageDifference(avg2025, avg2023);
 
   return {
     ...b,
-    insuranceQuota,
     actualQuota,
+    insuranceQuota,
     insuranceValue,
+    breadTypeCount,
     loavesCount,
     villagePopulation,
     beneficiaries2023,
     beneficiaries2024,
     beneficiaries2025,
-    perCapitaAverage,
     avg2023,
     avg2024,
     avg2025,
     avgDiff,
+    perCapitaAverage,
     bakeryCategory: b.bakeryCategory || 'مخبز بلدي مدعم',
+    breadType: b.breadType || 'بلدي مدعم ماو',
     flourBagPrice: b.flourBagPrice !== undefined && b.flourBagPrice !== null ? Number(b.flourBagPrice) : 950,
   };
 }
@@ -784,74 +856,107 @@ export function runComprehensiveAudit(
 ): MathAuditResult {
   const details: MathAuditResult['details'] = [];
 
-  // فحص 1: المعادلة المعتمدة لاحتساب عدد الأرغفة = المبلغ التأميني ÷ (235 ÷ 3) بدون تقريب وسيط
-  const loavesFromInsurance = calculateLoavesFromInsuranceValue(235000);
+  // فحص 1: احتساب الحصة التأمينية من المبلغ التأميني: 7050 ÷ 235 ÷ 3 = 10
+  const quotaCheck = calculateInsuranceQuota(7050);
   details.push({
-    checkName: 'معادلة الأرغفة من المبلغ التأميني: 235,000 ÷ (235 ÷ 3)',
-    expected: 3000,
-    actual: loavesFromInsurance,
-    status: loavesFromInsurance === 3000 ? 'PASS' : 'FAIL',
-    description: 'تحقق من قسمة المبلغ التأميني على (235 ÷ 3) بدون تقريب في المراحل الوسيطة.',
+    checkName: 'معادلة الحصة التأمينية: 7050 ÷ 235 ÷ 3 = 10',
+    expected: 10,
+    actual: quotaCheck,
+    status: quotaCheck === 10 ? 'PASS' : 'FAIL',
+    description: 'تحقق من معادلة الحصة التأمينية = المبلغ التأميني ÷ 235 ÷ 3.',
   });
 
-  // فحص 2: دقة معادلة الأرغفة من المبلغ التأميني للكسور (18,500 ÷ (235 ÷ 3) = 236 رغيف)
-  const loavesFraction = calculateLoavesFromInsuranceValue(18500);
+  // فحص 2: استخراج معامل عدد الأرغفة (660 أو 725)
+  const mult660 = extractBreadLoafMultiplier('660 رغيفاً');
+  const mult725 = extractBreadLoafMultiplier('725 رغيفاً');
   details.push({
-    checkName: 'معادلة الأرغفة للكسور العشرية: 18,500 ÷ (235 ÷ 3)',
-    expected: 236,
-    actual: loavesFraction,
-    status: loavesFraction === 236 ? 'PASS' : 'FAIL',
-    description: 'تحقق من تطبيق قاعدة التقريب النهائية المعتمدة فقط بعد إتمام القسمة الدقيقة.',
+    checkName: 'تحديد معامل عدد الأرغفة تلقائياً (660 أو 725)',
+    expected: '660 / 725',
+    actual: `${mult660} / ${mult725}`,
+    status: mult660 === 660 && mult725 === 725 ? 'PASS' : 'FAIL',
+    description: 'تحقق من قراءة نوع عدد الخبز وتحديد المعامل 660 أو 725 بدقة.',
   });
 
-  // فحص 3: دقة معادلة الحصة التأمينية بالشكاير (20 شيكارة × 1350 = 27,000 رغيف)
-  const loaves20 = calculateLoavesCount(20);
+  // فحص 3: احتساب عدد الأرغفة = الحصة الفعلية × المعامل (20 × 660 = 13,200)
+  const loaves20_660 = calculateLoavesCount(20, 660);
   details.push({
-    checkName: 'معادلة الحصة التأمينية بالشكاير (20 شيكارة × 1350)',
-    expected: 27000,
-    actual: loaves20,
-    status: loaves20 === 27000 ? 'PASS' : 'FAIL',
-    description: 'تحقق من معادلة الحصة التأمينية المستقلة بالشكاير.',
+    checkName: 'معادلة عدد الأرغفة لمعامل 660 (20 شيكارة × 660)',
+    expected: 13200,
+    actual: loaves20_660,
+    status: loaves20_660 === 13200 ? 'PASS' : 'FAIL',
+    description: 'تحقق من ضرب الحصة الفعلية في معامل 660.',
   });
 
-  // فحص 4: متوسط نصيب الفرد لسكان 30,000 نسمة بحصة 27,000 رغيف = 0.90 (علامة عشرية ورقمين فقط)
-  const perCapita = calculatePerCapitaAverage(27000, 30000);
+  // فحص 4: احتساب عدد الأرغفة = الحصة الفعلية × المعامل (20 × 725 = 14,500)
+  const loaves20_725 = calculateLoavesCount(20, 725);
   details.push({
-    checkName: 'متوسط نصيب الفرد من المخبز الواحد (27,000 ÷ 30,000)',
-    expected: '0.90',
-    actual: perCapita,
-    status: perCapita === '0.90' ? 'PASS' : 'FAIL',
-    description: 'تحقق من دقة احتساب متوسط نصيب الفرد لكل مخبز بشكل مستقل بعلامة عشرية ورقمين فقط (0.90).',
+    checkName: 'معادلة عدد الأرغفة لمعامل 725 (20 شيكارة × 725)',
+    expected: 14500,
+    actual: loaves20_725,
+    status: loaves20_725 === 14500 ? 'PASS' : 'FAIL',
+    description: 'تحقق من ضرب الحصة الفعلية في معامل 725.',
   });
 
-  // فحص 5: متوسط مستفيدي 2023 (27,000 ÷ 27,000) = 1.00
-  const avg23 = calculateYearlyAverage(27000, 27000);
+  // فحص 5: متوسط نصيب الفرد لعام 2023 = الأرغفة ÷ مستفيدي 2023 (13,200 ÷ 26,400 = 0.50)
+  const avg23 = calculateYearlyAverage(13200, 26400);
   details.push({
-    checkName: 'متوسط مستفيدي عام 2023 المستقل (27,000 ÷ 27,000)',
-    expected: '1.00',
+    checkName: 'متوسط مستفيدي عام 2023 (13,200 ÷ 26,400)',
+    expected: '0.50',
     actual: avg23,
-    status: avg23 === '1.00' ? 'PASS' : 'FAIL',
-    description: 'تحقق من قسمة الأرغفة على مستفيدي 2023 بشكل مستقل.',
+    status: avg23 === '0.50' ? 'PASS' : 'FAIL',
+    description: 'تحقق من قسمة الأرغفة على مستفيدي 2023.',
   });
 
-  // فحص 6: متوسط مستفيدي 2025 (27,000 ÷ 29,800) = 0.91
-  const avg25 = calculateYearlyAverage(27000, 29800);
+  // فحص 6: متوسط نصيب الفرد لعام 2024 (13,200 ÷ 27,500 = 0.48)
+  const avg24 = calculateYearlyAverage(13200, 27500);
   details.push({
-    checkName: 'متوسط مستفيدي عام 2025 المستقل (27,000 ÷ 29,800)',
-    expected: '0.91',
+    checkName: 'متوسط مستفيدي عام 2024 (13,200 ÷ 27,500)',
+    expected: '0.48',
+    actual: avg24,
+    status: avg24 === '0.48' ? 'PASS' : 'FAIL',
+    description: 'تحقق من قسمة الأرغفة على مستفيدي 2024.',
+  });
+
+  // فحص 7: متوسط نصيب الفرد لعام 2025 (13,200 ÷ 30,000 = 0.44)
+  const avg25 = calculateYearlyAverage(13200, 30000);
+  details.push({
+    checkName: 'متوسط مستفيدي عام 2025 (13,200 ÷ 30,000)',
+    expected: '0.44',
     actual: avg25,
-    status: avg25 === '0.91' ? 'PASS' : 'FAIL',
-    description: 'تحقق من قسمة الأرغفة على مستفيدي 2025 والتقريب النهائي لرقمين عشريين (0.91).',
+    status: avg25 === '0.44' ? 'PASS' : 'FAIL',
+    description: 'تحقق من قسمة الأرغفة على مستفيدي 2025.',
   });
 
-  // فحص 7: الفرق التراكمي بين السنوات (0.91 - 1.00 = -0.09)
-  const diff = calculateAverageDifference('0.91', '1.00');
+  // فحص 8: الفرق التراكمي لمتوسطات نصيب الفرد: ف = م_2023 - م_2024 - م_2025
+  // (0.50 - 0.48 - 0.44 = -0.42)
+  const cumDiff = calculateCumulativeDifference('0.50', '0.48', '0.44');
   details.push({
-    checkName: 'الفرق التراكمي بين متوسطي 2025 و 2023',
-    expected: '-0.09',
-    actual: diff,
-    status: diff === '-0.09' ? 'PASS' : 'FAIL',
-    description: 'تحقق من طرح متوسط 2023 من متوسط 2025 بعلامة عشرية ورقمين فقط.',
+    checkName: 'الفرق التراكمي: م2023 - م2024 - م2025 (0.50 - 0.48 - 0.44)',
+    expected: '-0.42',
+    actual: cumDiff,
+    status: cumDiff === '-0.42' ? 'PASS' : 'FAIL',
+    description: 'تحقق حرفي من معادلة الفرق التراكمي: م_2023 - م_2024 - م_2025.',
+  });
+
+  // فحص 9: متوسط نصيب الفرد للمخبز الواحد = عدد الأرغفة ÷ مستفيدي 2025 (13,200 ÷ 30,000 = 0.44)
+  const perBakery = calculatePerBakeryAverage(13200, 30000);
+  details.push({
+    checkName: 'متوسط نصيب الفرد للمخبز الواحد: الأرغفة ÷ مستفيدي 2025',
+    expected: '0.44',
+    actual: perBakery,
+    status: perBakery === '0.44' ? 'PASS' : 'FAIL',
+    description: 'تحقق من معادلة متوسط نصيب الفرد للمخبز الواحد = totalLoaves / beneficiaries2025.',
+  });
+
+  // فحص 10: منع القسمة على صفر وإرجاع 0.00
+  const zeroBenCheck = calculateYearlyAverage(13200, 0);
+  const zeroBakeryCheck = calculatePerBakeryAverage(13200, 0);
+  details.push({
+    checkName: 'الحماية الصارمة من القسمة على صفر (عند خلو المستفيدين)',
+    expected: '0.00',
+    actual: `${zeroBenCheck} / ${zeroBakeryCheck}`,
+    status: zeroBenCheck === '0.00' && zeroBakeryCheck === '0.00' ? 'PASS' : 'FAIL',
+    description: 'منع ظهور Infinity أو NaN عند الصفر أو الخانات الفارغة.',
   });
 
   // فحص 8: حساب إجمالي ومتبقي المخالفات (5000 + 2000 - 3000 = 4000)
@@ -892,40 +997,6 @@ export function runComprehensiveAudit(
     actual: netDebt,
     status: netDebt === 21000 ? 'PASS' : 'FAIL',
     description: 'تحقق من تجميع كافة المتبقيات من مخالفات ومضاف وتصرف.',
-  });
-
-  // فحص 12: احتساب الحصة التأمينية من المبلغ التأميني (7050 ÷ 235 ÷ 3 = 10)
-  const quotaCheck = calculateInsuranceQuota(7050);
-  details.push({
-    checkName: 'معادلة الحصة التأمينية: 7050 ÷ 235 ÷ 3 = 10',
-    expected: 10,
-    actual: quotaCheck,
-    status: quotaCheck === 10 ? 'PASS' : 'FAIL',
-    description: 'تحقق من معادلة الحصة التأمينية: الحصة التأمينية = المبلغ التأميني ÷ 235 ÷ 3',
-  });
-
-  // فحص 13: احتساب عدد الأرغفة وفق المعادلة: (الحصة الفعلية × عدد نوع الخبز) ÷ عدد السكان مع منع القسمة على صفر
-  const loavesFormulaCheck = calculateLoavesCountFromFormula(20, 1, 30000);
-  const loavesZeroPop = calculateLoavesCountFromFormula(20, 1, 0);
-  const loavesFormulaPassed = loavesFormulaCheck === Number(((20 * 1) / 30000).toFixed(4)) && loavesZeroPop === 0;
-  details.push({
-    checkName: 'معادلة عدد الأرغفة: (الحصة الفعلية × عدد نوع الخبز) ÷ عدد السكان',
-    expected: Number(((20 * 1) / 30000).toFixed(4)),
-    actual: loavesFormulaCheck,
-    status: loavesFormulaPassed ? 'PASS' : 'FAIL',
-    description: 'تحقق من معادلة عدد الأرغفة مع الحماية الصارمة من القسمة على صفر عند خلو عدد السكان.',
-  });
-
-  // فحص 14: احتساب متوسط نصيب الفرد للمخبز: (عدد الأرغفة × الحصة الفعلية) ÷ عدد السكان (0.00)
-  const perCapitaFormulaCheck = calculatePerCapitaAverageFromFormula(loavesFormulaCheck, 20, 30000);
-  const perCapitaZeroPop = calculatePerCapitaAverageFromFormula(loavesFormulaCheck, 20, 0);
-  const perCapitaFormulaPassed = perCapitaZeroPop === '0.00' && /^\d+\.\d{2}$/.test(perCapitaFormulaCheck);
-  details.push({
-    checkName: 'معادلة متوسط نصيب الفرد للمخبز: (عدد الأرغفة × الحصة الفعلية) ÷ عدد السكان',
-    expected: '0.00',
-    actual: perCapitaFormulaCheck,
-    status: perCapitaFormulaPassed ? 'PASS' : 'FAIL',
-    description: 'تحقق من معادلة متوسط نصيب الفرد للمخبز بعلامة عشرية ورقمين فقط ومنع القسمة على صفر.',
   });
 
   // فحص 12: فحص كافة سجلات المخابز الحية بقاعدة البيانات

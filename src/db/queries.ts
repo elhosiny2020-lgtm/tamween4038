@@ -91,7 +91,7 @@ export async function upsertBakeryInDb(b: Bakery) {
       activityStatus: b.activityStatus || 'يعمل',
       bakeryCategory: b.bakeryCategory || 'مخبز بلدي مدعم',
       breadType: b.breadType || 'ماكينة ميكانيكي',
-      breadTypeCount: b.breadTypeCount || 1,
+      breadTypeCount: typeof b.breadTypeCount === 'number' ? b.breadTypeCount : parseInt(String(b.breadTypeCount).replace(/[^\d]/g, '') || '660', 10),
       lineType: b.lineType || 'ميكانيكي كامل',
       fuelType: b.fuelType || 'سولار',
       phone: b.phone || '',

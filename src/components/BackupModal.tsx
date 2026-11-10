@@ -45,6 +45,11 @@ import {
 import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import {
+  executePublishProcess,
+  getLastConfirmedPublishInfo,
+  PublishProgressState,
+} from '../services/publishService';
+import {
   HardDrive,
   Download,
   Upload,
@@ -60,7 +65,12 @@ import {
   RefreshCw,
   ExternalLink,
   Database,
-  ArrowRight
+  ArrowRight,
+  UploadCloud,
+  RotateCw,
+  Copy,
+  Check,
+  AlertCircle,
 } from 'lucide-react';
 
 interface BackupModalProps {
@@ -81,6 +91,42 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [showConfirmReset, setShowConfirmReset] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Dedicated Publish Engine State
+  const [publishState, setPublishState] = useState<PublishProgressState>({
+    stage: 'IDLE',
+    stageNameArabic: 'جاهز للنشر',
+    progressPercent: 0,
+    statusMessage: 'اضغط على "نشر المنظومة الآن" للبدء في مراحل النشر الأربعة مع التأكيد السحابي.',
+    isDelayed: false,
+  });
+  const [lastPublishedInfo, setLastPublishedInfo] = useState(() => getLastConfirmedPublishInfo());
+  const [copiedPublishUrl, setCopiedPublishUrl] = useState(false);
+
+  const isPublishing =
+    publishState.stage === 'STARTING' ||
+    publishState.stage === 'PREPARING' ||
+    publishState.stage === 'UPLOADING' ||
+    publishState.stage === 'VERIFYING';
+
+  const handleExecutePublishFromBackup = async () => {
+    if (isPublishing) return;
+    try {
+      const res = await executePublishProcess(currentState, (prog) => {
+        setPublishState(prog);
+      });
+      setLastPublishedInfo(res);
+      setStatusMsg({
+        text: `تم بنجاح نشر المنظومة وتأكيد الرابط السحابي: ${res.publishedUrl}`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      setStatusMsg({
+        text: `فشل النشر: ${err.message || 'خطأ غير معروف'}`,
+        type: 'error',
+      });
+    }
+  };
 
   // GitHub Backup & Cloud Sync state
   const [githubEmail, setGithubEmail] = useState<string>(() => localStorage.getItem('TAMWEEN_GITHUB_EMAIL') || 'tamween-mahalla@egypt.gov.eg');
@@ -989,6 +1035,129 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 <span>فتح صفحة البرنامج مباشرة في نافذة متصفح جديدة</span>
               </button>
             </div>
+          </div>
+
+          {/* SECTION: PUBLISH ENGINE & CLOUD RELEASE */}
+          <div className="p-4.5 bg-gradient-to-br from-indigo-950 via-slate-900 to-sky-950 text-white border-2 border-indigo-400/70 rounded-2xl space-y-3.5 shadow-lg relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+
+            <div className="flex items-center justify-between relative z-10 flex-wrap gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-400/30 shadow-inner">
+                  <UploadCloud className="w-5 h-5 text-indigo-300 icon-float" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-indigo-200 flex items-center gap-2">
+                    <span>محرك النشر السحابي الفوري والمحسّن (Publish Engine)</span>
+                    <span className="text-[10px] bg-indigo-500/30 text-indigo-200 border border-indigo-400/40 px-2 py-0.5 rounded-full font-bold">
+                      v{lastPublishedInfo?.version || '2.4.0'} مُعتمد
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-300 font-medium mt-0.5">
+                    نشر وتحديث النسخة السحابية الموزعة بأحدث حزم الكود الخفيفة وبدون تجميد للشاشة
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExecutePublishFromBackup}
+                  disabled={isPublishing}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition shadow-md cursor-pointer ${
+                    isPublishing
+                      ? 'bg-indigo-700/60 text-indigo-200 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-white border border-indigo-300/40 hover:scale-[1.02] active:scale-[0.98]'
+                  }`}
+                >
+                  {isPublishing ? (
+                    <>
+                      <RotateCw className="w-4 h-4 animate-spin text-indigo-200" />
+                      <span>جارٍ تنفيذ النشر ({publishState.progressPercent}%)...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud className="w-4 h-4 text-white" />
+                      <span>نشر المنظومة الآن (Publish)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Stages Progress Indicator */}
+            {isPublishing && (
+              <div className="bg-slate-900/90 border border-indigo-400/30 rounded-xl p-3 space-y-2 relative z-10 animate-fadeIn">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+                  <span className="flex items-center gap-1.5 text-indigo-300">
+                    <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+                    <span>المرحلة: {publishState.stageNameArabic}</span>
+                  </span>
+                  <span className="text-indigo-300 font-mono font-black">{publishState.progressPercent}%</span>
+                </div>
+
+                <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-700">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 transition-all duration-300 rounded-full"
+                    style={{ width: `${publishState.progressPercent}%` }}
+                  />
+                </div>
+
+                {publishState.isDelayed && (
+                  <div className="p-2 bg-amber-950/70 border border-amber-500/50 rounded-lg text-[11px] text-amber-200 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>يستغرق النشر وقتاً إضافياً لضغط البيانات وتأكيد الرابط السحابي... يرجى الانتظار دون إغلاق الصفحة.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Published Link & Details */}
+            {lastPublishedInfo && (
+              <div className="bg-slate-950/70 border border-indigo-500/30 rounded-xl p-3 flex flex-col md:flex-row items-center justify-between gap-2.5 relative z-10 text-xs">
+                <div className="flex items-center gap-2 overflow-hidden text-right w-full md:w-auto">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="text-slate-400 shrink-0 font-medium">الرابط السحابي المعتمد:</span>
+                  <span className="font-mono text-sky-300 text-[11px] truncate max-w-xs ltr">
+                    {lastPublishedInfo.publishedUrl}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(lastPublishedInfo.publishedUrl);
+                      setCopiedPublishUrl(true);
+                      setTimeout(() => setCopiedPublishUrl(false), 2500);
+                    }}
+                    className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    {copiedPublishUrl ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-300">تم النسخ</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-slate-300" />
+                        <span>نسخ الرابط</span>
+                      </>
+                    )}
+                  </button>
+
+                  <a
+                    href={lastPublishedInfo.publishedUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white border border-indigo-400/40 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>فتح الرابط</span>
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* SECTION: SUPABASE CLOUD DATABASE & INDEX.HTML STORAGE */}

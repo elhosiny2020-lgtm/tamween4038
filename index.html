@@ -20,7 +20,27 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script>
+      // Non-blocking on-demand loader for html2pdf to accelerate page load & publishing
+      window.loadHtml2PdfOnDemand = function() {
+        return new Promise(function(resolve) {
+          if (typeof (window).html2pdf === 'function') {
+            return resolve((window).html2pdf);
+          }
+          var s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+          s.async = true;
+          s.onload = function() { resolve((window).html2pdf); };
+          s.onerror = function() { resolve(null); };
+          document.head.appendChild(s);
+        });
+      };
+      if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(function() { window.loadHtml2PdfOnDemand(); });
+      } else {
+        setTimeout(function() { window.loadHtml2PdfOnDemand(); }, 2500);
+      }
+    </script>
   </head>
   <body class="bg-black text-slate-100 font-sans antialiased selection:bg-amber-400 selection:text-black">
     <div id="root"></div>

@@ -59,6 +59,7 @@ import { AlertsModal } from './components/AlertsModal';
 import { DebtsView } from './components/DebtsView';
 import { ReportModal } from './components/ReportModal';
 import { BackupModal } from './components/BackupModal';
+import { PublishModal } from './components/PublishModal';
 import { UsersManagerModal } from './components/UsersManagerModal';
 import { ActivityStatusModal } from './components/ActivityStatusModal';
 import { WeeklyInstallmentsModal } from './components/WeeklyInstallmentsModal';
@@ -131,7 +132,8 @@ import {
   ListTodo,
   Sliders,
   Inbox,
-  RefreshCw
+  RefreshCw,
+  UploadCloud
 } from 'lucide-react';
 
 const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
@@ -241,6 +243,7 @@ export default function App() {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportModalInitialTab, setReportModalInitialTab] = useState<'bakeries' | 'debts' | 'bakery-debts' | 'users' | 'annual-averages'>('bakeries');
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [isWeeklyInstallmentsModalOpen, setIsWeeklyInstallmentsModalOpen] = useState(false);
@@ -1366,6 +1369,17 @@ export default function App() {
                 )}
               </button>
 
+              {/* Header Publish Button (نشر المنظومة) */}
+              <button
+                type="button"
+                onClick={() => setIsPublishModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black rounded-lg text-xs shadow-md border border-amber-300 hover:scale-105 active:scale-95 transition cursor-pointer"
+                title="نشر المنظومة والتحديثات السحابية (Publish Engine) مع المتابعة المباشرة وتأكيد الرابط"
+              >
+                <UploadCloud className="w-3.5 h-3.5 text-slate-950 stroke-[2.5]" />
+                <span>نشر المنظومة (Publish)</span>
+              </button>
+
               <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-slate-800/80 border border-slate-700 rounded-lg text-xs font-bold text-amber-100 shadow-inner">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 <span>{appState.currentUser.fullName}</span>
@@ -1719,6 +1733,27 @@ export default function App() {
               </div>
               <span className="text-[10px] bg-emerald-500 text-slate-950 px-2 py-0.5 rounded-full font-black shrink-0">
                 شامل 💾
+              </span>
+            </button>
+
+            {/* UNIFIED BUTTON 3: نشر المنظومة والتحديثات السحابية (Publish Engine) */}
+            <button
+              type="button"
+              onClick={() => setIsPublishModalOpen(true)}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black border-2 border-amber-300 rounded-xl text-xs transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg"
+              title="نشر المنظومة والتحديثات السحابية فوراً (بدء النشر • تجهيز الملفات • رفع الملفات • إتمام النشر والتأكيد)"
+            >
+              <div className="flex items-center gap-2">
+                <UploadCloud className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+                <div className="text-right">
+                  <div className="leading-tight">نشر المنظومة (Publish)</div>
+                  <div className="text-[9.5px] text-slate-900 font-black">
+                    مراحل النشر الأربعة • تأكيد الرابط السحابي
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] bg-slate-950 text-amber-300 px-2 py-0.5 rounded-full font-black shrink-0">
+                🚀 نشر مباشر
               </span>
             </button>
 
@@ -3520,6 +3555,15 @@ export default function App() {
           onFactoryReset={async () => {
             await factoryReset();
           }}
+        />
+      )}
+
+      {/* 7.1 Publish and Cloud Deploy Engine Modal */}
+      {isPublishModalOpen && (
+        <PublishModal
+          isOpen={isPublishModalOpen}
+          onClose={() => setIsPublishModalOpen(false)}
+          currentState={appState}
         />
       )}
 

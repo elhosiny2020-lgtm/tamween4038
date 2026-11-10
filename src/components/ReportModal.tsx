@@ -450,11 +450,26 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   };
 
   // Instant HTML2PDF Download in Landscape A4 with performance protection
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
     if (!printAreaRef.current) return;
     setIsGeneratingPdf(true);
 
     sanitizeLiveStylesheets();
+
+    const win = window as unknown as {
+      html2pdf?: () => {
+        from: (el: HTMLElement) => { set: (o: any) => { save: () => Promise<void> } };
+      };
+      loadHtml2PdfOnDemand?: () => Promise<any>;
+    };
+
+    if (typeof win.html2pdf !== 'function' && typeof win.loadHtml2PdfOnDemand === 'function') {
+      try {
+        await win.loadHtml2PdfOnDemand();
+      } catch (e) {
+        console.warn('html2pdf dynamic loading notice:', e);
+      }
+    }
 
     const element = printAreaRef.current;
     const opt = {
@@ -476,11 +491,6 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
     };
 
-    const win = window as unknown as {
-      html2pdf?: () => {
-        from: (el: HTMLElement) => { set: (o: typeof opt) => { save: () => Promise<void> } };
-      };
-    };
     if (typeof win.html2pdf === 'function') {
       const pdfTask = win
         .html2pdf()

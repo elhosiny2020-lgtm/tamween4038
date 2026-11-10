@@ -13,14 +13,12 @@ if (!fs.existsSync(distDir)) {
 const htmlPath = path.join(distDir, 'index.html');
 let htmlContent = fs.readFileSync(htmlPath, 'utf-8');
 
-// Inline CSS
+// Inline all CSS
 const cssFiles = fs.readdirSync(path.join(distDir, 'assets')).filter(f => f.endsWith('.css'));
 if (cssFiles.length > 0) {
-  const cssContent = fs.readFileSync(path.join(distDir, 'assets', cssFiles[0]), 'utf-8');
-  htmlContent = htmlContent.replace(
-    new RegExp(`<link rel="stylesheet"[^>]*href="/assets/${cssFiles[0]}"[^>]*>`, 'g'),
-    () => `<style>\n${cssContent}\n</style>`
-  );
+  const combinedCss = cssFiles.map(f => fs.readFileSync(path.join(distDir, 'assets', f), 'utf-8')).join('\n');
+  htmlContent = htmlContent.replace(/<link rel="stylesheet"[^>]*>/g, '');
+  htmlContent = htmlContent.replace('</head>', `<style>\n${combinedCss}\n</style>\n</head>`);
 }
 
 // Inline Favicon SVG as base64 Data URI
@@ -39,18 +37,25 @@ if (fs.existsSync(faviconPath)) {
   );
 }
 
-// Remove the external module script from head
+// Remove module scripts and inline combined JS in correct order
 const jsFiles = fs.readdirSync(path.join(distDir, 'assets')).filter(f => f.endsWith('.js'));
 if (jsFiles.length > 0) {
-  let jsContent = fs.readFileSync(path.join(distDir, 'assets', jsFiles[0]), 'utf-8');
-  // Escape closing script tags to prevent premature HTML parser close
-  jsContent = jsContent.replace(/<\/script>/gi, '<\\/script>');
+  // Sort vendor chunks before entry chunk
+  jsFiles.sort((a, b) => {
+    const aIsVendor = a.includes('vendor');
+    const bIsVendor = b.includes('vendor');
+    if (aIsVendor && !bIsVendor) return -1;
+    if (!aIsVendor && bIsVendor) return 1;
+    return a.localeCompare(b);
+  });
 
-  // Remove module script tag & external blocking scripts from <head>
-  htmlContent = htmlContent.replace(
-    new RegExp(`<script type="module"[^>]*src="/assets/${jsFiles[0]}"[^>]*></script>`, 'g'),
-    ''
-  );
+  const combinedJs = jsFiles.map(f => {
+    let code = fs.readFileSync(path.join(distDir, 'assets', f), 'utf-8');
+    return code.replace(/<\/script>/gi, '<\\/script>');
+  }).join('\n;\n');
+
+  // Remove module script tags from <head> and <body>
+  htmlContent = htmlContent.replace(/<script type="module"[^>]*><\/script>/g, '');
   htmlContent = htmlContent.replace(
     /<script[^>]*src="https:\/\/cdnjs\.cloudflare\.com[^>]*><\/script>/gi,
     `<!-- Non-blocking offline script fallback -->
@@ -100,7 +105,7 @@ if (jsFiles.length > 0) {
 
   // Inject the bundled JavaScript as a STANDARD script at the bottom of <body>
   // (Standard script without type="module" ensures 100% execution on file:/// local disks in Chrome/Edge/Firefox)
-  const bottomScript = `\n<script>\n${jsContent}\n</script>\n</body>`;
+  const bottomScript = `\n<script>\n${combinedJs}\n</script>\n</body>`;
   htmlContent = htmlContent.replace('</body>', () => bottomScript);
 }
 
@@ -321,13 +326,18 @@ start "" msedge --app="${ONLINE_URL}" 2>nul || start "" "${ONLINE_URL}"
 fs.writeFileSync(path.join(publicDir, 'تثبيت_أيقونة_المنظومة_على_سطح_المكتب.bat'), windowsBatInstaller, 'utf-8');
 fs.writeFileSync(path.join(distDir, 'تثبيت_أيقونة_المنظومة_على_سطح_المكتب.bat'), windowsBatInstaller, 'utf-8');
 
-// 5. Build native Windows EXE via python script
+// 5. Ensure native Windows EXE launcher exists
 try {
-  import('child_process').then(cp => {
+  const publicExe = path.join(publicDir, 'منظومة_وزارة_التموين.exe');
+  const distExe = path.join(distDir, 'منظومة_وزارة_التموين.exe');
+  if (fs.existsSync(publicExe)) {
+    fs.copyFileSync(publicExe, distExe);
+  } else {
+    const cp = await import('child_process');
     cp.execSync('python3 scripts/build_windows_exe.py');
-  });
+  }
 } catch (e) {
-  console.warn('Could not build EXE in bundle step:', e);
+  console.warn('Could not build/copy EXE in bundle step:', e);
 }
 
 console.log(`Successfully generated:

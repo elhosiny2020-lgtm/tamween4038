@@ -111,11 +111,10 @@ export const DEFAULT_BREAD_TYPES: string[] = [
 ];
 
 export const DEFAULT_BREAD_TYPE_COUNTS: string[] = [
-  '1',
-  '2',
-  '3',
-  '4',
-  '5'
+  '660',
+  '725',
+  '660 رغيفاً',
+  '725 رغيفاً'
 ];
 
 export const DEFAULT_LINE_TYPES: string[] = [
@@ -156,7 +155,7 @@ export const DEFAULT_COLUMN_TITLES: ColumnTitles = {
   bakeryCategory: 'نوع المخابز',
   breadType: 'نوع الخبز',
   flourBagPrice: 'سعر الشيكارة',
-  breadTypeCount: 'عدد نوع الخبز',
+  breadTypeCount: 'نوع عدد الخبز',
   lineType: 'نوع خط الإنتاج',
   fuelType: 'نوع الوقود',
   phone: 'رقم التليفون',
@@ -177,22 +176,22 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'بشبيش الرئيسية',
     insuranceQuota: 24,
     actualQuota: 24,
-    insuranceValue: 2538000, // 2538000 ÷ (235 ÷ 3) = 32400 رغيف
-    loavesCount: 32400,
+    insuranceValue: 16920, // 16920 ÷ 235 ÷ 3 = 24 شكارة
+    loavesCount: 15840, // 24 × 660 = 15840 رغيف
     villagePopulation: 38500,
-    perCapitaAverage: (32400 / 38500).toFixed(2), // 0.84
+    perCapitaAverage: (15840 / 37400).toFixed(2), // 0.42 (الأرغفة ÷ مستفيدي 2025)
     beneficiaries2023: 34200,
-    avg2023: (32400 / 34200).toFixed(2), // 0.95
+    avg2023: (15840 / 34200).toFixed(2), // 0.46
     beneficiaries2024: 35800,
-    avg2024: (32400 / 35800).toFixed(2), // 0.91
+    avg2024: (15840 / 35800).toFixed(2), // 0.44
     beneficiaries2025: 37400,
-    avg2025: (32400 / 37400).toFixed(2), // 0.87
-    avgDiff: (parseFloat((32400 / 37400).toFixed(2)) - parseFloat((32400 / 34200).toFixed(2))).toFixed(2), // -0.08
+    avg2025: (15840 / 37400).toFixed(2), // 0.42
+    avgDiff: (15840 / 34200 - 15840 / 35800 - 15840 / 37400).toFixed(2), // -0.40 (م2023 - م2024 - م2025)
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,
-    breadTypeCount: 1,
+    breadTypeCount: '660',
     lineType: 'نصف آلي',
     fuelType: 'غاز طبيعي',
     phone: '01004414038',
@@ -211,22 +210,22 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'محلة حسن الرئيسية',
     insuranceQuota: 18,
     actualQuota: 18,
-    insuranceValue: 1903500, // 1903500 ÷ (235 ÷ 3) = 24300 رغيف
-    loavesCount: 24300,
+    insuranceValue: 12690, // 12690 ÷ 235 ÷ 3 = 18 شكارة
+    loavesCount: 13050, // 18 × 725 = 13050 رغيف
     villagePopulation: 29400,
-    perCapitaAverage: (24300 / 29400).toFixed(2), // 0.83
+    perCapitaAverage: (13050 / 28900).toFixed(2), // 0.45 (الأرغفة ÷ مستفيدي 2025)
     beneficiaries2023: 26100,
-    avg2023: (24300 / 26100).toFixed(2), // 0.93
+    avg2023: (13050 / 26100).toFixed(2), // 0.50
     beneficiaries2024: 27500,
-    avg2024: (24300 / 27500).toFixed(2), // 0.88
+    avg2024: (13050 / 27500).toFixed(2), // 0.47
     beneficiaries2025: 28900,
-    avg2025: (24300 / 28900).toFixed(2), // 0.84
-    avgDiff: (parseFloat((24300 / 28900).toFixed(2)) - parseFloat((24300 / 26100).toFixed(2))).toFixed(2), // -0.09
+    avg2025: (13050 / 28900).toFixed(2), // 0.45
+    avgDiff: (13050 / 26100 - 13050 / 27500 - 13050 / 28900).toFixed(2), // -0.43 (م2023 - م2024 - م2025)
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,
-    breadTypeCount: 1,
+    breadTypeCount: '725',
     lineType: 'آلي كامل',
     fuelType: 'سولار',
     phone: '01123456789',
@@ -245,22 +244,22 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'شبرا بابل',
     insuranceQuota: 20,
     actualQuota: 20,
-    insuranceValue: 2115000, // 2115000 ÷ (235 ÷ 3) = 27000 رغيف
-    loavesCount: 27000,
+    insuranceValue: 14100, // 14100 ÷ 235 ÷ 3 = 20 شكارة
+    loavesCount: 13200, // 20 × 660 = 13200 رغيف
     villagePopulation: 31200,
-    perCapitaAverage: (27000 / 31200).toFixed(2), // 0.87
+    perCapitaAverage: (13200 / 30800).toFixed(2), // 0.43 (الأرغفة ÷ مستفيدي 2025)
     beneficiaries2023: 28000,
-    avg2023: (27000 / 28000).toFixed(2), // 0.96
+    avg2023: (13200 / 28000).toFixed(2), // 0.47
     beneficiaries2024: 29500,
-    avg2024: (27000 / 29500).toFixed(2), // 0.92
+    avg2024: (13200 / 29500).toFixed(2), // 0.45
     beneficiaries2025: 30800,
-    avg2025: (27000 / 30800).toFixed(2), // 0.88
-    avgDiff: (parseFloat((27000 / 30800).toFixed(2)) - parseFloat((27000 / 28000).toFixed(2))).toFixed(2), // -0.08
+    avg2025: (13200 / 30800).toFixed(2), // 0.43
+    avgDiff: (13200 / 28000 - 13200 / 29500 - 13200 / 30800).toFixed(2), // -0.40 (م2023 - م2024 - م2025)
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,
-    breadTypeCount: 1,
+    breadTypeCount: '660',
     lineType: 'نصف آلي',
     fuelType: 'غاز طبيعي',
     phone: '01234567891',
@@ -279,22 +278,22 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'دمرو الرئيسية',
     insuranceQuota: 22,
     actualQuota: 22,
-    insuranceValue: 2326500, // 2326500 ÷ (235 ÷ 3) = 29700 رغيف
-    loavesCount: 29700,
+    insuranceValue: 15510, // 15510 ÷ 235 ÷ 3 = 22 شكارة
+    loavesCount: 15950, // 22 × 725 = 15950 رغيف
     villagePopulation: 33400,
-    perCapitaAverage: (29700 / 33400).toFixed(2), // 0.89
+    perCapitaAverage: (15950 / 32900).toFixed(2), // 0.48 (الأرغفة ÷ مستفيدي 2025)
     beneficiaries2023: 29800,
-    avg2023: (29700 / 29800).toFixed(2), // 1.00
+    avg2023: (15950 / 29800).toFixed(2), // 0.54
     beneficiaries2024: 31200,
-    avg2024: (29700 / 31200).toFixed(2), // 0.95
+    avg2024: (15950 / 31200).toFixed(2), // 0.51
     beneficiaries2025: 32900,
-    avg2025: (29700 / 32900).toFixed(2), // 0.90
-    avgDiff: (parseFloat((29700 / 32900).toFixed(2)) - parseFloat((29700 / 29800).toFixed(2))).toFixed(2), // -0.10
+    avg2025: (15950 / 32900).toFixed(2), // 0.48
+    avgDiff: (15950 / 29800 - 15950 / 31200 - 15950 / 32900).toFixed(2), // -0.46 (م2023 - م2024 - م2025)
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مجر',
     flourBagPrice: 950,
-    breadTypeCount: 1,
+    breadTypeCount: '725',
     lineType: 'نصف آلي',
     fuelType: 'غاز طبيعي',
     phone: '01512345678',
@@ -313,22 +312,22 @@ export const INITIAL_BAKERIES: Bakery[] = [
     localUnit: 'الدواخلية',
     insuranceQuota: 16,
     actualQuota: 16,
-    insuranceValue: 1692000, // 1692000 ÷ (235 ÷ 3) = 21600 رغيف
-    loavesCount: 21600,
+    insuranceValue: 11280, // 11280 ÷ 235 ÷ 3 = 16 شكارة
+    loavesCount: 10560, // 16 × 660 = 10560 رغيف
     villagePopulation: 25800,
-    perCapitaAverage: (21600 / 25800).toFixed(2), // 0.84
+    perCapitaAverage: (10560 / 25100).toFixed(2), // 0.42 (الأرغفة ÷ مستفيدي 2025)
     beneficiaries2023: 23000,
-    avg2023: (21600 / 23000).toFixed(2), // 0.94
+    avg2023: (10560 / 23000).toFixed(2), // 0.46
     beneficiaries2024: 24200,
-    avg2024: (21600 / 24200).toFixed(2), // 0.89
+    avg2024: (10560 / 24200).toFixed(2), // 0.44
     beneficiaries2025: 25100,
-    avg2025: (21600 / 25100).toFixed(2), // 0.86
-    avgDiff: (parseFloat((21600 / 25100).toFixed(2)) - parseFloat((21600 / 23000).toFixed(2))).toFixed(2), // -0.08
+    avg2025: (10560 / 25100).toFixed(2), // 0.42
+    avgDiff: (10560 / 23000 - 10560 / 24200 - 10560 / 25100).toFixed(2), // -0.40 (م2023 - م2024 - م2025)
     activityStatus: 'شغال',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,
-    breadTypeCount: 1,
+    breadTypeCount: '660',
     lineType: 'آلي كامل',
     fuelType: 'سولار',
     phone: '01098765432',

@@ -17,6 +17,10 @@ import {
   deleteDropdownOption,
   filterAndSortDailyTasks,
   filterDebtsByAdvancedCriteria,
+  extractBreadLoafMultiplier,
+  calculateCumulativeDifference,
+  calculateYearlyAverage,
+  calculatePerBakeryAverage,
 } from './auditHelper';
 import { DailyBakeryTask } from '../types';
 
@@ -44,15 +48,16 @@ test('calculateAnnualWeightedAveragesReport computes weighted general averages v
   const sum23 = INITIAL_BAKERIES.reduce((s, b) => s + b.beneficiaries2023, 0);
   const sum24 = INITIAL_BAKERIES.reduce((s, b) => s + b.beneficiaries2024, 0);
   const sum25 = INITIAL_BAKERIES.reduce((s, b) => s + b.beneficiaries2025, 0);
+  const totalLoaves = INITIAL_BAKERIES.reduce((s, b) => s + b.loavesCount, 0);
   assert.equal(report.totalBakeries, 5);
-  assert.equal(report.totalLoaves, 135000);
+  assert.equal(report.totalLoaves, totalLoaves);
   assert.equal(report.totalBeneficiaries2023, sum23);
   assert.equal(report.totalBeneficiaries2024, sum24);
   assert.equal(report.totalBeneficiaries2025, sum25);
   // Weighted average = sum(loaves) / sum(beneficiaries)
-  assert.equal(report.weightedAvg2023, (135000 / sum23).toFixed(2));
-  assert.equal(report.weightedAvg2024, (135000 / sum24).toFixed(2));
-  assert.equal(report.weightedAvg2025, (135000 / sum25).toFixed(2));
+  assert.equal(report.weightedAvg2023, (totalLoaves / sum23).toFixed(2));
+  assert.equal(report.weightedAvg2024, (totalLoaves / sum24).toFixed(2));
+  assert.equal(report.weightedAvg2025, (totalLoaves / sum25).toFixed(2));
 });
 
 test('recalculateAllDatabaseEquations normalizes and synchronizes all bakeries and debts idempotently', () => {
@@ -60,13 +65,14 @@ test('recalculateAllDatabaseEquations normalizes and synchronizes all bakeries a
     idx === 0 ? { ...b, loavesCount: 999, perCapitaAverage: '0.123' } : b
   );
   const res = recalculateAllDatabaseEquations(staleBakeries, INITIAL_DEBTS);
-  assert.equal(res.bakeries[0].loavesCount, 32400);
-  assert.equal(res.bakeries[0].perCapitaAverage, '0.84');
+  assert.equal(res.bakeries[0].loavesCount, 15840);
+  assert.equal(res.bakeries[0].perCapitaAverage, '0.42');
   assert.equal(res.summary.updatedBakeriesCount >= 1, true);
 });
 
 test('runComprehensiveAudit passes all mathematical and 2-decimal checks', () => {
-  assert.equal(calculateLoavesCount(20), 27000);
+  assert.equal(calculateLoavesCount(20, 660), 13200);
+  assert.equal(calculateLoavesCount(20, 725), 14500);
   const res = runComprehensiveAudit();
   assert.equal(res.passed, true);
   assert.equal(res.failedChecks, 0);
@@ -284,35 +290,53 @@ test('calculateInsuranceQuota computes insuranceValue / 235 / 3 accurately', () 
   // Example given by user: 7050 ÷ 235 ÷ 3 = 10
   assert.equal(calculateInsuranceQuota(7050), 10);
   assert.equal(calculateInsuranceQuota(14100), 20);
+  assert.equal(calculateInsuranceQuota(16920), 24);
   assert.equal(calculateInsuranceQuota(0), 0);
   assert.equal(calculateInsuranceQuota(-500), 0);
-  // Reverse equation
+  // Reverse equation: insuranceValue = insuranceQuota * 235 * 3
   assert.equal(calculateInsuranceValueFromQuota(10), 7050);
   assert.equal(calculateInsuranceValueFromQuota(20), 14100);
+  assert.equal(calculateInsuranceValueFromQuota(24), 16920);
 });
 
-test('calculateLoavesCountFromFormula computes (actualQuota * breadTypeCount) / villagePopulation with zero protection', () => {
-  // Formula: (actualQuota * breadTypeCount) / villagePopulation
-  const val1 = calculateLoavesCountFromFormula(20, 1, 30000);
-  assert.equal(val1, Number(((20 * 1) / 30000).toFixed(4)));
+test('extractBreadLoafMultiplier and calculateLoavesCount determine multiplier and loaves count per bakery', () => {
+  // 660 tests
+  assert.equal(extractBreadLoafMultiplier('660'), 660);
+  assert.equal(extractBreadLoafMultiplier('660 رغيفاً'), 660);
+  assert.equal(extractBreadLoafMultiplier(660), 660);
+  // 725 tests
+  assert.equal(extractBreadLoafMultiplier('725'), 725);
+  assert.equal(extractBreadLoafMultiplier('725 رغيفاً'), 725);
+  assert.equal(extractBreadLoafMultiplier(725), 725);
 
-  const val2 = calculateLoavesCountFromFormula(30, 2, 50000);
-  assert.equal(val2, Number(((30 * 2) / 50000).toFixed(4)));
-
-  // Division by zero protection
-  assert.equal(calculateLoavesCountFromFormula(20, 1, 0), 0);
-  assert.equal(calculateLoavesCountFromFormula(20, 1, -100), 0);
+  // calculateLoavesCount: actualQuota * multiplier
+  assert.equal(calculateLoavesCount(20, 660), 13200);
+  assert.equal(calculateLoavesCount(20, 725), 14500);
+  assert.equal(calculateLoavesCount(24, '660 رغيفاً'), 15840);
+  assert.equal(calculateLoavesCount(18, '725 رغيفاً'), 13050);
 });
 
-test('calculatePerCapitaAverageFromFormula computes (loavesCount * actualQuota) / villagePopulation to strictly 2 decimal places', () => {
-  // Formula: (loavesCount * actualQuota) / villagePopulation
-  const avg1 = calculatePerCapitaAverageFromFormula(100, 20, 5000);
-  assert.equal(avg1, ((100 * 20) / 5000).toFixed(2));
-  assert.equal(avg1, '0.40');
+test('calculateYearlyAverage computes loavesCount / beneficiaries with division by zero safety', () => {
+  assert.equal(calculateYearlyAverage(13200, 26400), '0.50');
+  assert.equal(calculateYearlyAverage(13200, 27500), '0.48');
+  assert.equal(calculateYearlyAverage(13200, 30000), '0.44');
+  assert.equal(calculateYearlyAverage(13200, 0), '0.00');
+  assert.equal(calculateYearlyAverage(13200, -10), '0.00');
+});
 
-  // Zero population protection
-  assert.equal(calculatePerCapitaAverageFromFormula(100, 20, 0), '0.00');
-  assert.equal(calculatePerCapitaAverageFromFormula(0, 0, 10000), '0.00');
+test('calculateCumulativeDifference strictly computes avg2023 - avg2024 - avg2025', () => {
+  // Strict formula: m2023 - m2024 - m2025
+  // Example: 0.50 - 0.48 - 0.44 = -0.42
+  assert.equal(calculateCumulativeDifference('0.50', '0.48', '0.44'), '-0.42');
+  assert.equal(calculateCumulativeDifference(0.50, 0.48, 0.44), '-0.42');
+  assert.equal(calculateCumulativeDifference('1.00', '0.90', '0.80'), '-0.70');
+});
+
+test('calculatePerBakeryAverage computes totalLoaves / beneficiaries2025', () => {
+  assert.equal(calculatePerBakeryAverage(13200, 30000), '0.44');
+  assert.equal(calculatePerBakeryAverage(15840, 37400), '0.42');
+  assert.equal(calculatePerBakeryAverage(13050, 28900), '0.45');
+  assert.equal(calculatePerBakeryAverage(13200, 0), '0.00');
 });
 
 

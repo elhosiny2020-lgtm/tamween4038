@@ -38,7 +38,7 @@ export interface Bakery {
   bakeryCategory?: string; // نوع المخابز (مخبز بلدي مدعم، مخبز بلدي مطور، مخبز سياحي 72%، مخبز فينو وأفرنجي، مخبز طباقي)
   breadType: string; // نوع الخبز (بلدي مدعم ماو، بلدي مجر، خبز آلي، طباقي)
   flourBagPrice?: number; // سعر الشيكارة (بالجنيه)
-  breadTypeCount: number; // عدد نوع الخبز (افتراضي 1)
+  breadTypeCount: number | string; // نوع عدد الخبز (660 أو 725)
   lineType: string; // نوع خط الإنتاج (نصف آلي، آلي كامل، يدوي)
   fuelType: string; // نوع الوقود (غاز طبيعي، سولار)
 
@@ -287,5 +287,7 @@ export interface DailyBakeryTask {
   assignedTo?: string;
   createdAt: string;
 }
+
+export type { AppState } from './storage';
 
 

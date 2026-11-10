@@ -8,6 +8,9 @@ import {
   calculateInsuranceValueFromQuota,
   calculateLoavesCountFromFormula,
   calculatePerCapitaAverageFromFormula,
+  calculatePerBakeryAverage,
+  calculateCumulativeDifference,
+  extractBreadLoafMultiplier,
   normalizeBakeryCalculations,
 } from '../utils/auditHelper';
 import {
@@ -122,7 +125,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [bakeryCategory, setBakeryCategory] = useState('مخبز بلدي مدعم');
   const [breadType, setBreadType] = useState('بلدي مدعم ماو');
   const [flourBagPrice, setFlourBagPrice] = useState<number>(950);
-  const [breadTypeCount, setBreadTypeCount] = useState<number>(1);
+  const [breadTypeCount, setBreadTypeCount] = useState<number | string>('660');
   const [lineType, setLineType] = useState('نصف آلي');
   const [fuelType, setFuelType] = useState('غاز طبيعي');
 
@@ -266,7 +269,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setBakeryCategory(bakeryToEdit.bakeryCategory || 'مخبز بلدي مدعم');
       setBreadType(bakeryToEdit.breadType || 'بلدي مدعم ماو');
       setFlourBagPrice(bakeryToEdit.flourBagPrice !== undefined ? Number(bakeryToEdit.flourBagPrice) : 950);
-      setBreadTypeCount(bakeryToEdit.breadTypeCount || 1);
+      setBreadTypeCount(bakeryToEdit.breadTypeCount || '660');
       setLineType(bakeryToEdit.lineType || 'نصف آلي');
       setFuelType(bakeryToEdit.fuelType || 'غاز طبيعي');
 
@@ -290,25 +293,25 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
       setInsuranceQuota(20);
       setActualQuota(20);
-      setInsuranceValue(2115000);
-      const loaves = calculateLoavesFromInsuranceValue(2115000);
+      setInsuranceValue(14100);
+      const loaves = 20 * 660; // 13200
       setLoavesCount(loaves);
       setVillagePopulation(30000);
-      setPerCapitaAverage((loaves / 30000).toFixed(2));
       setBeneficiaries2023(27000);
       setAvg2023((loaves / 27000).toFixed(2));
       setBeneficiaries2024(28500);
       setAvg2024((loaves / 28500).toFixed(2));
       setBeneficiaries2025(29800);
-      const a25 = loaves / 29800;
-      setAvg2025(a25.toFixed(2));
-      setAvgDiff((a25 - loaves / 27000).toFixed(2));
+      const a25 = (loaves / 29800).toFixed(2);
+      setAvg2025(a25);
+      setPerCapitaAverage(a25);
+      setAvgDiff((loaves / 27000 - loaves / 28500 - loaves / 29800).toFixed(2));
 
       setActivityStatus('شغال');
       setBakeryCategory('مخبز بلدي مدعم');
       setBreadType('بلدي مدعم ماو');
       setFlourBagPrice(950);
-      setBreadTypeCount(1);
+      setBreadTypeCount('660');
       setLineType('نصف آلي');
       setFuelType('غاز طبيعي');
       setPhone('');
@@ -335,9 +338,13 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   };
 
   // Dedicated Auto-Calculation Engine:
-  // 1. الحصة التأمينية = المبلغ التأميني ÷ 235 ÷ 3
-  // 2. عدد الأرغفة = (الحصة الفعلية × عدد نوع الخبز المحدد في الجدول) ÷ عدد السكان
-  // 3. متوسط نصيب الفرد للمخبز = (عدد الأرغفة × الحصة الفعلية) ÷ عدد السكان
+  // 1. الحصة التأمينية = المبلغ التأميني بالجنيه ÷ 235 ÷ 3
+  // 2. عدد الأرغفة = حصة المخبز الفعلية × معامل عدد الأرغفة (660 أو 725 حسب نوع عدد الخبز)
+  // 3. متوسط نصيب الفرد لعام 2023 = عدد الأرغفة ÷ مستفيدي 2023
+  // 4. متوسط نصيب الفرد لعام 2024 = عدد الأرغفة ÷ مستفيدي 2024
+  // 5. متوسط نصيب الفرد لعام 2025 = عدد الأرغفة ÷ مستفيدي 2025
+  // 6. الفرق التراكمي = متوسط 2023 - متوسط 2024 - متوسط 2025 (ف = م_2023 - م_2024 - م_2025)
+  // 7. متوسط نصيب الفرد للمخبز الواحد = إجمالي عدد الأرغفة ÷ مستفيدي عام 2025
   const calculateAllAverages = (
     customQuota?: number,
     customPop?: number,
@@ -346,47 +353,44 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     customB25?: number,
     customInsValue?: number,
     customActualQuota?: number,
-    customBreadTypeCount?: number
+    customBreadTypeCount?: number | string
   ) => {
     const insVal = customInsValue !== undefined ? customInsValue : insuranceValue;
     const computedQuota = insVal > 0 ? calculateInsuranceQuota(insVal) : (customQuota !== undefined ? customQuota : insuranceQuota);
     setInsuranceQuota(computedQuota);
 
-    const q = computedQuota;
-    const pop = customPop !== undefined ? customPop : villagePopulation;
     const actQ = customActualQuota !== undefined ? customActualQuota : actualQuota;
     const btc = customBreadTypeCount !== undefined ? customBreadTypeCount : breadTypeCount;
     const b23 = customB23 !== undefined ? customB23 : beneficiaries2023;
     const b24 = customB24 !== undefined ? customB24 : beneficiaries2024;
     const b25 = customB25 !== undefined ? customB25 : beneficiaries2025;
 
-    // احتساب عدد الأرغفة: (الحصة الفعلية × عدد نوع الخبز) ÷ عدد السكان (مع منع القسمة على صفر)
-    const calculatedLoaves =
-      pop > 0
-        ? calculateLoavesCountFromFormula(actQ, btc, pop)
-        : Number(insVal) > 0
-        ? calculateLoavesFromInsuranceValue(Number(insVal))
-        : calculateLoavesCount(Number(q || 0));
+    // 1. استخراج معامل عدد الخبز (660 أو 725) واحتساب الأرغفة = الحصة الفعلية × المعامل
+    const mult = extractBreadLoafMultiplier(btc);
+    const calculatedLoaves = Math.round(actQ * mult);
     setLoavesCount(calculatedLoaves);
 
-    // احتساب متوسط نصيب الفرد للمخبز: (عدد الأرغفة × الحصة الفعلية) ÷ عدد السكان
-    const calculatedPerCapita =
-      pop > 0
-        ? calculatePerCapitaAverageFromFormula(calculatedLoaves, actQ, pop)
-        : '0.00';
-    setPerCapitaAverage(calculatedPerCapita);
-
-    const cAvg23 = b23 > 0 ? (calculatedLoaves / b23).toFixed(2) : '0.00';
+    // 2. متوسطات الأعوام التموينية: عدد الأرغفة ÷ عدد المستفيدين
+    const rawAvg23 = b23 > 0 ? calculatedLoaves / b23 : 0;
+    const cAvg23 = b23 > 0 ? rawAvg23.toFixed(2) : '0.00';
     setAvg2023(cAvg23);
 
-    const cAvg24 = b24 > 0 ? (calculatedLoaves / b24).toFixed(2) : '0.00';
+    const rawAvg24 = b24 > 0 ? calculatedLoaves / b24 : 0;
+    const cAvg24 = b24 > 0 ? rawAvg24.toFixed(2) : '0.00';
     setAvg2024(cAvg24);
 
-    const cAvg25 = b25 > 0 ? (calculatedLoaves / b25).toFixed(2) : '0.00';
+    const rawAvg25 = b25 > 0 ? calculatedLoaves / b25 : 0;
+    const cAvg25 = b25 > 0 ? rawAvg25.toFixed(2) : '0.00';
     setAvg2025(cAvg25);
 
-    const diff = (parseFloat(cAvg25) - parseFloat(cAvg23)).toFixed(2);
+    // 3. الفرق التراكمي: متوسط 2023 - متوسط 2024 - متوسط 2025 (مع الدقة الكاملة داخلياً)
+    const rawDiff = rawAvg23 - rawAvg24 - rawAvg25;
+    const diff = (b23 > 0 || b24 > 0 || b25 > 0) ? rawDiff.toFixed(2) : '0.00';
     setAvgDiff(diff);
+
+    // 4. متوسط نصيب الفرد للمخبز الواحد = إجمالي عدد الأرغفة ÷ مستفيدي 2025
+    const calculatedPerCapita = cAvg25;
+    setPerCapitaAverage(calculatedPerCapita);
 
     return {
       computedQuota,
@@ -396,6 +400,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       cAvg24,
       cAvg25,
       diff,
+      multiplier: mult
     };
   };
 
@@ -412,13 +417,13 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     );
     const missingWarnings: string[] = [];
     if (!insuranceValue || insuranceValue <= 0) missingWarnings.push('المبلغ التأميني غير مدخل');
-    if (!villagePopulation || villagePopulation <= 0) missingWarnings.push('سكان القرية غير مدخل أو يساوي صفر');
+    if (!actualQuota || actualQuota <= 0) missingWarnings.push('الحصة الفعلية غير مدخلة');
     if (!beneficiaries2023 || !beneficiaries2024 || !beneficiaries2025) {
       missingWarnings.push('تأكد من اكتمال أعداد المستفيدين للسنوات 2023-2025');
     }
     const warnSuffix = missingWarnings.length > 0 ? ` | تنبيه: ${missingWarnings.join(' ، ')}` : '';
     setCalcFeedback(
-      `تم احتساب المعادلات وفق المنظومة المعتمدة: الحصة التأمينية (${res.computedQuota} شكارة من ${insuranceValue} ÷ 235 ÷ 3) | عدد الأرغفة = ${res.calculatedLoaves} (الحصة الفعلية ${actualQuota} × عدد نوع الخبز ${breadTypeCount} ÷ السكان ${villagePopulation}) | متوسط نصيب الفرد = ${res.calculatedPerCapita} (الأرغفة × الحصة الفعلية ÷ السكان)${warnSuffix}`
+      `تم احتساب المعادلات وفق المنظومة المعتمدة: الحصة التأمينية (${res.computedQuota} شكارة من ${insuranceValue} ÷ 235 ÷ 3) | عدد الأرغفة = ${res.calculatedLoaves} (الحصة الفعلية ${actualQuota} × المعامل ${res.multiplier}) | متوسط نصيب الفرد للمخبز = ${res.calculatedPerCapita} (الأرغفة ÷ مستفيدي 2025) | الفرق التراكمي = ${res.diff} (م2023 - م2024 - م2025)${warnSuffix}`
     );
   };
 
@@ -729,7 +734,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             <div className="flex items-center gap-2 text-amber-900">
               <Calculator className="w-5 h-5 text-amber-700" />
               <span className="text-xs font-black">
-                المعيار التمويني المعتمد: الحصة التأمينية × 1350 رغيفاً للشيكارة الواحدة
+                المعيار التمويني المعتمد: الحصة التأمينية = المبلغ ÷ 235 ÷ 3 | عدد الأرغفة = الحصة الفعلية × معامل عدد الخبز (660 أو 725)
               </span>
             </div>
             <button
@@ -1381,7 +1386,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-3 border-b border-slate-200">
               <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
                 <Hash className="w-4 h-4 text-amber-600" />
-                4. الحصص والبيانات التموينية (الحصة التأمينية = المبلغ ÷ 235 ÷ 3 | الأرغفة = الحصة الفعلية × عدد نوع الخبز ÷ السكان)
+                4. الحصص والبيانات التموينية (الحصة التأمينية = المبلغ ÷ 235 ÷ 3 | الأرغفة = الحصة الفعلية × المعامل 660 أو 725)
               </h4>
               <button
                 type="button"
@@ -1520,7 +1525,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
               {/* 4. الأرغفة اليومية */}
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  عدد الأرغفة ((الفعلية × عدد النوع) ÷ السكان) *
+                  عدد الأرغفة (الحصة الفعلية × المعامل 660 أو 725) *
                 </label>
                 <input
                   type="number"
@@ -1545,7 +1550,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
               {/* 5. متوسط نصيب الفرد للمخبز */}
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">
-                  متوسط نصيب الفرد للمخبز ((الأرغفة × الفعلية) ÷ السكان)
+                  متوسط نصيب الفرد للمخبز الواحد (الأرغفة ÷ مستفيدي 2025)
                 </label>
                 <input
                   type="text"
