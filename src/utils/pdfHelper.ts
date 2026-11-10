@@ -260,13 +260,14 @@ export function printHtmlElementA4(
         <style>
           @page {
             size: A4 landscape;
-            margin: 5mm;
+            margin: 10mm;
           }
           * {
             box-sizing: border-box;
-            font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+            font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif !important;
             color: #000000 !important;
             -webkit-text-fill-color: #000000 !important;
+            text-shadow: none !important;
           }
           html, body {
             margin: 0 !important;
@@ -289,16 +290,14 @@ export function printHtmlElementA4(
             padding: 2mm !important;
             background: #ffffff !important;
             color: #000000 !important;
-            border: none !important;
-            box-shadow: none !important;
           }
           table {
             width: 100% !important;
             border-collapse: collapse !important;
             table-layout: auto !important;
             page-break-inside: auto;
-            border: 1.5px solid #000000 !important;
-            margin-top: 4px !important;
+            border: 2px solid #000000 !important;
+            margin-top: 10px !important;
           }
           tr {
             page-break-inside: avoid;
@@ -316,39 +315,37 @@ export function printHtmlElementA4(
           th, td {
             border: 1px solid #000000 !important;
             color: #000000 !important;
-            padding: 3px 3px !important;
+            padding: 6px 4px !important;
             word-break: break-word !important;
-            overflow-wrap: break-word !important;
-            line-height: 1.3 !important;
-            white-space: normal !important;
+            line-height: 1.2 !important;
             text-align: center !important;
             vertical-align: middle !important;
           }
-          .report-font-compact th, .report-font-compact td { font-size: 7.5pt !important; }
-          .report-font-standard th, .report-font-standard td { font-size: 8.5pt !important; }
-          .report-font-large th, .report-font-large td { font-size: 9.5pt !important; }
+          .report-font-compact th, .report-font-compact td { font-size: 7pt !important; }
+          .report-font-standard th, .report-font-standard td { font-size: 8pt !important; }
+          .report-font-large th, .report-font-large td { font-size: 9pt !important; }
           th {
             background-color: #e2e8f0 !important;
             color: #000000 !important;
             font-weight: 900 !important;
           }
           tbody tr:nth-child(even) td {
-            background-color: #f8fafc !important;
+            background-color: #f1f5f9 !important;
           }
           tfoot tr, tfoot td {
             background-color: #cbd5e1 !important;
             color: #000000 !important;
             font-weight: 900 !important;
-            border-top: 2px solid #000000 !important;
+            border: 2px solid #000000 !important;
           }
           .num-enlarged {
             font-weight: 900 !important;
-            font-size: 1.05em !important;
+            font-size: 1.1em !important;
             color: #000000 !important;
           }
           img {
-            max-width: 56px !important;
-            max-height: 56px !important;
+            max-width: 50px !important;
+            max-height: 50px !important;
             object-fit: contain !important;
           }
         </style>

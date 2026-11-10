@@ -2780,7 +2780,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                   lang="ar-EG"
                   value={disposalDate}
                   onChange={(e) => setDisposalDate(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900"
                 />
                 {disposalDate && (
                   <span className="block text-[10px] font-black text-amber-900 bg-amber-100/80 border border-amber-300 rounded px-1 mt-1 text-center font-mono">
@@ -2795,7 +2795,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                   type="number"
                   value={disposalBags}
                   onChange={(e) => setDisposalBags(parseFloat(e.target.value) || 0)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black num-enlarged text-center"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
                 />
               </div>
 
@@ -2805,7 +2805,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                   type="number"
                   value={disposalBagPrice}
                   onChange={(e) => setDisposalBagPrice(parseFloat(e.target.value) || 0)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black num-enlarged text-center"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
                 />
               </div>
 
@@ -2816,7 +2816,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                 <select
                   value={disposalMultiplier}
                   onChange={(e) => setDisposalMultiplier(parseInt(e.target.value) || 1)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900"
                 >
                   <option value={1}>1x (قيمة عادية)</option>
                   <option value={2}>2x (مضاعفة مرتين)</option>
@@ -2833,7 +2833,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                   lang="ar-EG"
                   value={disposalPaymentDate}
                   onChange={(e) => setDisposalPaymentDate(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900"
                 />
                 {disposalPaymentDate && (
                   <span className="block text-[10px] font-black text-amber-900 bg-amber-100/80 border border-amber-300 rounded px-1 mt-1 text-center font-mono">
