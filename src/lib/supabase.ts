@@ -746,3 +746,145 @@ export async function fetchDatabaseFromSupabase(): Promise<{
     };
   }
 }
+
+let autoSyncDebounceTimer: any = null;
+let activeRealtimeChannel: any = null;
+
+/**
+ * مزامنة تلقائية فورية مع Supabase عند أي تعديل دون الحاجة للضغط على أي زر
+ */
+export async function autoSyncToSupabase(state: AppState): Promise<boolean> {
+  const cfg = getSupabaseConfig();
+  if (!cfg.isConfigured) return false;
+
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  return new Promise((resolve) => {
+    if (autoSyncDebounceTimer) {
+      clearTimeout(autoSyncDebounceTimer);
+    }
+    // Debounce by 1000ms to avoid flooding Supabase during fast typing
+    autoSyncDebounceTimer = setTimeout(async () => {
+      try {
+        const snapshotPayload = {
+          version: '3.7-supabase-realtime-autosync',
+          timestamp: new Date().toISOString(),
+          bakeriesCount: state.bakeries.length,
+          debtsCount: state.debts.length,
+          data: state,
+        };
+
+        // 1. Send instant Realtime broadcast to all connected devices via WebSocket (<50ms)
+        try {
+          if (!activeRealtimeChannel) {
+            activeRealtimeChannel = client.channel('tamween_realtime_channel');
+            activeRealtimeChannel.subscribe();
+          }
+          activeRealtimeChannel.send({
+            type: 'broadcast',
+            event: 'state_update',
+            payload: snapshotPayload,
+          });
+        } catch (bcastErr) {
+          console.warn('Realtime broadcast error (fallback to postgres):', bcastErr);
+        }
+
+        // 2. Upsert into backup_snapshots as 'latest_live_snapshot' for real-time Postgres changes
+        await client
+          .from('backup_snapshots')
+          .upsert(
+            {
+              id: 'latest_live_snapshot',
+              version: snapshotPayload.version,
+              timestamp: snapshotPayload.timestamp,
+              bakeries_count: snapshotPayload.bakeriesCount,
+              debts_count: snapshotPayload.debtsCount,
+              payload: snapshotPayload,
+            },
+            { onConflict: 'id' }
+          );
+
+        // 3. Background non-blocking migration of individual tables
+        migrateDatabaseToSupabase(state).catch(() => {});
+        resolve(true);
+      } catch (err) {
+        console.warn('autoSyncToSupabase error (non-critical):', err);
+        resolve(false);
+      }
+    }, 1000);
+  });
+}
+
+/**
+ * الاشتراك في قناة Realtime المباشرة من Supabase لاستقبال ونقل التعديلات لحظياً بين جميع الأجهزة
+ */
+export function subscribeToSupabaseRealtime(
+  onUpdate: (state: AppState) => void
+): () => void {
+  const cfg = getSupabaseConfig();
+  if (!cfg.isConfigured) return () => {};
+
+  const client = getSupabaseClient();
+  if (!client) return () => {};
+
+  try {
+    const handlePayload = (fullPayload: any) => {
+      try {
+        if (!fullPayload) return;
+        const data = fullPayload.data || fullPayload;
+        if (data && (Array.isArray(data.bakeries) || Array.isArray(data.debts))) {
+          onUpdate(data as AppState);
+        }
+      } catch (err) {
+        console.warn('Error handling Supabase payload:', err);
+      }
+    };
+
+    const channel = client.channel('tamween_realtime_channel');
+    activeRealtimeChannel = channel;
+
+    // Listen to both instant WebSocket broadcast AND PostgreSQL logical replication changes
+    channel
+      .on('broadcast', { event: 'state_update' }, ({ payload }) => {
+        handlePayload(payload);
+      })
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'backup_snapshots',
+        },
+        (payload: any) => {
+          try {
+            const row = payload.new;
+            if (row && row.payload) {
+              handlePayload(row.payload);
+            }
+          } catch (err) {
+            console.warn('Error processing Supabase Realtime postgres_changes:', err);
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Supabase Realtime dual channel (broadcast + postgres) connected successfully');
+        }
+      });
+
+    return () => {
+      try {
+        client.removeChannel(channel);
+        if (activeRealtimeChannel === channel) {
+          activeRealtimeChannel = null;
+        }
+      } catch {}
+    };
+  } catch (err) {
+    console.warn('Failed to subscribe to Supabase Realtime:', err);
+    return () => {};
+  }
+}
+
+

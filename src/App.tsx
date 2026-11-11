@@ -53,7 +53,14 @@ import {
   matchesVillageOrUnitFilter,
   normalizeArabicText,
 } from './utils/auditHelper';
-import { testFirestoreConnection } from './lib/firebase';
+import {
+  testFirestoreConnection,
+  loadSharedStateFromFirestore,
+  syncSharedStateToFirestore,
+} from './lib/firebase';
+import {
+  subscribeToSupabaseRealtime,
+} from './lib/supabase';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
 import { HeaderCustomizerModal } from './components/HeaderCustomizerModal';
@@ -470,29 +477,30 @@ export default function App() {
     testFirestoreConnection().catch(() => {});
   }, []);
 
-  // Multi-Device Sync on boot: check if server has newer snapshot from another device
+  // Real-Time Live Sync via Supabase (Automatic import on boot cancelled per user request):
   useEffect(() => {
-    fetchLatestServerState()
-      .then((serverSnap) => {
-        if (serverSnap && serverSnap.data && Array.isArray(serverSnap.data.bakeries)) {
-          setAppState((current) => {
-            if (!current) return current;
-            const currentCount = current.bakeries.length;
-            const serverCount = serverSnap.bakeriesCount || serverSnap.data.bakeries?.length || 0;
-            // If server has more bakeries or current is default seed
-            if (serverCount > currentCount || (currentCount <= 16 && serverCount > 0)) {
-              const merged = mergeStates(current, serverSnap.data);
-              persistFullState(merged).catch(() => {});
-              return {
-                ...merged,
-                currentUser: current.currentUser,
-              };
-            }
-            return current;
-          });
-        }
-      })
-      .catch(() => {});
+    // Supabase handles live, fast synchronization between devices.
+    // Automatic cloud data import/overwriting on boot has been cancelled as requested.
+    const unsubscribeSupabase = subscribeToSupabaseRealtime((supaData) => {
+      if (
+        supaData &&
+        Array.isArray(supaData.bakeries) &&
+        supaData.bakeries.length > 0
+      ) {
+        setAppState((current) => {
+          if (!current) return current;
+          const merged = mergeStates(current, supaData);
+          return {
+            ...merged,
+            currentUser: current.currentUser,
+          };
+        });
+      }
+    });
+
+    return () => {
+      unsubscribeSupabase();
+    };
   }, []);
 
   // Open Daily Entry Briefing Modal automatically once when user enters the database
@@ -1117,11 +1125,38 @@ export default function App() {
   const handleManualCloudPull = useCallback(async () => {
     setIsSyncingWithCloud(true);
     try {
-      const snap = await fetchLatestServerState();
+      let snap: {
+        data?: Partial<AppState>;
+        bakeriesCount?: number;
+        debtsCount?: number;
+        savedAt?: string;
+      } | null = null;
+
+      try {
+        const firestoreSnap = await loadSharedStateFromFirestore();
+        if (
+          firestoreSnap &&
+          firestoreSnap.data &&
+          Array.isArray(firestoreSnap.data.bakeries) &&
+          firestoreSnap.data.bakeries.length > 0
+        ) {
+          snap = {
+            data: firestoreSnap.data,
+            bakeriesCount: firestoreSnap.bakeriesCount,
+            debtsCount: firestoreSnap.debtsCount,
+            savedAt: firestoreSnap.updatedAt,
+          };
+        }
+      } catch {}
+
+      if (!snap) {
+        snap = await fetchLatestServerState();
+      }
+
       if (snap && snap.data && Array.isArray(snap.data.bakeries) && snap.data.bakeries.length > 0) {
         setAppState((prev) => {
           if (!prev) return prev;
-          const merged = mergeStates(prev, snap.data);
+          const merged = mergeStates(prev, snap!.data!);
           persistFullState(merged).catch(() => {});
           return {
             ...merged,
@@ -1137,7 +1172,7 @@ export default function App() {
       } else {
         setSaveToast({
           id: Date.now(),
-          message: 'بيانات جهازك محدثة بالفعل، لم يتم العثور على سجلات جديدة على الخادم.',
+          message: 'بيانات جهازك محدثة بالفعل، لم يتم العثور على سجلات جديدة على الخادم السحابي.',
           timestamp: getArabicTimestamp(),
         });
       }

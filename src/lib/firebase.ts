@@ -13,6 +13,7 @@ import {
   getDoc,
   setDoc,
   getDocFromServer,
+  onSnapshot,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -254,6 +255,118 @@ export async function loadWorkspaceFromFirestore(): Promise<{
     } catch {
       return null;
     }
+  }
+}
+
+// 5.1 Shared Multi-Device Real-Time Cloud Sync (/shared_sync/tamween_latest)
+const SHARED_SYNC_DOC_ID = 'tamween_latest';
+
+/**
+ * حفظ ومزامنة أحدث بيانات المنظومة في Firestore المشترك لجميع الأجهزة تلقائياً
+ */
+export async function syncSharedStateToFirestore(
+  state: Record<string, any>
+): Promise<boolean> {
+  try {
+    const bakeriesCount = Array.isArray(state.bakeries) ? state.bakeries.length : 0;
+    const debtsCount = Array.isArray(state.debts) ? state.debts.length : 0;
+
+    // Prune very large non-essential fields if any to stay safely under 1MB Firestore doc limit
+    const cleanState = {
+      bakeries: state.bakeries || [],
+      debts: state.debts || [],
+      villages: state.villages,
+      issuingEntities: state.issuingEntities,
+      violationTypes: state.violationTypes,
+      activityStatuses: state.activityStatuses,
+      bakeryCategories: state.bakeryCategories,
+      breadTypes: state.breadTypes,
+      breadTypeCounts: state.breadTypeCounts,
+      lineTypes: state.lineTypes,
+      fuelTypes: state.fuelTypes,
+      paymentMethods: state.paymentMethods,
+      dailyTasks: state.dailyTasks,
+      inboxMessages: state.inboxMessages,
+      columnTitles: state.columnTitles,
+      systemConfig: state.systemConfig,
+      users: state.users,
+    };
+
+    const payloadJson = JSON.stringify(cleanState);
+    if (payloadJson.length > 950_000) {
+      console.warn('State exceeds 950KB, skipping full sync string');
+    }
+
+    await setDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID), {
+      syncId: SHARED_SYNC_DOC_ID,
+      updatedAt: new Date().toISOString(),
+      bakeriesCount,
+      debtsCount,
+      payloadJson,
+    });
+    return true;
+  } catch (err) {
+    console.warn('syncSharedStateToFirestore error (non-critical):', err);
+    return false;
+  }
+}
+
+/**
+ * جلب أحدث بيانات المنظومة من Firestore المشترك لجميع الأجهزة
+ */
+export async function loadSharedStateFromFirestore(): Promise<{
+  data: Record<string, any>;
+  updatedAt: string;
+  bakeriesCount: number;
+  debtsCount: number;
+} | null> {
+  try {
+    const snap = await getDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID));
+    if (!snap.exists()) return null;
+    const item = snap.data();
+    if (!item?.payloadJson) return null;
+    const parsed = JSON.parse(item.payloadJson);
+    return {
+      data: parsed,
+      updatedAt: item.updatedAt || new Date().toISOString(),
+      bakeriesCount: item.bakeriesCount || parsed.bakeries?.length || 0,
+      debtsCount: item.debtsCount || parsed.debts?.length || 0,
+    };
+  } catch (err) {
+    console.warn('loadSharedStateFromFirestore error:', err);
+    return null;
+  }
+}
+
+/**
+ * الاشتراك في تحديثات السحابة الحية (Realtime Snapshot) بحيث يظهر أي تعديل على الأجهزة الأخرى فوراً
+ */
+export function subscribeToSharedStateChanges(
+  onUpdate: (payload: { data: Record<string, any>; updatedAt: string; bakeriesCount: number; debtsCount: number }) => void
+): () => void {
+  try {
+    return onSnapshot(
+      doc(db, 'shared_sync', SHARED_SYNC_DOC_ID),
+      (snap) => {
+        if (!snap.exists()) return;
+        const item = snap.data();
+        if (!item?.payloadJson) return;
+        try {
+          const parsed = JSON.parse(item.payloadJson);
+          onUpdate({
+            data: parsed,
+            updatedAt: item.updatedAt || new Date().toISOString(),
+            bakeriesCount: item.bakeriesCount || parsed.bakeries?.length || 0,
+            debtsCount: item.debtsCount || parsed.debts?.length || 0,
+          });
+        } catch {}
+      },
+      (error) => {
+        console.warn('subscribeToSharedStateChanges snapshot error:', error);
+      }
+    );
+  } catch {
+    return () => {};
   }
 }
 

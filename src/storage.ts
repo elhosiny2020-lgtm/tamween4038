@@ -32,7 +32,12 @@ import {
   normalizeBakeryCalculations,
   synchronizeBakeryAndDebts
 } from './utils/auditHelper';
-import { auth, syncWorkspaceToFirestore } from './lib/firebase';
+import {
+  auth,
+  syncWorkspaceToFirestore,
+  syncSharedStateToFirestore,
+} from './lib/firebase';
+import { autoSyncToSupabase } from './lib/supabase';
 
 export interface MergeConflictItem {
   id: string;
@@ -438,59 +443,51 @@ export async function loadInitialState(): Promise<AppState> {
       console.warn('LocalStorage read error or restricted:', lsErr);
     }
 
-    // 2. If standalone preloaded file is opened, merge or adopt it immediately
+    // 2. If standalone preloaded file is opened, adopt only if local state is completely empty
     if (preloaded && preloaded.bakeries && preloaded.bakeries.length > 0) {
-      const lastFileTimestamp = typeof localStorage !== 'undefined' ? localStorage.getItem('TAMWEEN_LAST_FILE_TIMESTAMP') : null;
-      const isNewFileImport = Boolean(preloaded.exportTimestamp && preloaded.exportTimestamp !== lastFileTimestamp);
-
-      if (isNewFileImport || !bakeries || bakeries.length === 0) {
-        const existingBase: AppState = {
-          bakeries: (bakeries ?? INITIAL_BAKERIES).map(normalizeBakeryPerCapita),
-          debts: debts ?? INITIAL_DEBTS,
-          villages: villages ?? DEFAULT_VILLAGES_HIERARCHY,
-          issuingEntities: issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
-          violationTypes: violationTypes ?? DEFAULT_VIOLATION_TYPES,
-          activityStatuses: activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
-          bakeryCategories: bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
-          breadTypes: breadTypes ?? DEFAULT_BREAD_TYPES,
-          breadTypeCounts: breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
-          lineTypes: lineTypes ?? DEFAULT_LINE_TYPES,
-          fuelTypes: fuelTypes ?? DEFAULT_FUEL_TYPES,
-          paymentMethods: paymentMethods ?? PAYMENT_METHODS,
-          dailyTasks: dailyTasks ?? INITIAL_DAILY_TASKS,
-          inboxMessages: inboxMessages ?? INITIAL_INBOX_MESSAGES,
-          columnTitles: columnTitles ?? DEFAULT_COLUMN_TITLES,
-          systemConfig: systemConfig ?? DEFAULT_SYSTEM_CONFIG,
-          users: users ?? INITIAL_USERS,
-          currentUser: null,
-        };
-        const merged = mergeStates(existingBase, preloaded);
-        bakeries = merged.bakeries;
-        debts = merged.debts;
-        villages = merged.villages;
-        issuingEntities = merged.issuingEntities;
-        violationTypes = merged.violationTypes;
-        activityStatuses = merged.activityStatuses;
-        bakeryCategories = merged.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES;
-        breadTypes = merged.breadTypes ?? DEFAULT_BREAD_TYPES;
-        breadTypeCounts = merged.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
-        lineTypes = merged.lineTypes ?? DEFAULT_LINE_TYPES;
-        fuelTypes = merged.fuelTypes ?? DEFAULT_FUEL_TYPES;
-        paymentMethods = merged.paymentMethods ?? PAYMENT_METHODS;
-        dailyTasks = merged.dailyTasks ?? INITIAL_DAILY_TASKS;
-        inboxMessages = merged.inboxMessages ?? INITIAL_INBOX_MESSAGES;
-        columnTitles = merged.columnTitles;
-        systemConfig = merged.systemConfig;
-        users = merged.users;
+      if (!bakeries || bakeries.length === 0) {
+        bakeries = preloaded.bakeries.map(normalizeBakeryPerCapita);
+        debts = preloaded.debts ?? INITIAL_DEBTS;
+        villages = preloaded.villages ?? DEFAULT_VILLAGES_HIERARCHY;
+        issuingEntities = preloaded.issuingEntities ?? DEFAULT_ISSUING_ENTITIES;
+        violationTypes = preloaded.violationTypes ?? DEFAULT_VIOLATION_TYPES;
+        activityStatuses = preloaded.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
+        bakeryCategories = preloaded.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES;
+        breadTypes = preloaded.breadTypes ?? DEFAULT_BREAD_TYPES;
+        breadTypeCounts = preloaded.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
+        lineTypes = preloaded.lineTypes ?? DEFAULT_LINE_TYPES;
+        fuelTypes = preloaded.fuelTypes ?? DEFAULT_FUEL_TYPES;
+        paymentMethods = preloaded.paymentMethods ?? PAYMENT_METHODS;
+        dailyTasks = preloaded.dailyTasks ?? INITIAL_DAILY_TASKS;
+        inboxMessages = preloaded.inboxMessages ?? INITIAL_INBOX_MESSAGES;
+        columnTitles = preloaded.columnTitles ?? DEFAULT_COLUMN_TITLES;
+        systemConfig = preloaded.systemConfig ?? DEFAULT_SYSTEM_CONFIG;
+        users = preloaded.users ?? INITIAL_USERS;
+      }
+    } else if (!isInitialized && (!bakeries || bakeries.length === 0)) {
+      // First run default seed (automatic external cloud import has been cancelled per user request)
+      bakeries = INITIAL_BAKERIES.map(normalizeBakeryPerCapita);
+      debts = INITIAL_DEBTS;
+      villages = DEFAULT_VILLAGES_HIERARCHY;
+      issuingEntities = DEFAULT_ISSUING_ENTITIES;
+        violationTypes = DEFAULT_VIOLATION_TYPES;
+        activityStatuses = DEFAULT_ACTIVITY_STATUSES;
+        bakeryCategories = DEFAULT_BAKERY_CATEGORIES;
+        breadTypes = DEFAULT_BREAD_TYPES;
+        breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS;
+        lineTypes = DEFAULT_LINE_TYPES;
+        fuelTypes = DEFAULT_FUEL_TYPES;
+        paymentMethods = PAYMENT_METHODS;
+        dailyTasks = INITIAL_DAILY_TASKS;
+        inboxMessages = INITIAL_INBOX_MESSAGES;
+        columnTitles = DEFAULT_COLUMN_TITLES;
+        systemConfig = DEFAULT_SYSTEM_CONFIG;
+        users = INITIAL_USERS;
 
         try {
-          if (preloaded.exportTimestamp) {
-            localStorage.setItem('TAMWEEN_LAST_FILE_TIMESTAMP', preloaded.exportTimestamp);
-          }
           localStorage.setItem(KEYS.INITIALIZED, 'true');
         } catch {}
 
-        // Non-blocking background persistence
         persistFullState({
           bakeries,
           debts,
@@ -512,84 +509,6 @@ export async function loadInitialState(): Promise<AppState> {
           currentUser: null,
         }).catch(() => {});
       }
-    } else if (!isInitialized && (!bakeries || bakeries.length === 0)) {
-      // Check if the server already has a newer/populated cloud snapshot from another device
-      let serverSnapshot: { data?: Partial<AppState> } | null = null;
-      try {
-        serverSnapshot = await fetchLatestServerState();
-      } catch (err) {
-        console.warn('Could not fetch server snapshot on boot:', err);
-      }
-
-      if (
-        serverSnapshot &&
-        serverSnapshot.data &&
-        Array.isArray(serverSnapshot.data.bakeries) &&
-        serverSnapshot.data.bakeries.length > 0
-      ) {
-        bakeries = serverSnapshot.data.bakeries.map(normalizeBakeryPerCapita);
-        debts = serverSnapshot.data.debts ?? INITIAL_DEBTS;
-        villages = serverSnapshot.data.villages ?? DEFAULT_VILLAGES_HIERARCHY;
-        issuingEntities = serverSnapshot.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES;
-        violationTypes = serverSnapshot.data.violationTypes ?? DEFAULT_VIOLATION_TYPES;
-        activityStatuses = serverSnapshot.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
-        bakeryCategories = serverSnapshot.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES;
-        breadTypes = serverSnapshot.data.breadTypes ?? DEFAULT_BREAD_TYPES;
-        breadTypeCounts = serverSnapshot.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
-        lineTypes = serverSnapshot.data.lineTypes ?? DEFAULT_LINE_TYPES;
-        fuelTypes = serverSnapshot.data.fuelTypes ?? DEFAULT_FUEL_TYPES;
-        paymentMethods = serverSnapshot.data.paymentMethods ?? PAYMENT_METHODS;
-        dailyTasks = serverSnapshot.data.dailyTasks ?? INITIAL_DAILY_TASKS;
-        inboxMessages = serverSnapshot.data.inboxMessages ?? INITIAL_INBOX_MESSAGES;
-        columnTitles = serverSnapshot.data.columnTitles ?? DEFAULT_COLUMN_TITLES;
-        systemConfig = serverSnapshot.data.systemConfig ?? DEFAULT_SYSTEM_CONFIG;
-        users = serverSnapshot.data.users ?? INITIAL_USERS;
-      } else {
-        // First run default seed
-        bakeries = INITIAL_BAKERIES.map(normalizeBakeryPerCapita);
-        debts = INITIAL_DEBTS;
-        villages = DEFAULT_VILLAGES_HIERARCHY;
-        issuingEntities = DEFAULT_ISSUING_ENTITIES;
-        violationTypes = DEFAULT_VIOLATION_TYPES;
-        activityStatuses = DEFAULT_ACTIVITY_STATUSES;
-        bakeryCategories = DEFAULT_BAKERY_CATEGORIES;
-        breadTypes = DEFAULT_BREAD_TYPES;
-        breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS;
-        lineTypes = DEFAULT_LINE_TYPES;
-        fuelTypes = DEFAULT_FUEL_TYPES;
-        paymentMethods = PAYMENT_METHODS;
-        dailyTasks = INITIAL_DAILY_TASKS;
-        inboxMessages = INITIAL_INBOX_MESSAGES;
-        columnTitles = DEFAULT_COLUMN_TITLES;
-        systemConfig = DEFAULT_SYSTEM_CONFIG;
-        users = INITIAL_USERS;
-      }
-
-      try {
-        localStorage.setItem(KEYS.INITIALIZED, 'true');
-      } catch {}
-
-      persistFullState({
-        bakeries,
-        debts,
-        villages,
-        issuingEntities,
-        violationTypes,
-        activityStatuses,
-        bakeryCategories,
-        breadTypes,
-        breadTypeCounts,
-        lineTypes,
-        fuelTypes,
-        paymentMethods,
-        dailyTasks,
-        inboxMessages,
-        columnTitles,
-        systemConfig,
-        users,
-        currentUser: null,
-      }).catch(() => {});
-    }
 
     // 3. Fallback defaults if any section is empty
     const syncedInitial = synchronizeBakeryAndDebts(
@@ -866,10 +785,14 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
         syncWorkspaceToFirestore(backupSnapshot.state).catch(() => {});
       }
 
-      writeStateToDiskBackupFile(backupSnapshot).catch(() => {});
+      // 1. Direct Google Cloud Firestore Real-time Sync (Shared across all devices globally)
+      syncSharedStateToFirestore(backupSnapshot.state).catch(() => {});
 
-      // Multi-device sync: persist state to central server so any other device gets latest data
+      // 2. Multi-device sync: persist state to central server so any other device gets latest data
       syncStateToServer(backupSnapshot.state).catch(() => {});
+
+      // 3. Supabase Real-time Automatic Cloud Sync (without pressing buttons)
+      autoSyncToSupabase(backupSnapshot.state as AppState).catch(() => {});
     } catch {
       // Graceful fallback
     }

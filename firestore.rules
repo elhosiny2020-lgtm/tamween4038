@@ -65,6 +65,11 @@ service cloud.firestore {
       allow list, write: if false;
     }
 
+    // Shared multi-device sync collection: permits real-time cross-device updates for the Tamween system
+    match /shared_sync/{syncId} {
+      allow read, write: if isValidId(syncId);
+    }
+
     match /workspaces/{workspaceId} {
       allow get: if isValidId(workspaceId) && isWorkspaceOwner(workspaceId);
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;

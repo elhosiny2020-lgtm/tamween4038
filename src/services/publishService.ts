@@ -1,5 +1,6 @@
 import { AppState } from '../types';
 import { generateStandaloneHtml } from '../utils/htmlExporter';
+import { syncSharedStateToFirestore } from '../lib/firebase';
 
 export type PublishStage = 'IDLE' | 'STARTING' | 'PREPARING' | 'UPLOADING' | 'VERIFYING' | 'SUCCESS' | 'ERROR';
 
@@ -133,6 +134,21 @@ export async function executePublishProcess(
       `جاري إرسال الحزمة السحابية (${bakeriesCount} مخبز ، ${debtsCount} قيد مديونية)...`,
       { details: { bakeriesCount, debtsCount, bundleSizeKB } }
     );
+
+    // Sync directly to Google Cloud Firestore & server snapshot for seamless multi-device persistence
+    try {
+      await syncSharedStateToFirestore(state);
+    } catch (e) {
+      console.warn('Publish Firestore sync non-fatal warning:', e);
+    }
+
+    try {
+      await fetch('/api/backup/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state),
+      });
+    } catch {}
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 35000); // 35 second timeout

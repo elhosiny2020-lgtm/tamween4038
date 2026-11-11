@@ -1423,7 +1423,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 {supabaseCfg.isConfigured ? (
                   <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-emerald-300 bg-emerald-900/60 border border-emerald-400/40 px-2.5 py-1 rounded-full shadow-inner">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                    <span>متصل بـ Supabase</span>
+                    <span>متصل &bull; المزامنة اللحظية مفعلة تلقائياً ⚡</span>
                   </span>
                 ) : (
                   <span className="text-[10px] font-black text-amber-300 bg-amber-950/60 border border-amber-500/40 px-2.5 py-1 rounded-full">
@@ -1442,6 +1442,15 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
             {/* Quick Status / Info Banner */}
             <div className="bg-slate-900/80 border border-emerald-500/30 rounded-xl p-3 text-xs space-y-1.5 relative z-10">
+              <div className="flex items-center justify-between text-[11px] font-bold text-emerald-300 bg-emerald-950/70 px-2.5 py-1.5 rounded-lg border border-emerald-500/40">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>المزامنة التلقائية واللحظية مع Supabase:</span>
+                </span>
+                <span className="text-emerald-200 font-black text-[11px]">
+                  مفعلة وتعمل بالخلفية فور أي تعديل دون الحاجة للضغط على أي زر ⚡
+                </span>
+              </div>
               <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
                 <span>سجلات المخابز والمديونيات الجاهزة للنقل:</span>
                 <span className="text-emerald-300 font-black bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
