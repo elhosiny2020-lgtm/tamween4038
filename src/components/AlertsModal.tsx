@@ -79,18 +79,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'docs' | 'debts'>('docs');
 
-  // Escape key listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        onClose();
-      }
-    };
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   if (!isOpen) return null;
 
@@ -156,7 +145,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                 onClose();
               }}
               className="p-1.5 rounded-xl bg-red-800/80 hover:bg-red-600 text-white transition cursor-pointer border border-red-400/50"
-              title="إغلاق النافذة (Escape)"
+              title="إغلاق النافذة"
             >
               <X className="w-5 h-5 stroke-[2.5]" />
             </button>

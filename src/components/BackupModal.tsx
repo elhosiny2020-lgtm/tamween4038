@@ -30,7 +30,8 @@ import {
   downloadWindowsVbsLauncher,
   downloadWindowsExeLauncher,
   openStandaloneAppInNewTab,
-  generateStandaloneHtml
+  generateStandaloneHtml,
+  copyTextToClipboard,
 } from '../utils/htmlExporter';
 import {
   getSupabaseConfig,
@@ -171,7 +172,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   );
   const [showSqlSchemaModal, setShowSqlSchemaModal] = useState(false);
   const [uploadedHtmlPublicUrl, setUploadedHtmlPublicUrl] = useState<string | null>(null);
-  const [showSupabaseSettings, setShowSupabaseSettings] = useState(false);
+  const [showSupabaseSettings, setShowSupabaseSettings] = useState(true);
+  const [copiedSqlSchema, setCopiedSqlSchema] = useState(false);
 
   useEffect(() => {
     const unsub = initGoogleAuthListener((user) => {
@@ -196,18 +198,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     ? new Date(autoSaveInfo.timestamp).toLocaleString('ar-EG')
     : null;
 
-  // Escape key listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        onClose();
-      }
-    };
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   if (!isOpen) return null;
 
@@ -879,12 +870,19 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
-  const handleCopySqlSchema = () => {
-    navigator.clipboard.writeText(SUPABASE_TABLES_SQL_SCHEMA);
+  const handleCopySqlSchema = async () => {
+    const ok = await copyTextToClipboard(SUPABASE_TABLES_SQL_SCHEMA);
+    setCopiedSqlSchema(true);
+    setTimeout(() => setCopiedSqlSchema(false), 3500);
     setStatusMsg({
-      text: 'تم نسخ كود إنشاء جداول SQL (Schema Script) إلى الحافظة! يمكنك لصقه وتشغيله مباشرة في Supabase SQL Editor.',
+      text: ok
+        ? '✅ تم نسخ كود إنشاء الجداول على SQL (Schema Script) إلى الحافظة بنجاح! يمكنك لصقه وتشغيله مباشرة في Supabase SQL Editor.'
+        : 'تم تجهيز وعرض كود إنشاء الجداول على SQL بالأسفل لنسخه مباشرة.',
       type: 'success',
     });
+    if (!ok) {
+      setShowSqlSchemaModal(true);
+    }
   };
 
   const handleReset = () => {
@@ -937,7 +935,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               onClose();
             }}
             className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
-            title="إغلاق النافذة (Escape)"
+            title="إغلاق النافذة"
           >
             <X className="w-5 h-5 stroke-[2.5]" />
           </button>
@@ -965,6 +963,60 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <div className="leading-relaxed flex-1">{statusMsg.text}</div>
             </div>
           )}
+
+          {/* TOP QUICK-ACTION BAR: Open in Web Page | Download EXE | Copy SQL Schema */}
+          <div className="p-3.5 bg-gradient-to-r from-[#09152B] via-[#0F2342] to-[#16325B] border-2 border-amber-400 rounded-2xl shadow-lg space-y-2.5">
+            <div className="flex items-center justify-between text-amber-300 text-xs font-black">
+              <span>⚡ مفاتيح التشغيل السريع المباشر (صفحة الإنترنت &bull; برنامج EXE &bull; كود جداول SQL):</span>
+              <span className="text-[10px] bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full font-black">مُفعل 100%</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const res = openStandaloneAppInNewTab(currentState);
+                  setStatusMsg({
+                    text: `🌐 تم فتح المنظومة في صفحة إنترنت مستقلة بنجاح (${res.url})`,
+                    type: 'success',
+                  });
+                }}
+                className="py-2.5 px-3 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-500 hover:to-blue-600 text-white border border-sky-300/60 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition"
+              >
+                <ExternalLink className="w-4 h-4 text-amber-300 shrink-0" />
+                <span>فتح في صفحة إنترنت 🌐</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await downloadWindowsExeLauncher();
+                  setStatusMsg({ text: res.message, type: res.success ? 'success' : 'error' });
+                }}
+                className="py-2.5 px-3 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 border border-amber-200 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition"
+              >
+                <Download className="w-4 h-4 text-slate-950 shrink-0" />
+                <span>تنزيل البرنامج EXE 💻</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCopySqlSchema}
+                className="py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white border border-emerald-300/60 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition"
+              >
+                {copiedSqlSchema ? (
+                  <>
+                    <Check className="w-4 h-4 text-amber-300 shrink-0" />
+                    <span>تم نسخ كود الجداول SQL ✓</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 text-amber-300 shrink-0" />
+                    <span>نسخ كود إنشاء الجداول على SQL 📋</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
 
           {/* SECTION 1: PRIMARY USER REQUEST - Smart Upsert & Direct Working HTML Download */}
           <div className="p-4.5 bg-gradient-to-br from-amber-50 via-orange-50/50 to-amber-100/60 border-2 border-amber-500/80 rounded-2xl space-y-3.5 shadow-md">
@@ -1028,11 +1080,17 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             <div className="pt-1">
               <button
                 type="button"
-                onClick={openStandaloneAppInNewTab}
-                className="w-full py-2 px-3 bg-white hover:bg-slate-50 text-slate-800 border border-amber-400/80 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-xs cursor-pointer transition"
+                onClick={() => {
+                  const res = openStandaloneAppInNewTab(currentState);
+                  setStatusMsg({
+                    text: `🌐 تم فتح المنظومة في صفحة إنترنت مستقلة بنجاح (${res.url})`,
+                    type: 'success',
+                  });
+                }}
+                className="w-full py-2.5 px-3 bg-[#0F2342] hover:bg-[#16325B] text-amber-300 border border-amber-400 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-sm cursor-pointer transition"
               >
-                <ExternalLink className="w-3.5 h-3.5 text-amber-700 icon-animated" />
-                <span>فتح صفحة البرنامج مباشرة في نافذة متصفح جديدة</span>
+                <ExternalLink className="w-4 h-4 text-amber-300 icon-animated" />
+                <span>فتح في صفحة إنترنت مستقلة الآن 🌐</span>
               </button>
             </div>
           </div>
@@ -1324,15 +1382,25 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   <span>استعادة وتحميل البيانات من Supabase 📥</span>
                 </button>
 
-                {/* 4. View / Copy SQL Schema */}
-                <button
-                  type="button"
-                  onClick={() => setShowSqlSchemaModal(true)}
-                  className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition"
-                >
-                  <FileCode className="w-4 h-4 text-amber-400" />
-                  <span>عرض ونسخ سكريبت جداول SQL (Schema) 📄</span>
-                </button>
+                {/* 4. Direct Copy SQL Schema + View Modal */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopySqlSchema}
+                    className="py-2.5 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-300 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer transition shadow-sm"
+                  >
+                    <Copy className="w-4 h-4 text-slate-950 shrink-0" />
+                    <span>{copiedSqlSchema ? 'تم نسخ كود SQL ✓' : 'نسخ كود إنشاء الجداول على SQL 📋'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowSqlSchemaModal(true)}
+                    className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer transition"
+                  >
+                    <FileCode className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>معاينة كود SQL 📄</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2082,7 +2150,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             }}
             className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black shadow-xs cursor-pointer transition"
           >
-            إغلاق النافذة (ESC)
+            إغلاق النافذة
           </button>
         </div>
       </div>

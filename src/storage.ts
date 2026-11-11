@@ -118,8 +118,13 @@ export function clearMergeConflictsLog(): void {
   } catch {}
 }
 
+let cachedDbInstance: IDBDatabase | null = null;
+
 // IndexedDB Helper with safety timeout for file:/// and offline environments
 function openIndexedDB(): Promise<IDBDatabase> {
+  if (cachedDbInstance) {
+    return Promise.resolve(cachedDbInstance);
+  }
   return new Promise((resolve, reject) => {
     try {
       if (typeof window === 'undefined' || !window.indexedDB) {
@@ -139,6 +144,10 @@ function openIndexedDB(): Promise<IDBDatabase> {
       };
       request.onsuccess = () => {
         clearTimeout(timer);
+        cachedDbInstance = request.result;
+        cachedDbInstance.onclose = () => {
+          cachedDbInstance = null;
+        };
         resolve(request.result);
       };
       request.onerror = () => {
@@ -177,6 +186,23 @@ async function idbSet(key: string, val: unknown): Promise<void> {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       store.put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    // fallback gracefully
+  }
+}
+
+async function idbSetBatch(entries: Array<[string, unknown]>): Promise<void> {
+  try {
+    const db = await openIndexedDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      for (const [k, v] of entries) {
+        store.put(v, k);
+      }
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
@@ -725,92 +751,93 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     console.warn('LocalStorage quota limit reached, relying primarily on IndexedDB', err);
   }
 
-  // IndexedDB (No 5MB limit, stores large logos and thousands of entries safely)
-  await Promise.all([
-    idbSet(KEYS.BAKERIES, normalizedBakeries),
-    idbSet(KEYS.DEBTS, normalizedDebts),
-    idbSet(KEYS.VILLAGES, villages),
-    idbSet(KEYS.ENTITIES, issuingEntities),
-    idbSet(KEYS.VIOLATIONS, violationTypes),
-    idbSet(KEYS.ACTIVITY_STATUSES, activityStatuses),
-    idbSet(KEYS.BAKERY_CATEGORIES, bakeryCategories),
-    idbSet(KEYS.BREAD_TYPES, breadTypes),
-    idbSet(KEYS.BREAD_TYPE_COUNTS, breadTypeCounts),
-    idbSet(KEYS.LINE_TYPES, lineTypes),
-    idbSet(KEYS.FUEL_TYPES, fuelTypes),
-    idbSet(KEYS.PAYMENT_METHODS, paymentMethods),
-    idbSet(KEYS.DAILY_TASKS, dailyTasks),
-    idbSet(KEYS.INBOX_MESSAGES, inboxMessages),
-    idbSet(KEYS.COLUMNS, columnTitles),
-    idbSet(KEYS.CONFIG, lockedConfig),
-    idbSet(KEYS.USERS, users)
+  const backupSnapshot = {
+    timestamp: new Date().toISOString(),
+    gmailEmail: lockedConfig.gmailEmail || localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') || 'ELHOSINY2020@gmail.com',
+    state: {
+      bakeries: normalizedBakeries,
+      debts: normalizedDebts,
+      villages,
+      issuingEntities,
+      violationTypes,
+      activityStatuses,
+      bakeryCategories,
+      breadTypes,
+      breadTypeCounts,
+      lineTypes,
+      fuelTypes,
+      paymentMethods,
+      dailyTasks,
+      inboxMessages,
+      columnTitles,
+      systemConfig: lockedConfig,
+      users,
+    },
+  };
+
+  // Single-transaction IndexedDB batch write (zero UI lag)
+  await idbSetBatch([
+    [KEYS.BAKERIES, normalizedBakeries],
+    [KEYS.DEBTS, normalizedDebts],
+    [KEYS.VILLAGES, villages],
+    [KEYS.ENTITIES, issuingEntities],
+    [KEYS.VIOLATIONS, violationTypes],
+    [KEYS.ACTIVITY_STATUSES, activityStatuses],
+    [KEYS.BAKERY_CATEGORIES, bakeryCategories],
+    [KEYS.BREAD_TYPES, breadTypes],
+    [KEYS.BREAD_TYPE_COUNTS, breadTypeCounts],
+    [KEYS.LINE_TYPES, lineTypes],
+    [KEYS.FUEL_TYPES, fuelTypes],
+    [KEYS.PAYMENT_METHODS, paymentMethods],
+    [KEYS.DAILY_TASKS, dailyTasks],
+    [KEYS.INBOX_MESSAGES, inboxMessages],
+    [KEYS.COLUMNS, columnTitles],
+    [KEYS.CONFIG, lockedConfig],
+    [KEYS.USERS, users],
+    [KEYS.AUTOSAVE_BACKUP, backupSnapshot],
   ]);
 
-  // Automated snapshot backup for instant merging across sessions & Google Drive Gmail auto-sync
-  try {
-    const backupSnapshot = {
-      timestamp: new Date().toISOString(),
-      gmailEmail: lockedConfig.gmailEmail || localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') || 'ELHOSINY2020@gmail.com',
-      state: {
-        bakeries: normalizedBakeries,
-        debts: normalizedDebts,
-        villages,
-        issuingEntities,
-        violationTypes,
-        activityStatuses,
-        bakeryCategories,
-        breadTypes,
-        breadTypeCounts,
-        lineTypes,
-        fuelTypes,
-        paymentMethods,
-        dailyTasks,
-        inboxMessages,
-        columnTitles,
-        systemConfig: lockedConfig,
-        users,
+  // Defer secondary snapshot serialization & cloud/disk sync off the main UI thread
+  setTimeout(() => {
+    try {
+      localStorage.setItem(KEYS.AUTOSAVE_TIMESTAMP, backupSnapshot.timestamp);
+      const serializedSnapshot = JSON.stringify(backupSnapshot);
+      localStorage.setItem(KEYS.AUTOSAVE_BACKUP, serializedSnapshot);
+
+      const driveAutoSync =
+        lockedConfig.googleDriveAutoSync !== false &&
+        localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
+      if (driveAutoSync) {
+        const gmailKey = (
+          lockedConfig.gmailEmail ||
+          localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
+          'ELHOSINY2020@gmail.com'
+        )
+          .trim()
+          .toLowerCase();
+        const drivePayloadStr = JSON.stringify({
+          version: '3.0-google-drive-autosync',
+          timestamp: backupSnapshot.timestamp,
+          gmailEmail: gmailKey,
+          destinationType: 'GOOGLE_DRIVE',
+          targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
+          bakeriesCount: normalizedBakeries.length,
+          debtsCount: normalizedDebts.length,
+          data: backupSnapshot.state,
+        });
+        localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
+        localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
       }
-    };
-    localStorage.setItem(KEYS.AUTOSAVE_BACKUP, JSON.stringify(backupSnapshot));
-    localStorage.setItem(KEYS.AUTOSAVE_TIMESTAMP, backupSnapshot.timestamp);
-    await idbSet(KEYS.AUTOSAVE_BACKUP, backupSnapshot);
 
-    // If Google Drive auto-sync is enabled, automatically update the Google Drive JSON snapshot
-    const driveAutoSync =
-      lockedConfig.googleDriveAutoSync !== false &&
-      localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
-    if (driveAutoSync) {
-      const gmailKey = (
-        lockedConfig.gmailEmail ||
-        localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
-        'ELHOSINY2020@gmail.com'
-      )
-        .trim()
-        .toLowerCase();
-      const drivePayload = {
-        version: '3.0-google-drive-autosync',
-        timestamp: backupSnapshot.timestamp,
-        gmailEmail: gmailKey,
-        destinationType: 'GOOGLE_DRIVE',
-        targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
-        bakeriesCount: normalizedBakeries.length,
-        debtsCount: normalizedDebts.length,
-        data: backupSnapshot.state,
-      };
-      localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(drivePayload));
-      localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, JSON.stringify(drivePayload));
+      if (auth.currentUser) {
+        syncWorkspaceToFirestore(backupSnapshot.state).catch(() => {});
+      }
+
+      writeStateToDiskBackupFile(backupSnapshot).catch(() => {});
+    } catch {
+      // Graceful fallback
     }
-
-    // Cloud Firestore synchronization when user is authenticated with Firebase Auth
-    if (auth.currentUser) {
-      syncWorkspaceToFirestore(backupSnapshot.state).catch(() => {});
-    }
-
-    // Continuous auto-backup to selected hard disk file
-    writeStateToDiskBackupFile(backupSnapshot).catch(() => {});
-  } catch {
-    // Graceful fallback
-  }
+  }, 0);
 }
 
 export function getLatestAutoSaveInfo(): { timestamp: string | null; bakeryCount?: number; debtCount?: number } | null {

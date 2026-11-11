@@ -82,27 +82,17 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       ? 'report-font-compact text-[7.5pt] print:text-[7.5pt]'
       : 'report-font-standard text-[8.5pt] print:text-[8.5pt]';
 
-  // Manage print isolation class on body and Capture-Phase Escape key listener (0ms response)
+  // Manage print isolation class on body (Escape key closing disabled per user preference)
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
-    };
-
     if (isOpen) {
       document.body.classList.add('has-print-modal');
-      window.addEventListener('keydown', handleKeyDown, true);
     } else {
       document.body.classList.remove('has-print-modal');
     }
     return () => {
       document.body.classList.remove('has-print-modal');
-      window.removeEventListener('keydown', handleKeyDown, true);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   // Available Local units for selected village
   const currentUnits = useMemo(() => {

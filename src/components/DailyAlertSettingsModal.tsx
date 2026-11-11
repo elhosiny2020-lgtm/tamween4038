@@ -69,18 +69,7 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
   );
   const [toastMsg, setToastMsg] = useState('');
 
-  // Escape key listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        onClose();
-      }
-    };
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   // Check browser notification permission
   const requestNotificationPermission = async () => {
@@ -210,7 +199,7 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-xl bg-red-950/70 hover:bg-red-700 text-white cursor-pointer border border-red-500/40"
-            title="إغلاق النافذة فوراً (Escape)"
+            title="إغلاق النافذة فوراً"
           >
             <X className="w-5 h-5 stroke-[2.5]" />
           </button>

@@ -148,18 +148,7 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   if (!isOpen) return null;
 

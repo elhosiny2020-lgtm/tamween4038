@@ -65,15 +65,7 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
   const [editStatus, setEditStatus] = useState<TaskStatus>('pending');
   const [editAssignedTo, setEditAssignedTo] = useState('');
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   const filteredTasks = useMemo(() => {
     return filterAndSortDailyTasks(tasks, {

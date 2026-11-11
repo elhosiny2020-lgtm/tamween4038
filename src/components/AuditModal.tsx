@@ -69,17 +69,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({
   };
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        onClose();
-      }
-    };
     if (isOpen) {
       executeAudit();
-      window.addEventListener('keydown', handleKeyDown);
     }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, bakeries, debts, onClose]);
+  }, [isOpen, bakeries, debts]);
 
   // Categorize checks
   const categorizedDetails = useMemo(() => {
@@ -160,7 +153,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                 onClose();
               }}
               className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
-              title="إغلاق النافذة (Escape)"
+              title="إغلاق النافذة"
             >
               <X className="w-5 h-5 stroke-[2.5]" />
             </button>

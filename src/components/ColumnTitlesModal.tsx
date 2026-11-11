@@ -18,18 +18,7 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
   const [formData, setFormData] = useState<ColumnTitles>({ ...titles });
   const [msg, setMsg] = useState('');
 
-  // Escape key listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        onClose();
-      }
-    };
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   if (!isOpen) return null;
 
@@ -122,7 +111,7 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
               onClose();
             }}
             className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
-            title="إغلاق النافذة (Escape)"
+            title="إغلاق النافذة"
           >
             <X className="w-5 h-5 stroke-[2.5]" />
           </button>

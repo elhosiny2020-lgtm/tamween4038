@@ -48,18 +48,7 @@ export const HeaderCustomizerModal: React.FC<HeaderCustomizerModalProps> = ({
       : ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate']
   );
 
-  // Escape key listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        onClose();
-      }
-    };
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   if (!isOpen) return null;
 
@@ -152,7 +141,7 @@ export const HeaderCustomizerModal: React.FC<HeaderCustomizerModalProps> = ({
               onClose();
             }}
             className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white cursor-pointer border border-red-500/50 shadow-md"
-            title="إغلاق النافذة فوراً (Escape)"
+            title="إغلاق النافذة فوراً"
           >
             <X className="w-5 h-5 stroke-[2.5]" />
           </button>

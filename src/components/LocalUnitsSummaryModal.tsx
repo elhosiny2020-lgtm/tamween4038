@@ -65,18 +65,7 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
   const [sortAsc, setSortAsc] = useState(false);
   const summaryPrintRef = React.useRef<HTMLDivElement>(null);
 
-  React.useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   // Map bakery debts accurately
   const debtsMap = useMemo(() => {

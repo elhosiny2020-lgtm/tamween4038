@@ -529,35 +529,163 @@ WshShell.Run "${currentUrl}", 1, False
 }
 
 /**
+ * Builds a genuine 1024-byte 32-bit Windows GUI Portable Executable (.exe) in memory
+ * that invokes ShellExecuteA(NULL, "open", targetUrl, NULL, NULL, SW_SHOWNORMAL)
+ * and ExitProcess(0) with zero console window.
+ */
+export function buildWindowsPeExeBytes(urlStr: string = OFFICIAL_ONLINE_URL): Uint8Array {
+  const buf = new Uint8Array(1024);
+  const view = new DataView(buf.buffer);
+  const encoder = new TextEncoder();
+
+  const writeAscii = (offset: number, str: string) => {
+    const bytes = encoder.encode(str);
+    buf.set(bytes.subarray(0, Math.min(bytes.length, 1024 - offset)), offset);
+  };
+
+  // 1. DOS Header (0x00 - 0x3F)
+  writeAscii(0x00, 'MZ');
+  view.setUint32(0x3c, 0x40, true); // e_lfanew -> 0x40
+
+  // 2. PE Signature & COFF Header (0x40 - 0x57)
+  writeAscii(0x40, 'PE\0\0');
+  view.setUint16(0x44, 0x014c, true); // Machine = IMAGE_FILE_MACHINE_I386
+  view.setUint16(0x46, 1, true);      // NumberOfSections = 1
+  view.setUint32(0x48, 0, true);      // TimeDateStamp
+  view.setUint32(0x4c, 0, true);      // PointerToSymbolTable
+  view.setUint32(0x50, 0, true);      // NumberOfSymbols
+  view.setUint16(0x54, 0xe0, true);   // SizeOfOptionalHeader
+  view.setUint16(0x56, 0x010f, true); // Characteristics (Executable, 32-bit, No relocs)
+
+  // 3. Optional Header (0x58 - 0x137)
+  view.setUint16(0x58, 0x010b, true); // Magic = PE32
+  buf[0x5a] = 1;                      // MajorLinkerVersion
+  buf[0x5b] = 0;                      // MinorLinkerVersion
+  view.setUint32(0x5c, 0x200, true);  // SizeOfCode
+  view.setUint32(0x60, 0x200, true);  // SizeOfInitializedData
+  view.setUint32(0x64, 0, true);      // SizeOfUninitializedData
+  view.setUint32(0x68, 0x1000, true); // AddressOfEntryPoint (RVA)
+  view.setUint32(0x6c, 0x1000, true); // BaseOfCode
+  view.setUint32(0x70, 0x1000, true); // BaseOfData
+  view.setUint32(0x74, 0x00400000, true); // ImageBase
+  view.setUint32(0x78, 0x1000, true); // SectionAlignment
+  view.setUint32(0x7c, 0x0200, true); // FileAlignment
+  view.setUint16(0x80, 4, true);      // MajorOperatingSystemVersion
+  view.setUint16(0x82, 0, true);
+  view.setUint16(0x84, 0, true);
+  view.setUint16(0x86, 0, true);
+  view.setUint16(0x88, 4, true);      // MajorSubsystemVersion
+  view.setUint16(0x8a, 0, true);
+  view.setUint32(0x8c, 0, true);      // Win32VersionValue
+  view.setUint32(0x90, 0x2000, true); // SizeOfImage
+  view.setUint32(0x94, 0x0200, true); // SizeOfHeaders
+  view.setUint32(0x98, 0, true);      // CheckSum
+  view.setUint16(0x9c, 2, true);      // Subsystem = IMAGE_SUBSYSTEM_WINDOWS_GUI (No console window)
+  view.setUint16(0x9e, 0, true);      // DllCharacteristics
+  view.setUint32(0xa0, 0x100000, true); // SizeOfStackReserve
+  view.setUint32(0xa4, 0x1000, true);   // SizeOfStackCommit
+  view.setUint32(0xa8, 0x100000, true); // SizeOfHeapReserve
+  view.setUint32(0xac, 0x1000, true);   // SizeOfHeapCommit
+  view.setUint32(0xb0, 0, true);        // LoaderFlags
+  view.setUint32(0xb4, 16, true);       // NumberOfRvaAndSizes
+
+  // DataDirectory[1] = Import Table (RVA = 0x1040, Size = 0x3C)
+  view.setUint32(0xc0, 0x1040, true);
+  view.setUint32(0xc4, 0x3c, true);
+
+  // 4. Section Header: .text at 0x138 (40 bytes)
+  writeAscii(0x138, '.text');
+  view.setUint32(0x140, 0x200, true); // VirtualSize
+  view.setUint32(0x144, 0x1000, true); // VirtualAddress
+  view.setUint32(0x148, 0x200, true); // SizeOfRawData
+  view.setUint32(0x14c, 0x200, true); // PointerToRawData
+  view.setUint32(0x15c, 0xe0000060, true); // Characteristics (Code | Read | Write | Execute)
+
+  // 5. Section Data at file offset 0x200 (RVA 0x1000)
+  // x86 machine code calling ShellExecuteA then ExitProcess
+  const codeBytes = [
+    0x6a, 0x01,                         // push 1 (SW_SHOWNORMAL)
+    0x6a, 0x00,                         // push 0 (lpDirectory)
+    0x6a, 0x00,                         // push 0 (lpParameters)
+    0x68, 0x00, 0x11, 0x40, 0x00,       // push 0x00401100 (URL string)
+    0x68, 0xf0, 0x10, 0x40, 0x00,       // push 0x004010F0 ("open")
+    0x6a, 0x00,                         // push 0 (hwnd)
+    0xff, 0x15, 0x80, 0x10, 0x40, 0x00, // call dword ptr [0x00401080] (ShellExecuteA)
+    0x6a, 0x00,                         // push 0
+    0xff, 0x15, 0x88, 0x10, 0x40, 0x00, // call dword ptr [0x00401088] (ExitProcess)
+    0xc3,                               // ret
+  ];
+  buf.set(codeBytes, 0x200);
+
+  // Import Descriptor 1: shell32.dll (File 0x240, RVA 0x1040)
+  view.setUint32(0x240, 0x1090, true); // OriginalFirstThunk
+  view.setUint32(0x24c, 0x10a0, true); // Name ("shell32.dll")
+  view.setUint32(0x250, 0x1080, true); // FirstThunk (IAT)
+
+  // Import Descriptor 2: kernel32.dll (File 0x254, RVA 0x1054)
+  view.setUint32(0x254, 0x1098, true); // OriginalFirstThunk
+  view.setUint32(0x260, 0x10b0, true); // Name ("kernel32.dll")
+  view.setUint32(0x264, 0x1088, true); // FirstThunk (IAT)
+
+  // IAT (File 0x280, RVA 0x1080) & ILT (File 0x290, RVA 0x1090)
+  view.setUint32(0x280, 0x10c0, true);
+  view.setUint32(0x288, 0x10d4, true);
+  view.setUint32(0x290, 0x10c0, true);
+  view.setUint32(0x298, 0x10d4, true);
+
+  // DLL & Function Names
+  writeAscii(0x2a0, 'shell32.dll\0');
+  writeAscii(0x2b0, 'kernel32.dll\0');
+  writeAscii(0x2c2, 'ShellExecuteA\0');
+  writeAscii(0x2d6, 'ExitProcess\0');
+
+  // Strings: "open" at 0x2f0 (RVA 0x10f0), Target URL at 0x300 (RVA 0x1100)
+  writeAscii(0x2f0, 'open\0');
+  writeAscii(0x300, (urlStr || OFFICIAL_ONLINE_URL) + '\0');
+
+  return buf;
+}
+
+/**
  * Directly downloads the authentic Windows PE executable "منظومة_وزارة_التموين.exe"
  * which launches the official application with zero console windows.
  */
 export async function downloadWindowsExeLauncher(): Promise<{ success: boolean; message: string; fileName: string }> {
   try {
     const fileName = 'منظومة_وزارة_التموين.exe';
-    const res = await fetch('/' + encodeURIComponent(fileName));
-    if (res.ok) {
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      return {
-        success: true,
-        message: `تم تحميل ملف تشغيل ويندوز التنفيذي (${fileName}) بنجاح! انقر عليه مرتين لتشغيل المنظومة مباشرة.`,
-        fileName
-      };
-    }
-  } catch (e) {
-    console.warn('Could not fetch .exe file directly, using batch installer fallback', e);
-  }
+    const currentUrl =
+      typeof window !== 'undefined' &&
+      window.location.origin &&
+      window.location.origin !== 'null' &&
+      window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : OFFICIAL_ONLINE_URL;
 
-  // Fallback to the Windows Batch Desktop Installer
-  return downloadWindowsDesktopInstallerBat();
+    // Generate genuine 1024-byte Windows PE executable directly in memory
+    const exeBytes = buildWindowsPeExeBytes(currentUrl);
+    const blob = new Blob([exeBytes], { type: 'application/vnd.microsoft.portable-executable' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      if (a.parentNode) a.parentNode.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 500);
+
+    return {
+      success: true,
+      message: `تم تنزيل البرنامج التنفيذي (${fileName}) بنجاح (ملف تشغيل ويندوز EXE أصلي)! انقر عليه مرتين لتشغيل المنظومة مباشرة.`,
+      fileName,
+    };
+  } catch (e) {
+    console.warn('Could not build .exe in memory, falling back to batch installer', e);
+    return downloadWindowsDesktopInstallerBat();
+  }
 }
 
 /**
@@ -569,11 +697,81 @@ export function downloadAppLauncherHtml(): { success: boolean; message: string }
 }
 
 /**
- * Directly opens the standalone application in a new browser tab/window.
+ * Directly opens the full application in a new browser tab/window using a native anchor click
+ * (works inside sandboxed iframes without triggering window.open restrictions).
  */
-export function openStandaloneAppInNewTab(): void {
-  if (typeof window !== 'undefined') {
-    window.open('/tamween-system.html', '_blank');
+export function openStandaloneAppInNewTab(currentState?: AppState): { success: boolean; url: string } {
+  if (typeof document === 'undefined' || typeof window === 'undefined') {
+    return { success: false, url: OFFICIAL_ONLINE_URL };
   }
+
+  let targetUrl = OFFICIAL_ONLINE_URL;
+
+  if (
+    window.location.origin &&
+    window.location.origin !== 'null' &&
+    window.location.protocol.startsWith('http')
+  ) {
+    targetUrl = window.location.href;
+  } else if (currentState) {
+    const html = generateStandaloneHtml(currentState);
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    targetUrl = URL.createObjectURL(blob);
+  }
+
+  const a = document.createElement('a');
+  a.href = targetUrl;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    if (a.parentNode) a.parentNode.removeChild(a);
+  }, 300);
+
+  return { success: true, url: targetUrl };
 }
+
+/**
+ * Universal clipboard helper that works in both standard browser tabs and restricted iframes.
+ */
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+
+  // 1. Try modern Clipboard API first
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fallback to textarea execCommand below if iframe clipboard permission is denied
+    }
+  }
+
+  // 2. Synchronous DOM textarea fallback (works in sandboxed iframes)
+  if (typeof document !== 'undefined') {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.top = '-9999px';
+      textarea.style.left = '-9999px';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, text.length);
+      const copied = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      if (copied) return true;
+    } catch {
+      // ignore
+    }
+  }
+
+  return false;
+}
+
 

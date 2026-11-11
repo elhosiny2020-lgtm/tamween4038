@@ -505,15 +505,7 @@ export default function App() {
     }
   }, [saveToast]);
 
-  // Periodic 15-second heartbeat saving check
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (appState) {
-        persistFullState(appState);
-      }
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [appState]);
+  // Note: Redundant 15-second full-state serialization interval removed to prevent UI lag during navigation; triggerSave persists immediately on every state change.
 
   // Automated Daily License Expiry Alert Check Loop (Checks every 30 seconds)
   useEffect(() => {
@@ -929,19 +921,45 @@ export default function App() {
     return list;
   }, [filteredBakeries, sortField, sortDirection, bakeryRemainingDebtsMap]);
 
-  // In-table Hierarchical Grouping Engine (Village & Local Unit Totals — sums all columns accurately)
+  const totalPages = Math.max(1, Math.ceil(sortedBakeries.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedBakeries = useMemo(() => {
+    const startIdx = (safeCurrentPage - 1) * pageSize;
+    return sortedBakeries.slice(startIdx, startIdx + pageSize);
+  }, [sortedBakeries, safeCurrentPage, pageSize]);
+
+  // Memoized Grand Totals across ALL sortedBakeries for tfoot ("صف الإجماليات TOTAL SUMMARY")
+  const grandTotals = useMemo(() => {
+    return calculateBakeriesColumnTotals(sortedBakeries, bakeryRemainingDebtsMap);
+  }, [sortedBakeries, bakeryRemainingDebtsMap]);
+
+  // In-table Hierarchical Grouping Engine (Paginated rows for zero DOM lag + Full Village & Local Unit Totals from sortedBakeries)
   const hierarchicalGroups = useMemo(() => {
-    const list = sortedBakeries;
-    if (!list || list.length === 0) return [];
+    const pageList = paginatedBakeries;
+    if (!pageList || pageList.length === 0) return [];
 
-    // Group by Mother Village (القرية) -> Local Unit (الوحدة المحلية التابعة)
-    const villageMap = new Map<string, { displayName: string; unitsMap: Map<string, { displayName: string; bakeries: Bakery[] }> }>();
+    // Pre-index all matching bakeries in sortedBakeries by village & unit so subtotals reflect full village/unit sums
+    const fullVillageBakeMap = new Map<string, Bakery[]>();
+    const fullUnitBakeMap = new Map<string, Bakery[]>();
+    sortedBakeries.forEach((b) => {
+      const vKey = normalizeArabicText((b.village || 'غير محدد').trim()) || 'غير محدد';
+      const uKey = `${vKey}__${normalizeArabicText((b.localUnit || 'غير محدد').trim()) || 'غير محدد'}`;
+      if (!fullVillageBakeMap.has(vKey)) fullVillageBakeMap.set(vKey, []);
+      fullVillageBakeMap.get(vKey)!.push(b);
+      if (!fullUnitBakeMap.has(uKey)) fullUnitBakeMap.set(uKey, []);
+      fullUnitBakeMap.get(uKey)!.push(b);
+    });
 
-    list.forEach((b) => {
+    // Group current page's bakeries by Mother Village (القرية) -> Local Unit (الوحدة المحلية التابعة)
+    const villageMap = new Map<string, { displayName: string; unitsMap: Map<string, { displayName: string; fullKey: string; bakeries: Bakery[] }> }>();
+
+    pageList.forEach((b) => {
       const vRaw = (b.village || 'غير محدد').trim();
       const uRaw = (b.localUnit || 'غير محدد').trim();
       const vKey = normalizeArabicText(vRaw) || 'غير محدد';
       const uKey = normalizeArabicText(uRaw) || 'غير محدد';
+      const fullUnitKey = `${vKey}__${uKey}`;
 
       if (!villageMap.has(vKey)) {
         villageMap.set(vKey, {
@@ -953,6 +971,7 @@ export default function App() {
       if (!vEntry.unitsMap.has(uKey)) {
         vEntry.unitsMap.set(uKey, {
           displayName: uRaw,
+          fullKey: fullUnitKey,
           bakeries: [],
         });
       }
@@ -971,13 +990,12 @@ export default function App() {
 
     const result: VillageGroupItem[] = [];
 
-    villageMap.forEach((vEntry) => {
+    villageMap.forEach((vEntry, vKey) => {
       const unitSubGroups: SubUnitGroupItem[] = [];
-      const allVillageBakeries: Bakery[] = [];
 
       vEntry.unitsMap.forEach((uEntry) => {
-        const uTotals = calculateBakeriesColumnTotals(uEntry.bakeries, bakeryRemainingDebtsMap);
-        allVillageBakeries.push(...uEntry.bakeries);
+        const fullUnitBakeries = fullUnitBakeMap.get(uEntry.fullKey) || uEntry.bakeries;
+        const uTotals = calculateBakeriesColumnTotals(fullUnitBakeries, bakeryRemainingDebtsMap);
         unitSubGroups.push({
           ...uTotals,
           localUnit: uEntry.displayName,
@@ -986,7 +1004,8 @@ export default function App() {
         });
       });
 
-      const vTotals = calculateBakeriesColumnTotals(allVillageBakeries, bakeryRemainingDebtsMap);
+      const fullVillageBakeries = fullVillageBakeMap.get(vKey) || [];
+      const vTotals = calculateBakeriesColumnTotals(fullVillageBakeries, bakeryRemainingDebtsMap);
       result.push({
         ...vTotals,
         localUnit: vEntry.displayName,
@@ -995,15 +1014,7 @@ export default function App() {
     });
 
     return result;
-  }, [sortedBakeries, bakeryRemainingDebtsMap]);
-
-  const totalPages = Math.max(1, Math.ceil(sortedBakeries.length / pageSize));
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-
-  const paginatedBakeries = useMemo(() => {
-    const startIdx = (safeCurrentPage - 1) * pageSize;
-    return sortedBakeries.slice(startIdx, startIdx + pageSize);
-  }, [sortedBakeries, safeCurrentPage, pageSize]);
+  }, [paginatedBakeries, sortedBakeries, bakeryRemainingDebtsMap]);
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -1058,54 +1069,7 @@ export default function App() {
     setAppState((prev) => (prev ? { ...prev, currentUser: null } : null));
   }, []);
 
-  // Global fast Escape key listener to close any open modal immediately without lag
-  useEffect(() => {
-    const handleGlobalEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        if (isReportModalOpen) { setIsReportModalOpen(false); return; }
-        if (isInboxModalOpen) { setIsInboxModalOpen(false); return; }
-        if (isAdvancedPermissionsModalOpen) { setIsAdvancedPermissionsModalOpen(false); return; }
-        if (isUsersModalOpen) { setIsUsersModalOpen(false); return; }
-        if (isBackupModalOpen) { setIsBackupModalOpen(false); return; }
-        if (isMasterEditorModalOpen) { setIsMasterEditorModalOpen(false); return; }
-        if (isDailyTasksModalOpen) { setIsDailyTasksModalOpen(false); return; }
-        if (isAlertsModalOpen) { setIsAlertsModalOpen(false); return; }
-        if (isDailyBriefingModalOpen) { setIsDailyBriefingModalOpen(false); return; }
-        if (isWeeklyInstallmentsModalOpen) { setIsWeeklyInstallmentsModalOpen(false); return; }
-        if (isLocalUnitsModalOpen) { setIsLocalUnitsModalOpen(false); return; }
-        if (isAuditModalOpen) { setIsAuditModalOpen(false); return; }
-        if (isBudgetFrequencyModalOpen) { setIsBudgetFrequencyModalOpen(false); return; }
-        if (isBakeryModalOpen) { setIsBakeryModalOpen(false); return; }
-        if (isHeaderModalOpen) { setIsHeaderModalOpen(false); return; }
-        if (isVillageModalOpen) { setIsVillageModalOpen(false); return; }
-        if (isColumnModalOpen) { setIsColumnModalOpen(false); return; }
-        if (isActivityModalOpen) { setIsActivityModalOpen(false); return; }
-        if (isDailySettingsModalOpen) { setIsDailySettingsModalOpen(false); return; }
-      }
-    };
-    window.addEventListener('keydown', handleGlobalEscape, true);
-    return () => window.removeEventListener('keydown', handleGlobalEscape, true);
-  }, [
-    isReportModalOpen,
-    isInboxModalOpen,
-    isAdvancedPermissionsModalOpen,
-    isUsersModalOpen,
-    isBackupModalOpen,
-    isMasterEditorModalOpen,
-    isDailyTasksModalOpen,
-    isAlertsModalOpen,
-    isDailyBriefingModalOpen,
-    isWeeklyInstallmentsModalOpen,
-    isLocalUnitsModalOpen,
-    isAuditModalOpen,
-    isBudgetFrequencyModalOpen,
-    isBakeryModalOpen,
-    isHeaderModalOpen,
-    isVillageModalOpen,
-    isColumnModalOpen,
-    isActivityModalOpen,
-    isDailySettingsModalOpen,
-  ]);
+  // Global Escape key modal closing is intentionally disabled per user preference so windows only close via explicit close buttons.
 
   // Auto-logout when user leaves the computer / idle for 10 minutes (with automatic full pre-logout save)
   useEffect(() => {
@@ -1787,6 +1751,53 @@ export default function App() {
               <span>إعدادات الحساب</span>
             </button>
 
+            {/* Open in Web Page Direct Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const res = openStandaloneAppInNewTab(appState);
+                setSaveToast({
+                  id: Date.now(),
+                  message: `تم فتح المنظومة في صفحة إنترنت مستقلة بنجاح (${res.url})`,
+                  timestamp: getArabicTimestamp(),
+                });
+              }}
+              className="px-3 py-1.5 bg-sky-700 hover:bg-sky-600 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+              title="فتح المنظومة مباشرة في صفحة إنترنت مستقلة"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-amber-300" />
+              <span>فتح في صفحة إنترنت</span>
+            </button>
+
+            {/* Download EXE Direct Button */}
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await downloadWindowsExeLauncher();
+                setSaveToast({
+                  id: Date.now(),
+                  message: res.message,
+                  timestamp: getArabicTimestamp(),
+                });
+              }}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-2xs border border-amber-300"
+              title="تنزيل البرنامج التنفيذي لنظام ويندوز (منظومة_وزارة_التموين.exe)"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-950" />
+              <span>تنزيل البرنامج EXE</span>
+            </button>
+
+            {/* Supabase & Cloud Backup Button */}
+            <button
+              type="button"
+              onClick={() => setIsBackupModalOpen(true)}
+              className="px-3 py-1.5 bg-teal-800 hover:bg-teal-700 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-2xs border border-teal-500/40"
+              title="إعدادات Supabase ونسخ كود إنشاء الجداول على SQL والتخزين السحابي"
+            >
+              <HardDrive className="w-3.5 h-3.5 text-amber-300" />
+              <span className="hidden sm:inline">Supabase والنسخ السحابي</span>
+            </button>
+
             {/* Google Workspace (Calendar, Tasks, Forms) Button */}
             <button
               type="button"
@@ -1798,7 +1809,7 @@ export default function App() {
               title="مركز خدمات Google Workspace (Calendar • Tasks • Forms)"
             >
               <Calendar className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Google Workspace (Calendar • Tasks • Forms)</span>
+              <span className="hidden xl:inline">Google Workspace</span>
             </button>
 
             {/* Publish Button */}
@@ -2865,8 +2876,6 @@ export default function App() {
                         </tr>
                       ) : (
                         (() => {
-                          let runningIndex = 0;
-
                           // Helper to render a single bakery row
                           const renderBakeryRow = (b: Bakery, globalIndex: number) => {
                             const isSelected = selectedBakeryRowId === b.id;
@@ -3329,12 +3338,13 @@ export default function App() {
 
                           if (groupingViewMode === 'HIERARCHICAL') {
                             const elements: React.ReactNode[] = [];
+                            let pageRunningIndex = (safeCurrentPage - 1) * pageSize;
 
                             hierarchicalGroups.forEach((uGroup) => {
                               uGroup.villages.forEach((vGroup) => {
                                 vGroup.bakeries.forEach((b) => {
-                                  runningIndex++;
-                                  elements.push(renderBakeryRow(b, runningIndex));
+                                  pageRunningIndex++;
+                                  elements.push(renderBakeryRow(b, pageRunningIndex));
                                 });
                                 elements.push(renderVillageTotalRow(vGroup));
                               });
@@ -3356,8 +3366,6 @@ export default function App() {
                     {sortedBakeries.length > 0 && (
                       <tfoot className="sticky bottom-0 z-20 bg-[#051124] text-amber-300 font-extrabold border-t-4 border-amber-500 shadow-xl text-xs">
                         {(() => {
-                          const grandTotals = calculateBakeriesColumnTotals(sortedBakeries, bakeryRemainingDebtsMap);
-
                           return (
                             <tr className="total-summary-row">
                               <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-400 font-black text-sm">🏛️</td>

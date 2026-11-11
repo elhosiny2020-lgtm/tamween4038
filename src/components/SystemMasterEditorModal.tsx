@@ -188,15 +188,7 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
     }
   }, [isOpen, initialCategory]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  // Escape key closing is intentionally disabled per user preference
 
   const getListItems = (key: Exclude<DropdownCategoryKey, 'ALL' | 'villages'>): string[] => {
     switch (key) {
