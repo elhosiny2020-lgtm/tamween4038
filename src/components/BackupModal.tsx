@@ -145,8 +145,52 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     publishState.stage === 'UPLOADING' ||
     publishState.stage === 'VERIFYING';
 
+  const [isBackupPublishCancelled, setIsBackupPublishCancelled] = useState(() => {
+    try {
+      const stored = localStorage.getItem('TAMWEEN_CANCELLED_HOSTS');
+      if (stored) {
+        const obj = JSON.parse(stored);
+        return !!obj['cloud_run'] || !!obj['global'];
+      }
+    } catch (e) {}
+    return false;
+  });
+
+  const handleCancelPublishFromBackup = () => {
+    try {
+      const stored = localStorage.getItem('TAMWEEN_CANCELLED_HOSTS');
+      const obj = stored ? JSON.parse(stored) : {};
+      obj['cloud_run'] = true;
+      obj['global'] = true;
+      localStorage.setItem('TAMWEEN_CANCELLED_HOSTS', JSON.stringify(obj));
+      setIsBackupPublishCancelled(true);
+      setStatusMsg({
+        text: 'تم إلغاء وإيقاف الاستضافة السحابية بنجاح 🚫! يمكنك إعادة التفعيل بالنقر على "نشر المنظومة الآن" أو "إعادة التفعيل" في أي وقت.',
+        type: 'info',
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleReenablePublishFromBackup = () => {
+    try {
+      const stored = localStorage.getItem('TAMWEEN_CANCELLED_HOSTS');
+      const obj = stored ? JSON.parse(stored) : {};
+      delete obj['cloud_run'];
+      delete obj['global'];
+      localStorage.setItem('TAMWEEN_CANCELLED_HOSTS', JSON.stringify(obj));
+      setIsBackupPublishCancelled(false);
+      setStatusMsg({
+        text: 'تم إعادة تفعيل الاستضافة السحابية بنجاح ⚡.',
+        type: 'success',
+      });
+    } catch (e) {}
+  };
+
   const handleExecutePublishFromBackup = async () => {
     if (isPublishing) return;
+    handleReenablePublishFromBackup();
     try {
       const res = await executePublishProcess(currentState, (prog) => {
         setPublishState(prog);
@@ -1270,7 +1314,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
                   onClick={handleExecutePublishFromBackup}
@@ -1293,6 +1337,27 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     </>
                   )}
                 </button>
+
+                {isBackupPublishCancelled ? (
+                  <button
+                    type="button"
+                    onClick={handleReenablePublishFromBackup}
+                    className="px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-300/40 transition shadow cursor-pointer flex items-center gap-1.5"
+                    title="إعادة تفعيل الاستضافة السحابية"
+                  >
+                    <span>إعادة التفعيل ⚡</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleCancelPublishFromBackup}
+                    className="px-3.5 py-2 rounded-xl text-xs font-black bg-red-900/80 text-red-200 border border-red-500/40 hover:bg-red-800 hover:text-white transition shadow cursor-pointer flex items-center gap-1.5"
+                    title="إلغاء وفصل الاستضافة السحابية في أي وقت"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-300 shrink-0" />
+                    <span>إلغاء الاستضافة 🚫</span>
+                  </button>
+                )}
               </div>
             </div>
 

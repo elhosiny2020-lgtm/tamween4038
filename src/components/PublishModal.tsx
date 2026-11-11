@@ -30,6 +30,8 @@ import {
   ArrowUpRight,
   Code2,
   Laptop,
+  Trash2,
+  XCircle,
 } from 'lucide-react';
 
 interface PublishModalProps {
@@ -60,6 +62,78 @@ export const PublishModal: React.FC<PublishModalProps> = ({
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
 
+  // Cancellation state for hosting providers
+  const [cancelledHosts, setCancelledHosts] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('TAMWEEN_CANCELLED_HOSTS');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const handleCancelHosting = (hostKey: 'google' | 'cloudflare' | 'vercel' | 'all') => {
+    const updated = { ...cancelledHosts };
+    if (hostKey === 'all') {
+      updated.google = true;
+      updated.cloudflare = true;
+      updated.vercel = true;
+    } else {
+      updated[hostKey] = true;
+    }
+    setCancelledHosts(updated);
+    try {
+      localStorage.setItem('TAMWEEN_CANCELLED_HOSTS', JSON.stringify(updated));
+    } catch {}
+
+    const providerTitle =
+      hostKey === 'google'
+        ? 'Google Cloud'
+        : hostKey === 'cloudflare'
+        ? 'Cloudflare Pages'
+        : hostKey === 'vercel'
+        ? 'Vercel Free'
+        : 'جميع الاستضافات السحابية';
+
+    setPublishState({
+      stage: 'IDLE',
+      stageNameArabic: 'تم إلغاء الاستضافة',
+      progressPercent: 0,
+      statusMessage: `تم بنجاح إلغاء وإيقاف استضافة (${providerTitle}) بناءً على طلبك. يمكنك إعادة النشر والتفعيل مجدداً في أي وقت.`,
+      isDelayed: false,
+    });
+
+    if (hostKey === 'all' || hostKey === 'google') {
+      setLastPublished(null);
+      try {
+        localStorage.removeItem('TAMWEEN_LAST_PUBLISHED_INFO');
+      } catch {}
+    }
+  };
+
+  const handleReenableHosting = (hostKey: 'google' | 'cloudflare' | 'vercel' | 'all') => {
+    const updated = { ...cancelledHosts };
+    if (hostKey === 'all') {
+      delete updated.google;
+      delete updated.cloudflare;
+      delete updated.vercel;
+    } else {
+      delete updated[hostKey];
+    }
+    setCancelledHosts(updated);
+    try {
+      localStorage.setItem('TAMWEEN_CANCELLED_HOSTS', JSON.stringify(updated));
+    } catch {}
+
+    setPublishState({
+      stage: 'IDLE',
+      stageNameArabic: 'جاهز للنشر',
+      progressPercent: 0,
+      statusMessage: 'تم إعادة تفعيل الاستضافة. اضغط على "بدء النشر الآن" للنشر المباشر.',
+      isDelayed: false,
+    });
+  };
+
   const officialLiveUrl =
     publishState.publishedUrl ||
     lastPublished?.publishedUrl ||
@@ -81,6 +155,12 @@ export const PublishModal: React.FC<PublishModalProps> = ({
 
   const handleStartPublish = async () => {
     if (isPublishing) return;
+
+    // Clear cancellation for current tab host on publish
+    const currentHost = activeTab === 'live_publish' ? 'google' : activeTab === 'cloudflare' ? 'cloudflare' : activeTab === 'vercel' ? 'vercel' : null;
+    if (currentHost && cancelledHosts[currentHost]) {
+      handleReenableHosting(currentHost as any);
+    }
 
     try {
       const result = await executePublishProcess(currentState, (progress) => {
@@ -260,6 +340,28 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                     <ExternalLink className="w-3.5 h-3.5" />
                     <span>فتح الموقع</span>
                   </a>
+
+                  {cancelledHosts.google ? (
+                    <button
+                      type="button"
+                      onClick={() => handleReenableHosting('google')}
+                      className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-black flex items-center gap-1 cursor-pointer transition shadow"
+                      title="إعادة تفعيل استضافة Google Cloud"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                      <span>إعادة التفعيل</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleCancelHosting('google')}
+                      className="px-3 py-1.5 bg-red-900/80 hover:bg-red-800 text-red-200 border border-red-500/50 rounded text-xs font-black flex items-center gap-1 cursor-pointer transition shadow"
+                      title="إلغاء استضافة Google Cloud في أي وقت"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                      <span>إلغاء الاستضافة 🚫</span>
+                    </button>
+                  )}
                 </div>
 
                 <p className="text-[11px] text-slate-300 font-bold leading-relaxed">
@@ -374,9 +476,26 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                       </p>
                     </div>
                   </div>
-                  <span className="text-[11px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 px-2.5 py-1 rounded-full">
-                    جاهز 100% للرفع
-                  </span>
+                  {cancelledHosts.cloudflare ? (
+                    <button
+                      type="button"
+                      onClick={() => handleReenableHosting('cloudflare')}
+                      className="text-[11px] font-black bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-full shadow cursor-pointer transition flex items-center gap-1"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      <span>إعادة تفعيل Cloudflare</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleCancelHosting('cloudflare')}
+                      className="text-[11px] font-black bg-red-900/80 hover:bg-red-800 text-red-200 border border-red-500/50 px-3 py-1 rounded-full shadow cursor-pointer transition flex items-center gap-1"
+                      title="إلغاء استضافة Cloudflare Pages في أي وقت"
+                    >
+                      <Trash2 className="w-3 h-3 text-red-400" />
+                      <span>إلغاء استضافة Cloudflare 🚫</span>
+                    </button>
+                  )}
                 </div>
 
                 <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800 space-y-1 text-xs">
@@ -486,9 +605,26 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                       </p>
                     </div>
                   </div>
-                  <span className="text-[11px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 px-2.5 py-1 rounded-full">
-                    جاهز 100% للرفع
-                  </span>
+                  {cancelledHosts.vercel ? (
+                    <button
+                      type="button"
+                      onClick={() => handleReenableHosting('vercel')}
+                      className="text-[11px] font-black bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-full shadow cursor-pointer transition flex items-center gap-1"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      <span>إعادة تفعيل Vercel</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleCancelHosting('vercel')}
+                      className="text-[11px] font-black bg-red-900/80 hover:bg-red-800 text-red-200 border border-red-500/50 px-3 py-1 rounded-full shadow cursor-pointer transition flex items-center gap-1"
+                      title="إلغاء استضافة Vercel في أي وقت"
+                    >
+                      <Trash2 className="w-3 h-3 text-red-400" />
+                      <span>إلغاء استضافة Vercel 🚫</span>
+                    </button>
+                  )}
                 </div>
 
                 <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs">
@@ -729,6 +865,25 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                   <span>إعادة المحاولة فوراً</span>
                 </button>
               )}
+
+              <button
+                type="button"
+                disabled={isPublishing}
+                onClick={() =>
+                  handleCancelHosting(
+                    activeTab === 'packages'
+                      ? 'all'
+                      : activeTab === 'live_publish'
+                      ? 'google'
+                      : activeTab
+                  )
+                }
+                className="px-4 py-2.5 bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-500/50 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg transition cursor-pointer hover:scale-105 active:scale-95 disabled:opacity-50"
+                title="إلغاء وإيقاف الاستضافة في أي وقت"
+              >
+                <Trash2 className="w-4 h-4 text-red-400" />
+                <span>إلغاء الاستضافة 🚫</span>
+              </button>
 
               <button
                 type="button"

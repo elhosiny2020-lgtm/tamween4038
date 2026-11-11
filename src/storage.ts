@@ -37,7 +37,7 @@ import {
   syncWorkspaceToFirestore,
   syncSharedStateToFirestore,
 } from './lib/firebase';
-import { autoSyncToSupabase } from './lib/supabase';
+import { autoSyncToSupabase, fetchDatabaseFromSupabase } from './lib/supabase';
 
 export interface MergeConflictItem {
   id: string;
