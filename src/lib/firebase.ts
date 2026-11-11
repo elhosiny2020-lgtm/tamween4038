@@ -24,10 +24,34 @@ export const db = getFirestore(
   (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId || '(default)'
 );
 
-// 2. Configure Google Workspace OAuth Scopes (Google Drive & Gmail Direct Integration)
+// 2. Configure Google Workspace OAuth Scopes (Calendar, Tasks, Forms, Drive & Gmail Direct Integration)
 export const WORKSPACE_SCOPES = [
-  'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/calendar.acls',
+  'https://www.googleapis.com/auth/calendar.acls.readonly',
+  'https://www.googleapis.com/auth/calendar.app.created',
+  'https://www.googleapis.com/auth/calendar.calendarlist',
+  'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+  'https://www.googleapis.com/auth/calendar.calendars',
+  'https://www.googleapis.com/auth/calendar.calendars.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar.events.freebusy',
+  'https://www.googleapis.com/auth/calendar.events.owned',
+  'https://www.googleapis.com/auth/calendar.events.owned.readonly',
+  'https://www.googleapis.com/auth/calendar.events.public.readonly',
+  'https://www.googleapis.com/auth/calendar.events.readonly',
+  'https://www.googleapis.com/auth/calendar.freebusy',
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.settings.readonly',
+  'https://www.googleapis.com/auth/tasks',
+  'https://www.googleapis.com/auth/tasks.readonly',
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/forms.body',
+  'https://www.googleapis.com/auth/forms.body.readonly',
+  'https://www.googleapis.com/auth/forms.responses.readonly',
 ];
 
 export const googleAuthProvider = new GoogleAuthProvider();
@@ -524,3 +548,553 @@ export async function sendBackupDirectToGmail(
     message: `تم إرسال النسخة الاحتياطية مباشرة إلى بريد الجيميل (${cleanRecipient}) بنجاح! (رقم الرسالة: ${sendData.id})`,
   };
 }
+
+// ============================================================================
+// 8. Google Calendar API Integration (https://www.googleapis.com/calendar/v3)
+// ============================================================================
+export interface GoogleCalendarEventItem {
+  id: string;
+  summary: string;
+  description?: string;
+  location?: string;
+  htmlLink?: string;
+  start?: { date?: string; dateTime?: string };
+  end?: { date?: string; dateTime?: string };
+  status?: string;
+}
+
+export async function fetchGoogleCalendarEvents(
+  maxResults: number = 30
+): Promise<GoogleCalendarEventItem[]> {
+  const token = await getValidGoogleAccessToken();
+  const timeMin = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=${maxResults}&singleEvents=true&orderBy=startTime&timeMin=${encodeURIComponent(
+    timeMin
+  )}`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Calendar. يرجى تسجيل الدخول مرة أخرى.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر جلب مواعيد تقويم Google Calendar: ${res.status} ${errText}`);
+  }
+
+  const data = await res.json();
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+export async function createGoogleCalendarEvent(input: {
+  summary: string;
+  description?: string;
+  location?: string;
+  startDate: string; // YYYY-MM-DD
+  endDate?: string; // YYYY-MM-DD
+}): Promise<GoogleCalendarEventItem> {
+  const token = await getValidGoogleAccessToken();
+  const cleanStart = input.startDate.split('T')[0];
+  const cleanEnd = (input.endDate || input.startDate).split('T')[0];
+
+  const res = await fetch(
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        summary: input.summary,
+        description: input.description || '',
+        location: input.location || 'مركز المحلة الكبرى',
+        start: { date: cleanStart },
+        end: { date: cleanEnd },
+      }),
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Calendar. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر إنشاء الحدث في Google Calendar: ${res.status} ${errText}`);
+  }
+
+  return await res.json();
+}
+
+export async function updateGoogleCalendarEvent(
+  eventId: string,
+  input: {
+    summary: string;
+    description?: string;
+    location?: string;
+    startDate: string;
+    endDate?: string;
+  }
+): Promise<GoogleCalendarEventItem> {
+  const token = await getValidGoogleAccessToken();
+  const safeEventId = encodeURIComponent(eventId.trim());
+  const cleanStart = input.startDate.split('T')[0];
+  const cleanEnd = (input.endDate || input.startDate).split('T')[0];
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${safeEventId}`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        summary: input.summary,
+        description: input.description || '',
+        location: input.location || 'مركز المحلة الكبرى',
+        start: { date: cleanStart },
+        end: { date: cleanEnd },
+      }),
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Calendar. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر تحديث الحدث في Google Calendar: ${res.status} ${errText}`);
+  }
+
+  return await res.json();
+}
+
+export async function deleteGoogleCalendarEvent(eventId: string): Promise<void> {
+  const token = await getValidGoogleAccessToken();
+  const safeEventId = encodeURIComponent(eventId.trim());
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${safeEventId}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Calendar. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok && res.status !== 204) {
+    const errText = await res.text();
+    throw new Error(`تعذر حذف الحدث من Google Calendar: ${res.status} ${errText}`);
+  }
+}
+
+// ============================================================================
+// 9. Google Tasks API Integration (https://tasks.googleapis.com/tasks/v1)
+// ============================================================================
+export interface GoogleTaskListItem {
+  id: string;
+  title: string;
+  updated?: string;
+}
+
+export interface GoogleTaskItem {
+  id: string;
+  title: string;
+  notes?: string;
+  status: 'needsAction' | 'completed';
+  due?: string;
+  updated?: string;
+}
+
+export async function fetchGoogleTaskLists(): Promise<GoogleTaskListItem[]> {
+  const token = await getValidGoogleAccessToken();
+  const res = await fetch('https://tasks.googleapis.com/tasks/v1/users/@me/lists', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Tasks. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر جلب قوائم مهام Google Tasks: ${res.status} ${errText}`);
+  }
+
+  const data = await res.json();
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+export async function fetchGoogleTasks(
+  taskListId: string = '@default'
+): Promise<GoogleTaskItem[]> {
+  const token = await getValidGoogleAccessToken();
+  const safeListId = encodeURIComponent(taskListId.trim() || '@default');
+  const res = await fetch(
+    `https://tasks.googleapis.com/tasks/v1/lists/${safeListId}/tasks?showCompleted=true&showHidden=true&maxResults=100`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Tasks. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر جلب المهام من Google Tasks: ${res.status} ${errText}`);
+  }
+
+  const data = await res.json();
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+export async function createGoogleTask(
+  taskListId: string = '@default',
+  input: { title: string; notes?: string; due?: string }
+): Promise<GoogleTaskItem> {
+  const token = await getValidGoogleAccessToken();
+  const safeListId = encodeURIComponent(taskListId.trim() || '@default');
+  const dueIso = input.due
+    ? input.due.includes('T')
+      ? input.due
+      : `${input.due}T09:00:00.000Z`
+    : undefined;
+
+  const res = await fetch(
+    `https://tasks.googleapis.com/tasks/v1/lists/${safeListId}/tasks`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: input.title,
+        notes: input.notes || '',
+        ...(dueIso ? { due: dueIso } : {}),
+      }),
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Tasks. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر إضافة المهمة في Google Tasks: ${res.status} ${errText}`);
+  }
+
+  return await res.json();
+}
+
+export async function updateGoogleTask(
+  taskListId: string = '@default',
+  taskId: string,
+  input: { title: string; notes?: string; status: 'needsAction' | 'completed'; due?: string }
+): Promise<GoogleTaskItem> {
+  const token = await getValidGoogleAccessToken();
+  const safeListId = encodeURIComponent(taskListId.trim() || '@default');
+  const safeTaskId = encodeURIComponent(taskId.trim());
+
+  const res = await fetch(
+    `https://tasks.googleapis.com/tasks/v1/lists/${safeListId}/tasks/${safeTaskId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: input.title,
+        notes: input.notes || '',
+        status: input.status,
+      }),
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Tasks. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر تحديث المهمة في Google Tasks: ${res.status} ${errText}`);
+  }
+
+  return await res.json();
+}
+
+export async function deleteGoogleTask(
+  taskListId: string = '@default',
+  taskId: string
+): Promise<void> {
+  const token = await getValidGoogleAccessToken();
+  const safeListId = encodeURIComponent(taskListId.trim() || '@default');
+  const safeTaskId = encodeURIComponent(taskId.trim());
+
+  const res = await fetch(
+    `https://tasks.googleapis.com/tasks/v1/lists/${safeListId}/tasks/${safeTaskId}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Tasks. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok && res.status !== 204) {
+    const errText = await res.text();
+    throw new Error(`تعذر حذف المهمة من Google Tasks: ${res.status} ${errText}`);
+  }
+}
+
+// ============================================================================
+// 10. Google Forms API Integration (https://forms.googleapis.com/v1/forms)
+// ============================================================================
+export interface GoogleFormDriveFile {
+  id: string;
+  name: string;
+  modifiedTime?: string;
+  webViewLink?: string;
+}
+
+export interface GoogleFormDetails {
+  formId: string;
+  info: {
+    title: string;
+    documentTitle?: string;
+    description?: string;
+  };
+  responderUri?: string;
+  items?: {
+    itemId?: string;
+    title?: string;
+    description?: string;
+  }[];
+}
+
+export interface GoogleFormResponseItem {
+  responseId: string;
+  createTime: string;
+  lastSubmittedTime: string;
+  respondentEmail?: string;
+  answers?: Record<
+    string,
+    {
+      questionId: string;
+      textAnswers?: { answers: { value: string }[] };
+    }
+  >;
+}
+
+export async function listGoogleFormsFromDrive(): Promise<GoogleFormDriveFile[]> {
+  const token = await getValidGoogleAccessToken();
+  const q = encodeURIComponent(
+    "mimeType = 'application/vnd.google-apps.form' and trashed = false"
+  );
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime,webViewLink)&pageSize=25`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Forms / Drive. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر جلب قائمة نماذج Google Forms: ${res.status} ${errText}`);
+  }
+
+  const data = await res.json();
+  return Array.isArray(data.files) ? data.files : [];
+}
+
+export async function getGoogleFormDetails(formId: string): Promise<GoogleFormDetails> {
+  const token = await getValidGoogleAccessToken();
+  const safeFormId = encodeURIComponent(formId.trim());
+  const res = await fetch(`https://forms.googleapis.com/v1/forms/${safeFormId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Forms. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر قراءة بيانات النموذج من Google Forms: ${res.status} ${errText}`);
+  }
+
+  return await res.json();
+}
+
+export async function getGoogleFormResponses(
+  formId: string
+): Promise<GoogleFormResponseItem[]> {
+  const token = await getValidGoogleAccessToken();
+  const safeFormId = encodeURIComponent(formId.trim());
+  const res = await fetch(
+    `https://forms.googleapis.com/v1/forms/${safeFormId}/responses`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Forms. يرجى إعادة الربط.');
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`تعذر جلب ردود النموذج من Google Forms: ${res.status} ${errText}`);
+  }
+
+  const data = await res.json();
+  return Array.isArray(data.responses) ? data.responses : [];
+}
+
+export async function createBakeryInspectionGoogleForm(
+  title: string,
+  description: string
+): Promise<GoogleFormDetails> {
+  const token = await getValidGoogleAccessToken();
+
+  // Step 1: Create the form with info.title
+  const createRes = await fetch('https://forms.googleapis.com/v1/forms', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      info: {
+        title: title.trim() || 'نموذج تفتيش ومتابعة مخبز تمويني - مركز المحلة الكبرى',
+        documentTitle: title.trim() || 'نموذج تفتيش ومتابعة مخبز تمويني',
+      },
+    }),
+  });
+
+  if (createRes.status === 401) {
+    cachedAccessToken = null;
+    throw new Error('انتهت صلاحية جلسة Google Forms. يرجى إعادة الربط.');
+  }
+
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    throw new Error(`تعذر إنشاء النموذج في Google Forms: ${createRes.status} ${errText}`);
+  }
+
+  const createdForm: GoogleFormDetails = await createRes.json();
+  const safeFormId = encodeURIComponent(createdForm.formId.trim());
+
+  // Step 2: Populate description and standard bakery inspection fields via batchUpdate
+  const batchRes = await fetch(
+    `https://forms.googleapis.com/v1/forms/${safeFormId}:batchUpdate`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        includeFormInResponse: true,
+        requests: [
+          {
+            updateFormInfo: {
+              info: {
+                title: title.trim() || 'نموذج تفتيش ومتابعة مخبز تمويني - مركز المحلة الكبرى',
+                description:
+                  description.trim() ||
+                  'نموذج رسمي لمتابعة تشغيل المخابز البلدية والحصص التموينية والمديونيات بإدارة تموين مركز المحلة الكبرى',
+              },
+              updateMask: 'description',
+            },
+          },
+          {
+            createItem: {
+              item: {
+                title: 'اسم المخبز ورقم الماكينة',
+                questionItem: {
+                  question: {
+                    required: true,
+                    textQuestion: { paragraph: false },
+                  },
+                },
+              },
+              location: { index: 0 },
+            },
+          },
+          {
+            createItem: {
+              item: {
+                title: 'اسم القرية والوحدة المحلية',
+                questionItem: {
+                  question: {
+                    required: true,
+                    textQuestion: { paragraph: false },
+                  },
+                },
+              },
+              location: { index: 1 },
+            },
+          },
+          {
+            createItem: {
+              item: {
+                title: 'حالة التشغيل ومطابقة الحصة اليومية ووزن الرغيف',
+                questionItem: {
+                  question: {
+                    required: true,
+                    textQuestion: { paragraph: true },
+                  },
+                },
+              },
+              location: { index: 2 },
+            },
+          },
+        ],
+      }),
+    }
+  );
+
+  if (batchRes.ok) {
+    const batchData = await batchRes.json();
+    if (batchData.form) return batchData.form;
+  }
+
+  return createdForm;
+}
+

@@ -24,6 +24,8 @@ import {
   ListChecks,
   Layers,
   ShieldAlert,
+  Calendar,
+  CheckSquare,
 } from 'lucide-react';
 
 export type SidebarNavId = string;
@@ -275,6 +277,24 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           label: 'النسخ الاحتياطي',
           subtitle: 'إنشاء أو استعادة نسخة احتياطية كاملة',
           icon: <HardDrive className="w-5 h-5 shrink-0 icon-animated" />,
+        },
+        {
+          id: 'workspace-calendar',
+          label: 'تقويم Google Calendar',
+          subtitle: 'مزامنة مواعيد التراخيص والدفعات الأسبوعية',
+          icon: <Calendar className="w-5 h-5 shrink-0 icon-animated" />,
+        },
+        {
+          id: 'workspace-tasks',
+          label: 'مهام Google Tasks',
+          subtitle: 'إدارة ومزامنة المهام اليومية للمخابز',
+          icon: <CheckSquare className="w-5 h-5 shrink-0 icon-animated" />,
+        },
+        {
+          id: 'workspace-forms',
+          label: 'نماذج Google Forms',
+          subtitle: 'إنشاء نماذج التفتيش التمويني وقراءة الردود',
+          icon: <FileText className="w-5 h-5 shrink-0 icon-animated" />,
         },
       ],
     },

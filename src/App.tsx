@@ -80,6 +80,7 @@ import { RightSidebar, SidebarNavId } from './components/RightSidebar';
 import { ReportsCenterView, ReportTemplateId } from './components/ReportsCenterView';
 import { HomeDashboardView } from './components/HomeDashboardView';
 import { BakeryDetailsModal } from './components/BakeryDetailsModal';
+import { GoogleWorkspaceModal } from './components/GoogleWorkspaceModal';
 import { HighDebtAlertNotification } from './types';
 import {
   downloadUpdatedAppHtml,
@@ -296,6 +297,8 @@ export default function App() {
   const [isInboxModalOpen, setIsInboxModalOpen] = useState(false);
   const [isDailyBriefingModalOpen, setIsDailyBriefingModalOpen] = useState(false);
   const [isDisplaySettingsModalOpen, setIsDisplaySettingsModalOpen] = useState(false);
+  const [isGoogleWorkspaceModalOpen, setIsGoogleWorkspaceModalOpen] = useState(false);
+  const [googleWorkspaceInitialTab, setGoogleWorkspaceInitialTab] = useState<'calendar' | 'tasks' | 'forms'>('calendar');
   const [debtsColumnGroup, setDebtsColumnGroup] = useState<'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL'>('ALL');
   const [debtsPageSize, setDebtsPageSize] = useState<number>(50);
   const [showDebtsAlertsKeyModal, setShowDebtsAlertsKeyModal] = useState<boolean>(false);
@@ -1658,6 +1661,18 @@ export default function App() {
       case 'data-export':
         handleExportBakeryCSV();
         break;
+      case 'workspace-calendar':
+        setGoogleWorkspaceInitialTab('calendar');
+        setIsGoogleWorkspaceModalOpen(true);
+        break;
+      case 'workspace-tasks':
+        setGoogleWorkspaceInitialTab('tasks');
+        setIsGoogleWorkspaceModalOpen(true);
+        break;
+      case 'workspace-forms':
+        setGoogleWorkspaceInitialTab('forms');
+        setIsGoogleWorkspaceModalOpen(true);
+        break;
 
       // Additional legacy routes
       case 'dashboard-home':
@@ -1816,6 +1831,20 @@ export default function App() {
             >
               <Settings className="w-3.5 h-3.5" />
               <span>إعدادات الحساب</span>
+            </button>
+
+            {/* Google Workspace (Calendar, Tasks, Forms) Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setGoogleWorkspaceInitialTab('calendar');
+                setIsGoogleWorkspaceModalOpen(true);
+              }}
+              className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+              title="مركز خدمات Google Workspace (Calendar • Tasks • Forms)"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Google Workspace (Calendar • Tasks • Forms)</span>
             </button>
 
             {/* Publish Button */}
@@ -4356,6 +4385,16 @@ export default function App() {
           setDebtFilterBakeryId(bakeryId);
           setActiveTab('debts');
         }}
+      />
+
+      {/* Google Workspace Integration Modal (Google Calendar, Google Tasks, Google Forms) */}
+      <GoogleWorkspaceModal
+        isOpen={isGoogleWorkspaceModalOpen}
+        onClose={() => setIsGoogleWorkspaceModalOpen(false)}
+        bakeries={appState.bakeries}
+        debts={appState.debts}
+        dailyTasks={appState.dailyTasks || []}
+        initialTab={googleWorkspaceInitialTab}
       />
     </div>
   );
