@@ -301,7 +301,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     };
   }, [enrichedDebts, bakeries.length]);
 
-  // Filtered totals for table footer
+  // Filtered totals for table footer (sums/counts for every column in the table)
   const filteredTotals = useMemo(() => {
     let sumViol = 0;
     let sumOldViol = 0;
@@ -312,9 +312,30 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     let sumPaidAdded = 0;
     let sumRemAdded = 0;
     let sumDispBags = 0;
+    let sumDispBagPrice = 0;
+    let sumDispMultiplier = 0;
     let sumDispVal = 0;
     let sumPaidDisp = 0;
     let sumNetRem = 0;
+
+    const bakeriesSet = new Set<string>();
+    const machinesSet = new Set<string>();
+    const villagesSet = new Set<string>();
+    const unitsSet = new Set<string>();
+    const entitiesSet = new Set<string>();
+    const violTypesSet = new Set<string>();
+    const violPayMethodsSet = new Set<string>();
+    const addedPayMethodsSet = new Set<string>();
+    const dispPayMethodsSet = new Set<string>();
+
+    let violDatesCount = 0;
+    let violPayDatesCount = 0;
+    let violReceiptsCount = 0;
+    let addedPayDatesCount = 0;
+    let addedReceiptsCount = 0;
+    let dispDatesCount = 0;
+    let dispPayDatesCount = 0;
+    let dispReceiptsCount = 0;
 
     filteredDebts.forEach((d) => {
       sumViol += Number(d.violationAmount) || 0;
@@ -326,9 +347,32 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       sumPaidAdded += Number(d.paidAddedAmount) || 0;
       sumRemAdded += Number(d.remainingAdded) || 0;
       sumDispBags += Number(d.disposalBags) || 0;
+      sumDispBagPrice += Number(d.disposalBagPrice) || 0;
+      sumDispMultiplier += Number(d.disposalMultiplier) || 0;
       sumDispVal += Number(d.disposalValue) || 0;
       sumPaidDisp += Number(d.paidDisposalAmount) || 0;
       sumNetRem += Number(d.netRemainingDebt) || 0;
+
+      if (d.bakeryOwnerName) bakeriesSet.add(d.bakeryOwnerName);
+      if (d.machineNumber && d.machineNumber !== '—') machinesSet.add(d.machineNumber);
+      if (d.village) villagesSet.add(d.village);
+      if (d.localUnit) unitsSet.add(d.localUnit);
+      if (d.issuingEntity && d.issuingEntity !== '-') entitiesSet.add(d.issuingEntity);
+      if (d.violationType && d.violationType !== '-') violTypesSet.add(d.violationType);
+
+      if (d.violationDate && d.violationDate !== '-') violDatesCount += 1;
+      if (d.violationPaymentDate && d.violationPaymentDate !== '-') violPayDatesCount += 1;
+      if (d.violationReceiptNumber && d.violationReceiptNumber !== '-') violReceiptsCount += 1;
+      if (d.violationPaymentMethod && d.violationPaymentMethod !== '-') violPayMethodsSet.add(d.violationPaymentMethod);
+
+      if (d.addedPaymentDate && d.addedPaymentDate !== '-') addedPayDatesCount += 1;
+      if (d.addedReceiptNumber && d.addedReceiptNumber !== '-') addedReceiptsCount += 1;
+      if (d.addedPaymentMethod && d.addedPaymentMethod !== '-') addedPayMethodsSet.add(d.addedPaymentMethod);
+
+      if (d.disposalDate && d.disposalDate !== '-') dispDatesCount += 1;
+      if (d.disposalPaymentDate && d.disposalPaymentDate !== '-') dispPayDatesCount += 1;
+      if (d.disposalReceiptNumber && d.disposalReceiptNumber !== '-') dispReceiptsCount += 1;
+      if (d.disposalPaymentMethod && d.disposalPaymentMethod !== '-') dispPayMethodsSet.add(d.disposalPaymentMethod);
     });
 
     return {
@@ -341,9 +385,28 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       sumPaidAdded,
       sumRemAdded,
       sumDispBags,
+      sumDispBagPrice,
+      sumDispMultiplier,
       sumDispVal,
       sumPaidDisp,
       sumNetRem,
+      uniqueBakeriesCount: bakeriesSet.size,
+      uniqueMachinesCount: machinesSet.size,
+      uniqueVillagesCount: villagesSet.size,
+      uniqueUnitsCount: unitsSet.size,
+      uniqueEntitiesCount: entitiesSet.size,
+      uniqueViolTypesCount: violTypesSet.size,
+      violDatesCount,
+      violPayDatesCount,
+      violReceiptsCount,
+      violPayMethodsCount: violPayMethodsSet.size,
+      addedPayDatesCount,
+      addedReceiptsCount,
+      addedPayMethodsCount: addedPayMethodsSet.size,
+      dispDatesCount,
+      dispPayDatesCount,
+      dispReceiptsCount,
+      dispPayMethodsCount: dispPayMethodsSet.size,
     };
   }, [filteredDebts]);
 
@@ -1538,18 +1601,42 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 )}
               </tbody>
 
-              {/* Mandatory TOTAL SUMMARY Footer Row (صف الإجماليات TOTAL SUMMARY) */}
+              {/* Mandatory TOTAL SUMMARY Footer Row (صف الإجماليات TOTAL SUMMARY) — Every column populated */}
               {filteredDebts.length > 0 && (
                 <tfoot className="sticky bottom-0 z-20 bg-[#051124] text-amber-300 font-black border-t-4 border-amber-500 shadow-2xl text-xs font-mono">
                   <tr className="total-summary-row">
-                    <td colSpan={5} className="py-3.5 px-3 text-right font-sans font-black border-l border-[#1E3A5F] text-amber-300 text-xs sm:text-sm">
-                      صف الإجماليات TOTAL SUMMARY ({filteredDebts.length} قيد مديونية)
+                    <td className="py-3.5 px-2 text-center border-l border-[#1E3A5F] text-amber-300 font-mono">
+                      ∑
+                    </td>
+                    <td className="py-3.5 px-3 text-right font-sans font-black border-l border-[#1E3A5F] text-amber-300 text-xs sm:text-sm">
+                      صف الإجماليات TOTAL SUMMARY ({filteredDebts.length} قيد / {filteredTotals.uniqueBakeriesCount} مخبز)
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                      {filteredTotals.uniqueMachinesCount} ماكينة
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                      {filteredTotals.uniqueVillagesCount} قرية
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                      {filteredTotals.uniqueUnitsCount} وحدة
                     </td>
                     {showViolationsCols && (
                       <>
-                        <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-300">—</td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumViol.toLocaleString()}</td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumOldViol.toLocaleString()}</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.violDatesCount} تاريخ
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.uniqueEntitiesCount} جهة
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.uniqueViolTypesCount} نوع
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">
+                          {filteredTotals.sumViol.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">
+                          {filteredTotals.sumOldViol.toLocaleString()}
+                        </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
                           {filteredTotals.sumTotalViol.toLocaleString()}
                         </td>
@@ -1557,7 +1644,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     )}
                     {showViolationPayCols && (
                       <>
-                        <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.violPayDatesCount} سداد
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.violReceiptsCount} إيصال
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.violPayMethodsCount} طريقة
+                        </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
                           {filteredTotals.sumPaidViol.toLocaleString()}
                         </td>
@@ -1568,8 +1663,18 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     )}
                     {showAddedCols && (
                       <>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumAdded.toLocaleString()}</td>
-                        <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">
+                          {filteredTotals.sumAdded.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.addedPayDatesCount} سداد
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.addedReceiptsCount} إيصال
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.addedPayMethodsCount} طريقة
+                        </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
                           {filteredTotals.sumPaidAdded.toLocaleString()}
                         </td>
@@ -1580,14 +1685,33 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     )}
                     {showDisposalCols && (
                       <>
-                        <td className="border-l border-[#1E3A5F] text-slate-300">—</td>
-                        <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-white">{filteredTotals.sumDispBags}</td>
-                        <td colSpan={2} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.dispDatesCount} تصرف
+                        </td>
+                        <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-white">
+                          {filteredTotals.sumDispBags.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.sumDispBagPrice.toLocaleString()} ج.م
+                        </td>
+                        <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.sumDispMultiplier}
+                        </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
                           {filteredTotals.sumDispVal.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumDispVal.toLocaleString()}</td>
-                        <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">
+                          {filteredTotals.sumDispVal.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.dispPayDatesCount} سداد
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.dispReceiptsCount} إيصال
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                          {filteredTotals.dispPayMethodsCount} طريقة
+                        </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
                           {filteredTotals.sumPaidDisp.toLocaleString()}
                         </td>
@@ -1596,7 +1720,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     <td className="py-2.5 px-3 border-l border-[#1E3A5F] bg-[#162F57] text-amber-300 font-black text-sm">
                       {filteredTotals.sumNetRem.toLocaleString()} ج.م
                     </td>
-                    <td className="no-print" />
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-center text-[10px] text-amber-200 no-print">
+                      100% مكتمل
+                    </td>
                   </tr>
                 </tfoot>
               )}

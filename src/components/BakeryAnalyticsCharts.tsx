@@ -28,6 +28,7 @@ import {
   Table as TableIcon
 } from 'lucide-react';
 import { downloadWindowsExeLauncher, downloadUpdatedAppHtml } from '../utils/htmlExporter';
+import { matchesVillageOrUnitFilter, calculateBakeriesColumnTotals } from '../utils/auditHelper';
 import { D3DebtAnalysisChart } from './D3DebtAnalysisChart';
 
 interface BakeryAnalyticsChartsProps {
@@ -66,23 +67,65 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
 
   // Filtered bakeries based on analytics filters
   const filteredData = useMemo(() => {
-    return bakeries.filter((b) => {
-      if (selectedVillageFilter !== 'ALL' && b.village !== selectedVillageFilter) return false;
-      if (selectedUnitFilter !== 'ALL' && b.localUnit !== selectedUnitFilter) return false;
-      return true;
-    });
-  }, [bakeries, selectedVillageFilter, selectedUnitFilter]);
+    return bakeries.filter((b) =>
+      matchesVillageOrUnitFilter(b, selectedVillageFilter, selectedUnitFilter, villages)
+    );
+  }, [bakeries, selectedVillageFilter, selectedUnitFilter, villages]);
 
   // Aggregated data by Village / Local Unit
   const barChartData = useMemo(() => {
-    const map = new Map<string, { name: string; insuranceQuota: number; actualQuota: number; loavesCount: number; totalRemainingDebt: number; bakeryCount: number }>();
+    const map = new Map<
+      string,
+      {
+        name: string;
+        insuranceValue: number;
+        insuranceQuota: number;
+        actualQuota: number;
+        loavesCount: number;
+        ben2023: number;
+        ben2024: number;
+        ben2025: number;
+        avg2023: number;
+        avg2024: number;
+        avg2025: number;
+        perCapitaAvg: number;
+        avgDiff: number;
+        totalRemainingDebt: number;
+        bakeryCount: number;
+      }
+    >();
 
     filteredData.forEach((b) => {
       const key = selectedVillageFilter === 'ALL' ? b.village : b.localUnit;
-      const current = map.get(key) || { name: key, insuranceQuota: 0, actualQuota: 0, loavesCount: 0, totalRemainingDebt: 0, bakeryCount: 0 };
-      current.insuranceQuota += b.insuranceQuota || 0;
-      current.actualQuota += b.actualQuota || 0;
-      current.loavesCount += b.loavesCount || 0;
+      const current = map.get(key) || {
+        name: key,
+        insuranceValue: 0,
+        insuranceQuota: 0,
+        actualQuota: 0,
+        loavesCount: 0,
+        ben2023: 0,
+        ben2024: 0,
+        ben2025: 0,
+        avg2023: 0,
+        avg2024: 0,
+        avg2025: 0,
+        perCapitaAvg: 0,
+        avgDiff: 0,
+        totalRemainingDebt: 0,
+        bakeryCount: 0,
+      };
+      current.insuranceValue += Number(b.insuranceValue) || 0;
+      current.insuranceQuota += Number(b.insuranceQuota) || 0;
+      current.actualQuota += Number(b.actualQuota) || 0;
+      current.loavesCount += Number(b.loavesCount) || 0;
+      current.ben2023 += Number(b.beneficiaries2023) || 0;
+      current.ben2024 += Number(b.beneficiaries2024) || 0;
+      current.ben2025 += Number(b.beneficiaries2025) || 0;
+      current.avg2023 += parseFloat(String(b.avg2023 || '0')) || 0;
+      current.avg2024 += parseFloat(String(b.avg2024 || '0')) || 0;
+      current.avg2025 += parseFloat(String(b.avg2025 || '0')) || 0;
+      current.perCapitaAvg += Number(b.perCapitaAverage) || 0;
+      current.avgDiff += parseFloat(String(b.avgDiff || '0')) || 0;
       current.totalRemainingDebt += bakeryDebtsMap[b.id] || 0;
       current.bakeryCount += 1;
       map.set(key, current);
@@ -110,7 +153,7 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
     const top = barChartData.slice(0, 6);
     const others = barChartData.slice(6);
     const result = top.map((item) => ({ name: item.name, value: item.actualQuota }));
-    
+
     if (others.length > 0) {
       const othersTotal = others.reduce((acc, curr) => acc + curr.actualQuota, 0);
       result.push({ name: 'باقي القرى والوحدات', value: othersTotal });
@@ -119,18 +162,29 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
   }, [barChartData]);
 
   // Total summary for current view
+  const colTotals = useMemo(
+    () => calculateBakeriesColumnTotals(filteredData, bakeryDebtsMap),
+    [filteredData, bakeryDebtsMap]
+  );
+
   const totals = useMemo(() => {
-    return filteredData.reduce(
-      (acc, b) => ({
-        insurance: acc.insurance + (b.insuranceQuota || 0),
-        actual: acc.actual + (b.actualQuota || 0),
-        loaves: acc.loaves + (b.loavesCount || 0),
-        debts: acc.debts + (bakeryDebtsMap[b.id] || 0),
-        count: acc.count + 1
-      }),
-      { insurance: 0, actual: 0, loaves: 0, debts: 0, count: 0 }
-    );
-  }, [filteredData, bakeryDebtsMap]);
+    return {
+      insuranceValue: colTotals.insuranceValue,
+      insurance: colTotals.insuranceQuota,
+      actual: colTotals.actualQuota,
+      loaves: colTotals.loavesCount,
+      ben2023: colTotals.beneficiaries2023,
+      ben2024: colTotals.beneficiaries2024,
+      ben2025: colTotals.beneficiaries2025,
+      avg2023: colTotals.avg2023,
+      avg2024: colTotals.avg2024,
+      avg2025: colTotals.avg2025,
+      perCapitaAvg: colTotals.perCapitaAverage,
+      avgDiff: colTotals.avgDiff,
+      debts: colTotals.remainingDebt,
+      count: colTotals.bakeryCount,
+    };
+  }, [colTotals]);
 
   return (
     <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl shadow-2xl overflow-hidden no-print mb-5">
@@ -509,9 +563,18 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
                   <tr>
                     <th className="py-2.5 px-2 border-l border-slate-800">القرية / المنطقة</th>
                     <th className="py-2.5 px-2 border-l border-slate-800">عدد المخابز</th>
-                    <th className="py-2.5 px-2 border-l border-slate-800 text-amber-400">الحصة التأمينية (شيكارة)</th>
-                    <th className="py-2.5 px-2 border-l border-slate-800 text-cyan-300">الحصة الفعلية (شيكارة)</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800 text-amber-300">المبلغ التأميني</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800 text-amber-400">الحصة التأمينية</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800 text-cyan-300">الحصة الفعلية</th>
                     <th className="py-2.5 px-2 border-l border-slate-800 text-emerald-400">الأرغفة اليومية</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800">مستفيدي 2023</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800">مستفيدي 2024</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800">مستفيدي 2025</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800 text-sky-300">متوسط 2023</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800 text-sky-300">متوسط 2024</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800 text-sky-300">متوسط 2025</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800 text-emerald-300">متوسط المخبز</th>
+                    <th className="py-2.5 px-2 border-l border-slate-800 text-amber-300">الفرق التراكمي</th>
                     <th className="py-2.5 px-2 text-rose-400">إجمالي المتبقي (ج.م)</th>
                   </tr>
                 </thead>
@@ -519,24 +582,44 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
                   {barChartData.map((row, idx) => (
                     <tr key={row.name} className={idx % 2 === 0 ? 'bg-slate-900/80 hover:bg-slate-800/80' : 'bg-slate-950 hover:bg-slate-800/80'}>
                       <td className="py-2 px-2 border-l border-slate-800 font-black text-slate-100">{row.name}</td>
-                      <td className="py-2 px-2 border-l border-slate-800">{row.bakeryCount} مخبز</td>
-                      <td className="py-2 px-2 border-l border-slate-800 font-black text-amber-300">{row.insuranceQuota.toLocaleString()}</td>
-                      <td className="py-2 px-2 border-l border-slate-800 font-black text-cyan-300">{row.actualQuota.toLocaleString()}</td>
-                      <td className="py-2 px-2 border-l border-slate-800 font-black text-emerald-300">{row.loavesCount.toLocaleString()}</td>
-                      <td className="py-2 px-2 font-black text-rose-300">
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono">{row.bakeryCount} مخبز</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-amber-200">{row.insuranceValue.toLocaleString()} ج.م</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-black text-amber-300">{row.insuranceQuota.toLocaleString()}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-black text-cyan-300">{row.actualQuota.toLocaleString()}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono font-black text-emerald-300">{row.loavesCount.toLocaleString()}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono">{row.ben2023.toLocaleString()}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono">{row.ben2024.toLocaleString()}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono">{row.ben2025.toLocaleString()}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-sky-300">{row.avg2023.toFixed(2)}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-sky-300">{row.avg2024.toFixed(2)}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-sky-300">{row.avg2025.toFixed(2)}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-emerald-300">{row.perCapitaAvg.toFixed(2)}</td>
+                      <td className="py-2 px-2 border-l border-slate-800 font-mono text-amber-300">{row.avgDiff.toFixed(2)}</td>
+                      <td className="py-2 px-2 font-mono font-black text-rose-300">
                         {row.totalRemainingDebt > 0 ? `${row.totalRemainingDebt.toLocaleString()} ج.م` : 'خالص (0)'}
                       </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="bg-black text-white font-black border-t-2 border-slate-800">
-                  <tr>
-                    <td className="py-2.5 px-2 border-l border-slate-800 text-amber-400">الإجمالي العام</td>
-                    <td className="py-2.5 px-2 border-l border-slate-800">{totals.count} مخبز</td>
-                    <td className="py-2.5 px-2 border-l border-slate-800 text-amber-300">{totals.insurance.toLocaleString()} شيكارة</td>
-                    <td className="py-2.5 px-2 border-l border-slate-800 text-cyan-300">{totals.actual.toLocaleString()} شيكارة</td>
-                    <td className="py-2.5 px-2 border-l border-slate-800 text-emerald-300">{totals.loaves.toLocaleString()} رغيف</td>
-                    <td className="py-2.5 px-2 text-rose-300">{totals.debts.toLocaleString()} ج.م</td>
+                  <tr className="total-summary-row">
+                    <td className="py-2.5 px-2 border-l border-slate-800 text-amber-400">
+                      صف الإجماليات TOTAL SUMMARY ({barChartData.length} منطقة)
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono">{totals.count} مخبز</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-amber-200">{totals.insuranceValue.toLocaleString()} ج.م</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-amber-300">{totals.insurance.toLocaleString()} شيكارة</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-cyan-300">{totals.actual.toLocaleString()} شيكارة</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-emerald-300">{totals.loaves.toLocaleString()} رغيف</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono">{totals.ben2023.toLocaleString()}</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono">{totals.ben2024.toLocaleString()}</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono">{totals.ben2025.toLocaleString()}</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-sky-300">{totals.avg2023}</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-sky-300">{totals.avg2024}</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-sky-300">{totals.avg2025}</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-emerald-300">{totals.perCapitaAvg}</td>
+                    <td className="py-2.5 px-2 border-l border-slate-800 font-mono text-amber-300">{totals.avgDiff}</td>
+                    <td className="py-2.5 px-2 font-mono text-rose-300">{totals.debts.toLocaleString()} ج.م</td>
                   </tr>
                 </tfoot>
               </table>

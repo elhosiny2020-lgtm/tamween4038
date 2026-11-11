@@ -416,15 +416,20 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                   </tbody>
                   <tfoot>
                     <tr className="bg-slate-200 font-black border-t-2 border-slate-800 total-summary-row">
-                      <td colSpan={6} className="border border-slate-400 py-2 px-2 text-right">
-                        صف الإجماليات TOTAL SUMMARY — إجمالي المديونية المجدولة على {weeksCount} أسبوع:
+                      <td className="border border-slate-400 py-2 px-1 font-mono">{weeksCount} دفعات</td>
+                      <td className="border border-slate-400 py-2 px-2 text-right">
+                        صف الإجماليات TOTAL SUMMARY ({selectedBakery.bakeryOwnerName})
                       </td>
+                      <td className="border border-slate-400 py-2 px-2 font-mono">{selectedBakery.machineNumber}</td>
+                      <td className="border border-slate-400 py-2 px-2">{selectedBakery.village}</td>
+                      <td className="border border-slate-400 py-2 px-2">{selectedBakery.localUnit}</td>
+                      <td className="border border-slate-400 py-2 px-2 font-mono">{weeksCount} أسبوع</td>
                       <td className="border border-slate-400 py-2 px-2 num-enlarged text-red-900 text-sm">
                         {currentTotalDebt.toLocaleString()} ج.م
                       </td>
-                      <td colSpan={3} className="border border-slate-400 py-2 px-2 text-slate-600 text-[11px]">
-                        يسدد المخبز بانتظام كل أسبوع في الموعد المحدد
-                      </td>
+                      <td className="border border-slate-400 py-2 px-2 font-mono text-emerald-900">0 ج.م بعد السداد</td>
+                      <td className="border border-slate-400 py-2 px-2 text-slate-700 text-[11px]">{weeksCount} إيصال</td>
+                      <td className="border border-slate-400 py-2 px-2 text-slate-700 text-[11px]">معتمد</td>
                     </tr>
                   </tfoot>
                 </table>

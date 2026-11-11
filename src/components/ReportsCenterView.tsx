@@ -2,8 +2,11 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Bakery, DebtRecord, VillageHierarchy, SystemConfig, AppUser } from '../types';
 import {
   calculateAnnualWeightedAveragesReport,
+  calculateBakeriesColumnTotals,
   extractBreadLoafMultiplier,
   formatDateDDMMYYYY,
+  matchesVillageOrUnitFilter,
+  normalizeArabicText,
 } from '../utils/auditHelper';
 import { exportElementToPdf, printHtmlElementA4 } from '../utils/pdfHelper';
 import {
@@ -647,6 +650,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
 
   // Filter States
   const [filterVillage, setFilterVillage] = useState<string>('ALL');
+  const [filterLocalUnit, setFilterLocalUnit] = useState<string>('ALL');
   const [filterBreadType, setFilterBreadType] = useState<string>('ALL');
   const [filterBakeryId, setFilterBakeryId] = useState<string>('ALL');
   const [filterMultiplier, setFilterMultiplier] = useState<'ALL' | '660' | '725'>('ALL');
@@ -698,6 +702,36 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     return map;
   }, [debts]);
 
+  const availableUnitsForReport = useMemo(() => {
+    const units = new Set<string>();
+    if (filterVillage === 'ALL') {
+      villages.forEach((v) => v.localUnits.forEach((u) => units.add(u)));
+      bakeries.forEach((b) => {
+        if (b.localUnit) units.add(b.localUnit);
+      });
+    } else {
+      const targetNorm = normalizeArabicText(filterVillage);
+      villages.forEach((v) => {
+        if (
+          normalizeArabicText(v.village) === targetNorm ||
+          v.localUnits.some((u) => normalizeArabicText(u) === targetNorm)
+        ) {
+          v.localUnits.forEach((u) => units.add(u));
+        }
+      });
+      bakeries.forEach((b) => {
+        if (
+          b.localUnit &&
+          (normalizeArabicText(b.village) === targetNorm ||
+            normalizeArabicText(b.localUnit) === targetNorm)
+        ) {
+          units.add(b.localUnit);
+        }
+      });
+    }
+    return Array.from(units);
+  }, [villages, bakeries, filterVillage]);
+
   // Filtered bakeries for the active report
   const filteredBakeries = useMemo(() => {
     return bakeries.filter((b) => {
@@ -707,7 +741,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
       if (filterBakeryId !== 'ALL' && b.id !== filterBakeryId) {
         return false;
       }
-      if (filterVillage !== 'ALL' && b.village !== filterVillage) {
+      if (!matchesVillageOrUnitFilter(b, filterVillage, filterLocalUnit, villages)) {
         return false;
       }
       if (filterBreadType !== 'ALL' && b.breadType !== filterBreadType) {
@@ -743,6 +777,8 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     selectedReportId,
     filterBakeryId,
     filterVillage,
+    filterLocalUnit,
+    villages,
     filterBreadType,
     filterMultiplier,
     searchQuery,
@@ -755,46 +791,32 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     [filteredBakeries]
   );
 
+  // Column-by-column totals for footer row
+  const colTotals = useMemo(
+    () => calculateBakeriesColumnTotals(filteredBakeries, bakeryDebtMap),
+    [filteredBakeries, bakeryDebtMap]
+  );
+
   // Totals for footer row
   const totals = useMemo(() => {
-    let sumInsVal = 0;
-    let sumInsQuota = 0;
-    let sumActualQuota = 0;
-    let sumLoaves = 0;
-    let sumPop = 0;
-    let sumBen23 = 0;
-    let sumBen24 = 0;
-    let sumBen25 = 0;
-    let sumDebt = 0;
-
-    filteredBakeries.forEach((b) => {
-      sumInsVal += Number(b.insuranceValue) || 0;
-      sumInsQuota += Number(b.insuranceQuota) || 0;
-      sumActualQuota += Number(b.actualQuota) || 0;
-      sumLoaves += Number(b.loavesCount) || 0;
-      sumPop += Number(b.villagePopulation) || 0;
-      sumBen23 += Number(b.beneficiaries2023) || 0;
-      sumBen24 += Number(b.beneficiaries2024) || 0;
-      sumBen25 += Number(b.beneficiaries2025) || 0;
-      sumDebt += bakeryDebtMap[b.id] || 0;
-    });
-
     return {
-      sumInsVal,
-      sumInsQuota,
-      sumActualQuota,
-      sumLoaves,
-      sumPop,
-      sumBen23,
-      sumBen24,
-      sumBen25,
-      sumDebt,
-      avg2023: annualReport.weightedGeneralAvg2023,
-      avg2024: annualReport.weightedGeneralAvg2024,
-      avg2025: annualReport.weightedGeneralAvg2025,
-      cumDiff: annualReport.cumulativeWeightedDiff2025vs2023,
+      sumInsVal: colTotals.insuranceValue,
+      sumInsQuota: colTotals.insuranceQuota,
+      sumActualQuota: colTotals.actualQuota,
+      sumLoaves: colTotals.loavesCount,
+      sumPop: colTotals.villagePopulation,
+      sumBen23: colTotals.beneficiaries2023,
+      sumBen24: colTotals.beneficiaries2024,
+      sumBen25: colTotals.beneficiaries2025,
+      sumDebt: colTotals.remainingDebt,
+      avg2023: colTotals.avg2023,
+      avg2024: colTotals.avg2024,
+      avg2025: colTotals.avg2025,
+      perCapitaAvg: colTotals.perCapitaAverage,
+      cumDiff: colTotals.avgDiff,
+      weightedAvg2025: annualReport.weightedGeneralAvg2025,
     };
-  }, [filteredBakeries, bakeryDebtMap, annualReport]);
+  }, [colTotals, annualReport]);
 
   const activeColumnsMeta = useMemo(() => {
     const mandatoryKeys = ['index', 'bakeryOwnerName', 'machineNumber', 'village', 'localUnit'];
@@ -1010,6 +1032,26 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     if (idx === 0) return '∑';
     if (key === 'bakeryOwnerName') return `صف الإجماليات TOTAL SUMMARY (${filteredBakeries.length} مخبز)`;
     switch (key) {
+      case 'machineNumber':
+        return `${colTotals.bakeryCount} ماكينة`;
+      case 'village':
+        return colTotals.uniqueVillagesLabel;
+      case 'localUnit':
+        return colTotals.uniqueUnitsLabel;
+      case 'activityStatus':
+        return colTotals.activitySummaryLabel;
+      case 'bakeryCategory':
+        return colTotals.bakeryCategorySummaryLabel;
+      case 'breadType':
+        return colTotals.breadTypeSummaryLabel;
+      case 'flourBagPrice':
+        return `${safeFormatNum(colTotals.flourBagPriceSum, 0)} ج.م`;
+      case 'breadTypeCount':
+        return safeFormatNum(colTotals.breadTypeCountSum, 0);
+      case 'lineType':
+        return colTotals.lineTypeSummaryLabel;
+      case 'fuelType':
+        return colTotals.fuelTypeSummaryLabel;
       case 'insuranceValue':
         return safeFormatNum(totals.sumInsVal, 0);
       case 'insuranceQuota':
@@ -1031,14 +1073,19 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
       case 'beneficiaries2025':
         return safeFormatNum(totals.sumBen25, 0);
       case 'avg2025':
-      case 'perCapitaAverage':
         return safeFormatNum(totals.avg2025, 2);
+      case 'perCapitaAverage':
+        return safeFormatNum(totals.perCapitaAvg, 2);
       case 'avgDiff':
         return safeFormatNum(totals.cumDiff, 2);
       case 'remainingDebt':
         return safeFormatNum(totals.sumDebt, 0);
+      case 'phone':
+        return `${colTotals.validPhonesCount} رقم مسجل`;
+      case 'bakeryLicenseDate':
+        return `${colTotals.validLicenseCount} رخصة`;
       default:
-        return '—';
+        return `${colTotals.bakeryCount} سجل`;
     }
   };
 
@@ -1263,13 +1310,33 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
             <label className="block text-[11px] font-bold text-slate-600 mb-1">المنطقة / القرية</label>
             <select
               value={filterVillage}
-              onChange={(e) => setFilterVillage(e.target.value)}
+              onChange={(e) => {
+                setFilterVillage(e.target.value);
+                setFilterLocalUnit('ALL');
+              }}
               className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-bold text-slate-800"
             >
               <option value="ALL">كافة القرى ({villages.length})</option>
               {villages.map((v) => (
                 <option key={v.village} value={v.village}>
-                  {v.village}
+                  قرية {v.village}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Local Unit Filter */}
+          <div>
+            <label className="block text-[11px] font-bold text-slate-600 mb-1">الوحدة المحلية التابعة</label>
+            <select
+              value={filterLocalUnit}
+              onChange={(e) => setFilterLocalUnit(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-bold text-slate-800"
+            >
+              <option value="ALL">كافة الوحدات المحلية ({availableUnitsForReport.length})</option>
+              {availableUnitsForReport.map((u) => (
+                <option key={u} value={u}>
+                  {u}
                 </option>
               ))}
             </select>
@@ -1632,19 +1699,23 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
               </tbody>
               {filteredBakeries.length > 0 && (
                 <tfoot>
-                  <tr className="bg-[#DBEAFE] text-[#0F2342] font-black border-t-2 border-[#0F2342]">
+                  <tr className="bg-[#0F2342] text-amber-300 font-black border-t-2 border-amber-500 total-summary-row">
                     {activeColumnsMeta.map((col, idx) => (
                       <td
                         key={col.key}
                         dir={col.key === 'avgDiff' ? 'ltr' : undefined}
-                        className={`py-2.5 px-2 border border-blue-300 font-black ${
+                        className={`py-2.5 px-2 border border-[#1E3A8A] font-black ${
                           col.align === 'right' ? 'text-right' : 'text-center'
                         } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
                       >
                         {renderFooterCell(col.key, idx)}
                       </td>
                     ))}
-                    {onSelectBakeryDetails && <td className="border border-blue-300 no-print" />}
+                    {onSelectBakeryDetails && (
+                      <td className="py-2.5 px-2 border border-[#1E3A8A] text-center font-mono text-[10px] text-amber-200 no-print">
+                        100% مكتمل
+                      </td>
+                    )}
                   </tr>
                 </tfoot>
               )}

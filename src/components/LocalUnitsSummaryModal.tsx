@@ -102,6 +102,10 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
       totalBen2023: number;
       totalBen2024: number;
       totalBen2025: number;
+      sumAvg2023: number;
+      sumAvg2024: number;
+      sumAvg2025: number;
+      sumAvgDiff: number;
       totalDebts: number;
     }>();
 
@@ -120,6 +124,10 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
           totalBen2023: 0,
           totalBen2024: 0,
           totalBen2025: 0,
+          sumAvg2023: 0,
+          sumAvg2024: 0,
+          sumAvg2025: 0,
+          sumAvgDiff: 0,
           totalDebts: 0,
         });
       });
@@ -140,6 +148,10 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
         totalBen2023: 0,
         totalBen2024: 0,
         totalBen2025: 0,
+        sumAvg2023: 0,
+        sumAvg2024: 0,
+        sumAvg2025: 0,
+        sumAvgDiff: 0,
         totalDebts: 0,
       };
 
@@ -148,10 +160,14 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
       existing.totalInsuranceQuota += Number(b.insuranceQuota) || 0;
       existing.totalActualQuota += Number(b.actualQuota) || 0;
       existing.totalLoaves += Number(b.loavesCount) || 0;
-      existing.totalPopulation = Math.max(existing.totalPopulation, Number(b.villagePopulation) || 0);
+      existing.totalPopulation += Number(b.villagePopulation) || 0;
       existing.totalBen2023 += Number(b.beneficiaries2023) || 0;
       existing.totalBen2024 += Number(b.beneficiaries2024) || 0;
       existing.totalBen2025 += Number(b.beneficiaries2025) || 0;
+      existing.sumAvg2023 += parseFloat(String(b.avg2023 || '0')) || 0;
+      existing.sumAvg2024 += parseFloat(String(b.avg2024 || '0')) || 0;
+      existing.sumAvg2025 += parseFloat(String(b.avg2025 || '0')) || 0;
+      existing.sumAvgDiff += parseFloat(String(b.avgDiff || '0')) || 0;
 
       // Debt calculation
       const bDebt = debtsMap[b.id] || 0;
@@ -162,21 +178,17 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
 
     const totalBakeriesCount = bakeries.length || 1;
 
-    // Convert map to array with calculated weighted averages
+    // Convert map to array with summed averages
     const rows: LocalUnitSummaryRow[] = Array.from(unitsMap.values()).map((item) => {
       const avgDebt = item.bakeryCount > 0 ? item.totalDebts / item.bakeryCount : 0;
       const pct = (item.bakeryCount / totalBakeriesCount) * 100;
-      const a2023 = item.totalBen2023 > 0 ? (item.totalLoaves / item.totalBen2023).toFixed(2) : '0.00';
-      const a2024 = item.totalBen2024 > 0 ? (item.totalLoaves / item.totalBen2024).toFixed(2) : '0.00';
-      const a2025 = item.totalBen2025 > 0 ? (item.totalLoaves / item.totalBen2025).toFixed(2) : '0.00';
-      const diff = (Number(a2023) - Number(a2024) - Number(a2025)).toFixed(2);
 
       return {
         ...item,
-        avg2023: a2023,
-        avg2024: a2024,
-        avg2025: a2025,
-        avgDiff: diff,
+        avg2023: item.sumAvg2023.toFixed(2),
+        avg2024: item.sumAvg2024.toFixed(2),
+        avg2025: item.sumAvg2025.toFixed(2),
+        avgDiff: item.sumAvgDiff.toFixed(2),
         avgDebtPerBakery: Math.round(avgDebt),
         percentageOfBakeries: Number(pct.toFixed(1)),
       };
@@ -201,8 +213,8 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
         return true;
       })
       .sort((a, b) => {
-        let valA = a[sortField];
-        let valB = b[sortField];
+        const valA = a[sortField];
+        const valB = b[sortField];
         if (typeof valA === 'string' && typeof valB === 'string') {
           return sortAsc ? valA.localeCompare(valB, 'ar') : valB.localeCompare(valA, 'ar');
         }
@@ -212,9 +224,11 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
 
   // Overall Totals
   const totals = useMemo(() => {
+    const villagesSet = new Set<string>();
     const res = filteredAndSortedRows.reduce(
       (acc, r) => {
         acc.unitCount += 1;
+        if (r.village) villagesSet.add(r.village);
         acc.bakeries += r.bakeryCount;
         acc.insuranceValue += r.totalInsuranceValue;
         acc.insuranceQuota += r.totalInsuranceQuota;
@@ -224,7 +238,13 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
         acc.ben2023 += r.totalBen2023;
         acc.ben2024 += r.totalBen2024;
         acc.ben2025 += r.totalBen2025;
+        acc.avg2023Sum += parseFloat(r.avg2023) || 0;
+        acc.avg2024Sum += parseFloat(r.avg2024) || 0;
+        acc.avg2025Sum += parseFloat(r.avg2025) || 0;
+        acc.avgDiffSum += parseFloat(r.avgDiff) || 0;
         acc.debts += r.totalDebts;
+        acc.avgDebtSum += r.avgDebtPerBakery || 0;
+        if (r.totalDebts > 0) acc.indebtedUnits += 1;
         return acc;
       },
       {
@@ -238,21 +258,23 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
         ben2023: 0,
         ben2024: 0,
         ben2025: 0,
+        avg2023Sum: 0,
+        avg2024Sum: 0,
+        avg2025Sum: 0,
+        avgDiffSum: 0,
         debts: 0,
+        avgDebtSum: 0,
+        indebtedUnits: 0,
       }
     );
 
-    const avg23 = res.ben2023 > 0 ? (res.loaves / res.ben2023).toFixed(2) : '0.00';
-    const avg24 = res.ben2024 > 0 ? (res.loaves / res.ben2024).toFixed(2) : '0.00';
-    const avg25 = res.ben2025 > 0 ? (res.loaves / res.ben2025).toFixed(2) : '0.00';
-    const diff = (Number(avg23) - Number(avg24) - Number(avg25)).toFixed(2);
-
     return {
       ...res,
-      avg2023: avg23,
-      avg2024: avg24,
-      avg2025: avg25,
-      avgDiff: diff,
+      uniqueVillages: villagesSet.size,
+      avg2023: res.avg2023Sum.toFixed(2),
+      avg2024: res.avg2024Sum.toFixed(2),
+      avg2025: res.avg2025Sum.toFixed(2),
+      avgDiff: res.avgDiffSum.toFixed(2),
     };
   }, [filteredAndSortedRows]);
 
@@ -549,13 +571,20 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
                     <ArrowUpDown className="w-3 h-3 text-rose-400" />
                   </div>
                 </th>
+                <th
+                  onClick={() => handleSort('avgDebtPerBakery')}
+                  className="py-2.5 px-2.5 border-l border-slate-800 cursor-pointer hover:bg-slate-800 transition select-none min-w-[100px]"
+                >
+                  <span>متوسط مديونية المخبز</span>
+                </th>
+                <th className="py-2.5 px-2.5 border-l border-slate-800 min-w-[100px]">حالة السداد</th>
                 <th className="py-2.5 px-2 min-w-[80px] no-print">إجراء</th>
               </tr>
             </thead>
             <tbody>
               {filteredAndSortedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={18} className="py-8 text-center text-slate-400 font-bold bg-slate-900/30">
+                  <td colSpan={20} className="py-8 text-center text-slate-400 font-bold bg-slate-900/30">
                     لا توجد وحدات محلية مطابقة لمعايير البحث الحالية
                   </td>
                 </tr>
@@ -700,11 +729,17 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
             {/* Table Footer with Overall Totals */}
             <tfoot>
               <tr className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-t-2 border-indigo-500/50 text-white font-black text-xs total-summary-row">
-                <td colSpan={3} className="py-3 px-3 text-right border-l border-slate-700">
+                <td className="py-3 px-2 text-center border-l border-slate-700 font-mono text-amber-300">
+                  ∑
+                </td>
+                <td className="py-3 px-3 text-right border-l border-slate-700">
                   <div className="flex items-center gap-2">
                     <span className="text-amber-300 font-mono font-black text-sm">صف الإجماليات TOTAL SUMMARY:</span>
-                    <span className="text-slate-300 text-[11px]">({totals.unitCount} وحدة محلية مجمعة)</span>
+                    <span className="text-slate-300 text-[11px]">({totals.unitCount} وحدة محلية)</span>
                   </div>
+                </td>
+                <td className="py-3 px-3 text-right border-l border-slate-700 font-mono text-amber-200">
+                  {totals.uniqueVillages} قرية
                 </td>
                 <td className="py-3 px-2 border-l border-slate-700 font-mono text-amber-300 text-sm">
                   {totals.bakeries} مخبز
@@ -748,8 +783,14 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
                 <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-rose-300 text-sm bg-red-950/60">
                   {totals.debts.toLocaleString()} ج.م
                 </td>
-                <td className="py-3 px-2 text-slate-400 text-[10px] no-print">
-                  مركز المحلة
+                <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-amber-200 text-xs">
+                  {totals.avgDebtSum.toLocaleString()} ج.م
+                </td>
+                <td className="py-3 px-2.5 border-l border-slate-700 font-mono text-amber-200 text-[10px]">
+                  {totals.indebtedUnits} مستحق / {totals.unitCount - totals.indebtedUnits} خالص
+                </td>
+                <td className="py-3 px-2 text-amber-200 font-mono text-[10px] no-print">
+                  100% مكتمل
                 </td>
               </tr>
             </tfoot>

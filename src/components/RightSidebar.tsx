@@ -348,7 +348,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           type="button"
           onClick={() => setIsCollapsed((prev) => !prev)}
           title={isCollapsed ? 'توسيع القائمة الجانبية' : 'تصغير القائمة الجانبية'}
-          className="p-2.5 rounded-2xl bg-white/10 hover:bg-[#2563EB] text-white transition-all duration-200 cursor-pointer mx-auto sm:mx-0 border border-white/15 hover:border-blue-300/60 shadow-sm"
+          className="p-2.5 rounded-2xl bg-[#162F57] hover:bg-[#1E40AF] text-amber-300 hover:text-amber-200 transition-all duration-200 cursor-pointer mx-auto sm:mx-0 border border-blue-400/30 hover:border-amber-400/70 shadow-sm"
         >
           {isCollapsed ? (
             <PanelRightOpen className="w-5 h-5" />
@@ -360,12 +360,12 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
       {/* Active Section Quick Indicator when expanded */}
       {!isCollapsed && (
-        <div className="px-4 py-3 bg-[#09172E] border-b border-white/12 flex items-center justify-between text-xs">
+        <div className="px-4 py-3 bg-[#09172E] border-b border-blue-800/50 flex items-center justify-between text-xs">
           <span className="text-blue-200 font-extrabold flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-amber-400" />
             <span>الشاشة النشطة:</span>
           </span>
-          <span className="text-white font-black truncate max-w-[195px] bg-gradient-to-r from-[#1E40AF] to-[#2563EB] px-3 py-1 rounded-xl border border-blue-300/40 shadow-xs">
+          <span className="text-amber-300 font-black truncate max-w-[195px] bg-gradient-to-r from-[#1E40AF] to-[#2563EB] px-3 py-1 rounded-xl border border-amber-400/40 shadow-xs">
             {activeItemLabel}
           </span>
         </div>
@@ -382,8 +382,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
               key={group.id}
               className={`rounded-2xl transition-all duration-200 overflow-hidden ${
                 isGroupActive
-                  ? 'bg-[#12284C]/95 border-2 border-blue-400/45 shadow-lg'
-                  : 'bg-white/[0.04] border border-white/10 hover:bg-white/[0.07]'
+                  ? 'bg-[#12284C]/95 border-2 border-amber-400/60 shadow-lg'
+                  : 'bg-[#0C1D3A]/90 border border-blue-900/70 hover:bg-[#142D59] hover:border-amber-400/50'
               }`}
             >
               {/* Group Header Button (Enlarged) */}
@@ -393,29 +393,29 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                 title={group.title}
                 className={`w-full flex items-center justify-between px-4 py-3.5 text-right transition-all duration-200 cursor-pointer group ${
                   isGroupActive
-                    ? 'bg-gradient-to-l from-[#173464] to-[#102548] text-white font-black'
-                    : 'text-white font-extrabold hover:bg-white/10'
+                    ? 'bg-gradient-to-l from-[#173464] to-[#102548] text-amber-300 font-black'
+                    : 'text-white font-extrabold hover:bg-[#1E3A8A] hover:text-amber-300'
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <span
-                    className={`p-2.5 rounded-xl bg-gradient-to-br ${group.accentColor} text-white shadow-md shrink-0 border border-white/20`}
+                    className={`p-2.5 rounded-xl bg-gradient-to-br ${group.accentColor} text-white shadow-md shrink-0 border border-blue-300/30`}
                   >
                     {group.icon}
                   </span>
                   {!isCollapsed && (
                     <div className="min-w-0 text-right">
-                      <div className="text-[14.5px] font-black text-white truncate tracking-tight">
+                      <div className="text-[14.5px] font-black text-white group-hover:text-amber-300 truncate tracking-tight transition-colors">
                         {group.title}
                       </div>
-                      <div className="text-[11px] font-bold text-blue-200/80 truncate mt-0.5">
+                      <div className="text-[11px] font-bold text-blue-200/80 group-hover:text-amber-200/90 truncate mt-0.5 transition-colors">
                         {group.subtitle}
                       </div>
                     </div>
                   )}
                 </div>
                 {!isCollapsed && (
-                  <span className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-white/90 shrink-0 group-hover:bg-white/20 transition-colors">
+                  <span className="w-7 h-7 rounded-lg bg-[#162F57] flex items-center justify-center text-amber-300 shrink-0 group-hover:bg-amber-400 group-hover:text-[#09152B] transition-colors">
                     {isOpen ? (
                       <ChevronDown className="w-4 h-4 transition-transform duration-200" />
                     ) : (
@@ -427,7 +427,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
               {/* Group Sub-Items — Enlarged ERP Action Buttons */}
               {isOpen && !isCollapsed && (
-                <div className="p-2.5 space-y-2 border-t border-white/10 bg-[#08142A]/55">
+                <div className="p-2.5 space-y-2 border-t border-blue-900/60 bg-[#08142A]/80">
                   {group.items.map((item) => {
                     const isItemActive = activeNavId === item.id;
                     return (
@@ -443,8 +443,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                         }
                         className={`sidebar-btn-erp w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl text-right cursor-pointer group ${
                           isItemActive
-                            ? 'bg-gradient-to-l from-[#1D4ED8] via-[#2563EB] to-[#1E40AF] text-white font-black shadow-[0_6px_18px_rgba(37,99,235,0.45)] border-2 border-amber-300/80'
-                            : 'text-white bg-white/[0.05] hover:bg-gradient-to-l hover:from-[#1E3A8A]/90 hover:to-[#172554]/90 hover:shadow-[0_4px_14px_rgba(30,64,175,0.35)] border border-white/10 hover:border-blue-300/45'
+                            ? 'bg-gradient-to-l from-[#1D4ED8] via-[#2563EB] to-[#1E40AF] text-amber-300 font-black shadow-[0_6px_18px_rgba(37,99,235,0.45)] border-2 border-amber-300/80'
+                            : 'text-white bg-[#102344] hover:bg-gradient-to-l hover:from-[#1E3A8A] hover:to-[#1D4ED8] hover:text-amber-300 hover:shadow-[0_4px_14px_rgba(30,64,175,0.45)] border border-blue-900/70 hover:border-amber-400/70'
                         }`}
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -452,19 +452,19 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                             className={`p-2 rounded-xl shrink-0 transition-all duration-200 ${
                               isItemActive
                                 ? 'bg-amber-400 text-[#09152B] shadow-sm'
-                                : 'bg-white/10 text-blue-100 group-hover:bg-blue-500 group-hover:text-white'
+                                : 'bg-[#162F57] text-amber-300 group-hover:bg-amber-400 group-hover:text-[#09152B]'
                             }`}
                           >
                             {item.icon}
                           </span>
                           <div className="min-w-0 text-right">
-                            <div className="text-[14px] font-black text-white truncate leading-snug">
+                            <div className="text-[14px] font-black text-white group-hover:text-amber-300 truncate leading-snug transition-colors">
                               {item.label}
                             </div>
                             {item.subtitle && (
                               <div
-                                className={`text-[10.5px] font-bold truncate mt-0.5 ${
-                                  isItemActive ? 'text-amber-200' : 'text-blue-200/75 group-hover:text-blue-100'
+                                className={`text-[10.5px] font-bold truncate mt-0.5 transition-colors ${
+                                  isItemActive ? 'text-amber-200' : 'text-blue-200/75 group-hover:text-amber-100'
                                 }`}
                               >
                                 {item.subtitle}
@@ -475,7 +475,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
                         {item.badge !== undefined ? (
                           <span
-                            className={`px-2.5 py-1 text-[11.5px] font-black rounded-xl shrink-0 font-mono text-white shadow-sm border border-white/20 ${
+                            className={`px-2.5 py-1 text-[11.5px] font-black rounded-xl shrink-0 font-mono text-white shadow-sm border border-amber-300/30 ${
                               item.badgeColor === 'red'
                                 ? 'bg-red-600'
                                 : item.badgeColor === 'amber'
@@ -492,7 +492,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                             className={`w-4 h-4 shrink-0 transition-transform duration-200 ${
                               isItemActive
                                 ? 'text-amber-300 -translate-x-0.5'
-                                : 'text-white/40 group-hover:text-white group-hover:-translate-x-1'
+                                : 'text-blue-300/60 group-hover:text-amber-300 group-hover:-translate-x-1'
                             }`}
                           />
                         )}
@@ -504,7 +504,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
               {/* Collapsed Icon-Only Sub-Items */}
               {isCollapsed && (
-                <div className="p-1.5 space-y-1.5 border-t border-white/10 bg-[#08142A]/55 flex flex-col items-center">
+                <div className="p-1.5 space-y-1.5 border-t border-blue-900/60 bg-[#08142A]/80 flex flex-col items-center">
                   {group.items.map((item) => {
                     const isItemActive = activeNavId === item.id;
                     return (
@@ -522,7 +522,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                         className={`p-2.5 rounded-xl transition-all cursor-pointer relative ${
                           isItemActive
                             ? 'bg-[#2563EB] text-amber-300 border border-amber-300/70 shadow-md'
-                            : 'text-white/80 hover:bg-white/15 hover:text-white'
+                            : 'text-blue-100 bg-[#102344] hover:bg-[#1E3A8A] hover:text-amber-300 border border-blue-900/50 hover:border-amber-400/60'
                         }`}
                       >
                         {item.icon}

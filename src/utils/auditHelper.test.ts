@@ -339,5 +339,43 @@ test('calculatePerBakeryAverage computes totalLoaves / beneficiaries2025', () =>
   assert.equal(calculatePerBakeryAverage(13200, 0), '0.00');
 });
 
+import {
+  calculateBakeriesColumnTotals,
+  matchesVillageOrUnitFilter,
+} from './auditHelper';
 
+test('calculateBakeriesColumnTotals sums all beneficiaries, all averages, and all column cells accurately for villages and local units', () => {
+  const bishbishBakeries = [
+    INITIAL_BAKERIES[0],
+    {
+      ...INITIAL_BAKERIES[0],
+      id: 'b-101-b',
+      bakeryOwnerName: 'مخبز لومانة التجريبي',
+      localUnit: 'لومانة',
+      village: 'بشبيش',
+    },
+  ];
 
+  // Filter by village بشبيش -> matches both بشبيش الرئيسية and لومانة
+  const matchedVillage = bishbishBakeries.filter((b) =>
+    matchesVillageOrUnitFilter(b, 'بشبيش', 'ALL', DEFAULT_VILLAGES_HIERARCHY)
+  );
+  assert.equal(matchedVillage.length, 2);
+
+  // Filter by specific unit لومانة -> matches 1 bakery
+  const matchedUnit = bishbishBakeries.filter((b) =>
+    matchesVillageOrUnitFilter(b, 'بشبيش', 'لومانة', DEFAULT_VILLAGES_HIERARCHY)
+  );
+  assert.equal(matchedUnit.length, 1);
+
+  const totals = calculateBakeriesColumnTotals(matchedVillage, { 'b-101': 5000, 'b-101-b': 3000 });
+  assert.equal(totals.bakeryCount, 2);
+  assert.equal(totals.remainingDebt, 8000);
+  assert.equal(totals.beneficiaries2023, 34200 * 2);
+  assert.equal(totals.beneficiaries2024, 35800 * 2);
+  assert.equal(totals.beneficiaries2025, 37400 * 2);
+  assert.equal(totals.avg2023, (0.46 * 2).toFixed(2));
+  assert.equal(totals.avg2024, (0.44 * 2).toFixed(2));
+  assert.equal(totals.avg2025, (0.42 * 2).toFixed(2));
+  assert.equal(totals.perCapitaAverage, (0.42 * 2).toFixed(2));
+});

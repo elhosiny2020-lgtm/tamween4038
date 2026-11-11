@@ -1,7 +1,11 @@
 import React, { useMemo } from 'react';
 import { Bakery, DebtRecord, VillageHierarchy } from '../types';
 import { SidebarNavId } from './RightSidebar';
-import { calculateAnnualWeightedAveragesReport, extractBreadLoafMultiplier } from '../utils/auditHelper';
+import {
+  calculateAnnualWeightedAveragesReport,
+  calculateBakeriesColumnTotals,
+  extractBreadLoafMultiplier,
+} from '../utils/auditHelper';
 import {
   BarChart,
   Bar,
@@ -101,6 +105,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
   }, [bakeries, debts]);
 
   const annualReport = useMemo(() => calculateAnnualWeightedAveragesReport(bakeries), [bakeries]);
+  const colTotals = useMemo(() => calculateBakeriesColumnTotals(bakeries), [bakeries]);
 
   // 3-Year comparison data by Village (top 8 villages)
   const villageComparisonData = useMemo(() => {
@@ -359,38 +364,50 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
               </tbody>
               <tfoot className="bg-[#0F2342] text-white sticky bottom-0 z-10 font-black">
                 <tr className="total-summary-row">
-                  <td colSpan={5} className="py-2.5 px-3 text-right text-amber-300 border-l border-slate-700">
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-300">∑</td>
+                  <td className="py-2.5 px-3 text-right text-amber-300 border-l border-slate-700">
                     صف الإجماليات TOTAL SUMMARY ({bakeries.length} مخبز)
                   </td>
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
-                    {stats.totalInsuranceValue.toLocaleString()}
+                    {colTotals.bakeryCount} ماكينة
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
+                    {colTotals.uniqueVillagesLabel}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
+                    {colTotals.uniqueUnitsLabel}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
+                    {colTotals.insuranceValue.toLocaleString()}
                   </td>
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-300">
-                    {stats.totalInsuranceQuota.toLocaleString()}
+                    {colTotals.insuranceQuota.toLocaleString()}
                   </td>
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-300">
-                    {stats.totalActualQuota.toLocaleString()}
+                    {colTotals.actualQuota.toLocaleString()}
                   </td>
-                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-slate-300">-</td>
-                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-emerald-300">
-                    {stats.totalLoaves.toLocaleString()}
-                  </td>
-                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
-                    {annualReport.weightedGeneralAvg2023}
-                  </td>
-                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
-                    {annualReport.weightedGeneralAvg2024}
-                  </td>
-                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
-                    {annualReport.weightedGeneralAvg2025}
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
+                    {colTotals.breadTypeCountSum.toLocaleString()}
                   </td>
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-emerald-300">
-                    {stats.overallPerCapita}
+                    {colTotals.loavesCount.toLocaleString()}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
+                    {colTotals.avg2023}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
+                    {colTotals.avg2024}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
+                    {colTotals.avg2025}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-emerald-300">
+                    {colTotals.perCapitaAverage}
                   </td>
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-300">
-                    {annualReport.cumulativeWeightedDiff2025vs2023}
+                    {colTotals.avgDiff}
                   </td>
-                  <td className="py-2.5 px-2">-</td>
+                  <td className="py-2.5 px-2 font-mono text-[10px] text-amber-200">100% مكتمل</td>
                 </tr>
               </tfoot>
             </table>

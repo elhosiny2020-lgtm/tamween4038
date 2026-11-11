@@ -47,6 +47,9 @@ import {
   synchronizeBakeryAndDebts,
   recalculateAllDatabaseEquations,
   calculateAnnualWeightedAveragesReport,
+  calculateBakeriesColumnTotals,
+  matchesVillageOrUnitFilter,
+  normalizeArabicText,
 } from './utils/auditHelper';
 import { testFirestoreConnection } from './lib/firebase';
 import { getExpirationAlerts } from './components/AlertsModal';
@@ -652,15 +655,59 @@ export default function App() {
       .sort((a, b) => b.totalDebt - a.totalDebt);
   }, [appState, bakeryRemainingDebtsMap]);
 
-  // Dynamic units for selected village filter (all units or village-specific)
+  // Dynamic villages filter (all hierarchy villages + any custom villages present in bakeries)
+  const availableVillagesFilter = useMemo(() => {
+    if (!appState) return [];
+    const seenNorm = new Set<string>();
+    const list: string[] = [];
+    appState.villages.forEach((v) => {
+      const norm = normalizeArabicText(v.village);
+      if (v.village && !seenNorm.has(norm)) {
+        seenNorm.add(norm);
+        list.push(v.village);
+      }
+    });
+    appState.bakeries.forEach((b) => {
+      const vName = (b.village || '').trim();
+      const norm = normalizeArabicText(vName);
+      if (vName && !seenNorm.has(norm)) {
+        seenNorm.add(norm);
+        list.push(vName);
+      }
+    });
+    return list;
+  }, [appState]);
+
+  // Dynamic units for selected village filter (all units or village-specific, including any custom units on bakeries)
   const availableUnitsFilter = useMemo(() => {
     if (!appState) return [];
-    if (selectedVillage !== 'ALL') {
-      const v = appState.villages.find((x) => x.village === selectedVillage);
-      return v ? v.localUnits : [];
-    }
     const set = new Set<string>();
-    appState.villages.forEach((v) => v.localUnits.forEach((u) => set.add(u)));
+    if (selectedVillage !== 'ALL') {
+      const targetNorm = normalizeArabicText(selectedVillage);
+      const v = appState.villages.find((x) => normalizeArabicText(x.village) === targetNorm);
+      if (v) {
+        v.localUnits.forEach((u) => {
+          if (u && u.trim()) set.add(u.trim());
+        });
+      }
+      appState.bakeries.forEach((b) => {
+        if (
+          normalizeArabicText(b.village) === targetNorm ||
+          (v && v.localUnits.some((u) => normalizeArabicText(u) === normalizeArabicText(b.localUnit)))
+        ) {
+          if (b.localUnit && b.localUnit.trim()) set.add(b.localUnit.trim());
+        }
+      });
+      return Array.from(set);
+    }
+    appState.villages.forEach((v) =>
+      v.localUnits.forEach((u) => {
+        if (u && u.trim()) set.add(u.trim());
+      })
+    );
+    appState.bakeries.forEach((b) => {
+      if (b.localUnit && b.localUnit.trim()) set.add(b.localUnit.trim());
+    });
     return Array.from(set);
   }, [appState, selectedVillage]);
 
@@ -730,8 +777,9 @@ export default function App() {
     if (!appState) return [];
 
     return appState.bakeries.filter((b) => {
-      if (selectedVillage !== 'ALL' && b.village !== selectedVillage) return false;
-      if (selectedUnit !== 'ALL' && b.localUnit !== selectedUnit) return false;
+      if (!matchesVillageOrUnitFilter(b, selectedVillage, selectedUnit, appState.villages)) {
+        return false;
+      }
       if (selectedActivity !== 'ALL' && b.activityStatus !== selectedActivity) return false;
 
       // Filter by Bakery Category (تصنيف المخبز)
@@ -881,162 +929,68 @@ export default function App() {
     return list;
   }, [filteredBakeries, sortField, sortDirection, bakeryRemainingDebtsMap]);
 
-  // In-table Hierarchical Grouping Engine (Village & Local Unit Totals)
+  // In-table Hierarchical Grouping Engine (Village & Local Unit Totals — sums all columns accurately)
   const hierarchicalGroups = useMemo(() => {
     const list = sortedBakeries;
     if (!list || list.length === 0) return [];
 
-    const map = new Map<string, Map<string, Bakery[]>>();
+    // Group by Mother Village (القرية) -> Local Unit (الوحدة المحلية التابعة)
+    const villageMap = new Map<string, { displayName: string; unitsMap: Map<string, { displayName: string; bakeries: Bakery[] }> }>();
 
     list.forEach((b) => {
-      const u = b.localUnit || 'غير محدد';
-      const v = b.village || 'غير محدد';
-      if (!map.has(u)) {
-        map.set(u, new Map<string, Bakery[]>());
+      const vRaw = (b.village || 'غير محدد').trim();
+      const uRaw = (b.localUnit || 'غير محدد').trim();
+      const vKey = normalizeArabicText(vRaw) || 'غير محدد';
+      const uKey = normalizeArabicText(uRaw) || 'غير محدد';
+
+      if (!villageMap.has(vKey)) {
+        villageMap.set(vKey, {
+          displayName: vRaw,
+          unitsMap: new Map(),
+        });
       }
-      const vMap = map.get(u)!;
-      if (!vMap.has(v)) {
-        vMap.set(v, []);
+      const vEntry = villageMap.get(vKey)!;
+      if (!vEntry.unitsMap.has(uKey)) {
+        vEntry.unitsMap.set(uKey, {
+          displayName: uRaw,
+          bakeries: [],
+        });
       }
-      vMap.get(v)!.push(b);
+      vEntry.unitsMap.get(uKey)!.bakeries.push(b);
     });
 
-    const result: {
+    type SubUnitGroupItem = ReturnType<typeof calculateBakeriesColumnTotals> & {
       localUnit: string;
-      villages: {
-        localUnit: string;
-        village: string;
-        bakeries: Bakery[];
-        bakeryCount: number;
-        insuranceValue: number;
-        insuranceQuota: number;
-        actualQuota: number;
-        loavesCount: number;
-        villagePopulation: number;
-        beneficiaries2023: number;
-        beneficiaries2024: number;
-        beneficiaries2025: number;
-        avg2023: string;
-        avg2024: string;
-        avg2025: string;
-        perCapitaAverage: string;
-        avgDiff: string;
-        remainingDebt: number;
-      }[];
-      bakeryCount: number;
-      insuranceValue: number;
-      insuranceQuota: number;
-      actualQuota: number;
-      loavesCount: number;
-      villagePopulation: number;
-      beneficiaries2023: number;
-      beneficiaries2024: number;
-      beneficiaries2025: number;
-      avg2023: string;
-      avg2024: string;
-      avg2025: string;
-      perCapitaAverage: string;
-      avgDiff: string;
-      remainingDebt: number;
-    }[] = [];
+      village: string;
+      bakeries: Bakery[];
+    };
+    type VillageGroupItem = ReturnType<typeof calculateBakeriesColumnTotals> & {
+      localUnit: string;
+      villages: SubUnitGroupItem[];
+    };
 
-    map.forEach((vMap, uName) => {
-      const villageGroups: any[] = [];
-      let unitBakeryCount = 0;
-      let unitInsVal = 0;
-      let unitInsQuota = 0;
-      let unitActQuota = 0;
-      let unitLoaves = 0;
-      let unitPop = 0;
-      let unitBen2023 = 0;
-      let unitBen2024 = 0;
-      let unitBen2025 = 0;
-      let unitDebt = 0;
+    const result: VillageGroupItem[] = [];
 
-      vMap.forEach((bList, vName) => {
-        let vInsVal = 0;
-        let vInsQuota = 0;
-        let vActQuota = 0;
-        let vLoaves = 0;
-        let vPop = 0;
-        let vBen2023 = 0;
-        let vBen2024 = 0;
-        let vBen2025 = 0;
-        let vDebt = 0;
+    villageMap.forEach((vEntry) => {
+      const unitSubGroups: SubUnitGroupItem[] = [];
+      const allVillageBakeries: Bakery[] = [];
 
-        bList.forEach((b) => {
-          vInsVal += Number(b.insuranceValue) || 0;
-          vInsQuota += Number(b.insuranceQuota) || 0;
-          vActQuota += Number(b.actualQuota) || 0;
-          vLoaves += Number(b.loavesCount) || 0;
-          vPop = Math.max(vPop, Number(b.villagePopulation) || 0);
-          vBen2023 += Number(b.beneficiaries2023) || 0;
-          vBen2024 += Number(b.beneficiaries2024) || 0;
-          vBen2025 += Number(b.beneficiaries2025) || 0;
-          vDebt += bakeryRemainingDebtsMap[b.id] || 0;
+      vEntry.unitsMap.forEach((uEntry) => {
+        const uTotals = calculateBakeriesColumnTotals(uEntry.bakeries, bakeryRemainingDebtsMap);
+        allVillageBakeries.push(...uEntry.bakeries);
+        unitSubGroups.push({
+          ...uTotals,
+          localUnit: uEntry.displayName,
+          village: vEntry.displayName,
+          bakeries: uEntry.bakeries,
         });
-
-        const vAvg2023 = vBen2023 > 0 ? (vLoaves / vBen2023).toFixed(2) : '0.00';
-        const vAvg2024 = vBen2024 > 0 ? (vLoaves / vBen2024).toFixed(2) : '0.00';
-        const vAvg2025 = vBen2025 > 0 ? (vLoaves / vBen2025).toFixed(2) : '0.00';
-        const vAvgDiff = (Number(vAvg2023) - Number(vAvg2024) - Number(vAvg2025)).toFixed(2);
-
-        villageGroups.push({
-          localUnit: uName,
-          village: vName,
-          bakeries: bList,
-          bakeryCount: bList.length,
-          insuranceValue: vInsVal,
-          insuranceQuota: vInsQuota,
-          actualQuota: vActQuota,
-          loavesCount: vLoaves,
-          villagePopulation: vPop,
-          beneficiaries2023: vBen2023,
-          beneficiaries2024: vBen2024,
-          beneficiaries2025: vBen2025,
-          avg2023: vAvg2023,
-          avg2024: vAvg2024,
-          avg2025: vAvg2025,
-          perCapitaAverage: vAvg2025,
-          avgDiff: vAvgDiff,
-          remainingDebt: vDebt,
-        });
-
-        unitBakeryCount += bList.length;
-        unitInsVal += vInsVal;
-        unitInsQuota += vInsQuota;
-        unitActQuota += vActQuota;
-        unitLoaves += vLoaves;
-        unitPop += vPop;
-        unitBen2023 += vBen2023;
-        unitBen2024 += vBen2024;
-        unitBen2025 += vBen2025;
-        unitDebt += vDebt;
       });
 
-      const uAvg2023 = unitBen2023 > 0 ? (unitLoaves / unitBen2023).toFixed(2) : '0.00';
-      const uAvg2024 = unitBen2024 > 0 ? (unitLoaves / unitBen2024).toFixed(2) : '0.00';
-      const uAvg2025 = unitBen2025 > 0 ? (unitLoaves / unitBen2025).toFixed(2) : '0.00';
-      const uAvgDiff = (Number(uAvg2023) - Number(uAvg2024) - Number(uAvg2025)).toFixed(2);
-
+      const vTotals = calculateBakeriesColumnTotals(allVillageBakeries, bakeryRemainingDebtsMap);
       result.push({
-        localUnit: uName,
-        villages: villageGroups,
-        bakeryCount: unitBakeryCount,
-        insuranceValue: unitInsVal,
-        insuranceQuota: unitInsQuota,
-        actualQuota: unitActQuota,
-        loavesCount: unitLoaves,
-        villagePopulation: unitPop,
-        beneficiaries2023: unitBen2023,
-        beneficiaries2024: unitBen2024,
-        beneficiaries2025: unitBen2025,
-        avg2023: uAvg2023,
-        avg2024: uAvg2024,
-        avg2025: uAvg2025,
-        perCapitaAverage: uAvg2025,
-        avgDiff: uAvgDiff,
-        remainingDebt: unitDebt,
+        ...vTotals,
+        localUnit: vEntry.displayName,
+        villages: unitSubGroups,
       });
     });
 
@@ -1938,14 +1892,14 @@ export default function App() {
             </nav>
 
             {/* Primary View Mode Segmented Switcher */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200/80">
+            <div className="flex items-center gap-1 bg-[#E2E8F0] p-1 rounded-lg border border-slate-300">
               <button
                 type="button"
                 onClick={() => handleSelectSidebarNav('dashboard-home', 'لوحة التحكم', 'الصفحة الرئيسية')}
                 className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'dashboard'
-                    ? 'bg-[#0F2342] text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
+                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
                 }`}
               >
                 <LayoutDashboard className="w-3.5 h-3.5" />
@@ -1956,8 +1910,8 @@ export default function App() {
                 onClick={() => handleSelectSidebarNav('bakeries-all', 'إدارة المخابز', 'قاعدة بيانات المخابز')}
                 className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'bakeries'
-                    ? 'bg-[#0F2342] text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
+                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
                 }`}
               >
                 <Store className="w-3.5 h-3.5" />
@@ -1968,8 +1922,8 @@ export default function App() {
                 onClick={() => handleSelectSidebarNav('debts-records', 'إدارة المخابز', 'سجل مديونيات المخابز')}
                 className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'debts'
-                    ? 'bg-[#0F2342] text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
+                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
                 }`}
               >
                 <Scale className="w-3.5 h-3.5" />
@@ -1980,8 +1934,8 @@ export default function App() {
                 onClick={() => handleSelectSidebarNav('reports-center', 'مركز التقارير والطباعة', 'شاشة التقارير والطباعة المتقدمة')}
                 className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'reports'
-                    ? 'bg-[#0F2342] text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
+                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
                 }`}
               >
                 <Printer className="w-3.5 h-3.5" />
@@ -2420,10 +2374,10 @@ export default function App() {
                           }}
                           className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800 focus:ring-1 focus:ring-[#1E40AF] cursor-pointer"
                         >
-                          <option value="ALL">كافة القرى ({appState.villages.length})</option>
-                          {appState.villages.map((v) => (
-                            <option key={v.village} value={v.village}>
-                              {v.village}
+                          <option value="ALL">كافة القرى ({availableVillagesFilter.length})</option>
+                          {availableVillagesFilter.map((vName) => (
+                            <option key={vName} value={vName}>
+                              {vName}
                             </option>
                           ))}
                         </select>
@@ -2455,12 +2409,21 @@ export default function App() {
                         <select
                           value={selectedUnit}
                           onChange={(e) => {
-                            setSelectedUnit(e.target.value);
+                            const val = e.target.value;
+                            setSelectedUnit(val);
+                            if (val !== 'ALL' && selectedVillage !== 'ALL') {
+                              const parentV = appState.villages.find((v) =>
+                                v.localUnits.some((u) => normalizeArabicText(u) === normalizeArabicText(val))
+                              );
+                              if (parentV && normalizeArabicText(parentV.village) !== normalizeArabicText(selectedVillage)) {
+                                setSelectedVillage(parentV.village);
+                              }
+                            }
                             setCurrentPage(1);
                           }}
                           className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800 focus:ring-1 focus:ring-[#1E40AF] cursor-pointer"
                         >
-                          <option value="ALL">كافة الوحدات</option>
+                          <option value="ALL">كافة الوحدات ({availableUnitsFilter.length})</option>
                           {availableUnitsFilter.map((u) => (
                             <option key={u} value={u}>
                               {u}
@@ -3208,101 +3171,103 @@ export default function App() {
                             );
                           };
 
-                          // Helper to render Village Total Row
+                          // Helper to render Local Unit Subtotal Row (إجمالي الوحدة المحلية التابعة)
                           const renderVillageTotalRow = (vGroup: any) => (
                             <tr
-                              key={`vtotal-${vGroup.localUnit}-${vGroup.village}`}
-                              className="bg-[#EBF5FF] text-[#0284C7] font-black border-t-2 border-b-2 border-sky-300/80 shadow-xs text-xs"
+                              key={`vtotal-${vGroup.village}-${vGroup.localUnit}`}
+                              className="village-total-row bg-[#DBEAFE] text-[#0F2342] font-black border-t-2 border-b-2 border-sky-400 shadow-xs text-xs"
                             >
-                              <td className="py-2.5 px-2 border-l border-sky-200 text-[#0284C7] font-extrabold">∑</td>
+                              <td className="py-2.5 px-2 border-l border-sky-300 text-[#0369A1] font-extrabold">∑</td>
                               {showBasicCols && (
                                 <>
-                                  <td className="py-2.5 px-2.5 border-l border-sky-200 text-right font-black text-[#0369A1]">
-                                    إجمالي قرية {vGroup.village}
+                                  <td className="py-2.5 px-2.5 border-l border-sky-300 text-right font-black text-[#0F2342]">
+                                    إجمالي وحدة محلية ({vGroup.localUnit}) — قرية {vGroup.village}
                                   </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged text-[#0284C7]">
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged text-[#1E3A8A]">
                                     {vGroup.bakeryCount} مخبز
                                   </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">{vGroup.village}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">{vGroup.localUnit}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 font-bold">{vGroup.village}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 font-bold">{vGroup.localUnit}</td>
                                 </>
                               )}
                               {showDebtCol && (
-                                <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-rose-700">
+                                <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged font-black text-rose-700">
                                   {vGroup.remainingDebt > 0 ? `${vGroup.remainingDebt.toLocaleString()} ج.م` : 'خالص (0)'}
                                 </td>
                               )}
                               {showQuotaCols && (
                                 <>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.insuranceValue?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-[#0F2342] bg-sky-200/50">
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{vGroup.insuranceValue?.toLocaleString()} ج.م</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged font-black text-[#0F2342] bg-sky-200/60">
                                     {vGroup.insuranceQuota?.toLocaleString()}
                                   </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.actualQuota?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-[#0F2342] bg-sky-200/50">
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{vGroup.actualQuota?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged font-black text-[#0F2342] bg-sky-200/60">
                                     {vGroup.loavesCount?.toLocaleString()}
                                   </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-emerald-800 bg-sky-200/50">
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged font-black text-emerald-800 bg-sky-200/60">
                                     {vGroup.perCapitaAverage}
                                   </td>
                                 </>
                               )}
                               {showDemographicsCols && (
                                 <>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.villagePopulation?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.beneficiaries2023?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.beneficiaries2024?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged">{vGroup.beneficiaries2025?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged bg-sky-200/50 text-[#1E3A8A]">{vGroup.avg2023}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged bg-sky-200/50 text-[#1E3A8A]">{vGroup.avg2024}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged bg-sky-200/50 text-[#1E3A8A]">{vGroup.avg2025}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200 num-enlarged font-black text-amber-900 bg-sky-200/70">{vGroup.avgDiff}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{vGroup.villagePopulation?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{vGroup.beneficiaries2023?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{vGroup.beneficiaries2024?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{vGroup.beneficiaries2025?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{vGroup.avg2023}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{vGroup.avg2024}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{vGroup.avg2025}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged font-black text-amber-900 bg-sky-200/80">{vGroup.avgDiff}</td>
                                 </>
                               )}
                               {showOperationsCols && (
                                 <>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-bold">{vGroup.activitySummaryLabel}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px]">{vGroup.bakeryCategorySummaryLabel}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px]">{vGroup.breadTypeSummaryLabel}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{vGroup.flourBagPriceSum?.toLocaleString()} ج.م</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{vGroup.breadTypeCountSum?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px]">{vGroup.lineTypeSummaryLabel}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px]">{vGroup.fuelTypeSummaryLabel}</td>
                                 </>
                               )}
                               {showContactLicenseCols && (
                                 <>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-200">—</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validPhonesCount} رقم</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validNatIdsCount} هوية</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validCommRegCount} سجل</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validLicenseCount} رخصة</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validLeaseCount} عقد</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validTaxCardCount} بطاقة</td>
                                 </>
                               )}
-                              <td className="py-2.5 px-2 no-print">—</td>
+                              <td className="py-2.5 px-2 no-print font-mono text-[10px]">إجمالي الوحدة</td>
                             </tr>
                           );
 
-                          // Helper to render Local Unit Total Row
+                          // Helper to render Mother Village Total Row (إجمالي القرية شاملاً كافة وحداتها المحلية)
                           const renderLocalUnitTotalRow = (uGroup: any) => (
                             <tr
                               key={`utotal-${uGroup.localUnit}`}
-                              className="bg-[#0F2342] text-amber-300 font-extrabold border-t-2 border-b-2 border-amber-500/80 shadow-md text-xs"
+                              className="local-unit-total-row bg-[#0F2342] text-amber-300 font-extrabold border-t-2 border-b-2 border-amber-500/80 shadow-md text-xs"
                             >
                               <td className="py-3 px-2 border-l border-[#1E3A5F] text-amber-400 font-black">∑∑</td>
                               {showBasicCols && (
                                 <>
                                   <td className="py-3 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300">
-                                    إجمالي وحدة محلية {uGroup.localUnit}
+                                    إجمالي قرية {uGroup.localUnit} (شامل {uGroup.villages.length} وحدة محلية)
                                   </td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
                                     {uGroup.bakeryCount} مخبز
                                   </td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-slate-300">
-                                    {uGroup.villages.length} قرية
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-amber-200">
+                                    قرية {uGroup.localUnit}
                                   </td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-slate-300">{uGroup.localUnit}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-amber-200">
+                                    {uGroup.villages.length} وحدة تابعة
+                                  </td>
                                 </>
                               )}
                               {showDebtCol && (
@@ -3312,11 +3277,11 @@ export default function App() {
                               )}
                               {showQuotaCols && (
                                 <>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.insuranceValue?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">{uGroup.insuranceValue?.toLocaleString()} ج.م</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#162F57]">
                                     {uGroup.insuranceQuota?.toLocaleString()}
                                   </td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.actualQuota?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">{uGroup.actualQuota?.toLocaleString()}</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#162F57]">
                                     {uGroup.loavesCount?.toLocaleString()}
                                   </td>
@@ -3327,10 +3292,10 @@ export default function App() {
                               )}
                               {showDemographicsCols && (
                                 <>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.villagePopulation?.toLocaleString()}</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.beneficiaries2023?.toLocaleString()}</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.beneficiaries2024?.toLocaleString()}</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{uGroup.beneficiaries2025?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">{uGroup.villagePopulation?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">{uGroup.beneficiaries2023?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">{uGroup.beneficiaries2024?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">{uGroup.beneficiaries2025?.toLocaleString()}</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#162F57] text-sky-200">{uGroup.avg2023}</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#162F57] text-sky-200">{uGroup.avg2024}</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#162F57] text-sky-200">{uGroup.avg2025}</td>
@@ -3339,133 +3304,28 @@ export default function App() {
                               )}
                               {showOperationsCols && (
                                 <>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px]">{uGroup.activitySummaryLabel}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px]">{uGroup.bakeryCategorySummaryLabel}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px]">{uGroup.breadTypeSummaryLabel}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged">{uGroup.flourBagPriceSum?.toLocaleString()} ج.م</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] num-enlarged">{uGroup.breadTypeCountSum?.toLocaleString()}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px]">{uGroup.lineTypeSummaryLabel}</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px]">{uGroup.fuelTypeSummaryLabel}</td>
                                 </>
                               )}
                               {showContactLicenseCols && (
                                 <>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validPhonesCount} رقم</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validNatIdsCount} هوية</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validCommRegCount} سجل</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validLicenseCount} رخصة</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validLeaseCount} عقد</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validTaxCardCount} بطاقة</td>
                                 </>
                               )}
-                              <td className="py-3 px-2 no-print">—</td>
+                              <td className="py-3 px-2 no-print font-mono text-[10px]">إجمالي القرية</td>
                             </tr>
                           );
-
-                          // Helper to render Grand Total Row ("الإجمالي")
-                          const renderGrandTotalRow = () => {
-                            let gInsVal = 0;
-                            let gInsQuota = 0;
-                            let gActQuota = 0;
-                            let gLoaves = 0;
-                            let gPop = 0;
-                            let gBen2023 = 0;
-                            let gBen2024 = 0;
-                            let gBen2025 = 0;
-                            let gDebt = 0;
-
-                            sortedBakeries.forEach((b) => {
-                              gInsVal += Number(b.insuranceValue) || 0;
-                              gInsQuota += Number(b.insuranceQuota) || 0;
-                              gActQuota += Number(b.actualQuota) || 0;
-                              gLoaves += Number(b.loavesCount) || 0;
-                              gPop += Number(b.villagePopulation) || 0;
-                              gBen2023 += Number(b.beneficiaries2023) || 0;
-                              gBen2024 += Number(b.beneficiaries2024) || 0;
-                              gBen2025 += Number(b.beneficiaries2025) || 0;
-                              gDebt += bakeryRemainingDebtsMap[b.id] || 0;
-                            });
-
-                            const gAvg2023 = gBen2023 > 0 ? (gLoaves / gBen2023).toFixed(2) : '0.00';
-                            const gAvg2024 = gBen2024 > 0 ? (gLoaves / gBen2024).toFixed(2) : '0.00';
-                            const gAvg2025 = gBen2025 > 0 ? (gLoaves / gBen2025).toFixed(2) : '0.00';
-                            const gAvgDiff = (Number(gAvg2023) - Number(gAvg2024) - Number(gAvg2025)).toFixed(2);
-
-                            return (
-                              <tr
-                                key="grand-total-row"
-                                className="bg-[#051124] text-amber-300 font-extrabold border-t-4 border-amber-500 shadow-xl text-xs"
-                              >
-                                <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-400 font-black text-sm">🏛️</td>
-                                {showBasicCols && (
-                                  <>
-                                    <td className="py-3.5 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300 text-sm">
-                                      الإجمالي العام (الإجمالي)
-                                    </td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
-                                      {sortedBakeries.length} مخبز
-                                    </td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-slate-300">مركز المحلة</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-slate-300">جميع الوحدات</td>
-                                  </>
-                                )}
-                                {showDebtCol && (
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-rose-300 text-sm">
-                                    {gDebt > 0 ? `${gDebt.toLocaleString()} ج.م` : 'خالص (0)'}
-                                  </td>
-                                )}
-                                {showQuotaCols && (
-                                  <>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gInsVal.toLocaleString()} ج.م</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
-                                      {gInsQuota.toLocaleString()}
-                                    </td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gActQuota.toLocaleString()}</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
-                                      {gLoaves.toLocaleString()}
-                                    </td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-emerald-300 bg-[#0F2342]">
-                                      {gAvg2025}
-                                    </td>
-                                  </>
-                                )}
-                                {showDemographicsCols && (
-                                  <>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gPop.toLocaleString()}</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2023.toLocaleString()}</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2024.toLocaleString()}</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2025.toLocaleString()}</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2023}</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2024}</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2025}</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-400 bg-[#162F57]">{gAvgDiff}</td>
-                                  </>
-                                )}
-                                {showOperationsCols && (
-                                  <>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  </>
-                                )}
-                                {showContactLicenseCols && (
-                                  <>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                    <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  </>
-                                )}
-                                <td className="py-3.5 px-2 no-print">—</td>
-                              </tr>
-                            );
-                          };
 
                           if (groupingViewMode === 'HIERARCHICAL') {
                             const elements: React.ReactNode[] = [];
@@ -3492,36 +3352,11 @@ export default function App() {
                       )}
                     </tbody>
 
-                    {/* Dedicated Sticky Summary Footer ("صف الإجماليات TOTAL SUMMARY") */}
+                    {/* Dedicated Sticky Summary Footer ("صف الإجماليات TOTAL SUMMARY") — Sums ALL Columns Across All Villages & Local Units */}
                     {sortedBakeries.length > 0 && (
                       <tfoot className="sticky bottom-0 z-20 bg-[#051124] text-amber-300 font-extrabold border-t-4 border-amber-500 shadow-xl text-xs">
                         {(() => {
-                          let gInsVal = 0;
-                          let gInsQuota = 0;
-                          let gActQuota = 0;
-                          let gLoaves = 0;
-                          let gPop = 0;
-                          let gBen2023 = 0;
-                          let gBen2024 = 0;
-                          let gBen2025 = 0;
-                          let gDebt = 0;
-
-                          sortedBakeries.forEach((b) => {
-                            gInsVal += Number(b.insuranceValue) || 0;
-                            gInsQuota += Number(b.insuranceQuota) || 0;
-                            gActQuota += Number(b.actualQuota) || 0;
-                            gLoaves += Number(b.loavesCount) || 0;
-                            gPop += Number(b.villagePopulation) || 0;
-                            gBen2023 += Number(b.beneficiaries2023) || 0;
-                            gBen2024 += Number(b.beneficiaries2024) || 0;
-                            gBen2025 += Number(b.beneficiaries2025) || 0;
-                            gDebt += bakeryRemainingDebtsMap[b.id] || 0;
-                          });
-
-                          const gAvg2023 = gBen2023 > 0 ? (gLoaves / gBen2023).toFixed(2) : '0.00';
-                          const gAvg2024 = gBen2024 > 0 ? (gLoaves / gBen2024).toFixed(2) : '0.00';
-                          const gAvg2025 = gBen2025 > 0 ? (gLoaves / gBen2025).toFixed(2) : '0.00';
-                          const gAvgDiff = (Number(gAvg2023) - Number(gAvg2024) - Number(gAvg2025)).toFixed(2);
+                          const grandTotals = calculateBakeriesColumnTotals(sortedBakeries, bakeryRemainingDebtsMap);
 
                           return (
                             <tr className="total-summary-row">
@@ -3529,69 +3364,123 @@ export default function App() {
                               {showBasicCols && (
                                 <>
                                   <td className="py-3.5 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300 text-xs sm:text-sm">
-                                    صف الإجماليات TOTAL SUMMARY
+                                    صف الإجماليات TOTAL SUMMARY ({grandTotals.bakeryCount} مخبز)
                                   </td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
-                                    {sortedBakeries.length} مخبز
+                                    {grandTotals.bakeryCount} ماكينة / مخبز
                                   </td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-slate-300">مركز المحلة</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-slate-300">جميع الوحدات</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                                    {grandTotals.uniqueVillagesLabel}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                                    {grandTotals.uniqueUnitsLabel}
+                                  </td>
                                 </>
                               )}
                               {showDebtCol && (
                                 <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-rose-300 text-sm">
-                                  {gDebt > 0 ? `${gDebt.toLocaleString()} ج.م` : 'خالص (0)'}
+                                  {grandTotals.remainingDebt > 0
+                                    ? `${grandTotals.remainingDebt.toLocaleString()} ج.م`
+                                    : 'خالص (0 ج.م)'}
                                 </td>
                               )}
                               {showQuotaCols && (
                                 <>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gInsVal.toLocaleString()} ج.م</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
-                                    {gInsQuota.toLocaleString()}
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                    {grandTotals.insuranceValue.toLocaleString()} ج.م
                                   </td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gActQuota.toLocaleString()}</td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
-                                    {gLoaves.toLocaleString()}
+                                    {grandTotals.insuranceQuota.toLocaleString()} شيكارة
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                    {grandTotals.actualQuota.toLocaleString()} شيكارة
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-300 bg-[#0F2342]">
+                                    {grandTotals.loavesCount.toLocaleString()} رغيف
                                   </td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-emerald-300 bg-[#0F2342]">
-                                    {gAvg2025}
+                                    {grandTotals.perCapitaAverage}
                                   </td>
                                 </>
                               )}
                               {showDemographicsCols && (
                                 <>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gPop.toLocaleString()}</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2023.toLocaleString()}</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2024.toLocaleString()}</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-white">{gBen2025.toLocaleString()}</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2023}</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2024}</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">{gAvg2025}</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-400 bg-[#162F57]">{gAvgDiff}</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                    {grandTotals.villagePopulation.toLocaleString()}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                    {grandTotals.beneficiaries2023.toLocaleString()}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                    {grandTotals.beneficiaries2024.toLocaleString()}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
+                                    {grandTotals.beneficiaries2025.toLocaleString()}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">
+                                    {grandTotals.avg2023}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">
+                                    {grandTotals.avg2024}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged bg-[#0F2342] text-sky-200">
+                                    {grandTotals.avg2025}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged font-black text-amber-400 bg-[#162F57]">
+                                    {grandTotals.avgDiff}
+                                  </td>
                                 </>
                               )}
                               {showOperationsCols && (
                                 <>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-bold">
+                                    {grandTotals.activitySummaryLabel}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px]">
+                                    {grandTotals.bakeryCategorySummaryLabel}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px]">
+                                    {grandTotals.breadTypeSummaryLabel}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged">
+                                    {grandTotals.flourBagPriceSum.toLocaleString()} ج.م
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged">
+                                    {grandTotals.breadTypeCountSum.toLocaleString()}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px]">
+                                    {grandTotals.lineTypeSummaryLabel}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px]">
+                                    {grandTotals.fuelTypeSummaryLabel}
+                                  </td>
                                 </>
                               )}
                               {showContactLicenseCols && (
                                 <>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
-                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F]">—</td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    {grandTotals.validPhonesCount} رقم مسجل
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    {grandTotals.validNatIdsCount} رقم قومي
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    {grandTotals.validCommRegCount} سجل مسجل
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    {grandTotals.validLicenseCount} رخصة مسجلة
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    {grandTotals.validLeaseCount} عقد مسجل
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    {grandTotals.validTaxCardCount} بطاقة مسجلة
+                                  </td>
                                 </>
                               )}
-                              <td className="py-3.5 px-2 no-print">—</td>
+                              <td className="py-3.5 px-2 no-print font-mono text-[11px]">
+                                إجمالي ({grandTotals.bakeryCount})
+                              </td>
                             </tr>
                           );
                         })()}

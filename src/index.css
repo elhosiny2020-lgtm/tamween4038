@@ -94,42 +94,118 @@ button:hover .icon-spin-hover {
 
 /* Enterprise ERP Total Summary Row */
 tr.total-summary-row,
-tfoot tr.total-summary-row {
+tfoot tr.total-summary-row,
+tr.total-summary-row:hover,
+tfoot tr.total-summary-row:hover {
   background: linear-gradient(90deg, #09152B 0%, #0F2342 50%, #16325B 100%) !important;
-  color: #ffffff !important;
+  color: #fde68a !important;
   font-weight: 900 !important;
   border-top: 3px solid #f59e0b !important;
   box-shadow: 0 -4px 16px rgba(9, 21, 43, 0.22) !important;
 }
 
 tr.total-summary-row td,
-tfoot tr.total-summary-row td {
-  color: #ffffff !important;
+tfoot tr.total-summary-row td,
+tr.total-summary-row:hover td,
+tfoot tr.total-summary-row:hover td {
+  color: #fde68a !important;
   font-weight: 900 !important;
 }
 
-/* Professional Navy row highlight for Matte White tables */
+/* Subtotal rows for Local Units and Villages */
+tr.local-unit-total-row,
+tr.local-unit-total-row:hover {
+  background: linear-gradient(90deg, #0F2342 0%, #1E3A8A 100%) !important;
+  color: #fde68a !important;
+  font-weight: 900 !important;
+}
+
+tr.local-unit-total-row td,
+tr.local-unit-total-row:hover td {
+  background-color: transparent !important;
+  color: #fde68a !important;
+}
+
+tr.village-total-row,
+tr.village-total-row:hover {
+  background: linear-gradient(90deg, #bae6fd 0%, #dbeafe 100%) !important;
+  color: #0f2342 !important;
+  font-weight: 900 !important;
+}
+
+tr.village-total-row td,
+tr.village-total-row:hover td {
+  background-color: transparent !important;
+  color: #0f2342 !important;
+}
+
+/* Professional Navy/Royal-Blue row highlight for selected and hovered rows (Never White) */
 tr.row-selected {
-  background-color: #dbeafe !important;
-  box-shadow: inset 0 0 0 1.5px #1e40af !important;
+  background-color: #bfdbfe !important;
+  box-shadow: inset 0 0 0 2px #1e3a8a !important;
   font-weight: 800 !important;
 }
 
 tr.row-selected td {
+  background-color: #bfdbfe !important;
+  color: #0f2342 !important;
+  border-top-color: #60a5fa !important;
+  border-bottom-color: #60a5fa !important;
+}
+
+/* Smooth Table Row Hover — Rich Royal Blue / Navy Highlight instead of White */
+tbody tr {
+  transition: background-color 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
+}
+
+tbody tr:not(.total-summary-row):not(.local-unit-total-row):not(.village-total-row):hover {
+  background-color: #bfdbfe !important;
+  box-shadow: inset 0 0 0 1.5px #1e40af !important;
+}
+
+tbody tr:not(.total-summary-row):not(.local-unit-total-row):not(.village-total-row):hover td {
+  background-color: #bfdbfe !important;
+  color: #0f2342 !important;
+}
+
+/* Dark-themed modal tables row hover */
+.bg-slate-950 tbody tr:not(.total-summary-row):hover,
+.bg-slate-900 tbody tr:not(.total-summary-row):hover {
+  background-color: #1e3a8a !important;
+}
+
+.bg-slate-950 tbody tr:not(.total-summary-row):hover td,
+.bg-slate-900 tbody tr:not(.total-summary-row):hover td {
+  background-color: #1e3a8a !important;
+  color: #fde68a !important;
+}
+
+/* Buttons & Menus Hover — Replace white/light hover with Navy & Gold */
+button:not(.gsi-material-button):hover {
+  border-color: #1e3a8a;
+}
+
+button.bg-white:not(.gsi-material-button):hover,
+button.bg-slate-50:not(.gsi-material-button):hover,
+button.bg-slate-100:not(.gsi-material-button):hover {
+  background-color: #0f2342 !important;
+  color: #fde68a !important;
+  border-color: #f59e0b !important;
+}
+
+button.bg-white:not(.gsi-material-button):hover svg,
+button.bg-slate-50:not(.gsi-material-button):hover svg,
+button.bg-slate-100:not(.gsi-material-button):hover svg {
+  color: #fde68a !important;
+}
+
+select:hover,
+select:focus {
   background-color: #dbeafe !important;
   color: #0f2342 !important;
-  border-top-color: #93c5fd !important;
-  border-bottom-color: #93c5fd !important;
+  border-color: #1e3a8a !important;
 }
 
-/* Smooth Table Row Hover */
-tbody tr {
-  transition: background-color 0.14s ease, box-shadow 0.14s ease;
-}
-
-tbody tr:hover {
-  background-color: #eff6ff;
-}
 
 /* Force pure black (#000000) text inside all report containers (.print-container) both on screen and in print/PDF */
 .print-container,

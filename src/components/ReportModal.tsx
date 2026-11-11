@@ -8,6 +8,8 @@ import {
 import {
   formatDateDDMMYYYY,
   calculateAnnualWeightedAveragesReport,
+  calculateBakeriesColumnTotals,
+  matchesVillageOrUnitFilter,
 } from '../utils/auditHelper';
 import {
   ALL_PERMISSIONS_LIST,
@@ -208,12 +210,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   // Filtered bakeries for bakeries report
   const filteredBakeries = useMemo(() => {
     return bakeries.filter((b) => {
-      if (selectedVillage !== 'ALL' && b.village !== selectedVillage) return false;
-      if (selectedUnit !== 'ALL' && b.localUnit !== selectedUnit) return false;
+      if (!matchesVillageOrUnitFilter(b, selectedVillage, selectedUnit, villages)) return false;
       if (selectedActivity !== 'ALL' && b.activityStatus !== selectedActivity) return false;
       return true;
     });
-  }, [bakeries, selectedVillage, selectedUnit, selectedActivity]);
+  }, [bakeries, selectedVillage, selectedUnit, villages, selectedActivity]);
 
   // Annual Weighted Averages Report Data (2023 - 2025)
   const annualWeightedReport = useMemo(() => {
@@ -223,8 +224,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   // Filtered debts for detailed debt report
   const filteredDebts = useMemo(() => {
     return debts.filter((d) => {
-      if (selectedVillage !== 'ALL' && d.village !== selectedVillage) return false;
-      if (selectedUnit !== 'ALL' && d.localUnit !== selectedUnit) return false;
+      if (!matchesVillageOrUnitFilter(d, selectedVillage, selectedUnit, villages)) return false;
 
       const bakeryTotalDebt = bakeryDebtMap[d.bakeryId] || 0;
       if (debtFilterStatus === 'OVER_20K') {
@@ -236,24 +236,24 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       }
       return true;
     });
-  }, [debts, selectedVillage, selectedUnit, debtFilterStatus, bakeryDebtMap]);
+  }, [debts, selectedVillage, selectedUnit, villages, debtFilterStatus, bakeryDebtMap]);
+
+  // Column-by-column totals for bakeries report
+  const colTotals = useMemo(
+    () => calculateBakeriesColumnTotals(filteredBakeries, bakeryDebtMap),
+    [filteredBakeries, bakeryDebtMap]
+  );
 
   // Summary totals for bakeries report
   const reportTotals = useMemo(() => {
-    let totalInsuranceValue = 0;
-    let totalInsurance = 0;
-    let totalActual = 0;
-    let totalLoaves = 0;
-    let totalDebt = 0;
-    filteredBakeries.forEach((b) => {
-      totalInsuranceValue += b.insuranceValue || 0;
-      totalInsurance += b.insuranceQuota || 0;
-      totalActual += b.actualQuota || 0;
-      totalLoaves += b.loavesCount || 0;
-      totalDebt += bakeryDebtMap[b.id] || 0;
-    });
-    return { totalInsuranceValue, totalInsurance, totalActual, totalLoaves, totalDebt };
-  }, [filteredBakeries, bakeryDebtMap]);
+    return {
+      totalInsuranceValue: colTotals.insuranceValue,
+      totalInsurance: colTotals.insuranceQuota,
+      totalActual: colTotals.actualQuota,
+      totalLoaves: colTotals.loavesCount,
+      totalDebt: colTotals.remainingDebt,
+    };
+  }, [colTotals]);
 
   // Summary totals for detailed debts report
   const debtReportTotals = useMemo(() => {
@@ -356,8 +356,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   const filteredBakeryDebts = useMemo(() => {
     return bakeryDebtSummaries.filter((item) => {
       const b = item.bakery;
-      if (selectedVillage !== 'ALL' && b.village !== selectedVillage) return false;
-      if (selectedUnit !== 'ALL' && b.localUnit !== selectedUnit) return false;
+      if (!matchesVillageOrUnitFilter(b, selectedVillage, selectedUnit, villages)) return false;
 
       if (bakeryDebtFilter === 'HAS_DEBT') {
         if (item.netRemaining <= 0) return false;
@@ -1607,23 +1606,31 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     </tbody>
                     <tfoot>
                       <tr className="bg-slate-200 font-black border-t-2 border-black total-summary-row">
-                        <td colSpan={5} className="border border-black py-1.5 px-2 text-right">
+                        <td className="border border-black py-1.5 px-0.5 font-mono">∑</td>
+                        <td className="border border-black py-1.5 px-1 text-right">
                           صف الإجماليات TOTAL SUMMARY ({annualWeightedReport.rows.length} مخبز)
                         </td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalInsuranceValue.toLocaleString()}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalInsuranceQuota}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalLoaves.toLocaleString()}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalVillagePopulation.toLocaleString()}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedPerCapitaVillage}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalBeneficiaries2023.toLocaleString()}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedGeneralAvg2023}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalBeneficiaries2024.toLocaleString()}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedGeneralAvg2024}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalBeneficiaries2025.toLocaleString()}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedGeneralAvg2025}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedDiff2024vs2023}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedDiff2025vs2024}</td>
-                        <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.weightedDiff2025vs2023}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.bakeryCount} ماكينة</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.uniqueVillagesLabel}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.uniqueUnitsLabel}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.insuranceValue.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.insuranceQuota.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.loavesCount.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.villagePopulation.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.perCapitaAverage}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.beneficiaries2023.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.avg2023}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.beneficiaries2024.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.avg2024}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.beneficiaries2025.toLocaleString()}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.avg2025}</td>
+                        <td className="border border-black py-1 px-0.5 font-mono">
+                          {(parseFloat(colTotals.avg2024) - parseFloat(colTotals.avg2023)).toFixed(2)}
+                        </td>
+                        <td className="border border-black py-1 px-0.5 font-mono">
+                          {(parseFloat(colTotals.avg2025) - parseFloat(colTotals.avg2024)).toFixed(2)}
+                        </td>
+                        <td className="border border-black py-1 px-0.5 font-mono">{colTotals.avgDiff}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -1677,6 +1684,24 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         );
                       })}
                     </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-200 font-black border-t-2 border-black total-summary-row">
+                        <td className="border border-black py-1.5 px-1 font-mono">∑</td>
+                        <td className="border border-black py-1.5 px-2 text-right">
+                          صف الإجماليات TOTAL SUMMARY ({users.length} مستخدم مسجل)
+                        </td>
+                        <td className="border border-black py-1.5 px-2 font-mono">{users.length} يوزر</td>
+                        <td className="border border-black py-1.5 px-2 font-mono">{users.length} حساب نشط</td>
+                        <td className="border border-black py-1.5 px-2 font-mono">
+                          {new Set(users.map((u) => u.role)).size} أدوار وظيفية
+                        </td>
+                        <td className="border border-black py-1.5 px-2 font-mono">{users.length} مسمى وظيفي</td>
+                        <td className="border border-black py-1.5 px-2 font-mono">إدارة تموين المحلة</td>
+                        <td className="border border-black py-1.5 px-2 font-mono">
+                          {ALL_PERMISSIONS_LIST.length} صلاحية معتمدة
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               ) : reportType === 'debts' ? (
@@ -2454,52 +2479,164 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
                     <tfoot>
                       <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt] total-summary-row">
-                        <td colSpan={3} className="border border-black py-1.5 px-2 text-right">
-                          صف الإجماليات TOTAL SUMMARY ({filteredBakeries.length} مخبز)
-                        </td>
-                        {activeColumns.village && <td className="border border-black" />}
-                        {activeColumns.localUnit && <td className="border border-black" />}
+                        {activeColumns.index && (
+                          <td className="border border-black py-1.5 px-0.5 font-mono">∑</td>
+                        )}
+                        {activeColumns.bakeryOwnerName && (
+                          <td className="border border-black py-1.5 px-1 text-right">
+                            صف الإجماليات TOTAL SUMMARY ({filteredBakeries.length} مخبز)
+                          </td>
+                        )}
+                        {activeColumns.machineNumber && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-mono">
+                            {colTotals.bakeryCount} ماكينة
+                          </td>
+                        )}
+                        {activeColumns.village && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.uniqueVillagesLabel}
+                          </td>
+                        )}
+                        {activeColumns.localUnit && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.uniqueUnitsLabel}
+                          </td>
+                        )}
                         {activeColumns.remainingDebt && (
                           <td className="border border-black py-1 px-0.5 num-enlarged text-red-900 font-black">
-                            {reportTotals.totalDebt.toLocaleString()} ج.م
+                            {colTotals.remainingDebt.toLocaleString()} ج.م
                           </td>
                         )}
                         {activeColumns.insuranceValue && (
                           <td className="border border-black py-1 px-0.5 num-enlarged font-black">
-                            {reportTotals.totalInsuranceValue.toLocaleString()} ج.م
+                            {colTotals.insuranceValue.toLocaleString()} ج.م
                           </td>
                         )}
                         {activeColumns.insuranceQuota && (
                           <td className="border border-black py-1 px-0.5 num-enlarged font-black">
-                            {reportTotals.totalInsurance} شيكارة
+                            {colTotals.insuranceQuota.toLocaleString()} شيكارة
                           </td>
                         )}
                         {activeColumns.actualQuota && (
                           <td className="border border-black py-1 px-0.5 num-enlarged font-black">
-                            {reportTotals.totalActual} شيكارة
+                            {colTotals.actualQuota.toLocaleString()} شيكارة
                           </td>
                         )}
                         {activeColumns.loavesCount && (
                           <td className="border border-black py-1 px-0.5 num-enlarged font-black">
-                            {reportTotals.totalLoaves.toLocaleString()}
+                            {colTotals.loavesCount.toLocaleString()}
                           </td>
                         )}
-                        <td
-                          colSpan={
-                            Object.values(activeColumns).filter(Boolean).length -
-                            (activeColumns.index ? 1 : 0) -
-                            (activeColumns.bakeryOwnerName ? 1 : 0) -
-                            (activeColumns.machineNumber ? 1 : 0) -
-                            (activeColumns.village ? 1 : 0) -
-                            (activeColumns.localUnit ? 1 : 0) -
-                            (activeColumns.remainingDebt ? 1 : 0) -
-                            (activeColumns.insuranceValue ? 1 : 0) -
-                            (activeColumns.insuranceQuota ? 1 : 0) -
-                            (activeColumns.actualQuota ? 1 : 0) -
-                            (activeColumns.loavesCount ? 1 : 0)
-                          }
-                          className="border border-black bg-slate-100"
-                        />
+                        {activeColumns.villagePopulation && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.villagePopulation.toLocaleString()}
+                          </td>
+                        )}
+                        {activeColumns.perCapitaAverage && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.perCapitaAverage}
+                          </td>
+                        )}
+                        {activeColumns.beneficiaries2023 && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.beneficiaries2023.toLocaleString()}
+                          </td>
+                        )}
+                        {activeColumns.beneficiaries2024 && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.beneficiaries2024.toLocaleString()}
+                          </td>
+                        )}
+                        {activeColumns.beneficiaries2025 && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.beneficiaries2025.toLocaleString()}
+                          </td>
+                        )}
+                        {activeColumns.avg2023 && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.avg2023}
+                          </td>
+                        )}
+                        {activeColumns.avg2024 && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.avg2024}
+                          </td>
+                        )}
+                        {activeColumns.avg2025 && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.avg2025}
+                          </td>
+                        )}
+                        {activeColumns.avgDiff && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.avgDiff}
+                          </td>
+                        )}
+                        {activeColumns.activityStatus && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.activitySummaryLabel}
+                          </td>
+                        )}
+                        {activeColumns.bakeryCategory && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.bakeryCategorySummaryLabel}
+                          </td>
+                        )}
+                        {activeColumns.breadType && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.breadTypeSummaryLabel}
+                          </td>
+                        )}
+                        {activeColumns.flourBagPrice && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.flourBagPriceSum.toLocaleString()} ج.م
+                          </td>
+                        )}
+                        {activeColumns.breadTypeCount && (
+                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
+                            {colTotals.breadTypeCountSum.toLocaleString()}
+                          </td>
+                        )}
+                        {activeColumns.lineType && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.lineTypeSummaryLabel}
+                          </td>
+                        )}
+                        {activeColumns.fuelType && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.fuelTypeSummaryLabel}
+                          </td>
+                        )}
+                        {activeColumns.phone && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.validPhonesCount} رقم
+                          </td>
+                        )}
+                        {activeColumns.nationalId && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.validNatIdsCount} رقم قومي
+                          </td>
+                        )}
+                        {activeColumns.commercialRegDate && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.validCommRegCount} سجل
+                          </td>
+                        )}
+                        {activeColumns.bakeryLicenseDate && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.validLicenseCount} رخصة
+                          </td>
+                        )}
+                        {activeColumns.leaseAgreementDate && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.validLeaseCount} عقد
+                          </td>
+                        )}
+                        {activeColumns.taxCardDate && (
+                          <td className="border border-black py-1 px-0.5 font-mono">
+                            {colTotals.validTaxCardCount} بطاقة
+                          </td>
+                        )}
                       </tr>
                     </tfoot>
                   </table>
@@ -2547,6 +2684,23 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         );
                       })}
                     </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-200 font-black border-t-2 border-black total-summary-row">
+                        <td className="border border-black py-1 px-1 font-mono">∑</td>
+                        <td className="border border-black py-1 px-2 text-right">
+                          صف الإجماليات TOTAL SUMMARY ({users.length} مستخدم)
+                        </td>
+                        <td className="border border-black py-1 px-2 font-mono">{users.length} يوزر</td>
+                        <td className="border border-black py-1 px-2 font-mono">{users.length} حساب</td>
+                        <td className="border border-black py-1 px-2 font-mono">
+                          {new Set(users.map((u) => u.role)).size} أدوار
+                        </td>
+                        <td className="border border-black py-1 px-2 font-mono">{users.length} مسمى</td>
+                        <td className="border border-black py-1 px-2 font-mono">
+                          {ALL_PERMISSIONS_LIST.length} صلاحية
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               )}

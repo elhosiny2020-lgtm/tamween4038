@@ -1098,8 +1098,8 @@ export function filterDebtsByAdvancedCriteria(
 
   return debts.filter((d) => {
     if (filterBakeryId && d.bakeryId !== filterBakeryId) return false;
-    if (village !== 'ALL' && d.village !== village) return false;
-    if (localUnit !== 'ALL' && d.localUnit !== localUnit) return false;
+    if (village !== 'ALL' && normalizeArabicText(d.village) !== normalizeArabicText(village) && d.village !== village) return false;
+    if (localUnit !== 'ALL' && normalizeArabicText(d.localUnit) !== normalizeArabicText(localUnit) && d.localUnit !== localUnit) return false;
     if (issuingEntity !== 'ALL' && d.issuingEntity !== issuingEntity) return false;
     if (violationType !== 'ALL' && d.violationType !== violationType) return false;
 
@@ -1145,3 +1145,245 @@ export function filterDebtsByAdvancedCriteria(
     return true;
   });
 }
+
+/**
+ * 14. تطبيع النصوص العربية للمقارنة الدقيقة بين أسماء القرى والوحدات المحلية (توحيد الألف والتاء المربوطة والياء والمسافات)
+ */
+export function normalizeArabicText(text: unknown): string {
+  return String(text ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .toLowerCase();
+}
+
+/**
+ * 15. مطابقة ذكية وشاملة للقرية والوحدة المحلية تدعم هرمية القرى والوحدات التابعة لها (مثل بشبيش ووحداتها التابعة)
+ */
+export function matchesVillageOrUnitFilter(
+  item: { village?: string; localUnit?: string },
+  selectedVillage: string,
+  selectedUnit: string,
+  villagesHierarchy: { village: string; localUnits: string[] }[] = []
+): boolean {
+  const itemVillageNorm = normalizeArabicText(item.village);
+  const itemUnitNorm = normalizeArabicText(item.localUnit);
+
+  if (selectedVillage && selectedVillage !== 'ALL') {
+    const targetVillageNorm = normalizeArabicText(selectedVillage);
+    const hierarchyEntry = villagesHierarchy.find(
+      (v) => normalizeArabicText(v.village) === targetVillageNorm
+    );
+    const validVillageNames = new Set<string>([targetVillageNorm]);
+    if (hierarchyEntry) {
+      hierarchyEntry.localUnits.forEach((u) => validVillageNames.add(normalizeArabicText(u)));
+    }
+    const matchesVillage =
+      validVillageNames.has(itemVillageNorm) || validVillageNames.has(itemUnitNorm);
+    if (!matchesVillage) return false;
+  }
+
+  if (selectedUnit && selectedUnit !== 'ALL') {
+    const targetUnitNorm = normalizeArabicText(selectedUnit);
+    const targetBaseNorm = targetUnitNorm.replace(/\s+الرئيسيه$/, '').trim();
+    const itemUnitBaseNorm = itemUnitNorm.replace(/\s+الرئيسيه$/, '').trim();
+
+    const hierarchyEntryForUnit = !targetUnitNorm.endsWith('الرئيسيه')
+      ? villagesHierarchy.find((v) => normalizeArabicText(v.village) === targetUnitNorm)
+      : undefined;
+    const validSubUnits = new Set<string>();
+    if (hierarchyEntryForUnit) {
+      hierarchyEntryForUnit.localUnits.forEach((u) => validSubUnits.add(normalizeArabicText(u)));
+    }
+
+    const directMatch =
+      itemUnitNorm === targetUnitNorm ||
+      itemVillageNorm === targetUnitNorm ||
+      validSubUnits.has(itemUnitNorm) ||
+      validSubUnits.has(itemVillageNorm) ||
+      (targetUnitNorm.endsWith('الرئيسيه') && itemUnitNorm === targetBaseNorm) ||
+      (itemUnitNorm.endsWith('الرئيسيه') && targetUnitNorm === itemUnitBaseNorm);
+
+    if (!directMatch) return false;
+  }
+
+  return true;
+}
+
+/**
+ * 16. دالة تجميع شاملة وموحدة لكافة أعمدة جدول المخابز (صف الإجماليات TOTAL SUMMARY وإجماليات القرى والوحدات المحلية)
+ * تقوم بجمع كافة أعداد المستفيدين وجمع كافة متوسطات المستفيدين وجميع خانات الأعمدة في صف الإجماليات بدقة 100%
+ */
+export interface BakeriesColumnTotals {
+  bakeryCount: number;
+  uniqueVillagesCount: number;
+  uniqueVillagesLabel: string;
+  uniqueUnitsCount: number;
+  uniqueUnitsLabel: string;
+  remainingDebt: number;
+  insuranceValue: number;
+  insuranceQuota: number;
+  actualQuota: number;
+  loavesCount: number;
+  villagePopulation: number;
+  beneficiaries2023: number;
+  beneficiaries2024: number;
+  beneficiaries2025: number;
+  perCapitaAverage: string;
+  avg2023: string;
+  avg2024: string;
+  avg2025: string;
+  avgDiff: string;
+  activeCount: number;
+  stoppedCount: number;
+  activitySummaryLabel: string;
+  uniqueCategoriesCount: number;
+  bakeryCategorySummaryLabel: string;
+  uniqueBreadTypesCount: number;
+  breadTypeSummaryLabel: string;
+  flourBagPriceSum: number;
+  breadTypeCountSum: number;
+  uniqueLineTypesCount: number;
+  lineTypeSummaryLabel: string;
+  uniqueFuelTypesCount: number;
+  fuelTypeSummaryLabel: string;
+  validPhonesCount: number;
+  validNatIdsCount: number;
+  validCommRegCount: number;
+  validLicenseCount: number;
+  validLeaseCount: number;
+  validTaxCardCount: number;
+}
+
+export function calculateBakeriesColumnTotals(
+  bakeries: Bakery[],
+  debtsMap: Record<string, number> = {}
+): BakeriesColumnTotals {
+  let remainingDebt = 0;
+  let insuranceValue = 0;
+  let insuranceQuota = 0;
+  let actualQuota = 0;
+  let loavesCount = 0;
+  let villagePopulation = 0;
+  let beneficiaries2023 = 0;
+  let beneficiaries2024 = 0;
+  let beneficiaries2025 = 0;
+  let sumPerCapita = 0;
+  let sumAvg2023 = 0;
+  let sumAvg2024 = 0;
+  let sumAvg2025 = 0;
+  let sumAvgDiff = 0;
+  let activeCount = 0;
+  let flourBagPriceSum = 0;
+  let breadTypeCountSum = 0;
+  let validPhonesCount = 0;
+  let validNatIdsCount = 0;
+  let validCommRegCount = 0;
+  let validLicenseCount = 0;
+  let validLeaseCount = 0;
+  let validTaxCardCount = 0;
+
+  const villagesSet = new Set<string>();
+  const unitsSet = new Set<string>();
+  const categoriesSet = new Set<string>();
+  const breadTypesSet = new Set<string>();
+  const lineTypesSet = new Set<string>();
+  const fuelTypesSet = new Set<string>();
+
+  (bakeries || []).forEach((b) => {
+    const normB = normalizeBakeryCalculations(b);
+    if (normB.village) villagesSet.add(normB.village.trim());
+    if (normB.localUnit) unitsSet.add(normB.localUnit.trim());
+    if (normB.bakeryCategory) categoriesSet.add(normB.bakeryCategory.trim());
+    if (normB.breadType) breadTypesSet.add(normB.breadType.trim());
+    if (normB.lineType) lineTypesSet.add(normB.lineType.trim());
+    if (normB.fuelType) fuelTypesSet.add(normB.fuelType.trim());
+
+    remainingDebt += Number(debtsMap[normB.id]) || 0;
+    insuranceValue += Number(normB.insuranceValue) || 0;
+    insuranceQuota += Number(normB.insuranceQuota) || 0;
+    actualQuota += Number(normB.actualQuota) || 0;
+    loavesCount += Number(normB.loavesCount) || 0;
+    villagePopulation += Number(normB.villagePopulation) || 0;
+    beneficiaries2023 += Number(normB.beneficiaries2023) || 0;
+    beneficiaries2024 += Number(normB.beneficiaries2024) || 0;
+    beneficiaries2025 += Number(normB.beneficiaries2025) || 0;
+
+    sumPerCapita += parseFloat(String(normB.perCapitaAverage || normB.avg2025 || '0')) || 0;
+    sumAvg2023 += parseFloat(String(normB.avg2023 || '0')) || 0;
+    sumAvg2024 += parseFloat(String(normB.avg2024 || '0')) || 0;
+    sumAvg2025 += parseFloat(String(normB.avg2025 || '0')) || 0;
+    sumAvgDiff += parseFloat(String(normB.avgDiff || '0')) || 0;
+
+    if (normB.activityStatus === 'شغال') activeCount++;
+    flourBagPriceSum += Number(normB.flourBagPrice ?? 950) || 0;
+    breadTypeCountSum += extractBreadLoafMultiplier(normB.breadTypeCount);
+
+    if (normB.phone && normB.phone.trim()) validPhonesCount++;
+    if (normB.nationalId && normB.nationalId.trim()) validNatIdsCount++;
+    if (normB.commercialRegDate && normB.commercialRegDate.trim()) validCommRegCount++;
+    if (normB.bakeryLicenseDate && normB.bakeryLicenseDate.trim()) validLicenseCount++;
+    if (normB.leaseAgreementDate && normB.leaseAgreementDate.trim()) validLeaseCount++;
+    if (normB.taxCardDate && normB.taxCardDate.trim()) validTaxCardCount++;
+  });
+
+  const bakeryCount = (bakeries || []).length;
+  const stoppedCount = Math.max(0, bakeryCount - activeCount);
+  const villagesArr = Array.from(villagesSet);
+  const unitsArr = Array.from(unitsSet);
+
+  const uniqueVillagesLabel =
+    villagesArr.length === 1
+      ? `${villagesArr[0]} (1 قرية)`
+      : `إجمالي (${villagesArr.length} قرية)`;
+
+  const uniqueUnitsLabel =
+    unitsArr.length === 1
+      ? `${unitsArr[0]} (1 وحدة)`
+      : `إجمالي (${unitsArr.length} وحدة محلية)`;
+
+  return {
+    bakeryCount,
+    uniqueVillagesCount: villagesArr.length,
+    uniqueVillagesLabel,
+    uniqueUnitsCount: unitsArr.length,
+    uniqueUnitsLabel,
+    remainingDebt: Math.round(remainingDebt * 100) / 100,
+    insuranceValue: Math.round(insuranceValue * 100) / 100,
+    insuranceQuota: Number(insuranceQuota.toFixed(2)),
+    actualQuota: Number(actualQuota.toFixed(2)),
+    loavesCount: Math.round(loavesCount),
+    villagePopulation: Math.round(villagePopulation),
+    beneficiaries2023: Math.round(beneficiaries2023),
+    beneficiaries2024: Math.round(beneficiaries2024),
+    beneficiaries2025: Math.round(beneficiaries2025),
+    perCapitaAverage: sumPerCapita.toFixed(2),
+    avg2023: sumAvg2023.toFixed(2),
+    avg2024: sumAvg2024.toFixed(2),
+    avg2025: sumAvg2025.toFixed(2),
+    avgDiff: sumAvgDiff.toFixed(2),
+    activeCount,
+    stoppedCount,
+    activitySummaryLabel:
+      stoppedCount > 0 ? `${activeCount} شغال / ${stoppedCount} غير نشط` : `${activeCount} شغال`,
+    uniqueCategoriesCount: categoriesSet.size,
+    bakeryCategorySummaryLabel: `${bakeryCount} مخبز (${categoriesSet.size || 1} تصنيف)`,
+    uniqueBreadTypesCount: breadTypesSet.size,
+    breadTypeSummaryLabel: `${bakeryCount} خط (${breadTypesSet.size || 1} صنف)`,
+    flourBagPriceSum: Math.round(flourBagPriceSum),
+    breadTypeCountSum: Math.round(breadTypeCountSum),
+    uniqueLineTypesCount: lineTypesSet.size,
+    lineTypeSummaryLabel: `${bakeryCount} خط (${lineTypesSet.size || 1} نوع)`,
+    uniqueFuelTypesCount: fuelTypesSet.size,
+    fuelTypeSummaryLabel: `${bakeryCount} مخبز (${fuelTypesSet.size || 1} وقود)`,
+    validPhonesCount,
+    validNatIdsCount,
+    validCommRegCount,
+    validLicenseCount,
+    validLeaseCount,
+    validTaxCardCount,
+  };
+}
+
