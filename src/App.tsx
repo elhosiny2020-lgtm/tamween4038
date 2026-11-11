@@ -57,6 +57,7 @@ import {
   testFirestoreConnection,
   loadSharedStateFromFirestore,
   syncSharedStateToFirestore,
+  subscribeToSharedStateChanges,
 } from './lib/firebase';
 import {
   subscribeToSupabaseRealtime,
@@ -398,7 +399,7 @@ export default function App() {
     const isAutoStart =
       typeof window !== 'undefined' && window.location.search.includes('autostart=1');
 
-    // Failsafe timer: if storage loading takes longer than 350ms, open app immediately with preloaded or defaults!
+    // Failsafe timer: if storage loading takes longer than 6000ms, open app with preloaded or defaults
     const failsafe = setTimeout(() => {
       if (!hasLoaded) {
         hasLoaded = true;
@@ -427,7 +428,7 @@ export default function App() {
         });
         setSaveTimestamp(getArabicTimestamp());
       }
-    }, 350);
+    }, 6000);
 
     loadInitialState()
       .then((state) => {
@@ -478,39 +479,61 @@ export default function App() {
     testFirestoreConnection().catch(() => {});
   }, []);
 
-  // Exclusive Cross-Device Real-Time Synchronization via Supabase:
+  // Comprehensive Multi-Channel Real-Time Synchronization across devices (Firestore + Server Snapshot + Supabase + BroadcastChannel)
   useEffect(() => {
-    // 1. When opening from any device, fetch the latest data recorded last time on any other device
-    const loadLatestFromSupabaseOnBoot = async () => {
-      try {
-        const supaRes = await fetchDatabaseFromSupabase();
-        if (
-          supaRes &&
-          supaRes.success &&
-          supaRes.data &&
-          Array.isArray(supaRes.data.bakeries) &&
-          supaRes.data.bakeries.length > 0
-        ) {
-          setAppState((current) => {
-            if (!current) return current;
-            const updated: AppState = {
-              ...current,
-              ...supaRes.data!,
-              currentUser: current.currentUser,
-            };
-            // Persist the freshest state from Supabase to local storage
-            persistFullState(updated).catch(() => {});
-            return updated;
-          });
-        }
-      } catch (err) {
-        console.warn('Supabase cross-device boot fetch error:', err);
+    // 1. Initial boot check from Firestore & Server Snapshot
+    loadSharedStateFromFirestore().then((fsSnap) => {
+      if (fsSnap && fsSnap.data && Array.isArray(fsSnap.data.bakeries) && fsSnap.data.bakeries.length > 0) {
+        setAppState((current) => {
+          if (!current) return current;
+          const updated: AppState = {
+            ...current,
+            ...fsSnap.data,
+            currentUser: current.currentUser,
+          };
+          persistFullState(updated).catch(() => {});
+          return updated;
+        });
       }
-    };
+    }).catch(() => {});
 
-    loadLatestFromSupabaseOnBoot();
+    fetchLatestServerState().then((srvSnap) => {
+      if (srvSnap && srvSnap.data && Array.isArray(srvSnap.data.bakeries) && srvSnap.data.bakeries.length > 0) {
+        setAppState((current) => {
+          if (!current) return current;
+          const updated: AppState = {
+            ...current,
+            ...srvSnap.data,
+            currentUser: current.currentUser,
+          };
+          persistFullState(updated).catch(() => {});
+          return updated;
+        });
+      }
+    }).catch(() => {});
 
-    // 2. Real-time Supabase Listener: Adopt live updates directly without merging
+    // 2. Firestore Live Snapshot Listener
+    const unsubscribeFirestore = subscribeToSharedStateChanges((fsPayload) => {
+      if (
+        fsPayload &&
+        fsPayload.data &&
+        Array.isArray(fsPayload.data.bakeries) &&
+        fsPayload.data.bakeries.length > 0
+      ) {
+        setAppState((current) => {
+          if (!current) return current;
+          const directUpdate: AppState = {
+            ...current,
+            ...fsPayload.data,
+            currentUser: current.currentUser,
+          };
+          persistFullState(directUpdate).catch(() => {});
+          return directUpdate;
+        });
+      }
+    });
+
+    // 3. Supabase Realtime Listener
     const unsubscribeSupabase = subscribeToSupabaseRealtime((supaData) => {
       if (
         supaData &&
@@ -519,7 +542,6 @@ export default function App() {
       ) {
         setAppState((current) => {
           if (!current) return current;
-          // Adopt the latest Supabase state directly without merge conflicts
           const directUpdate: AppState = {
             ...current,
             ...supaData,
@@ -531,8 +553,63 @@ export default function App() {
       }
     });
 
+    // 4. 3-Second Heartbeat Polling of Server Snapshot (/api/backup/snapshot) for instant multi-device sync
+    const heartbeatInterval = setInterval(async () => {
+      try {
+        const serverSnap = await fetchLatestServerState();
+        if (
+          serverSnap &&
+          serverSnap.data &&
+          Array.isArray(serverSnap.data.bakeries) &&
+          serverSnap.data.bakeries.length > 0
+        ) {
+          const srvBakeries = serverSnap.data.bakeries;
+          const srvDebts = serverSnap.data.debts;
+          setAppState((current) => {
+            if (!current) return current;
+            if (
+              srvBakeries.length !== current.bakeries.length ||
+              srvDebts?.length !== current.debts.length
+            ) {
+              const updated: AppState = {
+                ...current,
+                ...serverSnap.data,
+                currentUser: current.currentUser,
+              };
+              persistFullState(updated).catch(() => {});
+              return updated;
+            }
+            return current;
+          });
+        }
+      } catch {}
+    }, 3000);
+
+    // 5. BroadcastChannel for same-browser multi-tab sync
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('tamween_cross_device_sync');
+        bc.onmessage = (event) => {
+          if (event.data?.type === 'STATE_UPDATED') {
+            fetchLatestServerState().then((snap) => {
+              if (snap && snap.data && Array.isArray(snap.data.bakeries)) {
+                setAppState((current) => {
+                  if (!current) return current;
+                  return { ...current, ...snap.data, currentUser: current.currentUser };
+                });
+              }
+            }).catch(() => {});
+          }
+        };
+      } catch {}
+    }
+
     return () => {
+      unsubscribeFirestore();
       unsubscribeSupabase();
+      clearInterval(heartbeatInterval);
+      if (bc) bc.close();
     };
   }, []);
 
