@@ -298,8 +298,10 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
               <thead className="bg-[#0F2342] text-white sticky top-0 z-10 font-bold">
                 <tr>
                   <th className="py-2.5 px-3 border-l border-slate-700">#</th>
-                  <th className="py-2.5 px-3 border-l border-slate-700 text-right">اسم صاحب المخبز</th>
-                  <th className="py-2.5 px-3 border-l border-slate-700">القرية</th>
+                  <th className="py-2.5 px-3 border-l border-slate-700 text-right">اسم المخبز</th>
+                  <th className="py-2.5 px-3 border-l border-slate-700">رقم الماكينة</th>
+                  <th className="py-2.5 px-3 border-l border-slate-700">اسم القرية</th>
+                  <th className="py-2.5 px-3 border-l border-slate-700">اسم الوحدة المحلية</th>
                   <th className="py-2.5 px-3 border-l border-slate-700">المبلغ التأميني</th>
                   <th className="py-2.5 px-3 border-l border-slate-700 bg-[#1E3A8A]">الحصة التأمينية (÷235÷3)</th>
                   <th className="py-2.5 px-3 border-l border-slate-700">الحصة الفعلية</th>
@@ -320,7 +322,9 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
                     <tr key={b.id} className={i % 2 === 0 ? 'bg-white hover:bg-blue-50/50' : 'bg-slate-50/70 hover:bg-blue-50/50'}>
                       <td className="py-2 px-2 border-l border-slate-200 font-mono text-slate-500 tabular-nums">{i + 1}</td>
                       <td className="py-2 px-3 border-l border-slate-200 text-right font-bold text-slate-900">{b.bakeryOwnerName}</td>
+                      <td className="py-2 px-2 border-l border-slate-200 font-mono font-bold text-slate-800">{b.machineNumber}</td>
                       <td className="py-2 px-2 border-l border-slate-200">{b.village}</td>
+                      <td className="py-2 px-2 border-l border-slate-200">{b.localUnit}</td>
                       <td className="py-2 px-2 border-l border-slate-200 font-mono tabular-nums">{b.insuranceValue?.toLocaleString()}</td>
                       <td className="py-2 px-2 border-l border-slate-200 font-mono font-extrabold text-[#1E3A8A] bg-blue-50/60 tabular-nums">
                         {b.insuranceQuota}
@@ -353,6 +357,42 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
                   );
                 })}
               </tbody>
+              <tfoot className="bg-[#0F2342] text-white sticky bottom-0 z-10 font-black">
+                <tr className="total-summary-row">
+                  <td colSpan={5} className="py-2.5 px-3 text-right text-amber-300 border-l border-slate-700">
+                    صف الإجماليات TOTAL SUMMARY ({bakeries.length} مخبز)
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
+                    {stats.totalInsuranceValue.toLocaleString()}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-300">
+                    {stats.totalInsuranceQuota.toLocaleString()}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-300">
+                    {stats.totalActualQuota.toLocaleString()}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-slate-300">-</td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-emerald-300">
+                    {stats.totalLoaves.toLocaleString()}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
+                    {annualReport.weightedGeneralAvg2023}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
+                    {annualReport.weightedGeneralAvg2024}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-sky-200">
+                    {annualReport.weightedGeneralAvg2025}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-emerald-300">
+                    {stats.overallPerCapita}
+                  </td>
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-300">
+                    {annualReport.cumulativeWeightedDiff2025vs2023}
+                  </td>
+                  <td className="py-2.5 px-2">-</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
@@ -684,81 +724,8 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Bottom Row: Bakery Status Summary & Latest Updates */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Bakery Status Summary */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs">
-          <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
-            <h3 className="text-sm font-extrabold text-[#0F2342] flex items-center gap-2">
-              <Activity className="w-4 h-4 text-[#1E40AF]" />
-              <span>ملخص حالة المخابز والتشغيل بالمركز</span>
-            </h3>
-            <button
-              type="button"
-              onClick={onOpenLocalUnitsModal}
-              className="text-xs font-bold text-[#1E40AF] hover:underline cursor-pointer"
-            >
-              إحصائيات الوحدات المحلية ←
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-            <button
-              type="button"
-              onClick={() => onNavigateToBakeries({ activityStatus: 'شغال' })}
-              className="p-3 bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200 rounded-xl text-right transition cursor-pointer"
-            >
-              <span className="text-emerald-800 font-semibold block">مخابز تعمل (شغال)</span>
-              <span className="text-xl font-mono font-black text-emerald-700 mt-1 block tabular-nums">
-                {stats.activeBakeries}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onNavigateToBakeries({ columnFocus: 'BASIC' })}
-              className="p-3 bg-amber-50/70 hover:bg-amber-100/70 border border-amber-200 rounded-xl text-right transition cursor-pointer"
-            >
-              <span className="text-amber-800 font-semibold block">مخابز متوقفة / تصفية</span>
-              <span className="text-xl font-mono font-black text-amber-700 mt-1 block tabular-nums">
-                {stats.stoppedBakeries}
-              </span>
-            </button>
-
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-right col-span-2 sm:col-span-1">
-              <span className="text-slate-600 font-semibold block">إجمالي المديونيات المتبقية</span>
-              <span className="text-xl font-mono font-black text-red-600 mt-1 block tabular-nums">
-                {stats.totalDebts.toLocaleString()} ج.م
-              </span>
-            </div>
-          </div>
-
-          {/* 3-Year Summary Table */}
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-xs text-center border border-slate-200 rounded-lg overflow-hidden">
-              <thead className="bg-slate-100 text-slate-700 font-bold">
-                <tr>
-                  <th className="py-2 px-3 border-l border-slate-200">السنة</th>
-                  <th className="py-2 px-3 border-l border-slate-200">إجمالي المستفيدين</th>
-                  <th className="py-2 px-3">المتوسط العام المرجح (رغيف/فرد)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 font-semibold text-slate-800">
-                {threeYearOverviewData.map((row) => (
-                  <tr key={row.year} className="hover:bg-slate-50">
-                    <td className="py-2 px-3 border-l border-slate-200 font-bold text-[#0F2342]">{row.year}</td>
-                    <td className="py-2 px-3 border-l border-slate-200 font-mono tabular-nums">
-                      {row.beneficiaries.toLocaleString()}
-                    </td>
-                    <td className="py-2 px-3 font-mono font-bold text-[#1E40AF] tabular-nums">
-                      {row.weightedAvg.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      {/* Bottom Row: Latest Operations & Quick Bakeries Preview */}
+      <div className="grid grid-cols-1 gap-4">
 
         {/* Latest Operations & Quick Bakeries Preview */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs">

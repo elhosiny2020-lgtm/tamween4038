@@ -699,10 +699,10 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
 
             {/* Table Footer with Overall Totals */}
             <tfoot>
-              <tr className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-t-2 border-indigo-500/50 text-white font-black text-xs">
+              <tr className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-t-2 border-indigo-500/50 text-white font-black text-xs total-summary-row">
                 <td colSpan={3} className="py-3 px-3 text-right border-l border-slate-700">
                   <div className="flex items-center gap-2">
-                    <span className="text-amber-300 font-mono font-black text-sm">المجموع الإجمالي العام:</span>
+                    <span className="text-amber-300 font-mono font-black text-sm">صف الإجماليات TOTAL SUMMARY:</span>
                     <span className="text-slate-300 text-[11px]">({totals.unitCount} وحدة محلية مجمعة)</span>
                   </div>
                 </td>

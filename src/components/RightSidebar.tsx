@@ -1,54 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import {
-  LayoutDashboard,
-  Home,
-  BarChart3,
-  Activity,
-  Clock,
   Store,
-  FileSpreadsheet,
-  Wheat,
-  Layers,
-  ShieldCheck,
-  Users,
   Calculator,
   Percent,
-  TrendingDown,
-  RefreshCw,
   FileText,
-  Printer,
   Search,
-  Hash,
-  MapPin,
-  Filter,
   Database,
   PlusCircle,
   Edit3,
   Upload,
   Download,
   HardDrive,
-  Settings,
-  Cloud,
-  UserCheck,
   Sliders,
-  CheckSquare,
   ChevronDown,
   ChevronLeft,
   PanelRightClose,
   PanelRightOpen,
-  ClipboardList,
-  BookOpen,
-  Mail,
-  Map,
   Scale,
   AlertTriangle,
-  Globe,
   Save,
   Bell,
-  HelpCircle,
   Eye,
-  LogOut,
-  RotateCcw,
+  ListChecks,
+  Layers,
+  ShieldAlert,
 } from 'lucide-react';
 
 export type SidebarNavId = string;
@@ -56,6 +31,7 @@ export type SidebarNavId = string;
 export interface SidebarSubItem {
   id: SidebarNavId;
   label: string;
+  subtitle?: string;
   icon: React.ReactNode;
   badge?: number | string;
   badgeColor?: 'blue' | 'amber' | 'red' | 'emerald';
@@ -64,7 +40,9 @@ export interface SidebarSubItem {
 export interface SidebarGroup {
   id: string;
   title: string;
+  subtitle: string;
   icon: React.ReactNode;
+  accentColor: string;
   items: SidebarSubItem[];
 }
 
@@ -88,8 +66,8 @@ export interface RightSidebarProps {
   customLogoBase64?: string;
 }
 
-const SIDEBAR_STORAGE_KEY = 'tamween_sidebar_open_groups_v2';
-const SIDEBAR_COLLAPSED_KEY = 'tamween_sidebar_collapsed_v2';
+const SIDEBAR_STORAGE_KEY = 'tamween_sidebar_erp_groups_v4';
+const SIDEBAR_COLLAPSED_KEY = 'tamween_sidebar_collapsed_v4';
 
 export const RightSidebar: React.FC<RightSidebarProps> = ({
   activeNavId,
@@ -97,24 +75,18 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   bakeriesCount,
   debtsCount,
   alertsCount,
-  unreadInboxCount = 0,
-  pendingTasksCount,
   largeDebtsCount,
-  logoBase64,
-  administrationTitle,
-  directorateTitle,
   totalBakeriesCount,
   totalDebtsCount,
   expiredLicensesCount,
   over20kBakeriesCount,
-  uncompletedTasksCount,
   customLogoBase64,
 }) => {
   const bakeriesTotal = bakeriesCount ?? totalBakeriesCount ?? 0;
   const debtsTotal = debtsCount ?? totalDebtsCount ?? 0;
   const alertsTotal = alertsCount ?? expiredLicensesCount ?? 0;
   const largeDebtsTotal = largeDebtsCount ?? over20kBakeriesCount ?? 0;
-  const tasksTotal = pendingTasksCount ?? uncompletedTasksCount ?? 0;
+
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
@@ -131,14 +103,10 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       // ignore
     }
     return {
-      'group-1': true,
-      'group-2': true,
-      'group-3': false,
-      'group-4': false,
-      'group-5': true,
-      'group-6': false,
-      'group-7': false,
-      'group-8': false,
+      'section-bakeries': true,
+      'section-edits': true,
+      'section-debts': true,
+      'section-backup': true,
     };
   });
 
@@ -169,374 +137,151 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
   const groups: SidebarGroup[] = [
     {
-      id: 'group-1',
-      title: '1. الرئيسية',
-      icon: <LayoutDashboard className="w-5 h-5 shrink-0" />,
-      items: [
-        { id: 'dashboard-home', label: 'لوحة التحكم', icon: <Home className="w-4 h-4 shrink-0" /> },
-        { id: 'dashboard-main', label: 'الصفحة الرئيسية', icon: <LayoutDashboard className="w-4 h-4 shrink-0" /> },
-        { id: 'dashboard-kpis', label: 'المؤشرات العامة', icon: <BarChart3 className="w-4 h-4 shrink-0" /> },
-        {
-          id: 'dashboard-status',
-          label: 'الإحصائيات وملخص المخابز',
-          icon: <Activity className="w-4 h-4 shrink-0" />,
-          badge: totalBakeriesCount,
-          badgeColor: 'blue',
-        },
-        { id: 'dashboard-recent', label: 'آخر التحديثات', icon: <Clock className="w-4 h-4 shrink-0" /> },
-      ],
-    },
-    {
-      id: 'group-2',
-      title: '2. إدارة المخابز',
-      icon: <Store className="w-5 h-5 shrink-0" />,
+      id: 'section-bakeries',
+      title: '1. قسم إدارة المخابز',
+      subtitle: 'البيانات الأساسية والحسابات والتقارير',
+      icon: <Store className="w-5 h-5 shrink-0 icon-animated" />,
+      accentColor: 'from-blue-600 to-indigo-700',
       items: [
         {
           id: 'bakeries-all',
-          label: 'قاعدة بيانات المخابز',
-          icon: <Database className="w-4 h-4 shrink-0" />,
-          badge: totalBakeriesCount,
+          label: 'إدارة المخابز',
+          subtitle: 'السجل الرسمي الشامل لبيانات المخابز',
+          icon: <Database className="w-5 h-5 shrink-0 icon-animated" />,
+          badge: bakeriesTotal > 0 ? bakeriesTotal : undefined,
           badgeColor: 'blue',
         },
         {
           id: 'data-add-bakery',
-          label: 'إضافة مخبز جديد',
-          icon: <PlusCircle className="w-4 h-4 shrink-0" />,
+          label: 'إضافات بيانات جديدة',
+          subtitle: 'إدراج مخبز جديد في قاعدة البيانات',
+          icon: <PlusCircle className="w-5 h-5 shrink-0 icon-animated" />,
           badgeColor: 'emerald',
         },
         {
+          id: 'search-advanced',
+          label: 'البحث والاستعلام',
+          subtitle: 'استعلام فوري بالاسم أو الماكينة أو القرية',
+          icon: <Search className="w-5 h-5 shrink-0 icon-animated" />,
+        },
+        {
+          id: 'calc-equations-view',
+          label: 'الحسابات والمعادلات',
+          subtitle: 'مراجعة الحصص والأرغفة والفروق التراكمية',
+          icon: <Calculator className="w-5 h-5 shrink-0 icon-animated" />,
+        },
+        {
+          id: 'report-per-capita',
+          label: 'تقرير متوسط نصيب الفرد السنوية',
+          subtitle: 'معدلات 2023 و2024 و2025 والفرق التراكمي',
+          icon: <Percent className="w-5 h-5 shrink-0 icon-animated" />,
+        },
+        {
+          id: 'settings-alerts',
+          label: 'مفتاح التنبيهات',
+          subtitle: 'التراخيص المنتهية والمخابز الموقوفة',
+          icon: <Bell className="w-5 h-5 shrink-0 icon-animated" />,
+          badge: alertsTotal > 0 ? alertsTotal : undefined,
+          badgeColor: 'amber',
+        },
+      ],
+    },
+    {
+      id: 'section-edits',
+      title: '2. قسم التعديلات',
+      subtitle: 'تحديث السجلات والقوائم وإعدادات الجداول',
+      icon: <Edit3 className="w-5 h-5 shrink-0 icon-animated" />,
+      accentColor: 'from-amber-500 to-orange-600',
+      items: [
+        {
+          id: 'data-edit-bakery',
+          label: 'تعديل البيانات',
+          subtitle: 'تعديل مباشر لبيانات وحصص المخابز',
+          icon: <Edit3 className="w-5 h-5 shrink-0 icon-animated" />,
+        },
+        {
           id: 'data-edit-master',
-          label: 'تعديل بيانات المخابز',
-          icon: <Edit3 className="w-4 h-4 shrink-0" />,
+          label: 'القوائم',
+          subtitle: 'إدارة القرى والوحدات والجهات والمخالفات',
+          icon: <ListChecks className="w-5 h-5 shrink-0 icon-animated" />,
         },
         {
-          id: 'bakery-details-view',
-          label: 'عرض تفاصيل المخبز',
-          icon: <Eye className="w-4 h-4 shrink-0" />,
+          id: 'settings-view-mode',
+          label: 'إعدادات العرض',
+          subtitle: 'التحكم في نمط العرض والتجميع والصفحات',
+          icon: <Eye className="w-5 h-5 shrink-0 icon-animated" />,
         },
         {
-          id: 'bakeries-basic',
-          label: 'تصنيف المخابز والبيانات',
-          icon: <FileText className="w-4 h-4 shrink-0" />,
+          id: 'settings-display',
+          label: 'إعدادات الأعمدة',
+          subtitle: 'تخصيص وإظهار/إخفاء ومسميات الأعمدة',
+          icon: <Sliders className="w-5 h-5 shrink-0 icon-animated" />,
         },
+      ],
+    },
+    {
+      id: 'section-debts',
+      title: '3. قسم سجل المديونيات',
+      subtitle: 'متابعة المخالفات والتحصيل المالي للمخابز',
+      icon: <Scale className="w-5 h-5 shrink-0 icon-animated" />,
+      accentColor: 'from-rose-600 to-red-700',
+      items: [
         {
-          id: 'bakeries-quotas',
-          label: 'بيانات الحصص الفعلية',
-          icon: <Layers className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'bakeries-bread',
-          label: 'أنواع الخبز والتشغيل',
-          icon: <Wheat className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'bakeries-insurance',
-          label: 'بيانات المبالغ التأمينية',
-          icon: <ShieldCheck className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'bakeries-beneficiaries',
-          label: 'بيانات المستفيدين',
-          icon: <Users className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'debts-main',
-          label: 'قاعدة بيانات مديونيات المخابز',
-          icon: <Scale className="w-4 h-4 shrink-0" />,
+          id: 'debts-records',
+          label: 'سجل المديونيات',
+          subtitle: 'الجدول المالي الموحد لمديونيات المخابز',
+          icon: <FileText className="w-5 h-5 shrink-0 icon-animated" />,
           badge: debtsTotal > 0 ? debtsTotal : undefined,
           badgeColor: 'red',
         },
         {
-          id: 'debts-weekly',
-          label: 'جدول الدفعات الأسبوعية',
-          icon: <FileSpreadsheet className="w-4 h-4 shrink-0" />,
+          id: 'debts-alerts-key',
+          label: 'مفتاح التنبيهات الخاص بسجل المديونيات',
+          subtitle: 'المديونيات الحرجة (>20 ألف) والمتأخرات',
+          icon: <ShieldAlert className="w-5 h-5 shrink-0 icon-animated" />,
           badge: largeDebtsTotal > 0 ? largeDebtsTotal : undefined,
           badgeColor: 'amber',
         },
       ],
     },
     {
-      id: 'group-3',
-      title: '3. الحسابات والمؤشرات',
-      icon: <Calculator className="w-5 h-5 shrink-0" />,
-      items: [
-        {
-          id: 'calc-insurance-quota',
-          label: 'الحصص التأمينية',
-          icon: <Calculator className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'calc-loaves-count',
-          label: 'عدد الأرغفة',
-          icon: <Wheat className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'calc-avg-2023',
-          label: 'متوسط نصيب الفرد 2023',
-          icon: <Percent className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'calc-avg-2024',
-          label: 'متوسط نصيب الفرد 2024',
-          icon: <Percent className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'calc-avg-2025',
-          label: 'متوسط نصيب الفرد 2025',
-          icon: <Percent className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'calc-avg-bakery',
-          label: 'متوسط نصيب الفرد للمخبز الواحد',
-          icon: <Store className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'calc-cum-diff',
-          label: 'الفرق التراكمي',
-          icon: <TrendingDown className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'calc-recalculate-all',
-          label: 'إعادة احتساب جميع المعادلات',
-          icon: <RefreshCw className="w-4 h-4 shrink-0" />,
-          badgeColor: 'emerald',
-        },
-      ],
-    },
-    {
-      id: 'group-4',
-      title: '4. البحث والاستعلام',
-      icon: <Search className="w-5 h-5 shrink-0" />,
-      items: [
-        { id: 'search-quick', label: 'البحث السريع', icon: <Search className="w-4 h-4 shrink-0" /> },
-        { id: 'search-by-name', label: 'البحث باسم المخبز', icon: <Store className="w-4 h-4 shrink-0" /> },
-        { id: 'search-by-machine', label: 'البحث برقم المخبز', icon: <Hash className="w-4 h-4 shrink-0" /> },
-        { id: 'search-by-region', label: 'البحث حسب المنطقة', icon: <MapPin className="w-4 h-4 shrink-0" /> },
-        { id: 'search-by-bread', label: 'البحث حسب نوع الخبز', icon: <Wheat className="w-4 h-4 shrink-0" /> },
-        { id: 'search-by-quota', label: 'البحث المتقدم', icon: <Filter className="w-4 h-4 shrink-0" /> },
-      ],
-    },
-    {
-      id: 'group-5',
-      title: '5. مركز التقارير والطباعة',
-      icon: <FileText className="w-5 h-5 shrink-0" />,
-      items: [
-        {
-          id: 'reports-center',
-          label: 'مركز التقارير والطباعة والتصدير',
-          icon: <FileText className="w-4 h-4 shrink-0" />,
-          badge: 24,
-          badgeColor: 'blue',
-        },
-        {
-          id: 'rep-comprehensive',
-          label: 'التقارير التفصيلية للمخابز',
-          icon: <FileText className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'rep-master-summary',
-          label: 'التقارير الإجمالية والملخص',
-          icon: <BarChart3 className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'rep-quotas-loaves',
-          label: 'تقارير الحصص والأرغفة',
-          icon: <Layers className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'rep-beneficiaries-comp',
-          label: 'تقارير المستفيدين (2023-2025)',
-          icon: <Users className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'rep-averages',
-          label: 'تقارير متوسط نصيب الفرد',
-          icon: <Percent className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'rep-cum-diff',
-          label: 'المقارنات السنوية والفروق',
-          icon: <TrendingDown className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'rep-local-units',
-          label: 'تقرير ملخص الوحدات المحلية',
-          icon: <MapPin className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'rep-expired-licenses',
-          label: 'تقرير التراخيص المنتهية',
-          icon: <AlertTriangle className="w-4 h-4 shrink-0" />,
-          badge: alertsTotal > 0 ? alertsTotal : undefined,
-          badgeColor: 'red',
-        },
-        {
-          id: 'rep-export-print',
-          label: 'الطباعة وتصدير PDF',
-          icon: <Printer className="w-4 h-4 shrink-0" />,
-        },
-      ],
-    },
-    {
-      id: 'group-6',
-      title: '6. إدارة البيانات',
-      icon: <Database className="w-5 h-5 shrink-0" />,
-      items: [
-        {
-          id: 'data-import',
-          label: 'استيراد Excel',
-          icon: <Upload className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'data-export',
-          label: 'تصدير Excel',
-          icon: <Download className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'ops-refresh-data',
-          label: 'تحديث البيانات',
-          icon: <RefreshCw className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'data-review-missing',
-          label: 'مراجعة البيانات',
-          icon: <CheckSquare className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'data-backup',
-          label: 'النسخ الاحتياطي',
-          icon: <HardDrive className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'data-restore',
-          label: 'استعادة البيانات',
-          icon: <RotateCcw className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'data-tasks',
-          label: 'المهام اليومية والزيارات',
-          icon: <ClipboardList className="w-4 h-4 shrink-0" />,
-          badge: tasksTotal > 0 ? tasksTotal : undefined,
-          badgeColor: 'amber',
-        },
-        {
-          id: 'data-notes',
-          label: 'سجل الملاحظات والردود',
-          icon: <BookOpen className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'data-inbox',
-          label: 'الوارد والصادر والردود',
-          icon: <Mail className="w-4 h-4 shrink-0" />,
-          badge: unreadInboxCount > 0 ? unreadInboxCount : undefined,
-          badgeColor: 'blue',
-        },
-        {
-          id: 'data-map',
-          label: 'خريطة مواقع المخابز',
-          icon: <Map className="w-4 h-4 shrink-0" />,
-        },
-      ],
-    },
-    {
-      id: 'group-7',
-      title: '7. أدوات التشغيل',
-      icon: <Sliders className="w-5 h-5 shrink-0" />,
+      id: 'section-backup',
+      title: '4. قسم الحفظ والنسخ',
+      subtitle: 'حفظ التعديلات وتبادل الملفات والنسخ الآمن',
+      icon: <HardDrive className="w-5 h-5 shrink-0 icon-animated" />,
+      accentColor: 'from-emerald-600 to-teal-700',
       items: [
         {
           id: 'ops-save-data',
           label: 'حفظ البيانات',
-          icon: <Save className="w-4 h-4 shrink-0" />,
+          subtitle: 'تثبيت وحفظ كافة التعديلات الحالية فوراً',
+          icon: <Save className="w-5 h-5 shrink-0 icon-animated" />,
           badgeColor: 'emerald',
         },
         {
-          id: 'ops-refresh-screen',
-          label: 'تحديث الشاشة',
-          icon: <RefreshCw className="w-4 h-4 shrink-0" />,
+          id: 'data-import',
+          label: 'استيراد البيانات',
+          subtitle: 'استيراد ملفات Excel أو قواعد البيانات',
+          icon: <Upload className="w-5 h-5 shrink-0 icon-animated" />,
         },
         {
-          id: 'ops-reload-data',
-          label: 'إعادة تحميل البيانات',
-          icon: <RotateCcw className="w-4 h-4 shrink-0" />,
+          id: 'data-export',
+          label: 'تصدير البيانات',
+          subtitle: 'تصدير الجداول إلى Excel أو التقرير المطبوع',
+          icon: <Download className="w-5 h-5 shrink-0 icon-animated" />,
         },
         {
-          id: 'settings-audit',
-          label: 'سجل العمليات والتدقيق',
-          icon: <CheckSquare className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'ops-alerts',
-          label: 'التنبيهات والإشعارات',
-          icon: <Bell className="w-4 h-4 shrink-0" />,
-          badge: alertsTotal + largeDebtsTotal > 0 ? alertsTotal + largeDebtsTotal : undefined,
-          badgeColor: 'amber',
-        },
-        {
-          id: 'ops-help',
-          label: 'المساعدة ودليل المعادلات',
-          icon: <HelpCircle className="w-4 h-4 shrink-0" />,
-        },
-      ],
-    },
-    {
-      id: 'group-8',
-      title: '8. الإعدادات',
-      icon: <Settings className="w-5 h-5 shrink-0" />,
-      items: [
-        {
-          id: 'settings-columns',
-          label: 'إعدادات المنظومة والأعمدة',
-          icon: <Sliders className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'settings-users',
-          label: 'إدارة المستخدمين',
-          icon: <UserCheck className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'settings-permissions',
-          label: 'الصلاحيات والأدوار',
-          icon: <ShieldCheck className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'settings-theme',
-          label: 'تخصيص الواجهة والشعار',
-          icon: <Settings className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'settings-gdrive',
-          label: 'ربط Google Drive',
-          icon: <Cloud className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'settings-database',
-          label: 'إعدادات قاعدة البيانات',
-          icon: <Database className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'settings-publish',
-          label: 'نشر وتحديث النظام (Publish)',
-          icon: <Globe className="w-4 h-4 shrink-0" />,
-          badgeColor: 'emerald',
-        },
-        {
-          id: 'settings-account',
-          label: 'إعدادات الحساب',
-          icon: <UserCheck className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'settings-logout',
-          label: 'تسجيل الخروج',
-          icon: <LogOut className="w-4 h-4 shrink-0" />,
-          badgeColor: 'red',
+          id: 'data-backup',
+          label: 'النسخ الاحتياطي',
+          subtitle: 'إنشاء أو استعادة نسخة احتياطية كاملة',
+          icon: <HardDrive className="w-5 h-5 shrink-0 icon-animated" />,
         },
       ],
     },
   ];
 
-  // Find active group & item label
-  let activeGroupId = 'group-2';
-  let activeItemLabel = 'قاعدة بيانات المخابز';
+  let activeGroupId = 'section-bakeries';
+  let activeItemLabel = 'إدارة المخابز';
   for (const grp of groups) {
     const found = grp.items.find((it) => it.id === activeNavId);
     if (found) {
@@ -548,32 +293,32 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
   return (
     <aside
-      aria-label="القائمة الجانبية الرئيسية"
-      className={`bg-gradient-to-b from-[#08152C] via-[#0F2342] to-[#132C54] text-white border-l border-[#1E3A8A]/70 flex flex-col shrink-0 transition-all duration-300 ease-in-out select-none no-print shadow-2xl ${
-        isCollapsed ? 'w-[78px]' : 'w-[310px]'
+      aria-label="القائمة الجانبية الرئيسية لمنظومة ERP"
+      className={`bg-gradient-to-b from-[#071124] via-[#0C1D3A] to-[#11284E] text-white border-l-2 border-[#1E3A8A]/80 flex flex-col shrink-0 transition-all duration-300 ease-in-out select-none no-print shadow-[0_0_40px_rgba(7,17,36,0.45)] ${
+        isCollapsed ? 'w-[86px]' : 'w-[340px]'
       }`}
     >
       {/* Top Sidebar Identity & Collapse Button */}
-      <div className="px-4 py-3.5 border-b border-white/12 flex items-center justify-between gap-2 bg-[#071226]/70">
+      <div className="px-4 py-4 border-b border-white/15 flex items-center justify-between gap-2.5 bg-[#050D1D]/85">
         {!isCollapsed && (
           <div className="flex items-center gap-3 min-w-0">
             {customLogoBase64 ? (
               <img
                 src={customLogoBase64}
                 alt="شعار المنظومة"
-                className="w-10 h-10 rounded-xl object-contain bg-white p-0.5 shrink-0 border border-blue-300/30 shadow-sm"
+                className="w-11 h-11 rounded-2xl object-contain bg-white p-1 shrink-0 border-2 border-amber-400/50 shadow-md"
               />
             ) : (
-              <div className="w-10 h-10 rounded-xl bg-[#1E3A8A] flex items-center justify-center shrink-0 border border-blue-400/30">
-                <Store className="w-5 h-5 text-white" />
+              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#1E3A8A] to-[#2563EB] flex items-center justify-center shrink-0 border border-blue-400/40 shadow-md">
+                <Layers className="w-6 h-6 text-amber-300" />
               </div>
             )}
             <div className="truncate">
-              <div className="text-sm font-black text-white truncate tracking-tight">
+              <div className="text-[15px] font-black text-white truncate tracking-tight">
                 إدارة تموين المحلة الكبرى
               </div>
-              <div className="text-[11px] text-blue-200 font-bold truncate">
-                مركز التحكم الرئيسي للمنظومة
+              <div className="text-[11px] text-amber-300/95 font-bold truncate">
+                نظام تخطيط موارد المخابز (ERP)
               </div>
             </div>
           </div>
@@ -583,7 +328,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           type="button"
           onClick={() => setIsCollapsed((prev) => !prev)}
           title={isCollapsed ? 'توسيع القائمة الجانبية' : 'تصغير القائمة الجانبية'}
-          className="p-2 rounded-xl bg-white/10 hover:bg-[#2563EB] text-white transition-all duration-200 cursor-pointer mx-auto sm:mx-0 border border-white/10 hover:border-blue-300/50 active:scale-95"
+          className="p-2.5 rounded-2xl bg-white/10 hover:bg-[#2563EB] text-white transition-all duration-200 cursor-pointer mx-auto sm:mx-0 border border-white/15 hover:border-blue-300/60 shadow-sm"
         >
           {isCollapsed ? (
             <PanelRightOpen className="w-5 h-5" />
@@ -595,16 +340,19 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
       {/* Active Section Quick Indicator when expanded */}
       {!isCollapsed && (
-        <div className="px-4 py-2.5 bg-[#0A1931]/90 border-b border-white/10 flex items-center justify-between text-xs">
-          <span className="text-blue-200 font-bold">القسم النشط:</span>
-          <span className="text-white font-black truncate max-w-[185px] bg-[#1E40AF]/60 px-2.5 py-0.5 rounded-lg border border-blue-400/30">
+        <div className="px-4 py-3 bg-[#09172E] border-b border-white/12 flex items-center justify-between text-xs">
+          <span className="text-blue-200 font-extrabold flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            <span>الشاشة النشطة:</span>
+          </span>
+          <span className="text-white font-black truncate max-w-[195px] bg-gradient-to-r from-[#1E40AF] to-[#2563EB] px-3 py-1 rounded-xl border border-blue-300/40 shadow-xs">
             {activeItemLabel}
           </span>
         </div>
       )}
 
-      {/* Scrollable Navigation Groups */}
-      <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-2 custom-scrollbar">
+      {/* Scrollable Navigation Groups — Enlarged ERP Buttons */}
+      <nav className="flex-1 overflow-y-auto py-3.5 px-3 space-y-3 custom-scrollbar">
         {groups.map((group) => {
           const isOpen = !!openGroups[group.id];
           const isGroupActive = activeGroupId === group.id;
@@ -612,41 +360,42 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           return (
             <div
               key={group.id}
-              className={`rounded-2xl transition-all duration-200 ${
+              className={`rounded-2xl transition-all duration-200 overflow-hidden ${
                 isGroupActive
-                  ? 'bg-[#152E59]/90 border border-blue-400/35 shadow-md'
-                  : 'bg-white/[0.04] border border-white/[0.07] hover:bg-white/[0.07]'
+                  ? 'bg-[#12284C]/95 border-2 border-blue-400/45 shadow-lg'
+                  : 'bg-white/[0.04] border border-white/10 hover:bg-white/[0.07]'
               }`}
             >
-              {/* Group Header Button */}
+              {/* Group Header Button (Enlarged) */}
               <button
                 type="button"
                 onClick={() => toggleGroup(group.id)}
                 title={group.title}
-                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-right transition-all duration-200 cursor-pointer ${
+                className={`w-full flex items-center justify-between px-4 py-3.5 text-right transition-all duration-200 cursor-pointer group ${
                   isGroupActive
-                    ? 'text-white font-black'
-                    : 'text-white font-bold hover:bg-white/10'
+                    ? 'bg-gradient-to-l from-[#173464] to-[#102548] text-white font-black'
+                    : 'text-white font-extrabold hover:bg-white/10'
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <span
-                    className={`p-1.5 rounded-xl transition-colors ${
-                      isGroupActive
-                        ? 'bg-[#2563EB] text-white shadow-sm'
-                        : 'bg-white/10 text-white'
-                    }`}
+                    className={`p-2.5 rounded-xl bg-gradient-to-br ${group.accentColor} text-white shadow-md shrink-0 border border-white/20`}
                   >
                     {group.icon}
                   </span>
                   {!isCollapsed && (
-                    <span className="text-[14px] font-black text-white truncate tracking-tight">
-                      {group.title}
-                    </span>
+                    <div className="min-w-0 text-right">
+                      <div className="text-[14.5px] font-black text-white truncate tracking-tight">
+                        {group.title}
+                      </div>
+                      <div className="text-[11px] font-bold text-blue-200/80 truncate mt-0.5">
+                        {group.subtitle}
+                      </div>
+                    </div>
                   )}
                 </div>
                 {!isCollapsed && (
-                  <span className="text-white/80 shrink-0">
+                  <span className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-white/90 shrink-0 group-hover:bg-white/20 transition-colors">
                     {isOpen ? (
                       <ChevronDown className="w-4 h-4 transition-transform duration-200" />
                     ) : (
@@ -656,9 +405,9 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                 )}
               </button>
 
-              {/* Group Sub-Items */}
+              {/* Group Sub-Items — Enlarged ERP Action Buttons */}
               {isOpen && !isCollapsed && (
-                <div className="px-2 pb-2.5 pt-1 space-y-1.5 border-t border-white/10">
+                <div className="p-2.5 space-y-2 border-t border-white/10 bg-[#08142A]/55">
                   {group.items.map((item) => {
                     const isItemActive = activeNavId === item.id;
                     return (
@@ -672,38 +421,91 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                             item.label
                           )
                         }
-                        className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl text-[13px] font-bold transition-all duration-200 cursor-pointer group ${
+                        className={`sidebar-btn-erp w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl text-right cursor-pointer group ${
                           isItemActive
-                            ? 'bg-gradient-to-l from-[#1D4ED8] to-[#2563EB] text-white font-black shadow-[0_4px_14px_rgba(37,99,235,0.45)] border border-blue-300/60 -translate-x-1'
-                            : 'text-white bg-white/[0.03] hover:bg-white/15 hover:-translate-x-1 hover:shadow-[0_0_12px_rgba(59,130,246,0.25)] border border-transparent hover:border-blue-400/30 active:scale-[0.98]'
+                            ? 'bg-gradient-to-l from-[#1D4ED8] via-[#2563EB] to-[#1E40AF] text-white font-black shadow-[0_6px_18px_rgba(37,99,235,0.45)] border-2 border-amber-300/80'
+                            : 'text-white bg-white/[0.05] hover:bg-gradient-to-l hover:from-[#1E3A8A]/90 hover:to-[#172554]/90 hover:shadow-[0_4px_14px_rgba(30,64,175,0.35)] border border-white/10 hover:border-blue-300/45'
                         }`}
                       >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="text-white shrink-0 transition-transform duration-200 group-hover:scale-110">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span
+                            className={`p-2 rounded-xl shrink-0 transition-all duration-200 ${
+                              isItemActive
+                                ? 'bg-amber-400 text-[#09152B] shadow-sm'
+                                : 'bg-white/10 text-blue-100 group-hover:bg-blue-500 group-hover:text-white'
+                            }`}
+                          >
                             {item.icon}
                           </span>
-                          <span className="truncate text-right text-white font-bold">
-                            {item.label}
-                          </span>
+                          <div className="min-w-0 text-right">
+                            <div className="text-[14px] font-black text-white truncate leading-snug">
+                              {item.label}
+                            </div>
+                            {item.subtitle && (
+                              <div
+                                className={`text-[10.5px] font-bold truncate mt-0.5 ${
+                                  isItemActive ? 'text-amber-200' : 'text-blue-200/75 group-hover:text-blue-100'
+                                }`}
+                              >
+                                {item.subtitle}
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {item.badge !== undefined ? (
                           <span
-                            className={`px-2 py-0.5 text-[11px] font-black rounded-full shrink-0 font-mono text-white ${
+                            className={`px-2.5 py-1 text-[11.5px] font-black rounded-xl shrink-0 font-mono text-white shadow-sm border border-white/20 ${
                               item.badgeColor === 'red'
-                                ? 'bg-red-600 shadow-xs'
+                                ? 'bg-red-600'
                                 : item.badgeColor === 'amber'
-                                ? 'bg-amber-600 shadow-xs'
+                                ? 'bg-amber-600'
                                 : item.badgeColor === 'emerald'
-                                ? 'bg-emerald-600 shadow-xs'
-                                : 'bg-blue-600 shadow-xs'
+                                ? 'bg-emerald-600'
+                                : 'bg-blue-600'
                             }`}
                           >
                             {item.badge}
                           </span>
-                        ) : isItemActive ? (
-                          <ChevronLeft className="w-4 h-4 text-white shrink-0" />
-                        ) : null}
+                        ) : (
+                          <ChevronLeft
+                            className={`w-4 h-4 shrink-0 transition-transform duration-200 ${
+                              isItemActive
+                                ? 'text-amber-300 -translate-x-0.5'
+                                : 'text-white/40 group-hover:text-white group-hover:-translate-x-1'
+                            }`}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Collapsed Icon-Only Sub-Items */}
+              {isCollapsed && (
+                <div className="p-1.5 space-y-1.5 border-t border-white/10 bg-[#08142A]/55 flex flex-col items-center">
+                  {group.items.map((item) => {
+                    const isItemActive = activeNavId === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        title={`${group.title} — ${item.label}`}
+                        onClick={() =>
+                          onSelectNav(
+                            item.id,
+                            group.title.replace(/^\d+\.\s*/, ''),
+                            item.label
+                          )
+                        }
+                        className={`p-2.5 rounded-xl transition-all cursor-pointer relative ${
+                          isItemActive
+                            ? 'bg-[#2563EB] text-amber-300 border border-amber-300/70 shadow-md'
+                            : 'text-white/80 hover:bg-white/15 hover:text-white'
+                        }`}
+                      >
+                        {item.icon}
                       </button>
                     );
                   })}
@@ -716,12 +518,12 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
       {/* Bottom Sidebar Status Footer */}
       {!isCollapsed && (
-        <div className="px-4 py-3 border-t border-white/12 bg-[#071226]/90 text-[11px] text-white font-bold flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>قاعدة البيانات نشطة ومؤمنة</span>
+        <div className="px-4 py-3.5 border-t border-white/15 bg-[#050D1D]/95 text-[11.5px] text-white font-bold flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+            <span>المعادلات والبيانات محمية 100%</span>
           </span>
-          <span className="font-mono text-blue-200 font-black">RTL • v3.5</span>
+          <span className="font-mono text-amber-300 font-black">ERP v4.0</span>
         </div>
       )}
     </aside>

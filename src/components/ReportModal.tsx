@@ -1561,8 +1561,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                       <tr className="bg-slate-900 text-white font-black border border-black">
                         <th className="border border-black py-1 px-0.5 w-7">م</th>
                         <th className="border border-black py-1 px-1 w-28">اسم المخبز</th>
-                        <th className="border border-black py-1 px-0.5 w-14">الماكينة</th>
-                        <th className="border border-black py-1 px-0.5 w-16">القرية</th>
+                        <th className="border border-black py-1 px-0.5 w-14">رقم الماكينة</th>
+                        <th className="border border-black py-1 px-0.5 w-16">اسم القرية</th>
+                        <th className="border border-black py-1 px-0.5 w-16">اسم الوحدة المحلية</th>
                         <th className="border border-black py-1 px-0.5 w-20">المبلغ التأميني</th>
                         <th className="border border-black py-1 px-0.5 w-12">الحصة</th>
                         <th className="border border-black py-1 px-0.5 w-16">الأرغفة</th>
@@ -1586,6 +1587,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                           <td className="border border-black py-1 px-1 font-black text-right">{r.bakeryOwnerName}</td>
                           <td className="border border-black py-1 px-0.5 font-mono font-black">{r.machineNumber}</td>
                           <td className="border border-black py-1 px-0.5">{r.village}</td>
+                          <td className="border border-black py-1 px-0.5">{r.localUnit}</td>
                           <td className="border border-black py-1 px-0.5 font-mono">{r.insuranceValue.toLocaleString()}</td>
                           <td className="border border-black py-1 px-0.5 font-mono font-black">{r.insuranceQuota}</td>
                           <td className="border border-black py-1 px-0.5 font-mono font-black bg-amber-50/60">{r.loavesCount.toLocaleString()}</td>
@@ -1604,9 +1606,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                       ))}
                     </tbody>
                     <tfoot>
-                      <tr className="bg-slate-200 font-black border-t-2 border-black">
-                        <td colSpan={4} className="border border-black py-1.5 px-2 text-right">
-                          الإجمالي العام / المتوسط العام المرجح بأعداد المستفيدين ({annualWeightedReport.rows.length} مخبز)
+                      <tr className="bg-slate-200 font-black border-t-2 border-black total-summary-row">
+                        <td colSpan={5} className="border border-black py-1.5 px-2 text-right">
+                          صف الإجماليات TOTAL SUMMARY ({annualWeightedReport.rows.length} مخبز)
                         </td>
                         <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalInsuranceValue.toLocaleString()}</td>
                         <td className="border border-black py-1 px-0.5 font-mono">{annualWeightedReport.totalInsuranceQuota}</td>
@@ -1820,12 +1822,12 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     </tbody>
 
                     <tfoot>
-                      <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt]">
+                      <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt] total-summary-row">
                         <td
                           colSpan={6 + (activeColumns.village ? 1 : 0) + (activeColumns.localUnit ? 1 : 0)}
                           className="border border-black py-1.5 px-2 text-right"
                         >
-                          إجمالي كشف حساب المديونيات ({filteredDebts.length} قيد)
+                          صف الإجماليات TOTAL SUMMARY ({filteredDebts.length} قيد)
                         </td>
                         <td className="border border-black py-1 px-0.5 num-enlarged">
                           {debtReportTotals.sumTotalViolations.toLocaleString()}
@@ -2087,12 +2089,12 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     </tbody>
 
                     <tfoot>
-                      <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt]">
+                      <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt] total-summary-row">
                         <td
                           colSpan={3 + (activeColumns.village ? 1 : 0) + (activeColumns.localUnit ? 1 : 0)}
                           className="border border-black py-1.5 px-2 text-right"
                         >
-                          إجمالي كشف مديونيات ونسب سداد المخابز ({filteredBakeryDebts.length} مخبز)
+                          صف الإجماليات TOTAL SUMMARY ({filteredBakeryDebts.length} مخبز)
                         </td>
                         <td className="border border-black py-1 px-0.5 num-enlarged">
                           {bakeryDebtsTotals.sumRecords} قيد
@@ -2451,9 +2453,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     </tbody>
 
                     <tfoot>
-                      <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt]">
+                      <tr className="bg-slate-200 font-black border-t-2 border-black text-[8px] print:text-[7pt] total-summary-row">
                         <td colSpan={3} className="border border-black py-1.5 px-2 text-right">
-                          إجمالي الكشف ({filteredBakeries.length} مخبز)
+                          صف الإجماليات TOTAL SUMMARY ({filteredBakeries.length} مخبز)
                         </td>
                         {activeColumns.village && <td className="border border-black" />}
                         {activeColumns.localUnit && <td className="border border-black" />}

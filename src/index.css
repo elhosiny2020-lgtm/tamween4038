@@ -18,38 +18,54 @@
 }
 
 /* =========================================================
-   ANIMATED BUTTONS & INTERACTIVE FEEDBACK
+   ANIMATED BUTTONS & ENTERPRISE ERP INTERACTIVE FEEDBACK
    ========================================================= */
 button,
 a[role="button"],
 .btn-interactive {
-  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.18s ease,
-              background-color 0.18s ease,
-              border-color 0.18s ease,
-              opacity 0.18s ease;
-  will-change: transform;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              background-color 0.2s ease,
+              border-color 0.2s ease,
+              color 0.2s ease,
+              opacity 0.2s ease;
+  will-change: transform, box-shadow;
 }
 
 button:hover,
 a[role="button"]:hover,
 .btn-interactive:hover {
-  transform: translateY(-1px);
+  transform: translateY(-1.5px);
 }
 
 button:active,
 a[role="button"]:active,
 .btn-interactive:active {
-  transform: scale(0.97) translateY(0px) !important;
+  transform: scale(0.96) translateY(0px) !important;
+}
+
+.sidebar-btn-erp {
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              background 0.22s ease,
+              border-color 0.22s ease;
+}
+
+.sidebar-btn-erp:hover {
+  transform: translateX(-4px) translateY(-1px);
+}
+
+.sidebar-btn-erp:active {
+  transform: scale(0.97) translateX(-2px) !important;
 }
 
 .icon-animated {
-  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 button:hover .icon-animated,
 a:hover .icon-animated,
 .group:hover .icon-animated {
-  transform: scale(1.1);
+  transform: scale(1.14) rotate(-3deg);
 }
 
 .icon-spin-hover {
@@ -59,21 +75,9 @@ button:hover .icon-spin-hover {
   transform: rotate(35deg) scale(1.1);
 }
 
-.icon-float,
-.icon-spin-slow,
-.pulse-glow,
-.shimmer-banner,
-.btn-glow-gold,
-.btn-glow-emerald,
-.animate-ping,
-.animate-bounce,
-.animate-pulse {
-  animation: none !important;
-}
-
 /* Enlarged bold numbers with tabular alignment */
 .num-enlarged {
-  font-size: 0.92rem !important;
+  font-size: 0.94rem !important;
   font-weight: 800 !important;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
@@ -86,6 +90,22 @@ button:hover .icon-spin-hover {
   font-weight: 900 !important;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+}
+
+/* Enterprise ERP Total Summary Row */
+tr.total-summary-row,
+tfoot tr.total-summary-row {
+  background: linear-gradient(90deg, #09152B 0%, #0F2342 50%, #16325B 100%) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+  border-top: 3px solid #f59e0b !important;
+  box-shadow: 0 -4px 16px rgba(9, 21, 43, 0.22) !important;
+}
+
+tr.total-summary-row td,
+tfoot tr.total-summary-row td {
+  color: #ffffff !important;
+  font-weight: 900 !important;
 }
 
 /* Professional Navy row highlight for Matte White tables */
@@ -103,8 +123,12 @@ tr.row-selected td {
 }
 
 /* Smooth Table Row Hover */
+tbody tr {
+  transition: background-color 0.14s ease, box-shadow 0.14s ease;
+}
+
 tbody tr:hover {
-  background-color: #f1f5f9;
+  background-color: #eff6ff;
 }
 
 /* Force pure black (#000000) text inside all report containers (.print-container) both on screen and in print/PDF */

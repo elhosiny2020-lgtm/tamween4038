@@ -295,6 +295,11 @@ export default function App() {
   const [isAdvancedPermissionsModalOpen, setIsAdvancedPermissionsModalOpen] = useState(false);
   const [isInboxModalOpen, setIsInboxModalOpen] = useState(false);
   const [isDailyBriefingModalOpen, setIsDailyBriefingModalOpen] = useState(false);
+  const [isDisplaySettingsModalOpen, setIsDisplaySettingsModalOpen] = useState(false);
+  const [debtsColumnGroup, setDebtsColumnGroup] = useState<'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL'>('ALL');
+  const [debtsPageSize, setDebtsPageSize] = useState<number>(50);
+  const [showDebtsAlertsKeyModal, setShowDebtsAlertsKeyModal] = useState<boolean>(false);
+  const [externalDebtsManageListModal, setExternalDebtsManageListModal] = useState<'entities' | 'violations' | null>(null);
   const [masterEditorInitialCategory, setMasterEditorInitialCategory] = useState<DropdownCategoryKey>('ALL');
   const [dailyNotificationData, setDailyNotificationData] = useState<{
     isOpen: boolean;
@@ -1538,103 +1543,24 @@ export default function App() {
     }
   };
 
-  // Comprehensive Sidebar Navigation Handler (Routes all 7 functional groups without page reload)
+  // Comprehensive Sidebar Navigation Handler (Routes all 4 ERP Sections without page reload)
   const handleSelectSidebarNav = (navId: SidebarNavId, groupTitle: string, itemLabel: string) => {
     setActiveSidebarNavId(navId);
     setBreadcrumbGroup(groupTitle);
     setBreadcrumbItem(itemLabel);
 
     switch (navId) {
-      // Group 1: Dashboard
-      case 'dashboard-home':
-      case 'dashboard-kpis':
-      case 'dashboard-updates':
-        setActiveTab('dashboard');
-        break;
-      case 'dashboard-summary':
-        setActiveTab('dashboard');
-        setIsLocalUnitsModalOpen(true);
-        break;
-
-      // Group 2: Bakeries Management
+      // 1. قسم إدارة المخابز
       case 'bakeries-all':
         setActiveTab('bakeries');
         setColumnViewMode('ALL');
         break;
-      case 'bakeries-basic':
-        setActiveTab('bakeries');
-        setColumnViewMode('BASIC');
+      case 'data-add-bakery':
+        if (appState.currentUser?.role !== 'viewer') {
+          setBakeryToEdit(null);
+          setIsBakeryModalOpen(true);
+        }
         break;
-      case 'bakeries-bread-types':
-        setActiveTab('bakeries');
-        setColumnViewMode('BREAD');
-        break;
-      case 'bakeries-actual-quotas':
-        setActiveTab('bakeries');
-        setColumnViewMode('QUOTAS');
-        break;
-      case 'bakeries-insurance':
-        setActiveTab('bakeries');
-        setColumnViewMode('INSURANCE');
-        break;
-      case 'bakeries-beneficiaries':
-        setActiveTab('bakeries');
-        setColumnViewMode('BENEFICIARIES');
-        break;
-      case 'debts-records':
-        setActiveTab('debts');
-        setDebtFilterBakeryId(undefined);
-        break;
-      case 'debts-installments':
-        setSelectedInstallmentBakeryId(undefined);
-        setIsWeeklyInstallmentsModalOpen(true);
-        break;
-
-      // Group 3: Calculations & Equations
-      case 'calc-insurance-quota':
-      case 'calc-loaves':
-      case 'calc-avg-2023':
-      case 'calc-avg-2024':
-      case 'calc-avg-2025':
-      case 'calc-per-bakery':
-      case 'calc-cum-diff':
-        setActiveTab('dashboard');
-        break;
-      case 'calc-recalculate-all':
-        handleRecalculateAllDatabaseEquations();
-        break;
-
-      // Group 5: Reports Center & Printing
-      case 'reports-center':
-        setActiveTab('reports');
-        setActiveReportId('bak-all');
-        break;
-      case 'report-detailed':
-        setActiveTab('reports');
-        setActiveReportId('bak-all');
-        break;
-      case 'report-summary':
-        setActiveTab('reports');
-        setActiveReportId('comp-totals');
-        break;
-      case 'report-years-comparison':
-        setActiveTab('reports');
-        setActiveReportId('comp-3years');
-        break;
-      case 'report-insurance-quotas':
-        setActiveTab('reports');
-        setActiveReportId('ins-quotas');
-        break;
-      case 'report-per-capita':
-        setActiveTab('reports');
-        setActiveReportId('avg-yearly');
-        break;
-      case 'report-differences':
-        setActiveTab('reports');
-        setActiveReportId('avg-cumdiff');
-        break;
-
-      // Group 5: Search & Inquiry
       case 'search-by-name':
         setActiveTab('bakeries');
         setSearchFocusMode('NAME');
@@ -1655,17 +1581,75 @@ export default function App() {
         setShowAdvancedSearchPanel(true);
         setTimeout(() => searchInputRef.current?.focus(), 100);
         break;
+      case 'calc-equations-view':
+      case 'calc-insurance-quota':
+      case 'calc-loaves':
+      case 'calc-avg-2023':
+      case 'calc-avg-2024':
+      case 'calc-avg-2025':
+      case 'calc-per-bakery':
+      case 'calc-cum-diff':
+        setActiveTab('bakeries');
+        setColumnViewMode('EQUATIONS');
+        break;
+      case 'calc-recalculate-all':
+        handleRecalculateAllDatabaseEquations();
+        break;
+      case 'report-per-capita':
+        setReportModalInitialTab('annual-averages');
+        setIsReportModalOpen(true);
+        break;
+      case 'settings-alerts':
+        setIsAlertsModalOpen(true);
+        break;
 
-      // Group 6: Data Management
-      case 'data-add-bakery':
-        if (appState.currentUser?.role !== 'viewer') {
-          setBakeryToEdit(null);
+      // 2. قسم التعديلات
+      case 'data-edit-bakery':
+        if (selectedBakeryRowId) {
+          const found = appState.bakeries.find((b) => b.id === selectedBakeryRowId);
+          if (found) {
+            setBakeryToEdit(found);
+            setIsBakeryModalOpen(true);
+            break;
+          }
+        }
+        if (appState.bakeries.length > 0 && appState.currentUser?.role !== 'viewer') {
+          setBakeryToEdit(appState.bakeries[0]);
           setIsBakeryModalOpen(true);
+        } else {
+          setMasterEditorInitialCategory('ALL');
+          setIsMasterEditorModalOpen(true);
         }
         break;
       case 'data-edit-master':
         setMasterEditorInitialCategory('ALL');
         setIsMasterEditorModalOpen(true);
+        break;
+      case 'settings-view-mode':
+        setIsDisplaySettingsModalOpen(true);
+        break;
+      case 'settings-display':
+        setIsColumnModalOpen(true);
+        break;
+
+      // 3. قسم سجل المديونيات
+      case 'debts-records':
+        setActiveTab('debts');
+        setDebtFilterBakeryId(undefined);
+        setShowDebtsAlertsKeyModal(false);
+        break;
+      case 'debts-alerts-key':
+        setActiveTab('debts');
+        setShowDebtsAlertsKeyModal(true);
+        break;
+      case 'debts-installments':
+        setSelectedInstallmentBakeryId(undefined);
+        setIsWeeklyInstallmentsModalOpen(true);
+        break;
+
+      // 4. قسم الحفظ والنسخ
+      case 'ops-save-data':
+        triggerSave(appState, 'تم حفظ وتثبيت كافة التغييرات في قاعدة البيانات بنجاح');
         break;
       case 'data-import':
       case 'data-backup':
@@ -1674,11 +1658,37 @@ export default function App() {
       case 'data-export':
         handleExportBakeryCSV();
         break;
+
+      // Additional legacy routes
+      case 'dashboard-home':
+      case 'dashboard-kpis':
+      case 'dashboard-updates':
+        setActiveTab('dashboard');
+        break;
+      case 'reports-center':
+      case 'report-detailed':
+        setActiveTab('reports');
+        setActiveReportId('bak-all');
+        break;
+      case 'report-summary':
+        setActiveTab('reports');
+        setActiveReportId('comp-totals');
+        break;
+      case 'report-years-comparison':
+        setActiveTab('reports');
+        setActiveReportId('comp-3years');
+        break;
+      case 'report-insurance-quotas':
+        setActiveTab('reports');
+        setActiveReportId('ins-quotas');
+        break;
+      case 'report-differences':
+        setActiveTab('reports');
+        setActiveReportId('avg-cumdiff');
+        break;
       case 'data-integrity':
         setIsAuditModalOpen(true);
         break;
-
-      // Group 7: Settings & Administration
       case 'settings-system':
         setIsHeaderModalOpen(true);
         break;
@@ -1691,20 +1701,14 @@ export default function App() {
       case 'settings-daily-tasks':
         setIsDailyTasksModalOpen(true);
         break;
-      case 'settings-alerts':
-        setIsAlertsModalOpen(true);
-        break;
-      case 'settings-display':
-        setIsColumnModalOpen(true);
-        break;
       case 'settings-logout':
         handleLogout();
         break;
     }
   };
 
-  // Determine which column groups are visible in Bakeries table based on columnViewMode
-  const showBasicCols = columnViewMode === 'ALL' || columnViewMode === 'BASIC' || columnViewMode === 'BREAD';
+  // Mandatory 4 Core Identifying Columns (اسم المخبز، رقم الماكينة، اسم القرية، اسم الوحدة المحلية) are ALWAYS visible
+  const showBasicCols = true;
   const showDebtCol = columnViewMode === 'ALL' || columnViewMode === 'BASIC' || columnViewMode === 'INSURANCE';
   const showQuotaCols =
     columnViewMode === 'ALL' ||
@@ -1953,18 +1957,6 @@ export default function App() {
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>مركز التقارير والطباعة</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectSidebarNav('report-years-comparison', 'التقارير والإحصائيات', 'مقارنة بيانات الأعوام')}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'charts'
-                    ? 'bg-[#0F2342] text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>الرسوم والمقارنات</span>
               </button>
             </div>
           </div>
@@ -2286,6 +2278,12 @@ export default function App() {
                 setReportModalInitialTab(tab || 'debts');
                 setIsReportModalOpen(true);
               }}
+              showAlertsKeyModal={showDebtsAlertsKeyModal}
+              onCloseAlertsKeyModal={() => setShowDebtsAlertsKeyModal(false)}
+              externalManageListModal={externalDebtsManageListModal}
+              onCloseExternalManageListModal={() => setExternalDebtsManageListModal(null)}
+              debtsColumnGroup={debtsColumnGroup}
+              debtsPageSize={debtsPageSize}
             />
           ) : (
             /* BAKERIES DATABASE VIEW (إعادة تصميم قاعدة بيانات المخابز - البند 6) */
@@ -3454,21 +3452,18 @@ export default function App() {
                               elements.push(renderLocalUnitTotalRow(uGroup));
                             });
 
-                            elements.push(renderGrandTotalRow());
                             return elements;
                           } else {
-                            const elements = paginatedBakeries.map((b, idx) => {
+                            return paginatedBakeries.map((b, idx) => {
                               const globalIndex = (safeCurrentPage - 1) * pageSize + idx + 1;
                               return renderBakeryRow(b, globalIndex);
                             });
-                            elements.push(renderGrandTotalRow());
-                            return elements;
                           }
                         })()
                       )}
                     </tbody>
 
-                    {/* Dedicated Sticky Summary Footer ("الإجمالي") */}
+                    {/* Dedicated Sticky Summary Footer ("صف الإجماليات TOTAL SUMMARY") */}
                     {sortedBakeries.length > 0 && (
                       <tfoot className="sticky bottom-0 z-20 bg-[#051124] text-amber-300 font-extrabold border-t-4 border-amber-500 shadow-xl text-xs">
                         {(() => {
@@ -3500,12 +3495,12 @@ export default function App() {
                           const gAvgDiff = (Number(gAvg2023) - Number(gAvg2024) - Number(gAvg2025)).toFixed(2);
 
                           return (
-                            <tr>
+                            <tr className="total-summary-row">
                               <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-400 font-black text-sm">🏛️</td>
                               {showBasicCols && (
                                 <>
-                                  <td className="py-3.5 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300 text-sm">
-                                    الإجمالي
+                                  <td className="py-3.5 px-2.5 border-l border-[#1E3A5F] text-right font-black text-amber-300 text-xs sm:text-sm">
+                                    صف الإجماليات TOTAL SUMMARY
                                   </td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] num-enlarged text-amber-200">
                                     {sortedBakeries.length} مخبز
@@ -4109,6 +4104,204 @@ export default function App() {
         }}
         unreadInboxCount={unreadInboxCount}
       />
+
+      {/* 16. ERP Display & Column Group Settings Modal (إعدادات العرض تحت قسم التعديلات) */}
+      {isDisplaySettingsModalOpen && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/75 cursor-pointer no-print"
+          onClick={() => setIsDisplaySettingsModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border-2 border-[#0F2342] w-full max-w-2xl p-6 cursor-default space-y-5"
+            onClick={(e) => e.stopPropagation()}
+            dir="rtl"
+          >
+            <div className="flex items-center justify-between border-b-2 border-slate-200 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-[#0F2342] text-amber-300">
+                  <Eye className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[#0F2342]">
+                    إعدادات العرض وتنظيم الجداول (قسم التعديلات)
+                  </h3>
+                  <p className="text-xs font-bold text-slate-500">
+                    التحكم المركزي في نمط العرض والتجميع الهرمي ومجموعات الأعمدة لجدولي المخابز والمديونيات
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDisplaySettingsModalOpen(false)}
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* 1. Bakeries Grouping Mode */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <label className="font-black text-[#0F2342] block">
+                  1. نمط تجميع صفوف جدول المخابز (الإجماليات الفرعية حسب القرية والوحدة المحلية):
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setGroupingViewMode('HIERARCHICAL')}
+                    className={`p-3 rounded-xl border text-right font-black transition cursor-pointer ${
+                      groupingViewMode === 'HIERARCHICAL'
+                        ? 'bg-[#0F2342] text-amber-300 border-[#0F2342] shadow-md'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div>تجميع هرمي شامل (القرية ← الوحدة المحلية ← الإجمالي)</div>
+                    <div className="text-[10px] font-bold opacity-80 mt-0.5">
+                      يعرض صفوف الإجماليات الفرعية وسط الجدول + صف الإجماليات TOTAL SUMMARY
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGroupingViewMode('FLAT')}
+                    className={`p-3 rounded-xl border text-right font-black transition cursor-pointer ${
+                      groupingViewMode === 'FLAT'
+                        ? 'bg-[#0F2342] text-amber-300 border-[#0F2342] shadow-md'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div>عرض مسطح بنظام الصفحات (بدون فواصل فرعية)</div>
+                    <div className="text-[10px] font-bold opacity-80 mt-0.5">
+                      يعرض المخابز متتالية مع صف الإجماليات TOTAL SUMMARY بالأسفل
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* 2. Bakeries Column View Mode */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <label className="font-black text-[#0F2342] block">
+                  2. نطاق عرض أعمدة جدول المخابز (مع ثبات الأعمدة الـ 4 الأساسية دائماً):
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { id: 'ALL', label: 'كافة الأعمدة (شامل)' },
+                      { id: 'BASIC', label: 'البيانات الأساسية والتراخيص' },
+                      { id: 'BREAD', label: 'أنواع الخبز والتشغيل' },
+                      { id: 'QUOTAS', label: 'الحصص الفعلية والأرغفة' },
+                      { id: 'INSURANCE', label: 'المبالغ والحصص التأمينية' },
+                      { id: 'BENEFICIARIES', label: 'بيانات المستفيدين (2023-2025)' },
+                      { id: 'EQUATIONS', label: 'الحسابات والمعادلات السبع ∑' },
+                    ] as const
+                  ).map((mode) => (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => setColumnViewMode(mode.id)}
+                      className={`px-3 py-2 rounded-xl font-black transition cursor-pointer border ${
+                        columnViewMode === mode.id
+                          ? 'bg-[#1E40AF] text-white border-[#1E40AF]'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Debts Column Group Mode */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <label className="font-black text-[#0F2342] block">
+                  3. نطاق عرض أعمدة جدول سجل المديونيات (مع ثبات الأعمدة الـ 4 الأساسية دائماً):
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { id: 'ALL', label: 'كافة أعمدة المديونيات (شامل)' },
+                      { id: 'SUMMARY', label: 'العرض المالي المختصر' },
+                      { id: 'VIOLATIONS', label: 'المخالفات وسدادها فقط' },
+                      { id: 'ADDED_DISPOSAL', label: 'المضاف والتصرف وسدادهما' },
+                    ] as const
+                  ).map((dMode) => (
+                    <button
+                      key={dMode.id}
+                      type="button"
+                      onClick={() => setDebtsColumnGroup(dMode.id)}
+                      className={`px-3 py-2 rounded-xl font-black transition cursor-pointer border ${
+                        debtsColumnGroup === dMode.id
+                          ? 'bg-[#1E40AF] text-white border-[#1E40AF]'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                    >
+                      {dMode.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 4. Page Sizes */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                  <label className="font-black text-[#0F2342] block mb-1.5">
+                    عدد السجلات بالصفحة (جدول المخابز):
+                  </label>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-bold"
+                  >
+                    <option value={15}>15 مخبز بالصفحة</option>
+                    <option value={25}>25 مخبز بالصفحة</option>
+                    <option value={50}>50 مخبز بالصفحة</option>
+                    <option value={100}>100 مخبز بالصفحة</option>
+                    <option value={500}>عرض الكل (500)</option>
+                  </select>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                  <label className="font-black text-[#0F2342] block mb-1.5">
+                    عدد القيود بالصفحة (جدول سجل المديونيات):
+                  </label>
+                  <select
+                    value={debtsPageSize}
+                    onChange={(e) => setDebtsPageSize(Number(e.target.value))}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-bold"
+                  >
+                    <option value={25}>25 قيد بالصفحة</option>
+                    <option value={50}>50 قيد بالصفحة</option>
+                    <option value={100}>100 قيد بالصفحة</option>
+                    <option value={500}>عرض الكل (500)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDisplaySettingsModalOpen(false);
+                  setIsColumnModalOpen(true);
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-[#0F2342] border border-slate-300 rounded-xl text-xs font-black cursor-pointer"
+              >
+                فتح إعدادات ومسميات الأعمدة...
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsDisplaySettingsModalOpen(false)}
+                className="px-6 py-2.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-amber-300 rounded-xl text-xs font-black cursor-pointer shadow-md"
+              >
+                تطبيق إعدادات العرض والعودة
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Real-time Floating Save Success Toast Notification */}
       {saveToast && (

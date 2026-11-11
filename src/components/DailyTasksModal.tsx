@@ -708,6 +708,18 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
                     })
                   )}
                 </tbody>
+                <tfoot className="bg-[#0F2342] text-white font-black">
+                  <tr className="total-summary-row">
+                    <td colSpan={4} className="py-2.5 px-3 text-right text-amber-300">
+                      صف الإجماليات TOTAL SUMMARY ({filteredTasks.length} مهمة)
+                    </td>
+                    <td colSpan={4} className="py-2.5 px-3 text-center text-sky-200">
+                      عاجلة: {filteredTasks.filter((t) => t.priority === 'high').length} | قيد التنفيذ:{' '}
+                      {filteredTasks.filter((t) => t.status !== 'completed').length} | مكتملة:{' '}
+                      {filteredTasks.filter((t) => t.status === 'completed').length}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </div>

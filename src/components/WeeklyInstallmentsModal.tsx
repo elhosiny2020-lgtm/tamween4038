@@ -364,6 +364,10 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                   <thead>
                     <tr className="bg-slate-900 text-white font-black">
                       <th className="border border-slate-400 py-2 px-1 w-12">الدفعة</th>
+                      <th className="border border-slate-400 py-2 px-2">اسم المخبز</th>
+                      <th className="border border-slate-400 py-2 px-2">رقم الماكينة</th>
+                      <th className="border border-slate-400 py-2 px-2">اسم القرية</th>
+                      <th className="border border-slate-400 py-2 px-2">اسم الوحدة المحلية</th>
                       <th className="border border-slate-400 py-2 px-2">تاريخ الاستحقاق الأسبوعي</th>
                       <th className="border border-slate-400 py-2 px-2">قيمة الدفعة الأسبوعية</th>
                       <th className="border border-slate-400 py-2 px-2">الرصيد المتبقي بعد السداد</th>
@@ -378,6 +382,18 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                         <tr key={item.weekNumber} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
                           <td className="border border-slate-400 py-1.5 px-1 num-enlarged font-black">
                             الدفعة {item.weekNumber}
+                          </td>
+                          <td className="border border-slate-400 py-1.5 px-2 font-black text-slate-900 text-right">
+                            {selectedBakery.bakeryOwnerName}
+                          </td>
+                          <td className="border border-slate-400 py-1.5 px-2 font-mono font-bold text-slate-800">
+                            {selectedBakery.machineNumber}
+                          </td>
+                          <td className="border border-slate-400 py-1.5 px-2 text-slate-800">
+                            {selectedBakery.village}
+                          </td>
+                          <td className="border border-slate-400 py-1.5 px-2 text-slate-800">
+                            {selectedBakery.localUnit}
                           </td>
                           <td className="border border-slate-400 py-1.5 px-2 num-enlarged text-slate-800">
                             {item.dueDate}
@@ -399,9 +415,9 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                     })}
                   </tbody>
                   <tfoot>
-                    <tr className="bg-slate-200 font-black border-t-2 border-slate-800">
-                      <td colSpan={2} className="border border-slate-400 py-2 px-2 text-right">
-                        إجمالي المديونية المجدولة على {weeksCount} أسبوع:
+                    <tr className="bg-slate-200 font-black border-t-2 border-slate-800 total-summary-row">
+                      <td colSpan={6} className="border border-slate-400 py-2 px-2 text-right">
+                        صف الإجماليات TOTAL SUMMARY — إجمالي المديونية المجدولة على {weeksCount} أسبوع:
                       </td>
                       <td className="border border-slate-400 py-2 px-2 num-enlarged text-red-900 text-sm">
                         {currentTotalDebt.toLocaleString()} ج.م

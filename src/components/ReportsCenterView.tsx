@@ -797,13 +797,18 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
   }, [filteredBakeries, bakeryDebtMap, annualReport]);
 
   const activeColumnsMeta = useMemo(() => {
-    return orderedColumnKeys
+    const mandatoryKeys = ['index', 'bakeryOwnerName', 'machineNumber', 'village', 'localUnit'];
+    const combinedKeys = Array.from(new Set([...mandatoryKeys, ...orderedColumnKeys]));
+    return combinedKeys
       .map((key) => ALL_REPORT_COLUMNS.find((c) => c.key === key))
       .filter((c): c is ColumnMeta => Boolean(c));
   }, [orderedColumnKeys]);
 
-  // Toggle column visibility
+  // Toggle column visibility (keep the 4 core identifying columns protected)
   const handleToggleColumn = (key: string) => {
+    if (['index', 'bakeryOwnerName', 'machineNumber', 'village', 'localUnit'].includes(key)) {
+      return;
+    }
     setOrderedColumnKeys((prev) => {
       if (prev.includes(key)) {
         if (prev.length <= 2) return prev;
@@ -1002,8 +1007,8 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
   };
 
   const renderFooterCell = (key: string, idx: number): string => {
-    if (idx === 0) return 'الإجمالي';
-    if (idx === 1 && key === 'bakeryOwnerName') return `إجمالي السجلات (${filteredBakeries.length} مخبز)`;
+    if (idx === 0) return '∑';
+    if (key === 'bakeryOwnerName') return `صف الإجماليات TOTAL SUMMARY (${filteredBakeries.length} مخبز)`;
     switch (key) {
       case 'insuranceValue':
         return safeFormatNum(totals.sumInsVal, 0);

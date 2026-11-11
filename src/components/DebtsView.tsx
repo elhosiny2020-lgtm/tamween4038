@@ -75,6 +75,12 @@ interface DebtsViewProps {
   filterBakeryId?: string;
   onClearBakeryFilter?: () => void;
   onOpenReportModal?: (tab?: 'bakeries' | 'debts' | 'bakery-debts' | 'users') => void;
+  showAlertsKeyModal?: boolean;
+  onCloseAlertsKeyModal?: () => void;
+  externalManageListModal?: 'entities' | 'violations' | null;
+  onCloseExternalManageListModal?: () => void;
+  debtsColumnGroup?: 'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL';
+  debtsPageSize?: number;
 }
 
 export const DebtsView: React.FC<DebtsViewProps> = ({
@@ -94,6 +100,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   filterBakeryId,
   onClearBakeryFilter,
   onOpenReportModal,
+  showAlertsKeyModal = false,
+  onCloseAlertsKeyModal,
+  externalManageListModal = null,
+  onCloseExternalManageListModal,
+  debtsColumnGroup = 'ALL',
+  debtsPageSize = 50,
 }) => {
   const debtsPrintRef = React.useRef<HTMLDivElement>(null);
   const isViewer = currentUser?.role === 'viewer';
@@ -107,6 +119,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [detailDebtRecord, setDetailDebtRecord] = useState<DebtRecord | null>(null);
+  const [isAlertsKeyVisible, setIsAlertsKeyVisible] = useState<boolean>(showAlertsKeyModal);
+
+  useEffect(() => {
+    if (showAlertsKeyModal) {
+      setIsAlertsKeyVisible(true);
+    }
+  }, [showAlertsKeyModal]);
 
   // Modals state
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
@@ -117,6 +138,16 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [isWeeklyInstallmentsOpen, setIsWeeklyInstallmentsOpen] = useState(false);
   const [isCalculatorModalOpen, setIsCalculatorModalOpen] = useState(false);
   const [installmentBakeryId, setInstallmentBakeryId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (externalManageListModal === 'entities') {
+      setIsEntitiesModalOpen(true);
+      onCloseExternalManageListModal?.();
+    } else if (externalManageListModal === 'violations') {
+      setIsViolationsModalOpen(true);
+      onCloseExternalManageListModal?.();
+    }
+  }, [externalManageListModal, onCloseExternalManageListModal]);
 
   // Row highlight state
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
@@ -133,9 +164,25 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [editingViolationNewName, setEditingViolationNewName] = useState('');
   const [violationSearchQuery, setViolationSearchQuery] = useState('');
 
+  // Enrich debts with linked bakery reference if any of the 4 core fields are missing
+  const enrichedDebts = useMemo(() => {
+    const bakeryById = new Map<string, Bakery>();
+    bakeries.forEach((b) => bakeryById.set(b.id, b));
+    return debts.map((d) => {
+      const linked = bakeryById.get(d.bakeryId);
+      return {
+        ...d,
+        bakeryOwnerName: d.bakeryOwnerName || linked?.bakeryOwnerName || 'غير محدد',
+        machineNumber: d.machineNumber || linked?.machineNumber || '—',
+        village: d.village || linked?.village || 'غير محدد',
+        localUnit: d.localUnit || linked?.localUnit || 'غير محدد',
+      };
+    });
+  }, [debts, bakeries]);
+
   // Filtering using pure helper function (supports dateFrom - dateTo, violationType, etc.)
   const filteredDebts = useMemo(() => {
-    return filterDebtsByAdvancedCriteria(debts, {
+    return filterDebtsByAdvancedCriteria(enrichedDebts, {
       dateFrom,
       dateTo,
       violationType: selectedViolationType,
@@ -148,7 +195,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       isOverdueCheck: getDebtOverdueInfo,
     });
   }, [
-    debts,
+    enrichedDebts,
     dateFrom,
     dateTo,
     filterBakeryId,
@@ -159,6 +206,33 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     selectedStatus,
     searchTerm,
   ]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    dateFrom,
+    dateTo,
+    filterBakeryId,
+    selectedVillage,
+    selectedUnit,
+    selectedEntity,
+    selectedViolationType,
+    selectedStatus,
+    searchTerm,
+    debtsPageSize,
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredDebts.length / debtsPageSize));
+  const paginatedDebts = useMemo(() => {
+    const start = (currentPage - 1) * debtsPageSize;
+    return filteredDebts.slice(start, start + debtsPageSize);
+  }, [filteredDebts, currentPage, debtsPageSize]);
+
+  const showViolationsCols = debtsColumnGroup === 'ALL' || debtsColumnGroup === 'VIOLATIONS' || debtsColumnGroup === 'SUMMARY';
+  const showViolationPayCols = debtsColumnGroup === 'ALL' || debtsColumnGroup === 'VIOLATIONS';
+  const showAddedCols = debtsColumnGroup === 'ALL' || debtsColumnGroup === 'ADDED_DISPOSAL' || debtsColumnGroup === 'SUMMARY';
+  const showDisposalCols = debtsColumnGroup === 'ALL' || debtsColumnGroup === 'ADDED_DISPOSAL';
 
   // Filtered period totals for the Advanced Search bar summary
   const filteredPeriodNetDebt = useMemo(() => {
@@ -176,9 +250,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     let netRemainingTotal = 0;
     let overdueCount = 0;
     let overdueAmount = 0;
+    let over20kCount = 0;
+    let paidFullCount = 0;
     const indebtedBakeryIds = new Set<string>();
 
-    debts.forEach((d) => {
+    enrichedDebts.forEach((d) => {
       totalViolations += d.totalViolations || 0;
       paidViolations += d.paidViolationAmount || 0;
       totalAdded += d.addedAmount || 0;
@@ -189,6 +265,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
       if ((d.netRemainingDebt || 0) > 0) {
         indebtedBakeryIds.add(d.bakeryId);
+        if ((d.netRemainingDebt || 0) > 20000) {
+          over20kCount += 1;
+        }
+      } else {
+        paidFullCount += 1;
       }
 
       const { isOverdue } = getDebtOverdueInfo(d.violationDate || d.disposalDate, d.netRemainingDebt);
@@ -215,8 +296,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       netRemainingTotal,
       overdueCount,
       overdueAmount,
+      over20kCount,
+      paidFullCount,
     };
-  }, [debts, bakeries.length]);
+  }, [enrichedDebts, bakeries.length]);
 
   // Filtered totals for table footer
   const filteredTotals = useMemo(() => {
@@ -268,10 +351,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const handleExportCSV = () => {
     const headers = [
       'م',
-      'اسم صاحب المخبز',
+      'اسم المخبز',
       'رقم الماكينة',
-      'القرية',
-      'الوحدة المحلية',
+      'اسم القرية',
+      'اسم الوحدة المحلية',
       'تاريخ المخالفة',
       'الجهة المحررة',
       'نوع المخالفة',
@@ -325,7 +408,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `قاعدة_بيانات_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `سجل_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -337,7 +420,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     }
     printHtmlElementA4(
       debtsPrintRef.current,
-      `تقرير_قاعدة_بيانات_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}`
+      `تقرير_سجل_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}`
     );
   };
 
@@ -346,7 +429,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     setIsExportingPdf(true);
     try {
       await exportElementToPdf(debtsPrintRef.current, {
-        title: 'تقرير_قاعدة_بيانات_مديونيات_المخابز',
+        title: 'تقرير_سجل_مديونيات_المخابز',
         paperSize: 'a4',
         orientation: 'landscape',
       });
@@ -357,31 +440,46 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
   return (
     <div className="space-y-4" dir="rtl">
-      {/* 1. Prominent Section Title Banner: قاعدة بيانات مديونيات المخابز */}
-      <div className="bg-[#0F2342] text-white rounded-2xl p-5 shadow-md border border-[#1E3A5F] flex flex-wrap items-center justify-between gap-4 no-print">
-        <div className="flex items-center gap-3.5">
-          <div className="p-3 bg-white/10 rounded-xl border border-white/20">
-            <Scale className="w-7 h-7 text-amber-400" />
+      {/* 1. Prominent Enterprise ERP Header Banner: سجل مديونيات المخابز */}
+      <div className="bg-gradient-to-l from-[#071124] via-[#0F2342] to-[#16335E] text-white rounded-2xl p-5 shadow-lg border-2 border-[#1E3A8A]/70 flex flex-wrap items-center justify-between gap-4 no-print">
+        <div className="flex items-center gap-4">
+          <div className="p-3.5 bg-gradient-to-br from-amber-400 to-amber-600 rounded-2xl border border-amber-200/40 shadow-md">
+            <Scale className="w-7 h-7 text-[#071124]" />
           </div>
           <div>
-            <h2 className="text-lg md:text-xl font-black tracking-tight text-white flex items-center gap-2">
-              <span>قاعدة بيانات مديونيات المخابز</span>
-              <span className="text-xs bg-amber-500/20 text-amber-300 px-2.5 py-0.5 rounded-full border border-amber-400/30">
-                منظومة موحدة
+            <div className="flex items-center flex-wrap gap-2.5">
+              <h2 className="text-xl md:text-2xl font-black tracking-tight text-white">
+                سجل مديونيات المخابز الموحد
+              </h2>
+              <span className="text-xs bg-amber-400/20 text-amber-300 px-3 py-1 rounded-xl border border-amber-400/40 font-black">
+                منظومة الرقابة والتحصيل المالي ERP
               </span>
-            </h2>
-            <p className="text-xs text-slate-300 font-bold mt-0.5">
-              إدارة ومتابعة المخالفات التموينية والمبالغ المضافة وفروق التصرف والتحصيلات وصافي المديونيات المتبقية
+            </div>
+            <p className="text-xs text-blue-100/90 font-bold mt-1">
+              متابعة دقيقة للمخالفات التموينية والمبالغ المضافة وفروق التصرف وسجل السداد وصافي المديونيات المتبقية
             </p>
           </div>
         </div>
 
-        <div className="flex items-center flex-wrap justify-end gap-2 text-right">
+        <div className="flex items-center flex-wrap justify-end gap-2.5 text-right">
+          <button
+            type="button"
+            onClick={() => setIsAlertsKeyVisible((prev) => !prev)}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 border transition cursor-pointer ${
+              isAlertsKeyVisible
+                ? 'bg-amber-400 text-[#071124] border-amber-300 shadow-md'
+                : 'bg-white/10 hover:bg-white/20 text-amber-300 border-amber-400/40'
+            }`}
+          >
+            <AlertTriangle className="w-4 h-4" />
+            <span>مفتاح التنبيهات الخاص بسجل المديونيات</span>
+          </button>
+
           <button
             type="button"
             disabled={isExportingPdf}
             onClick={handleExportDebtsPdf}
-            className="px-4 py-2.5 bg-[#1E3A8A] hover:bg-[#2563EB] active:scale-[0.98] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm border border-blue-400/40 transition cursor-pointer"
+            className="px-4 py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-md border border-blue-400/50 transition cursor-pointer"
           >
             {isExportingPdf ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
             <span>{isExportingPdf ? 'جاري التصدير...' : 'تصدير التقرير PDF'}</span>
@@ -392,10 +490,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             onClick={() =>
               printHtmlElementA4(
                 debtsPrintRef.current,
-                `قاعدة_بيانات_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}`
+                `سجل_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}`
               )
             }
-            className="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
           >
             <Printer className="w-4 h-4 text-amber-300" />
             <span>طباعة فورية</span>
@@ -403,21 +501,147 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
       </div>
 
+      {/* Interactive Debt Alerts Key Panel (مفتاح التنبيهات الخاص بسجل المديونيات) */}
+      {isAlertsKeyVisible && (
+        <div className="bg-gradient-to-l from-[#09152B] via-[#0F2342] to-[#17335E] text-white rounded-2xl p-4 border-2 border-amber-400/60 shadow-lg no-print space-y-3">
+          <div className="flex items-center justify-between border-b border-white/15 pb-2.5">
+            <div className="flex items-center gap-2.5">
+              <span className="p-2 rounded-xl bg-amber-400 text-[#09152B]">
+                <AlertTriangle className="w-5 h-5" />
+              </span>
+              <div>
+                <h3 className="text-sm font-black text-white">
+                  مفتاح التنبيهات الخاص بسجل المديونيات (تصنيف المخاطر المالية والتحصيل)
+                </h3>
+                <p className="text-[11px] text-blue-200 font-bold">
+                  اضغط على أي مؤشر لتصفية جدول المديونيات فوراً حسب درجة الخطورة أو حالة السداد
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setIsAlertsKeyVisible(false);
+                onCloseAlertsKeyModal?.();
+              }}
+              className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold cursor-pointer flex items-center gap-1"
+            >
+              <X className="w-4 h-4" />
+              <span>إغلاق المفتاح</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <button
+              type="button"
+              onClick={() => setSelectedStatus(selectedStatus === 'OVER_20K' ? 'ALL' : 'OVER_20K')}
+              className={`p-3.5 rounded-xl border text-right transition cursor-pointer flex items-center justify-between ${
+                selectedStatus === 'OVER_20K'
+                  ? 'bg-red-600 text-white border-amber-300 shadow-md'
+                  : 'bg-red-950/60 hover:bg-red-900/70 text-red-100 border-red-400/40'
+              }`}
+            >
+              <div>
+                <div className="text-xs font-black flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                  <span>مديونية حرجة (&gt; 20,000 ج.م)</span>
+                </div>
+                <div className="text-[11px] font-bold text-red-200 mt-1">
+                  خاضعة لجدولة الدفعات الأسبوعية الإلزامية
+                </div>
+              </div>
+              <span className="text-xl font-black font-mono bg-black/25 px-3 py-1 rounded-xl">
+                {stats.over20kCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedStatus(selectedStatus === 'OVERDUE' ? 'ALL' : 'OVERDUE')}
+              className={`p-3.5 rounded-xl border text-right transition cursor-pointer flex items-center justify-between ${
+                selectedStatus === 'OVERDUE'
+                  ? 'bg-amber-500 text-[#09152B] border-white shadow-md'
+                  : 'bg-amber-950/60 hover:bg-amber-900/70 text-amber-100 border-amber-400/40'
+              }`}
+            >
+              <div>
+                <div className="text-xs font-black flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                  <span>متأخرات تجاوزت 30 يوماً</span>
+                </div>
+                <div className="text-[11px] font-bold opacity-85 mt-1">
+                  إجمالي المتأخرات: {stats.overdueAmount.toLocaleString()} ج.م
+                </div>
+              </div>
+              <span className="text-xl font-black font-mono bg-black/25 px-3 py-1 rounded-xl text-white">
+                {stats.overdueCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedStatus(selectedStatus === 'UNPAID' ? 'ALL' : 'UNPAID')}
+              className={`p-3.5 rounded-xl border text-right transition cursor-pointer flex items-center justify-between ${
+                selectedStatus === 'UNPAID'
+                  ? 'bg-blue-600 text-white border-amber-300 shadow-md'
+                  : 'bg-blue-950/60 hover:bg-blue-900/70 text-blue-100 border-blue-400/40'
+              }`}
+            >
+              <div>
+                <div className="text-xs font-black flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-400" />
+                  <span>مديونيات جارية قيد التحصيل</span>
+                </div>
+                <div className="text-[11px] font-bold text-blue-200 mt-1">
+                  مخابز عليها مبالغ متبقية واجبة السداد
+                </div>
+              </div>
+              <span className="text-xl font-black font-mono bg-black/25 px-3 py-1 rounded-xl">
+                {stats.indebtedBakeriesCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedStatus(selectedStatus === 'PAID' ? 'ALL' : 'PAID')}
+              className={`p-3.5 rounded-xl border text-right transition cursor-pointer flex items-center justify-between ${
+                selectedStatus === 'PAID'
+                  ? 'bg-emerald-600 text-white border-amber-300 shadow-md'
+                  : 'bg-emerald-950/60 hover:bg-emerald-900/70 text-emerald-100 border-emerald-400/40'
+              }`}
+            >
+              <div>
+                <div className="text-xs font-black flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                  <span>خالص السداد بالكامل (0 ج.م)</span>
+                </div>
+                <div className="text-[11px] font-bold text-emerald-200 mt-1">
+                  قيود تم تحصيلها وتسويتها بالكامل
+                </div>
+              </div>
+              <span className="text-xl font-black font-mono bg-black/25 px-3 py-1 rounded-xl">
+                {stats.paidFullCount}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Active Bakery Filter Notification */}
       {filterBakeryId && (
-        <div className="bg-amber-50 border border-amber-300 p-3.5 rounded-xl flex items-center justify-between text-amber-950 font-black text-xs no-print shadow-2xs">
+        <div className="bg-amber-50 border-2 border-amber-400 p-3.5 rounded-2xl flex items-center justify-between text-amber-950 font-black text-xs no-print shadow-sm">
           <div className="flex items-center gap-2">
             <Scale className="w-5 h-5 text-amber-700" />
             <span>
               عرض مديونيات المخبز المحدد فقط: (
-              {debts.find((d) => d.bakeryId === filterBakeryId)?.bakeryOwnerName ||
+              {enrichedDebts.find((d) => d.bakeryId === filterBakeryId)?.bakeryOwnerName ||
                 bakeries.find((b) => b.id === filterBakeryId)?.bakeryOwnerName}
               )
             </span>
           </div>
           <button
             onClick={onClearBakeryFilter}
-            className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-lg text-xs font-bold cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-xl text-xs font-bold cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             إلغاء التصفية وعرض كافة المخابز
@@ -425,18 +649,21 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
       )}
 
-      {/* 2. Primary 5 Statistical Cards Above Debts Table (البطاقات الإحصائية الخمس المطلوبة) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 no-print">
+      {/* 2. Primary 5 Statistical Cards Above Debts Table */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 no-print">
         {/* Card 1: إجمالي عدد المخابز */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex items-center justify-between">
+        <div
+          onClick={() => setSelectedStatus('ALL')}
+          className="bg-white hover:bg-blue-50/40 border-2 border-slate-200 hover:border-blue-400 rounded-2xl p-4 shadow-sm flex items-center justify-between cursor-pointer transition"
+        >
           <div>
-            <span className="text-xs font-bold text-slate-500 block">1. إجمالي عدد المخابز</span>
+            <span className="text-xs font-extrabold text-slate-500 block">1. إجمالي عدد المخابز</span>
             <span className="text-2xl font-black text-[#0F2342] font-mono tabular-nums mt-1 block">
               {stats.totalBakeriesCount.toLocaleString()}
             </span>
             <span className="text-[11px] font-bold text-slate-500 mt-0.5 block">مخبز مسجل بالمنظومة</span>
           </div>
-          <div className="p-3 bg-blue-50 text-[#1E3A8A] rounded-xl border border-blue-100">
+          <div className="p-3 bg-blue-50 text-[#1E3A8A] rounded-2xl border border-blue-200">
             <Store className="w-6 h-6" />
           </div>
         </div>
@@ -444,26 +671,26 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         {/* Card 2: إجمالي عدد المخابز المدينة */}
         <div
           onClick={() => setSelectedStatus('UNPAID')}
-          className="bg-white hover:bg-amber-50/40 border border-slate-200 hover:border-amber-400 rounded-2xl p-4 shadow-2xs flex items-center justify-between cursor-pointer transition"
+          className="bg-white hover:bg-amber-50/40 border-2 border-slate-200 hover:border-amber-400 rounded-2xl p-4 shadow-sm flex items-center justify-between cursor-pointer transition"
         >
           <div>
-            <span className="text-xs font-bold text-slate-500 block">2. إجمالي عدد المخابز المدينة</span>
+            <span className="text-xs font-extrabold text-slate-500 block">2. إجمالي عدد المخابز المدينة</span>
             <span className="text-2xl font-black text-amber-700 font-mono tabular-nums mt-1 block">
               {stats.indebtedBakeriesCount.toLocaleString()}
             </span>
             <span className="text-[11px] font-bold text-amber-800 mt-0.5 block">
-              من إجمالي {debts.length} قيد مديونية
+              من إجمالي {enrichedDebts.length} قيد مديونية
             </span>
           </div>
-          <div className="p-3 bg-amber-50 text-amber-700 rounded-xl border border-amber-200">
+          <div className="p-3 bg-amber-50 text-amber-700 rounded-2xl border border-amber-200">
             <AlertTriangle className="w-6 h-6" />
           </div>
         </div>
 
         {/* Card 3: إجمالي قيمة المديونيات */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex items-center justify-between">
+        <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-xs font-bold text-slate-500 block">3. إجمالي قيمة المديونيات</span>
+            <span className="text-xs font-extrabold text-slate-500 block">3. إجمالي قيمة المديونيات</span>
             <span className="text-2xl font-black text-[#1E3A8A] font-mono tabular-nums mt-1 block">
               {stats.totalOriginalDebt.toLocaleString()}
             </span>
@@ -471,7 +698,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               جنيه مصري (مخالفات + مضاف + تصرف)
             </span>
           </div>
-          <div className="p-3 bg-blue-50 text-[#1E40AF] rounded-xl border border-blue-200">
+          <div className="p-3 bg-blue-50 text-[#1E40AF] rounded-2xl border border-blue-200">
             <Scale className="w-6 h-6" />
           </div>
         </div>
@@ -479,16 +706,16 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         {/* Card 4: إجمالي المبالغ المسددة */}
         <div
           onClick={() => setSelectedStatus('PAID')}
-          className="bg-white hover:bg-emerald-50/40 border border-slate-200 hover:border-emerald-400 rounded-2xl p-4 shadow-2xs flex items-center justify-between cursor-pointer transition"
+          className="bg-white hover:bg-emerald-50/40 border-2 border-slate-200 hover:border-emerald-400 rounded-2xl p-4 shadow-sm flex items-center justify-between cursor-pointer transition"
         >
           <div>
-            <span className="text-xs font-bold text-slate-500 block">4. إجمالي المبالغ المسددة</span>
+            <span className="text-xs font-extrabold text-slate-500 block">4. إجمالي المبالغ المسددة</span>
             <span className="text-2xl font-black text-emerald-700 font-mono tabular-nums mt-1 block">
               {stats.totalPaidAmount.toLocaleString()}
             </span>
             <span className="text-[11px] font-bold text-emerald-700 mt-0.5 block">جنيه مصري محصل</span>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200">
+          <div className="p-3 bg-emerald-50 text-emerald-700 rounded-2xl border border-emerald-200">
             <CheckCircle2 className="w-6 h-6" />
           </div>
         </div>
@@ -496,28 +723,29 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         {/* Card 5: إجمالي المبالغ المتبقية */}
         <div
           onClick={() => setSelectedStatus('UNPAID')}
-          className="bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-2xl p-4 shadow-sm flex items-center justify-between cursor-pointer transition hover:shadow-md"
+          className="bg-gradient-to-br from-[#0F2342] via-[#1E3A8A] to-[#172554] text-white rounded-2xl p-4 shadow-md border-2 border-amber-400/50 flex items-center justify-between cursor-pointer transition hover:shadow-lg"
         >
           <div>
-            <span className="text-xs font-bold text-rose-100 block">5. إجمالي المبالغ المتبقية</span>
+            <span className="text-xs font-bold text-amber-300 block">5. صافي المبالغ المتبقية</span>
             <span className="text-2xl font-black text-white font-mono tabular-nums mt-1 block">
               {stats.netRemainingTotal.toLocaleString()}
             </span>
-            <span className="text-[11px] font-bold text-rose-100 mt-0.5 block">
+            <span className="text-[11px] font-bold text-blue-200 mt-0.5 block">
               جنيه مصري مستحق التحصيل
             </span>
           </div>
-          <div className="p-3 bg-white/15 text-white rounded-xl border border-white/25">
+          <div className="p-3 bg-amber-400/20 text-amber-300 rounded-2xl border border-amber-400/40">
             <DollarSign className="w-6 h-6" />
           </div>
         </div>
       </div>
 
-      {/* 3. Organized Command Toolbar & Filter Bar Above Debts Table */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-3.5 no-print">
-        <div className="flex flex-wrap items-center justify-between gap-2.5">
+      {/* 3. Streamlined ERP Command Toolbar & Filter Bar Above Debts Table
+          (Removed زر الجهات المحررة للمحضر & زر أنواع المخالفات from top of table as requested) */}
+      <div className="bg-white border-2 border-slate-200/90 rounded-2xl p-4 shadow-sm space-y-3.5 no-print">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             {!isViewer && (
               <button
                 type="button"
@@ -525,10 +753,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   setDebtToEdit(null);
                   setIsDebtModalOpen(true);
                 }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#0F2342] hover:bg-[#1E3A8A] active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-l from-[#0F2342] to-[#1E3A8A] hover:from-[#1E3A8A] hover:to-[#2563EB] text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
               >
-                <Plus className="w-4 h-4 text-white" />
-                <span>تسجيل مديونية / مخالفة جديدة</span>
+                <Plus className="w-4 h-4 text-amber-300" />
+                <span>إضافة قيد مديونية / مخالفة جديدة</span>
               </button>
             )}
 
@@ -536,13 +764,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const found = debts.find((d) => d.id === selectedRowId);
+                  const found = enrichedDebts.find((d) => d.id === selectedRowId);
                   if (found) {
                     setDebtToEdit(found);
                     setIsDebtModalOpen(true);
                   }
                 }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#1E40AF] hover:bg-[#2563EB] active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
               >
                 <Edit2 className="w-3.5 h-3.5 text-white" />
                 <span>تعديل المديونية المحددة</span>
@@ -552,7 +780,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             <button
               type="button"
               onClick={() => setIsCalculatorModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-600 hover:bg-amber-500 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
             >
               <Calculator className="w-4 h-4 text-white" />
               <span>حاسبة الغرامات التموينية</span>
@@ -564,36 +792,16 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 setInstallmentBakeryId(undefined);
                 setIsWeeklyInstallmentsOpen(true);
               }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#1E40AF] hover:bg-[#2563EB] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-[#1E40AF] hover:bg-[#2563EB] text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
             >
-              <DollarSign className="w-4 h-4 text-white" />
+              <DollarSign className="w-4 h-4 text-amber-300" />
               <span>جدولة الدفعات الأسبوعية (&gt; 20 ألف)</span>
             </button>
 
             <button
               type="button"
-              onClick={() => setIsEntitiesModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
-              title="إدارة وتعديل وحذف الجهات المحررة للمحاضر"
-            >
-              <Building className="w-3.5 h-3.5 text-[#1E40AF]" />
-              <span>الجهات المحررة ({issuingEntities.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsViolationsModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
-              title="إدارة وتعديل وحذف أنواع المخالفات التموينية"
-            >
-              <Scale className="w-3.5 h-3.5 text-red-600" />
-              <span>أنواع المخالفات ({violationTypes.length})</span>
-            </button>
-
-            <button
-              type="button"
               onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
             >
               <FileSpreadsheet className="w-4 h-4 text-white" />
               <span>تصدير Excel</span>
@@ -601,18 +809,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
             <button
               type="button"
-              disabled={isExportingPdf}
-              onClick={handleExportDebtsPdf}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#1D4ED8] hover:bg-[#2563EB] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
-            >
-              <FileText className="w-4 h-4 text-white" />
-              <span>تصدير التقرير PDF</span>
-            </button>
-
-            <button
-              type="button"
               onClick={handlePrintDebts}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-[#0F2342] border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-[#0F2342] border border-slate-300 rounded-xl text-xs font-black transition cursor-pointer"
             >
               <Printer className="w-4 h-4 text-[#0F2342]" />
               <span>معاينة وطباعة الكشف</span>
@@ -620,14 +818,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
 
           {/* Search Box */}
-          <div className="relative flex-1 min-w-[240px] max-w-sm">
-            <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="relative flex-1 min-w-[260px] max-w-md">
+            <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="بحث باسم صاحب المخبز، رقم الماكينة، رقم الإيصال..."
-              className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-300 text-slate-800 placeholder:text-slate-400 rounded-xl text-xs font-bold focus:bg-white focus:ring-2 focus:ring-[#1E40AF] text-right transition"
+              placeholder="بحث فوري باسم المخبز، رقم الماكينة، القرية، أو رقم الإيصال..."
+              className="w-full pr-10 pl-3 py-2.5 bg-slate-50 border-2 border-slate-200 text-slate-900 placeholder:text-slate-400 rounded-xl text-xs font-extrabold focus:bg-white focus:border-[#1E40AF] focus:outline-none text-right transition"
             />
           </div>
         </div>
@@ -636,29 +834,29 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         <div
           role="region"
           aria-label="البحث المتقدم عبر المديونيات"
-          className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3"
+          className="p-3.5 bg-slate-50/90 border border-slate-200 rounded-xl space-y-3"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
             <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-blue-50 border border-blue-200 rounded-lg">
-                <Filter className="w-4 h-4 text-[#1E3A8A]" />
+              <div className="p-1.5 bg-[#0F2342] text-amber-300 rounded-lg">
+                <Filter className="w-4 h-4" />
               </div>
               <div>
                 <h3 className="text-xs sm:text-sm font-black text-[#0F2342] flex items-center gap-2">
-                  <span>البحث والتصفية المتقدمة لسجلات المديونيات</span>
-                  <span className="text-[10px] bg-blue-100 text-[#1E3A8A] px-2 py-0.5 rounded-full font-bold">
-                    نطاق تاريخي + نوع المخالفة + المنطقة
+                  <span>محرك البحث والاستعلام المتقدم لسجل المديونيات</span>
+                  <span className="text-[10px] bg-blue-100 text-[#1E3A8A] px-2.5 py-0.5 rounded-full font-black">
+                    فلترة ديناميكية شاملة
                   </span>
                 </h3>
               </div>
             </div>
 
             <div className="flex items-center flex-wrap gap-2">
-              <span className="px-2.5 py-1 bg-white border border-slate-300 text-slate-700 rounded-lg text-[11px] font-bold">
+              <span className="px-3 py-1 bg-white border border-slate-300 text-slate-700 rounded-lg text-[11px] font-extrabold">
                 القيود المعروضة: <strong className="text-[#0F2342] font-mono">{filteredDebts.length}</strong> من{' '}
-                <strong className="font-mono">{debts.length}</strong> قيد
+                <strong className="font-mono">{enrichedDebts.length}</strong> قيد
               </span>
-              <span className="px-2.5 py-1 bg-red-50 border border-red-200 text-red-800 rounded-lg text-[11px] font-black">
+              <span className="px-3 py-1 bg-[#0F2342] text-amber-300 rounded-lg text-[11px] font-black">
                 صافي مديونيات النتائج: {filteredPeriodNetDebt.toLocaleString()} ج.م
               </span>
               {(dateFrom !== '' ||
@@ -695,7 +893,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             <div>
               <label
                 htmlFor="debt-advanced-date-from"
-                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1"
+                className="flex items-center gap-1.5 text-[11px] font-extrabold text-slate-700 mb-1"
               >
                 <Calendar className="w-3.5 h-3.5 text-[#1E40AF]" />
                 <span>من تاريخ:</span>
@@ -715,7 +913,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             <div>
               <label
                 htmlFor="debt-advanced-date-to"
-                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1"
+                className="flex items-center gap-1.5 text-[11px] font-extrabold text-slate-700 mb-1"
               >
                 <Calendar className="w-3.5 h-3.5 text-[#1E40AF]" />
                 <span>إلى تاريخ:</span>
@@ -735,7 +933,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             <div>
               <label
                 htmlFor="debt-advanced-violation-type"
-                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 mb-1"
+                className="flex items-center gap-1.5 text-[11px] font-extrabold text-slate-700 mb-1"
               >
                 <Scale className="w-3.5 h-3.5 text-red-600" />
                 <span>حسب نوع المخالفة التموينية:</span>
@@ -753,10 +951,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 }}
                 className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-800 text-xs cursor-pointer"
               >
-                <option value="ALL">كافة أنواع المخالفات ({debts.length} قيد)</option>
-                {Array.from(new Set([...violationTypes, ...debts.map((d) => d.violationType).filter(Boolean)])).map(
+                <option value="ALL">كافة أنواع المخالفات ({enrichedDebts.length} قيد)</option>
+                {Array.from(new Set([...violationTypes, ...enrichedDebts.map((d) => d.violationType).filter(Boolean)])).map(
                   (vType) => {
-                    const count = debts.filter((d) => d.violationType === vType).length;
+                    const count = enrichedDebts.filter((d) => d.violationType === vType).length;
                     return (
                       <option key={vType} value={vType}>
                         {vType} ({count} قيد)
@@ -764,13 +962,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     );
                   }
                 )}
-                <option value="__MANAGE_VIOLATIONS__">⚙️ إدارة وتعديل أنواع المخالفات...</option>
+                <option value="__MANAGE_VIOLATIONS__">⚙️ إدارة وتعديل قائمة المخالفات...</option>
               </select>
             </div>
 
             {/* 4. Quick Date Range Presets */}
             <div>
-              <span className="block text-[11px] font-bold text-slate-700 mb-1">فترات زمنية سريعة:</span>
+              <span className="block text-[11px] font-extrabold text-slate-700 mb-1">فترات زمنية سريعة:</span>
               <div className="flex items-center flex-wrap gap-1.5">
                 <button
                   type="button"
@@ -835,7 +1033,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           {/* Secondary Dropdown Filters */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-slate-200 text-xs">
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">القرية</label>
+              <label className="block text-[11px] font-extrabold text-slate-600 mb-1">اسم القرية</label>
               <select
                 value={selectedVillage}
                 onChange={(e) => {
@@ -854,7 +1052,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">الوحدة المحلية التابعة</label>
+              <label className="block text-[11px] font-extrabold text-slate-600 mb-1">اسم الوحدة المحلية</label>
               <select
                 value={selectedUnit}
                 onChange={(e) => setSelectedUnit(e.target.value)}
@@ -882,7 +1080,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">الجهة المحررة للمحضر</label>
+              <label className="block text-[11px] font-extrabold text-slate-600 mb-1">الجهة المحررة للمحضر</label>
               <select
                 value={selectedEntity}
                 onChange={(e) => {
@@ -895,7 +1093,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-800"
               >
                 <option value="ALL">كافة الجهات المحررة ({issuingEntities.length})</option>
-                <option value="__MANAGE_ENTITIES__">⚙️ إدارة وتعديل الجهات المحررة...</option>
+                <option value="__MANAGE_ENTITIES__">⚙️ إدارة وتعديل قائمة الجهات المحررة...</option>
                 {issuingEntities.map((e) => (
                   <option key={e} value={e}>
                     {e}
@@ -905,7 +1103,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">حالة السداد والجدولة</label>
+              <label className="block text-[11px] font-extrabold text-slate-600 mb-1">حالة السداد والجدولة</label>
               <select
                 value={selectedStatus}
                 onChange={(e) => setSelectedStatus(e.target.value as 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE')}
@@ -922,7 +1120,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
       </div>
 
-      {/* 4. Printable Wrapper & Official Grouped Headers Debts Table */}
+      {/* 4. Printable Wrapper & Enterprise ERP Debts Registry Table */}
       <div ref={debtsPrintRef} className="space-y-3 print-container">
         {/* Official Printable Header (Appears during print & PDF export) */}
         <div className="hidden print:block mb-4 text-center border-b-2 border-[#0F2342] pb-3">
@@ -938,7 +1136,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               </div>
             )}
             <div className="text-left font-mono text-[10px] font-bold">
-              <p>تقرير قاعدة بيانات مديونيات المخابز</p>
+              <p>تقرير سجل مديونيات المخابز</p>
               <p>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</p>
               <p>عدد القيود: {filteredDebts.length} قيد</p>
             </div>
@@ -946,125 +1144,158 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
 
         {/* Debts Database Table */}
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-          <div className="overflow-x-auto max-h-[650px] relative">
+        <div className="bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-md">
+          <div className="overflow-x-auto max-h-[670px] relative custom-scrollbar">
             <table className="w-full text-center border-collapse text-xs">
               {/* Super Headers */}
-              <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-bold shadow-xs">
+              <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-black shadow-md">
                 <tr className="border-b border-[#1E3A8A]">
                   <th
                     rowSpan={2}
-                    className="py-3 px-2 bg-[#0A1931] border-l border-[#1E3A8A] text-white w-10 text-center font-black"
+                    className="py-3 px-2 bg-[#08152C] border-l border-[#1E3A8A] text-amber-300 w-10 text-center font-black"
                   >
                     م
                   </th>
                   <th
                     colSpan={4}
-                    className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-white font-black"
+                    className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-amber-300 font-black"
                   >
-                    1. البيانات الأساسية وموقع المخبز
+                    1. الأعمدة الأساسية للمخبز (إلزامية)
                   </th>
-                  <th
-                    colSpan={6}
-                    className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
-                  >
-                    2. مخالفات المخبز
-                  </th>
-                  <th
-                    colSpan={5}
-                    className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-white font-black"
-                  >
-                    3. سداد المخالفات
-                  </th>
-                  <th
-                    colSpan={6}
-                    className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
-                  >
-                    4. المنصرف وسداد المنصرف (المضاف)
-                  </th>
-                  <th
-                    colSpan={5}
-                    className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-white font-black"
-                  >
-                    5. التصرف من المخبز
-                  </th>
-                  <th
-                    colSpan={5}
-                    className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
-                  >
-                    6. السداد من التصرف
-                  </th>
+                  {showViolationsCols && (
+                    <th
+                      colSpan={6}
+                      className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
+                    >
+                      2. مخالفات المخبز
+                    </th>
+                  )}
+                  {showViolationPayCols && (
+                    <th
+                      colSpan={5}
+                      className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-white font-black"
+                    >
+                      3. سداد المخالفات
+                    </th>
+                  )}
+                  {showAddedCols && (
+                    <th
+                      colSpan={6}
+                      className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
+                    >
+                      4. المنصرف وسداد المنصرف (المضاف)
+                    </th>
+                  )}
+                  {showDisposalCols && (
+                    <>
+                      <th
+                        colSpan={5}
+                        className="py-2.5 px-2 bg-[#0F2342] border-l border-[#1E3A8A] text-white font-black"
+                      >
+                        5. التصرف من المخبز
+                      </th>
+                      <th
+                        colSpan={5}
+                        className="py-2.5 px-2 bg-[#162E58] border-l border-[#1E3A8A] text-white font-black"
+                      >
+                        6. السداد من التصرف
+                      </th>
+                    </>
+                  )}
                   <th
                     rowSpan={2}
-                    className="py-3 px-3 bg-[#1E3A8A] border-l border-blue-800 text-white text-xs font-black min-w-[135px]"
+                    className="py-3 px-3 bg-[#1E3A8A] border-l border-blue-800 text-amber-300 text-xs font-black min-w-[145px]"
                   >
                     صافي المتبقي على صاحب المخبز
                   </th>
                   <th
                     rowSpan={2}
-                    className="py-3 px-2 bg-[#0A1931] border-l border-[#1E3A8A] text-white min-w-[95px] no-print text-center font-black"
+                    className="py-3 px-2 bg-[#08152C] border-l border-[#1E3A8A] text-white min-w-[115px] no-print text-center font-black"
                   >
-                    الإجراءات
+                    الإجراءات والتفاصيل
                   </th>
                 </tr>
 
-                {/* Sub Columns Headers */}
-                <tr className="bg-[#152E59] text-[11px] text-white font-bold border-b-2 border-[#0F2342]">
-                  {/* 1. Basic Info */}
-                  <th className="py-2.5 px-2.5 border-l border-[#1E3A8A] min-w-[155px] text-right">اسم صاحب المخبز</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[90px]">رقم الماكينة</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">القرية</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[95px]">الوحدة التابعة</th>
+                {/* Sub Columns Headers — Mandatory 4 Identifying Columns First */}
+                <tr className="bg-[#152E59] text-[11px] text-white font-black border-b-2 border-amber-400/70">
+                  {/* 1. Mandatory 4 Core Columns */}
+                  <th className="py-2.5 px-2.5 border-l border-[#1E3A8A] min-w-[165px] text-right bg-[#102548] text-amber-200">
+                    اسم المخبز
+                  </th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[100px] bg-[#102548] text-amber-200">
+                    رقم الماكينة
+                  </th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[95px] bg-[#102548] text-amber-200">
+                    اسم القرية
+                  </th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[110px] bg-[#102548] text-amber-200">
+                    اسم الوحدة المحلية
+                  </th>
 
                   {/* 2. Violations */}
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ العملية</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[115px]">الجهة المحررة</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[125px]">نوع المخالفة</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">قيمة المخالفة</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">مخالفات قديمة</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">إجمالي المخالفات</th>
+                  {showViolationsCols && (
+                    <>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ العملية</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[115px]">الجهة المحررة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[125px]">نوع المخالفة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">قيمة المخالفة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">مخالفات قديمة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">إجمالي المخالفات</th>
+                    </>
+                  )}
 
                   {/* 3. Violation Payment */}
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المبلغ المسدد</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">المتبقي</th>
+                  {showViolationPayCols && (
+                    <>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المبلغ المسدد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">المتبقي</th>
+                    </>
+                  )}
 
                   {/* 4. Added */}
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المضاف للمخبز</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المسدد من المضاف</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">المتبقي</th>
+                  {showAddedCols && (
+                    <>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المضاف للمخبز</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المسدد من المضاف</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">المتبقي</th>
+                    </>
+                  )}
 
-                  {/* 5. Disposal */}
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ التصرف</th>
-                  <th className="py-2.5 px-1.5 border-l border-[#1E3A8A]">الشكاير</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">سعر الشيكارة</th>
-                  <th className="py-2.5 px-1.5 border-l border-[#1E3A8A]">المضاعفة</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">قيمة التصرف</th>
-
-                  {/* 6. Disposal Payment */}
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">قيمة التصرف</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
-                  <th className="py-2.5 px-2 border-l border-[#1E3A8A]">السداد من التصرف</th>
+                  {/* 5 & 6. Disposal & Disposal Payment */}
+                  {showDisposalCols && (
+                    <>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ التصرف</th>
+                      <th className="py-2.5 px-1.5 border-l border-[#1E3A8A]">الشكاير</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">سعر الشيكارة</th>
+                      <th className="py-2.5 px-1.5 border-l border-[#1E3A8A]">المضاعفة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">قيمة التصرف</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">قيمة التصرف</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">السداد من التصرف</th>
+                    </>
+                  )}
                 </tr>
               </thead>
 
               {/* Table Body */}
               <tbody className="divide-y divide-slate-200 font-bold text-slate-800">
-                {filteredDebts.length === 0 ? (
+                {paginatedDebts.length === 0 ? (
                   <tr>
                     <td colSpan={34} className="py-12 text-center text-slate-500 font-black">
                       لا توجد أي قيود مديونية مطابقة لمعايير البحث الحالية
                     </td>
                   </tr>
                 ) : (
-                  filteredDebts.map((d, index) => {
+                  paginatedDebts.map((d, index) => {
+                    const globalIndex = (currentPage - 1) * debtsPageSize + index + 1;
                     const isSelected = selectedRowId === d.id;
                     return (
                       <tr
@@ -1074,140 +1305,158 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                           isSelected
                             ? 'row-selected'
                             : index % 2 === 0
-                            ? 'bg-white hover:bg-blue-50/70'
-                            : 'bg-slate-50/90 hover:bg-blue-50/70'
+                            ? 'bg-white hover:bg-blue-50/75'
+                            : 'bg-slate-50/90 hover:bg-blue-50/75'
                         }`}
                       >
                         {/* Index */}
                         <td className="py-2.5 px-1.5 border-l border-slate-200 text-slate-500 font-mono text-center">
-                          {index + 1}
+                          {globalIndex}
                         </td>
 
-                        {/* Owner & Location */}
-                        <td className="py-2.5 px-2.5 border-l border-slate-200 font-extrabold text-[#0F2342] text-right">
+                        {/* Mandatory 4 Identifying Columns */}
+                        <td className="py-2.5 px-2.5 border-l border-slate-200 font-black text-[#0F2342] text-right">
                           {d.bakeryOwnerName}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-[#1E40AF]">
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-[#1E40AF] bg-blue-50/30">
                           {d.machineNumber}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-800">{d.village}</td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-600">{d.localUnit}</td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-extrabold text-slate-800">
+                          {d.village}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-slate-200 font-bold text-slate-700">
+                          {d.localUnit}
+                        </td>
 
                         {/* 2. Violations */}
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
-                          <div>
-                            <span>{formatDateDDMMYYYY(d.violationDate) || '-'}</span>
-                            {(() => {
-                              const { isOverdue, daysElapsed } = getDebtOverdueInfo(
-                                d.violationDate || d.disposalDate,
-                                d.netRemainingDebt
-                              );
-                              if (isOverdue) {
-                                return (
-                                  <span
-                                    className="block text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded px-1 mt-0.5"
-                                    title={`مر ${daysElapsed} يوماً على تحرير الغرامة دون سداد`}
-                                  >
-                                    منذ {daysElapsed} يوم
-                                  </span>
-                                );
-                              }
-                              return null;
-                            })()}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 text-xs text-slate-700">
-                          {d.issuingEntity}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 text-xs text-red-700 font-extrabold">
-                          {d.violationType}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-800">
-                          {(d.violationAmount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-600">
-                          {(d.oldViolations || 0).toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-red-50/60 text-red-800">
-                          {(d.totalViolations || 0).toLocaleString()}
-                        </td>
+                        {showViolationsCols && (
+                          <>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                              <div>
+                                <span>{formatDateDDMMYYYY(d.violationDate) || '-'}</span>
+                                {(() => {
+                                  const { isOverdue, daysElapsed } = getDebtOverdueInfo(
+                                    d.violationDate || d.disposalDate,
+                                    d.netRemainingDebt
+                                  );
+                                  if (isOverdue) {
+                                    return (
+                                      <span
+                                        className="block text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded px-1 mt-0.5"
+                                        title={`مر ${daysElapsed} يوماً على تحرير الغرامة دون سداد`}
+                                      >
+                                        منذ {daysElapsed} يوم
+                                      </span>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 text-xs text-slate-700">
+                              {d.issuingEntity}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 text-xs text-red-700 font-extrabold">
+                              {d.violationType}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-800">
+                              {(d.violationAmount || 0).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-600">
+                              {(d.oldViolations || 0).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-red-50/60 text-red-800">
+                              {(d.totalViolations || 0).toLocaleString()}
+                            </td>
+                          </>
+                        )}
 
                         {/* 3. Violation Payment */}
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
-                          {formatDateDDMMYYYY(d.violationPaymentDate) || '-'}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
-                          {d.violationReceiptNumber || '-'}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200">
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
-                            {d.violationPaymentMethod}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
-                          {(d.paidViolationAmount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-blue-50/40 text-[#0F2342]">
-                          {(d.remainingViolations || 0).toLocaleString()}
-                        </td>
+                        {showViolationPayCols && (
+                          <>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                              {formatDateDDMMYYYY(d.violationPaymentDate) || '-'}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
+                              {d.violationReceiptNumber || '-'}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200">
+                              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
+                                {d.violationPaymentMethod}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
+                              {(d.paidViolationAmount || 0).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-blue-50/40 text-[#0F2342]">
+                              {(d.remainingViolations || 0).toLocaleString()}
+                            </td>
+                          </>
+                        )}
 
                         {/* 4. Added */}
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-800">
-                          {(d.addedAmount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
-                          {formatDateDDMMYYYY(d.addedPaymentDate) || '-'}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
-                          {d.addedReceiptNumber || '-'}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200">
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
-                            {d.addedPaymentMethod}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
-                          {(d.paidAddedAmount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-blue-50/40 text-[#0F2342]">
-                          {(d.remainingAdded || 0).toLocaleString()}
-                        </td>
+                        {showAddedCols && (
+                          <>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-800">
+                              {(d.addedAmount || 0).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                              {formatDateDDMMYYYY(d.addedPaymentDate) || '-'}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
+                              {d.addedReceiptNumber || '-'}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200">
+                              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
+                                {d.addedPaymentMethod}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
+                              {(d.paidAddedAmount || 0).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-blue-50/40 text-[#0F2342]">
+                              {(d.remainingAdded || 0).toLocaleString()}
+                            </td>
+                          </>
+                        )}
 
-                        {/* 5. Disposal */}
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
-                          {formatDateDDMMYYYY(d.disposalDate) || '-'}
-                        </td>
-                        <td className="py-2.5 px-1.5 border-l border-slate-200 font-mono text-slate-800">
-                          {d.disposalBags}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
-                          {(d.disposalBagPrice || 0).toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-1.5 border-l border-slate-200 font-mono text-amber-700">
-                          {d.disposalMultiplier}x
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-amber-50/50 text-amber-900">
-                          {(d.disposalValue || 0).toLocaleString()}
-                        </td>
-
-                        {/* 6. Disposal Payment */}
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
-                          {(d.disposalValue || 0).toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
-                          {formatDateDDMMYYYY(d.disposalPaymentDate) || '-'}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
-                          {d.disposalReceiptNumber || '-'}
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200">
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
-                            {d.disposalPaymentMethod}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
-                          {(d.paidDisposalAmount || 0).toLocaleString()}
-                        </td>
+                        {/* 5 & 6. Disposal & Disposal Payment */}
+                        {showDisposalCols && (
+                          <>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                              {formatDateDDMMYYYY(d.disposalDate) || '-'}
+                            </td>
+                            <td className="py-2.5 px-1.5 border-l border-slate-200 font-mono text-slate-800">
+                              {d.disposalBags}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                              {(d.disposalBagPrice || 0).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-1.5 border-l border-slate-200 font-mono text-amber-700">
+                              {d.disposalMultiplier}x
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black bg-amber-50/50 text-amber-900">
+                              {(d.disposalValue || 0).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                              {(d.disposalValue || 0).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                              {formatDateDDMMYYYY(d.disposalPaymentDate) || '-'}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700 font-mono">
+                              {d.disposalReceiptNumber || '-'}
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200">
+                              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-300">
+                                {d.disposalPaymentMethod}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-emerald-700">
+                              {(d.paidDisposalAmount || 0).toLocaleString()}
+                            </td>
+                          </>
+                        )}
 
                         {/* Net Remaining Debt */}
                         <td className="py-2.5 px-3 border-l border-slate-200 font-mono font-black bg-slate-50/60">
@@ -1238,39 +1487,50 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                           )}
                         </td>
 
-                        {/* Actions Column */}
+                        {/* Actions & Details Column */}
                         <td className="py-2 px-1.5 border-l border-slate-200 no-print text-center">
-                          {isViewer ? (
-                            <span className="text-[11px] font-bold text-slate-500">عرض فقط</span>
-                          ) : (
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDebtToEdit(d);
-                                  setIsDebtModalOpen(true);
-                                }}
-                                className="p-1.5 bg-blue-50 hover:bg-blue-100 text-[#1E40AF] border border-blue-200 rounded-lg transition cursor-pointer"
-                                title="تعديل المديونية"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
-                                    onDeleteDebt(d.id);
-                                  }
-                                }}
-                                className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg transition cursor-pointer"
-                                title="حذف القيد"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          )}
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDetailDebtRecord(d);
+                              }}
+                              className="px-2 py-1 bg-slate-100 hover:bg-[#0F2342] text-[#0F2342] hover:text-white border border-slate-300 rounded-lg transition cursor-pointer text-[10px] font-black"
+                              title="عرض تفاصيل مديونية المخبز بالكامل"
+                            >
+                              التفاصيل
+                            </button>
+                            {!isViewer && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDebtToEdit(d);
+                                    setIsDebtModalOpen(true);
+                                  }}
+                                  className="p-1.5 bg-blue-50 hover:bg-blue-100 text-[#1E40AF] border border-blue-200 rounded-lg transition cursor-pointer"
+                                  title="تعديل المديونية"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
+                                      onDeleteDebt(d.id);
+                                    }
+                                  }}
+                                  className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg transition cursor-pointer"
+                                  title="حذف القيد"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1278,46 +1538,62 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 )}
               </tbody>
 
-              {/* Highlighted Summary Footer Row (tfoot - الإجمالي) */}
+              {/* Mandatory TOTAL SUMMARY Footer Row (صف الإجماليات TOTAL SUMMARY) */}
               {filteredDebts.length > 0 && (
-                <tfoot className="sticky bottom-0 z-20 bg-[#051124] text-amber-300 font-extrabold border-t-4 border-amber-500 shadow-xl text-xs font-mono">
-                  <tr>
-                    <td colSpan={5} className="py-3.5 px-3 text-right font-sans font-black border-l border-[#1E3A5F] text-amber-300 text-sm">
-                      الإجمالي ({filteredDebts.length} قيد مديونية)
+                <tfoot className="sticky bottom-0 z-20 bg-[#051124] text-amber-300 font-black border-t-4 border-amber-500 shadow-2xl text-xs font-mono">
+                  <tr className="total-summary-row">
+                    <td colSpan={5} className="py-3.5 px-3 text-right font-sans font-black border-l border-[#1E3A5F] text-amber-300 text-xs sm:text-sm">
+                      صف الإجماليات TOTAL SUMMARY ({filteredDebts.length} قيد مديونية)
                     </td>
-                    <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-400">—</td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumViol.toLocaleString()}</td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumOldViol.toLocaleString()}</td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
-                      {filteredTotals.sumTotalViol.toLocaleString()}
-                    </td>
-                    <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-400">—</td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-400 font-black">
-                      {filteredTotals.sumPaidViol.toLocaleString()}
-                    </td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
-                      {filteredTotals.sumRemViol.toLocaleString()}
-                    </td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumAdded.toLocaleString()}</td>
-                    <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-400">—</td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-400 font-black">
-                      {filteredTotals.sumPaidAdded.toLocaleString()}
-                    </td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
-                      {filteredTotals.sumRemAdded.toLocaleString()}
-                    </td>
-                    <td className="border-l border-[#1E3A5F] text-slate-400">—</td>
-                    <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-white">{filteredTotals.sumDispBags}</td>
-                    <td colSpan={2} className="border-l border-[#1E3A5F] text-slate-400">—</td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
-                      {filteredTotals.sumDispVal.toLocaleString()}
-                    </td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumDispVal.toLocaleString()}</td>
-                    <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-400">—</td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-400 font-black">
-                      {filteredTotals.sumPaidDisp.toLocaleString()}
-                    </td>
-                    <td className="py-2.5 px-3 border-l border-[#1E3A5F] bg-[#162F57] text-rose-300 font-black text-sm">
+                    {showViolationsCols && (
+                      <>
+                        <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumViol.toLocaleString()}</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumOldViol.toLocaleString()}</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
+                          {filteredTotals.sumTotalViol.toLocaleString()}
+                        </td>
+                      </>
+                    )}
+                    {showViolationPayCols && (
+                      <>
+                        <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
+                          {filteredTotals.sumPaidViol.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
+                          {filteredTotals.sumRemViol.toLocaleString()}
+                        </td>
+                      </>
+                    )}
+                    {showAddedCols && (
+                      <>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumAdded.toLocaleString()}</td>
+                        <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
+                          {filteredTotals.sumPaidAdded.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
+                          {filteredTotals.sumRemAdded.toLocaleString()}
+                        </td>
+                      </>
+                    )}
+                    {showDisposalCols && (
+                      <>
+                        <td className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-white">{filteredTotals.sumDispBags}</td>
+                        <td colSpan={2} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
+                          {filteredTotals.sumDispVal.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">{filteredTotals.sumDispVal.toLocaleString()}</td>
+                        <td colSpan={3} className="border-l border-[#1E3A5F] text-slate-300">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
+                          {filteredTotals.sumPaidDisp.toLocaleString()}
+                        </td>
+                      </>
+                    )}
+                    <td className="py-2.5 px-3 border-l border-[#1E3A5F] bg-[#162F57] text-amber-300 font-black text-sm">
                       {filteredTotals.sumNetRem.toLocaleString()} ج.م
                     </td>
                     <td className="no-print" />
@@ -1326,8 +1602,158 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               )}
             </table>
           </div>
+
+          {/* Enterprise Pagination Bar */}
+          {filteredDebts.length > debtsPageSize && (
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-700 no-print">
+              <div>
+                عرض السجلات من{' '}
+                <strong className="font-mono text-[#0F2342]">{(currentPage - 1) * debtsPageSize + 1}</strong> إلى{' '}
+                <strong className="font-mono text-[#0F2342]">
+                  {Math.min(currentPage * debtsPageSize, filteredDebts.length)}
+                </strong>{' '}
+                من إجمالي <strong className="font-mono text-[#0F2342]">{filteredDebts.length}</strong> قيد مديونية
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-40 font-black cursor-pointer"
+                >
+                  السابق
+                </button>
+                <span className="px-3 py-1.5 rounded-lg bg-[#0F2342] text-amber-300 font-mono font-black">
+                  صفحة {currentPage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-40 font-black cursor-pointer"
+                >
+                  التالي
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Modal: Bakery Debt Details Statement (بطاقة تفاصيل مديونية المخبز) */}
+      {detailDebtRecord && (
+        <div
+          className="fixed inset-0 z-[75] flex items-center justify-center p-4 bg-black/75 cursor-pointer no-print"
+          onClick={() => setDetailDebtRecord(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border-2 border-[#0F2342] w-full max-w-2xl p-6 cursor-default space-y-4"
+            onClick={(e) => e.stopPropagation()}
+            dir="rtl"
+          >
+            <div className="flex items-center justify-between border-b-2 border-slate-200 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-[#0F2342] text-amber-300">
+                  <Scale className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[#0F2342]">
+                    كشف تفصيلي لقيد مديونية المخبز
+                  </h3>
+                  <p className="text-xs font-bold text-slate-500">
+                    {detailDebtRecord.bakeryOwnerName} — ماكينة رقم ({detailDebtRecord.machineNumber})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailDebtRecord(null)}
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 font-bold block">اسم المخبز</span>
+                <span className="font-black text-[#0F2342] mt-0.5 block">{detailDebtRecord.bakeryOwnerName}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 font-bold block">رقم الماكينة</span>
+                <span className="font-black font-mono text-[#1E40AF] mt-0.5 block">{detailDebtRecord.machineNumber}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 font-bold block">اسم القرية</span>
+                <span className="font-black text-slate-800 mt-0.5 block">{detailDebtRecord.village}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <span className="text-slate-500 font-bold block">اسم الوحدة المحلية</span>
+                <span className="font-black text-slate-800 mt-0.5 block">{detailDebtRecord.localUnit}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-3.5 rounded-xl bg-red-50/70 border border-red-200 space-y-1.5">
+                <div className="font-black text-red-900 border-b border-red-200 pb-1">1. بيان المخالفات</div>
+                <div className="flex justify-between"><span>نوع المخالفة:</span><strong className="text-red-800">{detailDebtRecord.violationType}</strong></div>
+                <div className="flex justify-between"><span>الجهة المحررة:</span><strong>{detailDebtRecord.issuingEntity}</strong></div>
+                <div className="flex justify-between"><span>إجمالي المخالفات:</span><strong className="font-mono">{detailDebtRecord.totalViolations.toLocaleString()} ج.م</strong></div>
+                <div className="flex justify-between"><span>المسدد:</span><strong className="font-mono text-emerald-700">{detailDebtRecord.paidViolationAmount.toLocaleString()} ج.م</strong></div>
+                <div className="flex justify-between border-t border-red-200 pt-1"><span>المتبقي:</span><strong className="font-mono text-red-700">{detailDebtRecord.remainingViolations.toLocaleString()} ج.م</strong></div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 space-y-1.5">
+                <div className="font-black text-[#0F2342] border-b border-blue-200 pb-1">2. بيان المضاف</div>
+                <div className="flex justify-between"><span>قيمة المضاف:</span><strong className="font-mono">{detailDebtRecord.addedAmount.toLocaleString()} ج.م</strong></div>
+                <div className="flex justify-between"><span>المسدد من المضاف:</span><strong className="font-mono text-emerald-700">{detailDebtRecord.paidAddedAmount.toLocaleString()} ج.م</strong></div>
+                <div className="flex justify-between"><span>رقم الإيصال:</span><strong className="font-mono">{detailDebtRecord.addedReceiptNumber || '—'}</strong></div>
+                <div className="flex justify-between border-t border-blue-200 pt-1"><span>المتبقي من المضاف:</span><strong className="font-mono text-[#0F2342]">{detailDebtRecord.remainingAdded.toLocaleString()} ج.م</strong></div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1.5">
+                <div className="font-black text-amber-950 border-b border-amber-200 pb-1">3. بيان التصرف</div>
+                <div className="flex justify-between"><span>عدد الشكاير:</span><strong className="font-mono">{detailDebtRecord.disposalBags} شيكارة</strong></div>
+                <div className="flex justify-between"><span>قيمة التصرف:</span><strong className="font-mono">{detailDebtRecord.disposalValue.toLocaleString()} ج.م</strong></div>
+                <div className="flex justify-between"><span>المسدد من التصرف:</span><strong className="font-mono text-emerald-700">{detailDebtRecord.paidDisposalAmount.toLocaleString()} ج.م</strong></div>
+                <div className="flex justify-between border-t border-amber-200 pt-1"><span>المتبقي من التصرف:</span><strong className="font-mono text-amber-900">{detailDebtRecord.remainingDisposal.toLocaleString()} ج.م</strong></div>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#0F2342] text-white flex items-center justify-between">
+              <div>
+                <span className="text-xs text-blue-200 font-bold block">صافي المديونية المتبقية على المخبز</span>
+                <span className="text-xl font-black text-amber-300 font-mono">
+                  {detailDebtRecord.netRemainingDebt.toLocaleString()} جنيه مصري
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {!isViewer && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const record = detailDebtRecord;
+                      setDetailDebtRecord(null);
+                      setDebtToEdit(record);
+                      setIsDebtModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-[#09152B] rounded-xl text-xs font-black cursor-pointer"
+                  >
+                    تعديل القيد
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDetailDebtRecord(null)}
+                  className="px-4 py-2 bg-white/15 hover:bg-white/25 text-white rounded-xl text-xs font-black cursor-pointer"
+                >
+                  إغلاق
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal 1: Add / Edit Debt Record */}
       {isDebtModalOpen && (

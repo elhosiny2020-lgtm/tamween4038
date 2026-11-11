@@ -418,6 +418,23 @@ export const DailyEntryBriefingModal: React.FC<DailyEntryBriefingModalProps> = (
                         );
                       })}
                     </tbody>
+                    <tfoot className="bg-[#0F2342] text-white font-black sticky bottom-0">
+                      <tr className="total-summary-row">
+                        <td colSpan={5} className="p-2.5 text-right text-amber-300">
+                          صف الإجماليات TOTAL SUMMARY ({filteredDebts.length} مخبز)
+                        </td>
+                        <td className="p-2.5 font-mono text-amber-200">
+                          {filteredDebts.reduce((s, x) => s + x.totalDebt, 0).toLocaleString('ar-EG')} ج.م
+                        </td>
+                        <td className="p-2.5 font-mono text-emerald-300">
+                          {filteredDebts.reduce((s, x) => s + x.paidAmount, 0).toLocaleString('ar-EG')} ج.م
+                        </td>
+                        <td className="p-2.5 font-mono text-rose-300">
+                          {filteredDebts.reduce((s, x) => s + x.remainingAmount, 0).toLocaleString('ar-EG')} ج.م
+                        </td>
+                        <td className="p-2.5 text-amber-200 text-[10px]">إجمالي مستحق</td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               )}
@@ -458,8 +475,10 @@ export const DailyEntryBriefingModal: React.FC<DailyEntryBriefingModalProps> = (
                     <thead className="bg-slate-100 text-slate-800 font-black sticky top-0">
                       <tr>
                         <th className="p-2.5 border-b border-slate-200">م</th>
-                        <th className="p-2.5 border-b border-slate-200">اسم صاحب المخبز</th>
-                        <th className="p-2.5 border-b border-slate-200">القرية / الوحدة المحلية</th>
+                        <th className="p-2.5 border-b border-slate-200">اسم المخبز</th>
+                        <th className="p-2.5 border-b border-slate-200">رقم الماكينة</th>
+                        <th className="p-2.5 border-b border-slate-200">اسم القرية</th>
+                        <th className="p-2.5 border-b border-slate-200">اسم الوحدة المحلية</th>
                         <th className="p-2.5 border-b border-slate-200">نوع الوثيقة / الترخيص / العقد</th>
                         <th className="p-2.5 border-b border-slate-200">تاريخ الانتهاء</th>
                         <th className="p-2.5 border-b border-slate-200">الحالة والمدة</th>
@@ -478,9 +497,9 @@ export const DailyEntryBriefingModal: React.FC<DailyEntryBriefingModalProps> = (
                         >
                           <td className="p-2.5">{idx + 1}</td>
                           <td className="p-2.5 font-black text-slate-950">{row.bakery.bakeryOwnerName}</td>
-                          <td className="p-2.5">
-                            {row.bakery.village} - {row.bakery.localUnit}
-                          </td>
+                          <td className="p-2.5 font-mono font-bold text-slate-800">{row.bakery.machineNumber}</td>
+                          <td className="p-2.5">{row.bakery.village}</td>
+                          <td className="p-2.5">{row.bakery.localUnit}</td>
                           <td className="p-2.5 font-black text-indigo-900">{row.docType}</td>
                           <td className="p-2.5 font-mono" dir="ltr">
                             {row.expiryDate}
@@ -514,6 +533,17 @@ export const DailyEntryBriefingModal: React.FC<DailyEntryBriefingModalProps> = (
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot className="bg-[#0F2342] text-white font-black sticky bottom-0">
+                      <tr className="total-summary-row">
+                        <td colSpan={5} className="p-2.5 text-right text-amber-300">
+                          صف الإجماليات TOTAL SUMMARY ({filteredExpiries.length} وثيقة/ترخيص)
+                        </td>
+                        <td colSpan={onEditBakery ? 4 : 3} className="p-2.5 text-amber-200">
+                          منتهي: {filteredExpiries.filter((x) => x.status === 'expired').length} | قارب على الانتهاء:{' '}
+                          {filteredExpiries.filter((x) => x.status === 'expiring').length}
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               )}
