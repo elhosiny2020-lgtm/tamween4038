@@ -479,61 +479,31 @@ export default function App() {
     testFirestoreConnection().catch(() => {});
   }, []);
 
-  // Comprehensive Multi-Channel Real-Time Synchronization across devices (Firestore + Server Snapshot + Supabase + BroadcastChannel)
+  // Exclusive Real-Time Synchronization via Supabase Cloud DB:
   useEffect(() => {
-    // 1. Initial boot check from Firestore & Server Snapshot
-    loadSharedStateFromFirestore().then((fsSnap) => {
-      if (fsSnap && fsSnap.data && Array.isArray(fsSnap.data.bakeries) && fsSnap.data.bakeries.length > 0) {
-        setAppState((current) => {
-          if (!current) return current;
-          const updated: AppState = {
-            ...current,
-            ...fsSnap.data,
-            currentUser: current.currentUser,
-          };
-          persistFullState(updated).catch(() => {});
-          return updated;
-        });
-      }
-    }).catch(() => {});
-
-    fetchLatestServerState().then((srvSnap) => {
-      if (srvSnap && srvSnap.data && Array.isArray(srvSnap.data.bakeries) && srvSnap.data.bakeries.length > 0) {
-        setAppState((current) => {
-          if (!current) return current;
-          const updated: AppState = {
-            ...current,
-            ...srvSnap.data,
-            currentUser: current.currentUser,
-          };
-          persistFullState(updated).catch(() => {});
-          return updated;
-        });
-      }
-    }).catch(() => {});
-
-    // 2. Firestore Live Snapshot Listener
-    const unsubscribeFirestore = subscribeToSharedStateChanges((fsPayload) => {
+    // 1. Initial boot fetch from Supabase
+    fetchDatabaseFromSupabase().then((supaRes) => {
       if (
-        fsPayload &&
-        fsPayload.data &&
-        Array.isArray(fsPayload.data.bakeries) &&
-        fsPayload.data.bakeries.length > 0
+        supaRes &&
+        supaRes.success &&
+        supaRes.data &&
+        Array.isArray(supaRes.data.bakeries) &&
+        supaRes.data.bakeries.length > 0
       ) {
         setAppState((current) => {
           if (!current) return current;
-          const directUpdate: AppState = {
+          const updated: AppState = {
             ...current,
-            ...fsPayload.data,
+            ...supaRes.data!,
             currentUser: current.currentUser,
           };
-          persistFullState(directUpdate).catch(() => {});
-          return directUpdate;
+          persistFullState(updated).catch(() => {});
+          return updated;
         });
       }
-    });
+    }).catch(() => {});
 
-    // 3. Supabase Realtime Listener
+    // 2. Real-time Supabase Listener: Adopt live database updates directly without background polling or merging
     const unsubscribeSupabase = subscribeToSupabaseRealtime((supaData) => {
       if (
         supaData &&
@@ -553,63 +523,8 @@ export default function App() {
       }
     });
 
-    // 4. 3-Second Heartbeat Polling of Server Snapshot (/api/backup/snapshot) for instant multi-device sync
-    const heartbeatInterval = setInterval(async () => {
-      try {
-        const serverSnap = await fetchLatestServerState();
-        if (
-          serverSnap &&
-          serverSnap.data &&
-          Array.isArray(serverSnap.data.bakeries) &&
-          serverSnap.data.bakeries.length > 0
-        ) {
-          const srvBakeries = serverSnap.data.bakeries;
-          const srvDebts = serverSnap.data.debts;
-          setAppState((current) => {
-            if (!current) return current;
-            if (
-              srvBakeries.length !== current.bakeries.length ||
-              srvDebts?.length !== current.debts.length
-            ) {
-              const updated: AppState = {
-                ...current,
-                ...serverSnap.data,
-                currentUser: current.currentUser,
-              };
-              persistFullState(updated).catch(() => {});
-              return updated;
-            }
-            return current;
-          });
-        }
-      } catch {}
-    }, 3000);
-
-    // 5. BroadcastChannel for same-browser multi-tab sync
-    let bc: BroadcastChannel | null = null;
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      try {
-        bc = new BroadcastChannel('tamween_cross_device_sync');
-        bc.onmessage = (event) => {
-          if (event.data?.type === 'STATE_UPDATED') {
-            fetchLatestServerState().then((snap) => {
-              if (snap && snap.data && Array.isArray(snap.data.bakeries)) {
-                setAppState((current) => {
-                  if (!current) return current;
-                  return { ...current, ...snap.data, currentUser: current.currentUser };
-                });
-              }
-            }).catch(() => {});
-          }
-        };
-      } catch {}
-    }
-
     return () => {
-      unsubscribeFirestore();
       unsubscribeSupabase();
-      clearInterval(heartbeatInterval);
-      if (bc) bc.close();
     };
   }, []);
 
@@ -667,7 +582,8 @@ export default function App() {
       const todayDateStr = now.toISOString().split('T')[0];
 
       // Check if current time matches scheduled alert time and hasn't fired today
-      if (currentTimeStr === dailyConfig.alertTime && dailyConfig.lastAlertDate !== todayDateStr) {
+      const lastFiredLocally = typeof localStorage !== 'undefined' ? localStorage.getItem('TAMWEEN_DAILY_ALERT_LAST_DATE') : null;
+      if (currentTimeStr === dailyConfig.alertTime && dailyConfig.lastAlertDate !== todayDateStr && lastFiredLocally !== todayDateStr) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const targetDocs = dailyConfig.targetDocs && dailyConfig.targetDocs.length > 0
@@ -723,26 +639,18 @@ export default function App() {
             }
           }
 
-          // Mark today as alerted to avoid multiple firings today
-          const updatedConfig: DailyAlertConfig = {
-            ...dailyConfig,
-            lastAlertDate: todayDateStr,
-          };
-          triggerSave({
-            ...appState,
-            systemConfig: {
-              ...appState.systemConfig,
-              dailyAlertConfig: updatedConfig,
-            },
-          });
+          // Mark today as alerted in localStorage to avoid re-triggering loop
+          try {
+            localStorage.setItem('TAMWEEN_DAILY_ALERT_LAST_DATE', todayDateStr);
+          } catch {}
         }
       }
     };
 
     checkDailyAlert();
-    const interval = setInterval(checkDailyAlert, 30000);
+    const interval = setInterval(checkDailyAlert, 60000);
     return () => clearInterval(interval);
-  }, [appState]);
+  }, [appState?.systemConfig?.dailyAlertConfig, appState?.bakeries]);
 
   const handleSaveDailyAlertConfig = (updatedConfig: DailyAlertConfig) => {
     if (!appState) return;

@@ -359,83 +359,7 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
 
 export async function loadInitialState(): Promise<AppState> {
   try {
-    // 0-A. Primary Source of Truth: Attempt fetching latest live database directly from Firestore Shared Sync
-    try {
-      const fsShared = await loadSharedStateFromFirestore();
-      if (
-        fsShared &&
-        fsShared.data &&
-        Array.isArray(fsShared.data.bakeries) &&
-        fsShared.data.bakeries.length > 0
-      ) {
-        let fsBakeries = fsShared.data.bakeries.map(normalizeBakeryPerCapita);
-        let fsDebts = fsShared.data.debts ?? [];
-        try { localStorage.setItem(KEYS.INITIALIZED, 'true'); } catch {}
-
-        return {
-          bakeries: fsBakeries,
-          debts: fsDebts,
-          villages: fsShared.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
-          issuingEntities: fsShared.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
-          violationTypes: fsShared.data.violationTypes ?? DEFAULT_VIOLATION_TYPES,
-          activityStatuses: fsShared.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
-          bakeryCategories: fsShared.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
-          breadTypes: fsShared.data.breadTypes ?? DEFAULT_BREAD_TYPES,
-          breadTypeCounts: fsShared.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
-          lineTypes: fsShared.data.lineTypes ?? DEFAULT_LINE_TYPES,
-          fuelTypes: fsShared.data.fuelTypes ?? DEFAULT_FUEL_TYPES,
-          paymentMethods: fsShared.data.paymentMethods ?? PAYMENT_METHODS,
-          dailyTasks: fsShared.data.dailyTasks ?? INITIAL_DAILY_TASKS,
-          inboxMessages: fsShared.data.inboxMessages ?? INITIAL_INBOX_MESSAGES,
-          columnTitles: fsShared.data.columnTitles ? { ...DEFAULT_COLUMN_TITLES, ...fsShared.data.columnTitles } : DEFAULT_COLUMN_TITLES,
-          systemConfig: fsShared.data.systemConfig ? { ...DEFAULT_SYSTEM_CONFIG, ...fsShared.data.systemConfig, logoBase64: DEFAULT_OFFICIAL_LOGO } : { ...DEFAULT_SYSTEM_CONFIG, logoBase64: DEFAULT_OFFICIAL_LOGO },
-          users: fsShared.data.users ?? INITIAL_USERS,
-          currentUser: null,
-        };
-      }
-    } catch (fsErr) {
-      console.warn('Firestore shared boot load skipped:', fsErr);
-    }
-
-    // 0-B. Server Snapshot Endpoint (/api/backup/snapshot)
-    try {
-      const serverSnap = await fetchLatestServerState();
-      if (
-        serverSnap &&
-        serverSnap.data &&
-        Array.isArray(serverSnap.data.bakeries) &&
-        serverSnap.data.bakeries.length > 0
-      ) {
-        let srvBakeries = serverSnap.data.bakeries.map(normalizeBakeryPerCapita);
-        let srvDebts = serverSnap.data.debts ?? [];
-        try { localStorage.setItem(KEYS.INITIALIZED, 'true'); } catch {}
-
-        return {
-          bakeries: srvBakeries,
-          debts: srvDebts,
-          villages: serverSnap.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
-          issuingEntities: serverSnap.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
-          violationTypes: serverSnap.data.violationTypes ?? DEFAULT_VIOLATION_TYPES,
-          activityStatuses: serverSnap.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
-          bakeryCategories: serverSnap.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
-          breadTypes: serverSnap.data.breadTypes ?? DEFAULT_BREAD_TYPES,
-          breadTypeCounts: serverSnap.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
-          lineTypes: serverSnap.data.lineTypes ?? DEFAULT_LINE_TYPES,
-          fuelTypes: serverSnap.data.fuelTypes ?? DEFAULT_FUEL_TYPES,
-          paymentMethods: serverSnap.data.paymentMethods ?? PAYMENT_METHODS,
-          dailyTasks: serverSnap.data.dailyTasks ?? INITIAL_DAILY_TASKS,
-          inboxMessages: serverSnap.data.inboxMessages ?? INITIAL_INBOX_MESSAGES,
-          columnTitles: serverSnap.data.columnTitles ? { ...DEFAULT_COLUMN_TITLES, ...serverSnap.data.columnTitles } : DEFAULT_COLUMN_TITLES,
-          systemConfig: serverSnap.data.systemConfig ? { ...DEFAULT_SYSTEM_CONFIG, ...serverSnap.data.systemConfig, logoBase64: DEFAULT_OFFICIAL_LOGO } : { ...DEFAULT_SYSTEM_CONFIG, logoBase64: DEFAULT_OFFICIAL_LOGO },
-          users: serverSnap.data.users ?? INITIAL_USERS,
-          currentUser: null,
-        };
-      }
-    } catch (srvErr) {
-      console.warn('Server snapshot boot load skipped:', srvErr);
-    }
-
-    // 0-C. Supabase Cloud DB
+    // 0. EXCLUSIVE Primary Source of Truth: Fetch latest database directly from Supabase Cloud DB
     try {
       const supaRes = await fetchDatabaseFromSupabase();
       if (
@@ -897,9 +821,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
         localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
       }
 
-      // Sync to all cloud & server endpoints in real-time for multi-device sync
-      syncSharedStateToFirestore(backupSnapshot.state).catch(() => {});
-      syncStateToServer(backupSnapshot.state as AppState).catch(() => {});
+      // Sync exclusively to Supabase in real-time (no automatic background merges or syncs to other services)
       autoSyncToSupabase(backupSnapshot.state as AppState).catch(() => {});
       if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
         try {

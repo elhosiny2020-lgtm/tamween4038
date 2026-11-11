@@ -36,61 +36,24 @@ async function startServer() {
     });
   });
 
-  // Server-side scheduled/manual backup snapshot endpoint
+  // Server-side backup snapshot endpoint (Legacy JSON backups disabled per user requirement - Supabase exclusive sync)
   app.post('/api/backup/snapshot', (req, res) => {
     try {
-      const payload = req.body;
-      const snapshotWrapper = {
-        savedAt: new Date().toISOString(),
-        bakeriesCount: Array.isArray(payload?.bakeries) ? payload.bakeries.length : 0,
-        debtsCount: Array.isArray(payload?.debts) ? payload.debts.length : 0,
-        data: payload,
-      };
-      const jsonContent = JSON.stringify(snapshotWrapper, null, 2);
-      try {
-        fs.writeFileSync(SNAPSHOT_PRIMARY_PATH, jsonContent, 'utf-8');
-      } catch (err) {
-        console.warn('Could not write primary snapshot, falling back to /tmp', err);
-      }
-      try {
-        fs.writeFileSync(SNAPSHOT_TMP_PATH, jsonContent, 'utf-8');
-      } catch {}
-
+      if (fs.existsSync(SNAPSHOT_PRIMARY_PATH)) { try { fs.unlinkSync(SNAPSHOT_PRIMARY_PATH); } catch {} }
+      if (fs.existsSync(SNAPSHOT_TMP_PATH)) { try { fs.unlinkSync(SNAPSHOT_TMP_PATH); } catch {} }
       res.json({
         success: true,
-        savedAt: snapshotWrapper.savedAt,
-        bakeriesCount: snapshotWrapper.bakeriesCount,
-        debtsCount: snapshotWrapper.debtsCount,
+        message: 'تم إيقاف الدمج من ملفات JSON المحلية وتوجيه المزامنة حصرياً إلى Supabase.',
       });
     } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: error?.message || 'Failed to write server backup snapshot',
-      });
+      res.status(500).json({ success: false, error: error?.message });
     }
   });
 
   app.get('/api/backup/snapshot', (_req, res) => {
-    try {
-      let targetPath = null;
-      if (fs.existsSync(SNAPSHOT_PRIMARY_PATH)) {
-        targetPath = SNAPSHOT_PRIMARY_PATH;
-      } else if (fs.existsSync(SNAPSHOT_TMP_PATH)) {
-        targetPath = SNAPSHOT_TMP_PATH;
-      }
-
-      if (!targetPath) {
-        res.json({ success: true, exists: false, snapshot: null });
-        return;
-      }
-      const raw = fs.readFileSync(targetPath, 'utf-8');
-      res.json({ success: true, exists: true, snapshot: JSON.parse(raw) });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: error?.message || 'Failed to read server backup snapshot',
-      });
-    }
+    if (fs.existsSync(SNAPSHOT_PRIMARY_PATH)) { try { fs.unlinkSync(SNAPSHOT_PRIMARY_PATH); } catch {} }
+    if (fs.existsSync(SNAPSHOT_TMP_PATH)) { try { fs.unlinkSync(SNAPSHOT_TMP_PATH); } catch {} }
+    res.json({ success: true, exists: false, snapshot: null });
   });
 
   // Dedicated Supabase config storage for seamless cross-device synchronization
