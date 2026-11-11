@@ -91,9 +91,9 @@ export interface GoogleDriveAccountEntry {
 const loadStoredDriveAccounts = (): GoogleDriveAccountEntry[] => {
   try {
     const raw = localStorage.getItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS');
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) return parsed;
     }
   } catch (e) {
     console.error('Failed to parse TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', e);
@@ -224,13 +224,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [customAutoSync, setCustomAutoSync] = useState<boolean>(
     () => localStorage.getItem('TAMWEEN_CUSTOM_AUTOSYNC') !== 'false'
   );
-  const [gmailEmail, setGmailEmail] = useState<string>(
-    () =>
-      localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
-      currentState.currentUser?.gmailEmail ||
-      currentState.systemConfig?.gmailEmail ||
-      'ELHOSINY2020@gmail.com'
-  );
+  const [gmailEmail, setGmailEmail] = useState<string>(() => {
+    const stored = localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL');
+    if (stored !== null) return stored;
+    return currentState.systemConfig?.gmailEmail || currentState.currentUser?.gmailEmail || '';
+  });
   const [googleDriveAutoSync, setGoogleDriveAutoSync] = useState<boolean>(
     () => localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false'
   );
@@ -306,24 +304,31 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       return;
     }
 
-    const updated = driveAccounts.filter((a) => a.id !== accToDelete.id);
+    const updated = driveAccounts.filter(
+      (a) => a.id !== accToDelete.id && a.email.toLowerCase() !== accToDelete.email.toLowerCase()
+    );
     setDriveAccounts(updated);
     localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(updated));
     localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${accToDelete.email.toLowerCase()}`);
     localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${accToDelete.email.toLowerCase()}`);
 
     if (gmailEmail.toLowerCase() === accToDelete.email.toLowerCase()) {
-      if (updated.length > 0) {
-        setGmailEmail(updated[0].email);
-        localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', updated[0].email);
-      } else {
-        setGmailEmail('');
-        localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_EMAIL');
+      const nextEmail = updated.length > 0 ? updated[0].email : '';
+      setGmailEmail(nextEmail);
+      localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', nextEmail);
+      if (currentState.systemConfig?.gmailEmail !== nextEmail) {
+        onRestoreState({
+          ...currentState,
+          systemConfig: {
+            ...currentState.systemConfig,
+            gmailEmail: nextEmail,
+          },
+        });
       }
     }
 
     setStatusMsg({
-      text: `تم مسح الإيميل (${accToDelete.email}) بالكامل من قائمة Google Drive بنجاح!`,
+      text: `تم مسح وحذف الإيميل (${accToDelete.email}) بالكامل ولن يظهر مجدداً!`,
       type: 'success',
     });
   };
@@ -338,7 +343,16 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
     const current = gmailEmail;
     setGmailEmail('');
-    localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_EMAIL');
+    localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', '');
+    if (currentState.systemConfig?.gmailEmail !== '') {
+      onRestoreState({
+        ...currentState,
+        systemConfig: {
+          ...currentState.systemConfig,
+          gmailEmail: '',
+        },
+      });
+    }
     setStatusMsg({
       text: `تم مسح الإيميل النشط (${current}) وتفريغ حقل Google Drive بنجاح. يمكنك الآن اختيار أو إضافة أي إيميل آخر.`,
       type: 'success',

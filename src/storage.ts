@@ -745,7 +745,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
 
   const backupSnapshot = {
     timestamp: new Date().toISOString(),
-    gmailEmail: lockedConfig.gmailEmail || localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') || 'ELHOSINY2020@gmail.com',
+    gmailEmail: lockedConfig.gmailEmail ?? localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ?? '',
     state: {
       bakeries: normalizedBakeries,
       debts: normalizedDebts,
