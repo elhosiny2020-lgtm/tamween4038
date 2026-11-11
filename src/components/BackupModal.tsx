@@ -1082,6 +1082,55 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
+  const handleSaveBackupSettings = async () => {
+    try {
+      // 1. Save Gmail / Google Drive settings
+      const cleanGmail = gmailEmail.trim();
+      if (cleanGmail) {
+        localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', cleanGmail);
+      }
+      localStorage.setItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC', String(googleDriveAutoSync));
+      if (customBackupPath.trim()) {
+        localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PATH', customBackupPath.trim());
+      }
+      localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_TYPE', customBackupType);
+      localStorage.setItem('TAMWEEN_CUSTOM_AUTOSYNC', String(customAutoSync));
+
+      // 2. Save GitHub settings
+      if (githubEmail.trim()) localStorage.setItem('TAMWEEN_GITHUB_EMAIL', githubEmail.trim());
+      if (githubRepo.trim()) localStorage.setItem('TAMWEEN_GITHUB_REPO', githubRepo.trim());
+      localStorage.setItem('TAMWEEN_GITHUB_AUTOSYNC', String(githubAutoSync));
+      if (githubToken.trim()) localStorage.setItem('TAMWEEN_GITHUB_TOKEN', githubToken.trim());
+
+      // 3. Save Supabase config
+      if (supabaseUrlInput.trim() && supabaseKeyInput.trim()) {
+        saveSupabaseConfig(supabaseUrlInput.trim(), supabaseKeyInput.trim());
+      }
+
+      // 4. Update systemConfig gmailEmail in AppState if changed
+      if (cleanGmail && currentState.systemConfig?.gmailEmail !== cleanGmail) {
+        const updatedState: AppState = {
+          ...currentState,
+          systemConfig: {
+            ...currentState.systemConfig,
+            gmailEmail: cleanGmail,
+          },
+        };
+        onRestoreState(updatedState);
+      }
+
+      setStatusMsg({
+        text: '✅ تم بنجاح حفظ كافة إعدادات الحفظ والاستيراد والنسخ الاحتياطي والمزامنة السحابية!',
+        type: 'success',
+      });
+    } catch (err: any) {
+      setStatusMsg({
+        text: `فشل حفظ الإعدادات: ${err.message || 'خطأ غير معروف'}`,
+        type: 'error',
+      });
+    }
+  };
+
   const handleReset = () => {
     onFactoryReset();
     setShowConfirmReset(false);
@@ -1167,7 +1216,17 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <span>⚡ مفاتيح التشغيل السريع المباشر (صفحة الإنترنت &bull; برنامج EXE &bull; كود جداول SQL):</span>
               <span className="text-[10px] bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full font-black">مُفعل 100%</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+              <button
+                type="button"
+                onClick={handleSaveBackupSettings}
+                className="py-2.5 px-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white border border-emerald-300/60 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition hover:scale-[1.02] active:scale-[0.98]"
+                title="حفظ كافة إعدادات النسخ الاحتياطي والمزامنة"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-200 shrink-0" />
+                <span>حفظ الإعدادات 💾</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
@@ -1203,12 +1262,12 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 {copiedSqlSchema ? (
                   <>
                     <Check className="w-4 h-4 text-amber-300 shrink-0" />
-                    <span>تم نسخ كود الجداول SQL ✓</span>
+                    <span>تم نسخ كود SQL ✓</span>
                   </>
                 ) : (
                   <>
                     <Copy className="w-4 h-4 text-amber-300 shrink-0" />
-                    <span>نسخ كود إنشاء الجداول على SQL 📋</span>
+                    <span>نسخ كود الجداول SQL 📋</span>
                   </>
                 )}
               </button>
@@ -2567,21 +2626,32 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3.5 bg-slate-100 border-t border-slate-200 flex justify-between items-center shrink-0">
+        <div className="p-3.5 bg-slate-100 border-t border-slate-200 flex flex-wrap justify-between items-center gap-2 shrink-0">
           <span className="text-[11px] font-bold text-slate-600">
-            منظومة إدارة تموين مركز المحلة الكبرى &bull; إصلاح وتحديث شامل
+            منظومة إدارة تموين مركز المحلة الكبرى &bull; الحفظ والاستيراد والنسخ والتشغيل
           </span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onClose();
-            }}
-            className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black shadow-xs cursor-pointer transition"
-          >
-            إغلاق النافذة
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSaveBackupSettings}
+              className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition flex items-center gap-2 hover:scale-[1.02] active:scale-[0.98] border border-emerald-400/40"
+              title="حفظ كافة إعدادات الحفظ والاستيراد والنسخ الاحتياطي والمزامنة السحابية"
+            >
+              <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+              <span>حفظ الإعدادات 💾</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black shadow-xs cursor-pointer transition"
+            >
+              إغلاق النافذة
+            </button>
+          </div>
         </div>
       </div>
     </div>
