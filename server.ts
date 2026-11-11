@@ -93,6 +93,46 @@ async function startServer() {
     }
   });
 
+  // Dedicated Supabase config storage for seamless cross-device synchronization
+  const SUPABASE_CONFIG_PATH = path.resolve(__dirname, 'supabase_config.json');
+  const SUPABASE_CONFIG_TMP = '/tmp/supabase_config.json';
+
+  app.get('/api/supabase/config', (_req, res) => {
+    try {
+      let cfg = {
+        url: process.env.VITE_SUPABASE_URL || '',
+        anonKey: process.env.VITE_SUPABASE_ANON_KEY || '',
+      };
+      let foundPath = null;
+      if (fs.existsSync(SUPABASE_CONFIG_PATH)) foundPath = SUPABASE_CONFIG_PATH;
+      else if (fs.existsSync(SUPABASE_CONFIG_TMP)) foundPath = SUPABASE_CONFIG_TMP;
+
+      if (foundPath) {
+        const raw = fs.readFileSync(foundPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed.url) cfg.url = parsed.url;
+        if (parsed.anonKey) cfg.anonKey = parsed.anonKey;
+      }
+      res.json({ success: true, url: cfg.url, anonKey: cfg.anonKey });
+    } catch {
+      res.json({ success: false, url: '', anonKey: '' });
+    }
+  });
+
+  app.post('/api/supabase/config', (req, res) => {
+    try {
+      const { url, anonKey } = req.body || {};
+      if (url && anonKey) {
+        const data = JSON.stringify({ url: String(url).trim(), anonKey: String(anonKey).trim() });
+        try { fs.writeFileSync(SUPABASE_CONFIG_PATH, data, 'utf-8'); } catch {}
+        try { fs.writeFileSync(SUPABASE_CONFIG_TMP, data, 'utf-8'); } catch {}
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Dedicated Publish and Cloud Sync verification endpoint
   const PUBLISHED_RELEASE_PATH = '/tmp/tamween_published_release.json';
   app.post('/api/publish', (req, res) => {

@@ -358,6 +358,45 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
 
 export async function loadInitialState(): Promise<AppState> {
   try {
+    // 0. Primary Source of Truth: Attempt fetching latest live database directly from Supabase first
+    try {
+      const supaRes = await fetchDatabaseFromSupabase();
+      if (
+        supaRes &&
+        supaRes.success &&
+        supaRes.data &&
+        Array.isArray(supaRes.data.bakeries) &&
+        supaRes.data.bakeries.length > 0
+      ) {
+        let supaBakeries = supaRes.data.bakeries.map(normalizeBakeryPerCapita);
+        let supaDebts = supaRes.data.debts ?? [];
+        try { localStorage.setItem(KEYS.INITIALIZED, 'true'); } catch {}
+        
+        return {
+          bakeries: supaBakeries,
+          debts: supaDebts,
+          villages: supaRes.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
+          issuingEntities: supaRes.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
+          violationTypes: supaRes.data.violationTypes ?? DEFAULT_VIOLATION_TYPES,
+          activityStatuses: supaRes.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
+          bakeryCategories: supaRes.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
+          breadTypes: supaRes.data.breadTypes ?? DEFAULT_BREAD_TYPES,
+          breadTypeCounts: supaRes.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
+          lineTypes: supaRes.data.lineTypes ?? DEFAULT_LINE_TYPES,
+          fuelTypes: supaRes.data.fuelTypes ?? DEFAULT_FUEL_TYPES,
+          paymentMethods: supaRes.data.paymentMethods ?? PAYMENT_METHODS,
+          dailyTasks: supaRes.data.dailyTasks ?? INITIAL_DAILY_TASKS,
+          inboxMessages: supaRes.data.inboxMessages ?? INITIAL_INBOX_MESSAGES,
+          columnTitles: supaRes.data.columnTitles ? { ...DEFAULT_COLUMN_TITLES, ...supaRes.data.columnTitles } : DEFAULT_COLUMN_TITLES,
+          systemConfig: supaRes.data.systemConfig ? { ...DEFAULT_SYSTEM_CONFIG, ...supaRes.data.systemConfig, logoBase64: DEFAULT_OFFICIAL_LOGO } : { ...DEFAULT_SYSTEM_CONFIG, logoBase64: DEFAULT_OFFICIAL_LOGO },
+          users: supaRes.data.users ?? INITIAL_USERS,
+          currentUser: null,
+        };
+      }
+    } catch (supaErr) {
+      console.warn('Supabase boot load skipped or network offline:', supaErr);
+    }
+
     // 1. FAST PATH: Check if state is preloaded directly in the standalone HTML file
     interface PreloadedStatePayload extends Partial<AppState> {
       exportTimestamp?: string;
@@ -781,17 +820,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
         localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
       }
 
-      if (auth.currentUser) {
-        syncWorkspaceToFirestore(backupSnapshot.state).catch(() => {});
-      }
-
-      // 1. Direct Google Cloud Firestore Real-time Sync (Shared across all devices globally)
-      syncSharedStateToFirestore(backupSnapshot.state).catch(() => {});
-
-      // 2. Multi-device sync: persist state to central server so any other device gets latest data
-      syncStateToServer(backupSnapshot.state).catch(() => {});
-
-      // 3. Supabase Real-time Automatic Cloud Sync (without pressing buttons)
+      // Sync exclusively to Supabase in real-time (no automatic background merges or syncs to other services)
       autoSyncToSupabase(backupSnapshot.state as AppState).catch(() => {});
     } catch {
       // Graceful fallback

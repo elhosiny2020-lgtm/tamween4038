@@ -49,6 +49,19 @@ function safeRemoveItem(key: string): void {
   delete memoryStore[key];
 }
 
+export function isValidHttpUrl(str: string): boolean {
+  if (!str || typeof str !== 'string') return false;
+  try {
+    const parsed = new URL(str.trim());
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      !str.includes('xyzcompany.supabase.co')
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * الحصول على إعدادات Supabase النشطة (من متغيرات البيئة أو التخزين المحلي)
  */
@@ -65,7 +78,7 @@ export function getSupabaseConfig(): SupabaseConfig {
   const storageUrl = safeGetItem(SUPABASE_URL_KEY).trim();
   const storageKey = safeGetItem(SUPABASE_ANON_KEY_KEY).trim();
 
-  if (envUrl && envKey) {
+  if (envUrl && envKey && isValidHttpUrl(envUrl)) {
     return {
       url: envUrl,
       anonKey: envKey,
@@ -74,7 +87,7 @@ export function getSupabaseConfig(): SupabaseConfig {
     };
   }
 
-  if (storageUrl && storageKey) {
+  if (storageUrl && storageKey && isValidHttpUrl(storageUrl)) {
     return {
       url: storageUrl,
       anonKey: storageKey,
@@ -92,7 +105,7 @@ export function getSupabaseConfig(): SupabaseConfig {
 }
 
 /**
- * حفظ وتحديث مفاتيح اتصال Supabase في التخزين المحلي
+ * حفظ وتحديث مفاتيح اتصال Supabase في التخزين المحلي ومزامنتها للخادم للأجهزة الأخرى
  */
 export function saveSupabaseConfig(url: string, anonKey: string): SupabaseConfig {
   const cleanUrl = url.trim();
@@ -115,6 +128,56 @@ export function saveSupabaseConfig(url: string, anonKey: string): SupabaseConfig
   lastUsedUrl = '';
   lastUsedKey = '';
 
+  // Synchronize credentials to server endpoint so other devices receive them automatically
+  if (cleanUrl && cleanKey && typeof window !== 'undefined') {
+    try {
+      const isCloudHost =
+        window.location.hostname.includes('run.app') || window.location.hostname === 'localhost';
+      const targetUrl = isCloudHost
+        ? '/api/supabase/config'
+        : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/config';
+
+      fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: cleanUrl, anonKey: cleanKey }),
+      }).catch(() => {});
+    } catch {}
+  }
+
+  return getSupabaseConfig();
+}
+
+/**
+ * استرداد مفاتيح اتصال Supabase المحفوظة من الخادم لدعم الأجهزة الأخرى فوراً
+ */
+export async function syncSupabaseConfigFromRemote(): Promise<SupabaseConfig> {
+  const localCfg = getSupabaseConfig();
+  if (localCfg.isConfigured && localCfg.url && localCfg.anonKey) {
+    return localCfg;
+  }
+
+  if (typeof window === 'undefined') return localCfg;
+
+  try {
+    const isCloudHost =
+      window.location.hostname.includes('run.app') || window.location.hostname === 'localhost';
+    const targetUrl = isCloudHost
+      ? '/api/supabase/config'
+      : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/config';
+
+    const resp = await fetch(targetUrl);
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data && data.url && data.anonKey) {
+        saveSupabaseConfig(data.url, data.anonKey);
+        return getSupabaseConfig();
+      }
+    }
+  } catch (err) {
+    console.warn('syncSupabaseConfigFromRemote check error:', err);
+  }
+
   return getSupabaseConfig();
 }
 
@@ -123,7 +186,7 @@ export function saveSupabaseConfig(url: string, anonKey: string): SupabaseConfig
  */
 export function getSupabaseClient(): SupabaseClient | null {
   const cfg = getSupabaseConfig();
-  if (!cfg.isConfigured || !cfg.url || !cfg.anonKey) {
+  if (!cfg.isConfigured || !cfg.url || !cfg.anonKey || !isValidHttpUrl(cfg.url)) {
     return null;
   }
 
@@ -614,7 +677,11 @@ export async function fetchDatabaseFromSupabase(): Promise<{
   message: string;
   data?: AppState;
 }> {
-  const client = getSupabaseClient();
+  let client = getSupabaseClient();
+  if (!client) {
+    await syncSupabaseConfigFromRemote();
+    client = getSupabaseClient();
+  }
   if (!client) {
     return {
       success: false,
@@ -623,7 +690,26 @@ export async function fetchDatabaseFromSupabase(): Promise<{
   }
 
   try {
-    // 1. Try reading latest snapshot from backup_snapshots table
+    // 1. Try reading specifically 'latest_live_snapshot' for the freshest cross-device data
+    const { data: liveRow, error: liveErr } = await client
+      .from('backup_snapshots')
+      .select('payload')
+      .eq('id', 'latest_live_snapshot')
+      .maybeSingle();
+
+    if (!liveErr && liveRow && liveRow.payload) {
+      const payload = liveRow.payload;
+      const data = payload.data || payload;
+      if (data && (Array.isArray(data.bakeries) || Array.isArray(data.debts))) {
+        return {
+          success: true,
+          message: `تم بنجاح تحميل أحدث بيانات مسجلة من Supabase (${data.bakeries?.length || 0} مخبز و ${data.debts?.length || 0} مديونية)!`,
+          data,
+        };
+      }
+    }
+
+    // 2. Fallback: Try reading latest snapshot by timestamp from backup_snapshots table
     const { data: snapshotRows, error: sErr } = await client
       .from('backup_snapshots')
       .select('payload')

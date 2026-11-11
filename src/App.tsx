@@ -60,6 +60,7 @@ import {
 } from './lib/firebase';
 import {
   subscribeToSupabaseRealtime,
+  fetchDatabaseFromSupabase,
 } from './lib/supabase';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
@@ -477,10 +478,39 @@ export default function App() {
     testFirestoreConnection().catch(() => {});
   }, []);
 
-  // Real-Time Live Sync via Supabase (Automatic import on boot cancelled per user request):
+  // Exclusive Cross-Device Real-Time Synchronization via Supabase:
   useEffect(() => {
-    // Supabase handles live, fast synchronization between devices.
-    // Automatic cloud data import/overwriting on boot has been cancelled as requested.
+    // 1. When opening from any device, fetch the latest data recorded last time on any other device
+    const loadLatestFromSupabaseOnBoot = async () => {
+      try {
+        const supaRes = await fetchDatabaseFromSupabase();
+        if (
+          supaRes &&
+          supaRes.success &&
+          supaRes.data &&
+          Array.isArray(supaRes.data.bakeries) &&
+          supaRes.data.bakeries.length > 0
+        ) {
+          setAppState((current) => {
+            if (!current) return current;
+            const updated: AppState = {
+              ...current,
+              ...supaRes.data!,
+              currentUser: current.currentUser,
+            };
+            // Persist the freshest state from Supabase to local storage
+            persistFullState(updated).catch(() => {});
+            return updated;
+          });
+        }
+      } catch (err) {
+        console.warn('Supabase cross-device boot fetch error:', err);
+      }
+    };
+
+    loadLatestFromSupabaseOnBoot();
+
+    // 2. Real-time Supabase Listener: Adopt live updates directly without merging
     const unsubscribeSupabase = subscribeToSupabaseRealtime((supaData) => {
       if (
         supaData &&
@@ -489,11 +519,14 @@ export default function App() {
       ) {
         setAppState((current) => {
           if (!current) return current;
-          const merged = mergeStates(current, supaData);
-          return {
-            ...merged,
+          // Adopt the latest Supabase state directly without merge conflicts
+          const directUpdate: AppState = {
+            ...current,
+            ...supaData,
             currentUser: current.currentUser,
           };
+          persistFullState(directUpdate).catch(() => {});
+          return directUpdate;
         });
       }
     });
