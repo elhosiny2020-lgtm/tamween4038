@@ -342,10 +342,14 @@ try {
 
 // 6. Generate deployment zip archive for Cloudflare Pages / Vercel Free Hosting
 try {
+  const existingZipInDist = path.join(distDir, 'tamween-cloudflare-vercel-deployment.zip');
+  if (fs.existsSync(existingZipInDist)) {
+    fs.unlinkSync(existingZipInDist);
+  }
   const cp = await import('child_process');
-  cp.execSync('python3 -c "import shutil, os; shutil.make_archive(\'public/tamween-cloudflare-vercel-deployment\', \'zip\', \'dist\'); shutil.copyfile(\'public/tamween-cloudflare-vercel-deployment.zip\', \'dist/tamween-cloudflare-vercel-deployment.zip\')"');
+  cp.execSync('python3 -c "import shutil, os; zip_path = shutil.make_archive(\'/tmp/tamween-cloudflare-vercel-deployment\', \'zip\', \'dist\'); shutil.copyfile(zip_path, \'dist/tamween-cloudflare-vercel-deployment.zip\')"');
 } catch (e) {
-  console.warn('Could not generate deployment zip archive:', e);
+  console.warn('Non-critical: could not generate deployment zip archive:', e);
 }
 
 console.log(`Successfully generated:
