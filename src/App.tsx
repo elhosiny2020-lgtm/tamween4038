@@ -20,7 +20,9 @@ import {
   factoryReset,
   setupDiskAutoBackup,
   getActiveDiskBackupInfo,
-  mergeStates
+  mergeStates,
+  fetchLatestServerState,
+  syncStateToServer
 } from './storage';
 import {
   DEFAULT_SYSTEM_CONFIG,
@@ -149,7 +151,8 @@ import {
   ArrowDown,
   Home,
   Save,
-  Clock
+  Clock,
+  RotateCw
 } from 'lucide-react';
 
 const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
@@ -465,6 +468,31 @@ export default function App() {
   // Verify Firestore connection on boot per Firebase integration guidelines
   useEffect(() => {
     testFirestoreConnection().catch(() => {});
+  }, []);
+
+  // Multi-Device Sync on boot: check if server has newer snapshot from another device
+  useEffect(() => {
+    fetchLatestServerState()
+      .then((serverSnap) => {
+        if (serverSnap && serverSnap.data && Array.isArray(serverSnap.data.bakeries)) {
+          setAppState((current) => {
+            if (!current) return current;
+            const currentCount = current.bakeries.length;
+            const serverCount = serverSnap.bakeriesCount || serverSnap.data.bakeries?.length || 0;
+            // If server has more bakeries or current is default seed
+            if (serverCount > currentCount || (currentCount <= 16 && serverCount > 0)) {
+              const merged = mergeStates(current, serverSnap.data);
+              persistFullState(merged).catch(() => {});
+              return {
+                ...merged,
+                currentUser: current.currentUser,
+              };
+            }
+            return current;
+          });
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Open Daily Entry Briefing Modal automatically once when user enters the database
@@ -1083,6 +1111,47 @@ export default function App() {
       handleLogout('تم تسجيل الخروج وقفل الجلسة بنجاح.');
     }
   }, [appState, triggerSave, handleLogout]);
+
+  const [isSyncingWithCloud, setIsSyncingWithCloud] = useState(false);
+
+  const handleManualCloudPull = useCallback(async () => {
+    setIsSyncingWithCloud(true);
+    try {
+      const snap = await fetchLatestServerState();
+      if (snap && snap.data && Array.isArray(snap.data.bakeries) && snap.data.bakeries.length > 0) {
+        setAppState((prev) => {
+          if (!prev) return prev;
+          const merged = mergeStates(prev, snap.data);
+          persistFullState(merged).catch(() => {});
+          return {
+            ...merged,
+            currentUser: prev.currentUser,
+          };
+        });
+        const dateStr = snap.savedAt ? new Date(snap.savedAt).toLocaleTimeString('ar-EG') : '';
+        setSaveToast({
+          id: Date.now(),
+          message: `تمت مزامنة أحدث البيانات السحابية بنجاح (${snap.bakeriesCount} مخبز • ${snap.debtsCount} قيد مديونية - توقيت: ${dateStr})`,
+          timestamp: getArabicTimestamp(),
+        });
+      } else {
+        setSaveToast({
+          id: Date.now(),
+          message: 'بيانات جهازك محدثة بالفعل، لم يتم العثور على سجلات جديدة على الخادم.',
+          timestamp: getArabicTimestamp(),
+        });
+      }
+    } catch (err) {
+      console.error('Cloud pull error:', err);
+      setSaveToast({
+        id: Date.now(),
+        message: 'تعذر الاتصال بالخادم السحابي لجلب أحدث البيانات. تحقق من اتصال الإنترنت.',
+        timestamp: getArabicTimestamp(),
+      });
+    } finally {
+      setIsSyncingWithCloud(false);
+    }
+  }, []);
 
   // Global Escape key modal closing is intentionally disabled per user preference so windows only close via explicit close buttons.
 
@@ -1825,6 +1894,18 @@ export default function App() {
             >
               <Calendar className="w-3.5 h-3.5" />
               <span className="hidden xl:inline">Google Workspace</span>
+            </button>
+
+            {/* Multi-Device Cloud Sync Button */}
+            <button
+              type="button"
+              onClick={handleManualCloudPull}
+              disabled={isSyncingWithCloud}
+              className="px-3 py-1.5 bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-700 hover:to-teal-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-emerald-400/40"
+              title="مزامنة سحابية فورية وجلب أحدث السجلات المسجلة من الأجهزة الأخرى"
+            >
+              <RotateCw className={`w-3.5 h-3.5 ${isSyncingWithCloud ? 'animate-spin text-amber-300' : 'text-emerald-300'}`} />
+              <span className="hidden md:inline">{isSyncingWithCloud ? 'جاري المزامنة...' : 'مزامنة الأجهزة 🔄'}</span>
             </button>
 
             {/* Publish & Cloud Hosting Button */}

@@ -513,24 +513,57 @@ export async function loadInitialState(): Promise<AppState> {
         }).catch(() => {});
       }
     } else if (!isInitialized && (!bakeries || bakeries.length === 0)) {
-      // First run default seed
-      bakeries = INITIAL_BAKERIES.map(normalizeBakeryPerCapita);
-      debts = INITIAL_DEBTS;
-      villages = DEFAULT_VILLAGES_HIERARCHY;
-      issuingEntities = DEFAULT_ISSUING_ENTITIES;
-      violationTypes = DEFAULT_VIOLATION_TYPES;
-      activityStatuses = DEFAULT_ACTIVITY_STATUSES;
-      bakeryCategories = DEFAULT_BAKERY_CATEGORIES;
-      breadTypes = DEFAULT_BREAD_TYPES;
-      breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS;
-      lineTypes = DEFAULT_LINE_TYPES;
-      fuelTypes = DEFAULT_FUEL_TYPES;
-      paymentMethods = PAYMENT_METHODS;
-      dailyTasks = INITIAL_DAILY_TASKS;
-      inboxMessages = INITIAL_INBOX_MESSAGES;
-      columnTitles = DEFAULT_COLUMN_TITLES;
-      systemConfig = DEFAULT_SYSTEM_CONFIG;
-      users = INITIAL_USERS;
+      // Check if the server already has a newer/populated cloud snapshot from another device
+      let serverSnapshot: { data?: Partial<AppState> } | null = null;
+      try {
+        serverSnapshot = await fetchLatestServerState();
+      } catch (err) {
+        console.warn('Could not fetch server snapshot on boot:', err);
+      }
+
+      if (
+        serverSnapshot &&
+        serverSnapshot.data &&
+        Array.isArray(serverSnapshot.data.bakeries) &&
+        serverSnapshot.data.bakeries.length > 0
+      ) {
+        bakeries = serverSnapshot.data.bakeries.map(normalizeBakeryPerCapita);
+        debts = serverSnapshot.data.debts ?? INITIAL_DEBTS;
+        villages = serverSnapshot.data.villages ?? DEFAULT_VILLAGES_HIERARCHY;
+        issuingEntities = serverSnapshot.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES;
+        violationTypes = serverSnapshot.data.violationTypes ?? DEFAULT_VIOLATION_TYPES;
+        activityStatuses = serverSnapshot.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
+        bakeryCategories = serverSnapshot.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES;
+        breadTypes = serverSnapshot.data.breadTypes ?? DEFAULT_BREAD_TYPES;
+        breadTypeCounts = serverSnapshot.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
+        lineTypes = serverSnapshot.data.lineTypes ?? DEFAULT_LINE_TYPES;
+        fuelTypes = serverSnapshot.data.fuelTypes ?? DEFAULT_FUEL_TYPES;
+        paymentMethods = serverSnapshot.data.paymentMethods ?? PAYMENT_METHODS;
+        dailyTasks = serverSnapshot.data.dailyTasks ?? INITIAL_DAILY_TASKS;
+        inboxMessages = serverSnapshot.data.inboxMessages ?? INITIAL_INBOX_MESSAGES;
+        columnTitles = serverSnapshot.data.columnTitles ?? DEFAULT_COLUMN_TITLES;
+        systemConfig = serverSnapshot.data.systemConfig ?? DEFAULT_SYSTEM_CONFIG;
+        users = serverSnapshot.data.users ?? INITIAL_USERS;
+      } else {
+        // First run default seed
+        bakeries = INITIAL_BAKERIES.map(normalizeBakeryPerCapita);
+        debts = INITIAL_DEBTS;
+        villages = DEFAULT_VILLAGES_HIERARCHY;
+        issuingEntities = DEFAULT_ISSUING_ENTITIES;
+        violationTypes = DEFAULT_VIOLATION_TYPES;
+        activityStatuses = DEFAULT_ACTIVITY_STATUSES;
+        bakeryCategories = DEFAULT_BAKERY_CATEGORIES;
+        breadTypes = DEFAULT_BREAD_TYPES;
+        breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS;
+        lineTypes = DEFAULT_LINE_TYPES;
+        fuelTypes = DEFAULT_FUEL_TYPES;
+        paymentMethods = PAYMENT_METHODS;
+        dailyTasks = INITIAL_DAILY_TASKS;
+        inboxMessages = INITIAL_INBOX_MESSAGES;
+        columnTitles = DEFAULT_COLUMN_TITLES;
+        systemConfig = DEFAULT_SYSTEM_CONFIG;
+        users = INITIAL_USERS;
+      }
 
       try {
         localStorage.setItem(KEYS.INITIALIZED, 'true');
@@ -834,10 +867,68 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
       }
 
       writeStateToDiskBackupFile(backupSnapshot).catch(() => {});
+
+      // Multi-device sync: persist state to central server so any other device gets latest data
+      syncStateToServer(backupSnapshot.state).catch(() => {});
     } catch {
       // Graceful fallback
     }
   }, 0);
+}
+
+export const OFFICIAL_CLOUD_API_URL =
+  'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/backup/snapshot';
+
+/**
+ * إرسال ومزامنة أحدث بيانات المنظومة إلى الخادم السحابي المشترك لمشاركتها مع جميع الأجهزة
+ */
+export async function syncStateToServer(state: Partial<AppState>): Promise<boolean> {
+  try {
+    const isCloudHost =
+      typeof window !== 'undefined' &&
+      (window.location.hostname.includes('run.app') || window.location.hostname === 'localhost');
+    const targetUrl = isCloudHost ? '/api/backup/snapshot' : OFFICIAL_CLOUD_API_URL;
+
+    const resp = await fetch(targetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+    });
+    return resp.ok;
+  } catch (err) {
+    console.warn('syncStateToServer background failure (non-critical):', err);
+    return false;
+  }
+}
+
+/**
+ * جلب أحدث نسخة احتياطية محفوظة من الخادم السحابي المشترك (لتحديث الأجهزة الأخرى فوراً)
+ */
+export async function fetchLatestServerState(): Promise<{
+  savedAt: string;
+  data: Partial<AppState>;
+  bakeriesCount: number;
+  debtsCount: number;
+} | null> {
+  try {
+    const isCloudHost =
+      typeof window !== 'undefined' &&
+      (window.location.hostname.includes('run.app') || window.location.hostname === 'localhost');
+    const targetUrl = isCloudHost ? '/api/backup/snapshot' : OFFICIAL_CLOUD_API_URL;
+
+    const resp = await fetch(targetUrl, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    if (json.success && json.exists && json.snapshot?.data) {
+      return json.snapshot;
+    }
+    return null;
+  } catch (err) {
+    console.warn('fetchLatestServerState failure:', err);
+    return null;
+  }
 }
 
 export function getLatestAutoSaveInfo(): { timestamp: string | null; bakeryCount?: number; debtCount?: number } | null {
