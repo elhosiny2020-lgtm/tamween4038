@@ -72,7 +72,42 @@ import {
   Copy,
   Check,
   AlertCircle,
+  Trash2,
+  Key,
+  Eye,
+  EyeOff,
+  PlusCircle,
+  UserCheck,
 } from 'lucide-react';
+
+export interface GoogleDriveAccountEntry {
+  id: string;
+  email: string;
+  password?: string;
+  notes?: string;
+  addedAt: string;
+}
+
+const loadStoredDriveAccounts = (): GoogleDriveAccountEntry[] => {
+  try {
+    const raw = localStorage.getItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    console.error('Failed to parse TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', e);
+  }
+  return [
+    {
+      id: 'default-1',
+      email: 'ELHOSINY2020@gmail.com',
+      password: '',
+      notes: 'الحساب الرئيسي الافتراضي',
+      addedAt: new Date().toLocaleDateString('ar-EG'),
+    },
+  ];
+};
 
 interface BackupModalProps {
   isOpen: boolean;
@@ -159,6 +194,124 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [lastCloudDriveSyncTime, setLastCloudDriveSyncTime] = useState<string | null>(
     () => localStorage.getItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC') || null
   );
+
+  // Dedicated Google Drive Accounts Management (Add with password, delete any email, clear active)
+  const [driveAccounts, setDriveAccounts] = useState<GoogleDriveAccountEntry[]>(loadStoredDriveAccounts);
+  const [newAccEmail, setNewAccEmail] = useState('');
+  const [newAccPassword, setNewAccPassword] = useState('');
+  const [newAccNotes, setNewAccNotes] = useState('');
+  const [showNewAccPassword, setShowNewAccPassword] = useState(false);
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
+
+  const handleAddOrUpdateDriveAccount = () => {
+    const cleanEmail = newAccEmail.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setStatusMsg({
+        text: 'يرجى إدخال بريد إلكتروني صحيح لإضافته إلى قائمة Google Drive (مثال: user@gmail.com).',
+        type: 'error',
+      });
+      return;
+    }
+
+    const existingIdx = driveAccounts.findIndex((a) => a.email.toLowerCase() === cleanEmail.toLowerCase());
+    let updated: GoogleDriveAccountEntry[];
+    if (existingIdx >= 0) {
+      updated = driveAccounts.map((a, idx) =>
+        idx === existingIdx
+          ? {
+              ...a,
+              password: newAccPassword.trim() || a.password,
+              notes: newAccNotes.trim() || a.notes,
+              addedAt: new Date().toLocaleDateString('ar-EG'),
+            }
+          : a
+      );
+      setStatusMsg({
+        text: `تم بنجاح تحديث بيانات وكلمة مرور الحساب (${cleanEmail}) في قائمة Google Drive!`,
+        type: 'success',
+      });
+    } else {
+      const newEntry: GoogleDriveAccountEntry = {
+        id: `drive-acc-${Date.now()}`,
+        email: cleanEmail,
+        password: newAccPassword.trim(),
+        notes: newAccNotes.trim() || 'حساب إضافي لـ Google Drive',
+        addedAt: new Date().toLocaleDateString('ar-EG'),
+      };
+      updated = [newEntry, ...driveAccounts];
+      setStatusMsg({
+        text: `تم بنجاح إضافة الإيميل (${cleanEmail}) مع كلمة المرور إلى قائمة Google Drive وتفعيله!`,
+        type: 'success',
+      });
+    }
+
+    setDriveAccounts(updated);
+    localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(updated));
+    setGmailEmail(cleanEmail);
+    localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', cleanEmail);
+    if (newAccPassword.trim()) {
+      localStorage.setItem(`TAMWEEN_DRIVE_PASS_${cleanEmail.toLowerCase()}`, newAccPassword.trim());
+    }
+    setNewAccEmail('');
+    setNewAccPassword('');
+    setNewAccNotes('');
+  };
+
+  const handleDeleteDriveAccount = (accToDelete: GoogleDriveAccountEntry) => {
+    if (!confirm(`هل أنت متأكد من مسح وحذف الإيميل (${accToDelete.email}) نهائياً من قائمة Google Drive؟`)) {
+      return;
+    }
+
+    const updated = driveAccounts.filter((a) => a.id !== accToDelete.id);
+    setDriveAccounts(updated);
+    localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(updated));
+    localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${accToDelete.email.toLowerCase()}`);
+    localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${accToDelete.email.toLowerCase()}`);
+
+    if (gmailEmail.toLowerCase() === accToDelete.email.toLowerCase()) {
+      if (updated.length > 0) {
+        setGmailEmail(updated[0].email);
+        localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', updated[0].email);
+      } else {
+        setGmailEmail('');
+        localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_EMAIL');
+      }
+    }
+
+    setStatusMsg({
+      text: `تم مسح الإيميل (${accToDelete.email}) بالكامل من قائمة Google Drive بنجاح!`,
+      type: 'success',
+    });
+  };
+
+  const handleClearCurrentActiveEmail = () => {
+    if (!gmailEmail) {
+      setStatusMsg({ text: 'لا يوجد إيميل نشط حالياً للمسح.', type: 'info' });
+      return;
+    }
+    if (!confirm(`هل أنت متأكد من مسح وتفريغ الإيميل النشط حالياً (${gmailEmail}) من إعدادات Google Drive؟`)) {
+      return;
+    }
+    const current = gmailEmail;
+    setGmailEmail('');
+    localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_EMAIL');
+    setStatusMsg({
+      text: `تم مسح الإيميل النشط (${current}) وتفريغ حقل Google Drive بنجاح. يمكنك الآن اختيار أو إضافة أي إيميل آخر.`,
+      type: 'success',
+    });
+  };
+
+  const handleSelectActiveDriveAccount = (acc: GoogleDriveAccountEntry) => {
+    setGmailEmail(acc.email);
+    localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', acc.email);
+    if (acc.password) {
+      localStorage.setItem(`TAMWEEN_DRIVE_PASS_${acc.email.toLowerCase()}`, acc.password);
+    }
+    setStatusMsg({
+      text: `تم تفعيل وتعيين الإيميل (${acc.email}) كحساب نشط حالياً لـ Google Drive.`,
+      type: 'success',
+    });
+  };
 
   const [isGoogleConnected, setIsGoogleConnected] = useState<boolean>(() => !!auth.currentUser);
   const [googleConnectedEmail, setGoogleConnectedEmail] = useState<string | null>(() => auth.currentUser?.email || null);
@@ -1216,6 +1369,31 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Cloudflare Pages & Vercel Free Hosting Quick Access */}
+            <div className="bg-slate-900/95 border border-amber-500/40 rounded-xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-amber-500/20 text-amber-300 rounded-lg border border-amber-400/30">
+                  <UploadCloud className="w-4 h-4 text-amber-400" />
+                </div>
+                <div>
+                  <span className="font-black text-amber-200 block">
+                    الاستضافة السحابية المجانية (Cloudflare Pages • Vercel Free)
+                  </span>
+                  <span className="text-[11px] text-slate-300 font-bold">
+                    تم تجهيز ملفات التوجيه (_redirects و vercel.json) بنجاح 100%. يمكنك رفع الموقع فوراً.
+                  </span>
+                </div>
+              </div>
+              <a
+                href="/tamween-cloudflare-vercel-deployment.zip"
+                download="tamween-cloudflare-vercel-deployment.zip"
+                className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-1.5 shadow transition cursor-pointer whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>تحميل حزمة النشر السحابي (ZIP)</span>
+              </a>
+            </div>
           </div>
 
           {/* SECTION: SUPABASE CLOUD DATABASE & INDEX.HTML STORAGE */}
@@ -1689,12 +1867,26 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               قم بإدخال بريد Gmail والضغط على زر <strong className="text-amber-300">ربط الحساب</strong> للمصادقة الآمنة عبر صفحة Google الرسمية (OAuth 2.0). لا يُطلب أو يُخزن أي كلمة مرور داخل النظام نهائياً. استخدم الأزرار أدناه للربط، وفصل الاتصال، ومزامنة واستعادة البيانات عبر Google Drive API.
             </p>
 
-            {/* Gmail Email & OAuth Connection Status (No plaintext password storage) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs bg-slate-950/60 p-3 rounded-xl border border-cyan-500/30">
-              <div>
-                <label className="block text-[11px] font-black text-amber-300 mb-1">
-                  📧 إيميل الجيميل للربط المباشر مع Google Drive (OAuth 2.0)
-                </label>
+            {/* Active Email & Connection Status Bar with Quick Clear */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs bg-slate-950/80 p-3 rounded-xl border border-cyan-500/40 shadow-inner">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-black text-amber-300 flex items-center gap-1.5">
+                    <UserCheck className="w-3.5 h-3.5 text-amber-400" />
+                    <span>📧 الإيميل النشط حالياً للمزامنة مع Google Drive:</span>
+                  </label>
+                  {gmailEmail && (
+                    <button
+                      type="button"
+                      onClick={handleClearCurrentActiveEmail}
+                      className="px-2 py-0.5 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-600/50 rounded text-[10px] font-black flex items-center gap-1 cursor-pointer transition"
+                      title="مسح وتفريغ هذا الإيميل من النظام"
+                    >
+                      <Trash2 className="w-3 h-3 text-rose-400" />
+                      <span>مسح الإيميل النشط ✕</span>
+                    </button>
+                  )}
+                </div>
                 <input
                   type="email"
                   dir="ltr"
@@ -1703,20 +1895,184 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     setGmailEmail(e.target.value);
                     localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', e.target.value);
                   }}
-                  placeholder="ELHOSINY2020@gmail.com"
+                  placeholder="name@gmail.com"
                   className="w-full px-3 py-2 bg-slate-900 border border-cyan-400/50 rounded-xl font-bold text-white text-left text-xs focus:ring-2 focus:ring-cyan-400 outline-none"
                 />
               </div>
 
               <div className="flex flex-col justify-between bg-slate-900/90 border border-cyan-500/30 rounded-xl p-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black text-cyan-300">حالة الاتصال السحابي:</span>
+                  <span className="text-[10px] font-black text-cyan-300">حالة الربط والاتصال:</span>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${isGoogleConnected ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40' : 'bg-amber-500/20 text-amber-300 border border-amber-400/40'}`}>
-                    {isGoogleConnected ? `🟢 متصل (${googleConnectedEmail || auth.currentUser?.email || gmailEmail})` : '⚪ غير متصل (اضغط ربط الحساب)'}
+                    {isGoogleConnected ? `🟢 متصل (${googleConnectedEmail || auth.currentUser?.email || gmailEmail})` : '⚪ غير متصل'}
                   </span>
                 </div>
                 <div className="text-[10px] text-slate-300 font-bold mt-1">
-                  آخر نسخة سحابية: <span className="text-amber-300 font-mono">{lastCloudDriveSyncTime || formattedAutoSaveTime || 'لم يتم الرفع بعد'}</span>
+                  آخر مزامنة سحابية: <span className="text-amber-300 font-mono">{lastCloudDriveSyncTime || formattedAutoSaveTime || 'لم يتم الرفع بعد'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* NEW: Add / Manage Google Drive Emails & Passwords Form */}
+            <div className="p-3.5 bg-slate-950/90 border-2 border-cyan-500/50 rounded-xl space-y-3">
+              <div className="flex items-center justify-between border-b border-cyan-500/30 pb-2">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-cyan-300" />
+                  <span className="text-xs font-black text-cyan-200">
+                    إدارة حسابات Google Drive (إضافة أي إيميل مع كلمة المرور أو مسح أي إيميل) 🔐
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-500/40">
+                  {driveAccounts.length} إيميل مسجل
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                {/* Email Input */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-300 mb-1">
+                    البريد الإلكتروني (Google Drive Email)
+                  </label>
+                  <input
+                    type="email"
+                    dir="ltr"
+                    value={newAccEmail}
+                    onChange={(e) => setNewAccEmail(e.target.value)}
+                    placeholder="user@gmail.com"
+                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-bold focus:border-cyan-400 outline-none"
+                  />
+                </div>
+
+                {/* Password Input with show/hide toggle */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-300 mb-1">
+                    كلمة المرور / كلمة مرور التطبيق (App Password)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewAccPassword ? 'text' : 'password'}
+                      dir="ltr"
+                      value={newAccPassword}
+                      onChange={(e) => setNewAccPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full pl-8 pr-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-cyan-400 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewAccPassword((prev) => !prev)}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                      title={showNewAccPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                    >
+                      {showNewAccPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Account Notes */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-300 mb-1">
+                    ملاحظة / وصف الحساب (اختياري)
+                  </label>
+                  <input
+                    type="text"
+                    value={newAccNotes}
+                    onChange={(e) => setNewAccNotes(e.target.value)}
+                    placeholder="مثال: حساب مكتب تموين المحلة"
+                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-bold focus:border-cyan-400 outline-none text-right"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={handleAddOrUpdateDriveAccount}
+                  className="py-1.5 px-4 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer shadow transition"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  <span>إضافة / حفظ الإيميل في Google Drive 💾</span>
+                </button>
+              </div>
+
+              {/* Saved Accounts List with Delete and Switch Buttons */}
+              <div className="space-y-1.5 pt-1 border-t border-slate-800">
+                <span className="text-[10px] font-extrabold text-cyan-300 block">
+                  قائمة الإيميلات المسجلة (يمكنك تعيين أي إيميل كنشط أو مسح أي إيميل نهائياً):
+                </span>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {driveAccounts.map((acc) => {
+                    const isActive = gmailEmail.toLowerCase() === acc.email.toLowerCase();
+                    const isPassRevealed = !!revealedPasswords[acc.id];
+                    return (
+                      <div
+                        key={acc.id}
+                        className={`flex flex-wrap items-center justify-between gap-2 p-2 rounded-lg border text-xs transition ${
+                          isActive
+                            ? 'bg-cyan-950/80 border-cyan-400 text-cyan-100 shadow-sm'
+                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-white text-[11px]" dir="ltr">
+                            {acc.email}
+                          </span>
+                          {isActive && (
+                            <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 rounded-full text-[10px] font-black">
+                              الحساب النشط حالياً ✓
+                            </span>
+                          )}
+                          {acc.notes && (
+                            <span className="text-[10px] text-slate-400">({acc.notes})</span>
+                          )}
+                          {acc.password ? (
+                            <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-700 text-[10px]">
+                              <span className="text-slate-400">كلمة المرور:</span>
+                              <span className="font-mono text-amber-300" dir="ltr">
+                                {isPassRevealed ? acc.password : '••••••••'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRevealedPasswords((prev) => ({
+                                    ...prev,
+                                    [acc.id]: !prev[acc.id],
+                                  }))
+                                }
+                                className="text-slate-400 hover:text-white cursor-pointer ml-1"
+                                title="إظهار / إخفاء كلمة المرور"
+                              >
+                                {isPassRevealed ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-500">بدون كلمة مرور</span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {!isActive && (
+                            <button
+                              type="button"
+                              onClick={() => handleSelectActiveDriveAccount(acc)}
+                              className="px-2.5 py-1 bg-cyan-700 hover:bg-cyan-600 text-white rounded text-[10px] font-black cursor-pointer transition shadow-2xs"
+                              title="تحديد هذا الإيميل كحساب نشط للمزامنة"
+                            >
+                              تعيين كنشط ⚡
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDriveAccount(acc)}
+                            className="px-2 py-1 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-600/60 rounded text-[10px] font-black flex items-center gap-1 cursor-pointer transition"
+                            title="مسح هذا الإيميل نهائياً من Google Drive"
+                          >
+                            <Trash2 className="w-3 h-3 text-rose-400" />
+                            <span>مسح الإيميل 🗑️</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>

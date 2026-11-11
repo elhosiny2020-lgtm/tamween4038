@@ -6,14 +6,26 @@
   }
 
   body {
-    font-weight: 600;
-    color: #1e293b;
-    background-color: #f4f6f9;
+    font-weight: 700;
+    color: #0f172a;
+    background-color: #f1f5f9;
     overflow-x: hidden;
   }
 
   input, select, textarea, button {
-    font-weight: 600;
+    font-weight: 700;
+  }
+
+  table {
+    font-weight: 700;
+  }
+
+  th {
+    font-weight: 900;
+  }
+
+  td {
+    font-weight: 700;
   }
 }
 

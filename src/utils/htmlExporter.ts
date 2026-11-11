@@ -663,7 +663,7 @@ export async function downloadWindowsExeLauncher(): Promise<{ success: boolean; 
 
     // Generate genuine 1024-byte Windows PE executable directly in memory
     const exeBytes = buildWindowsPeExeBytes(currentUrl);
-    const blob = new Blob([exeBytes], { type: 'application/vnd.microsoft.portable-executable' });
+    const blob = new Blob([exeBytes as unknown as BlobPart], { type: 'application/vnd.microsoft.portable-executable' });
     const url = URL.createObjectURL(blob);
 
     const a = document.createElement('a');

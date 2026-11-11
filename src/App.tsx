@@ -1069,6 +1069,21 @@ export default function App() {
     setAppState((prev) => (prev ? { ...prev, currentUser: null } : null));
   }, []);
 
+  // Handle Safe Save and Logout (حفظ آمن وتسجيل خروج فوري)
+  const handleSafeSaveAndLogout = useCallback(async () => {
+    if (!appState) return;
+    try {
+      triggerSave(appState, 'جاري الحفظ الآمن لكافة بيانات المنظومة وقفل الجلسة...');
+      await persistFullState(appState);
+      setTimeout(() => {
+        handleLogout('تم الحفظ الآمن لكافة السجلات والبيانات وتأمين تسجيل الخروج بنجاح.');
+      }, 350);
+    } catch (err) {
+      console.error('Error during safe save and logout:', err);
+      handleLogout('تم تسجيل الخروج وقفل الجلسة بنجاح.');
+    }
+  }, [appState, triggerSave, handleLogout]);
+
   // Global Escape key modal closing is intentionally disabled per user preference so windows only close via explicit close buttons.
 
   // Auto-logout when user leaves the computer / idle for 10 minutes (with automatic full pre-logout save)
@@ -1812,15 +1827,26 @@ export default function App() {
               <span className="hidden xl:inline">Google Workspace</span>
             </button>
 
-            {/* Publish Button */}
+            {/* Publish & Cloud Hosting Button */}
             <button
               type="button"
               onClick={() => setIsPublishModalOpen(true)}
-              className="px-3 py-1.5 bg-[#1E40AF] hover:bg-[#2563EB] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
-              title="نشر المنظومة والتحديثات السحابية"
+              className="px-3 py-1.5 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-600 hover:to-indigo-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-blue-400/30"
+              title="نشر واستضافة المنظومة سحابياً (Cloudflare Pages • Vercel • Google Cloud)"
             >
-              <UploadCloud className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">نشر (Publish)</span>
+              <UploadCloud className="w-3.5 h-3.5 text-amber-300" />
+              <span className="hidden sm:inline">نشر واستضافة (Cloudflare / Vercel)</span>
+            </button>
+
+            {/* Safe Save & Logout Button in Header */}
+            <button
+              type="button"
+              onClick={handleSafeSaveAndLogout}
+              className="px-3 py-1.5 bg-gradient-to-r from-red-700 via-rose-700 to-red-800 hover:from-red-600 hover:to-rose-600 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-md border border-red-500/50"
+              title="حفظ آمن لكافة بيانات وسجلات المنظومة وتسجيل الخروج وقفل الشاشة فوراً"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-200" />
+              <span>خروج وحفظ آمن</span>
             </button>
           </div>
         </div>
@@ -2011,6 +2037,17 @@ export default function App() {
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>حفظ التغييرات</span>
+              </button>
+
+              {/* 3.2 Safe Save & Logout Button (زر خروج وحفظ آمن أعلى الجداول) */}
+              <button
+                type="button"
+                onClick={handleSafeSaveAndLogout}
+                className="px-3 py-1.5 bg-gradient-to-r from-red-700 via-rose-700 to-red-800 hover:from-red-600 hover:to-rose-600 text-white rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-red-500/60"
+                title="حفظ آمن لكافة بيانات وسجلات الجداول وتسجيل الخروج وقفل الشاشة فوراً"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-200" />
+                <span>خروج وحفظ آمن</span>
               </button>
 
               {/* 4. Recalculate Results */}
@@ -2278,6 +2315,7 @@ export default function App() {
               onCloseExternalManageListModal={() => setExternalDebtsManageListModal(null)}
               debtsColumnGroup={debtsColumnGroup}
               debtsPageSize={debtsPageSize}
+              onSafeSaveAndLogout={handleSafeSaveAndLogout}
             />
           ) : (
             /* BAKERIES DATABASE VIEW (إعادة تصميم قاعدة بيانات المخابز - البند 6) */

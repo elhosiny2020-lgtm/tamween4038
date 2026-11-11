@@ -26,6 +26,7 @@ import {
   FileText,
   Store,
   RefreshCw,
+  LogOut,
 } from 'lucide-react';
 
 import { WeeklyInstallmentsModal } from './WeeklyInstallmentsModal';
@@ -81,6 +82,7 @@ interface DebtsViewProps {
   onCloseExternalManageListModal?: () => void;
   debtsColumnGroup?: 'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL';
   debtsPageSize?: number;
+  onSafeSaveAndLogout?: () => void;
 }
 
 export const DebtsView: React.FC<DebtsViewProps> = ({
@@ -106,6 +108,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   onCloseExternalManageListModal,
   debtsColumnGroup = 'ALL',
   debtsPageSize = 50,
+  onSafeSaveAndLogout,
 }) => {
   const debtsPrintRef = React.useRef<HTMLDivElement>(null);
   const isViewer = currentUser?.role === 'viewer';
@@ -878,6 +881,19 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               <Printer className="w-4 h-4 text-[#0F2342]" />
               <span>معاينة وطباعة الكشف</span>
             </button>
+
+            {/* Safe Save & Logout Button (زر خروج وحفظ آمن أعلى جدول المديونيات) */}
+            {onSafeSaveAndLogout && (
+              <button
+                type="button"
+                onClick={onSafeSaveAndLogout}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-red-700 via-rose-700 to-red-800 hover:from-red-600 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-md transition cursor-pointer border border-red-500/50"
+                title="حفظ آمن لكافة بيانات وسجلات الجداول وتسجيل الخروج وقفل الشاشة فوراً"
+              >
+                <LogOut className="w-4 h-4 text-rose-200" />
+                <span>خروج وحفظ آمن</span>
+              </button>
+            )}
           </div>
 
           {/* Search Box */}
@@ -1206,12 +1222,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           </div>
         </div>
 
-        {/* Debts Database Table */}
+        {/* Debts Database Table (Enlarged +1 step to text-sm with bold fonts) */}
         <div className="bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-md">
           <div className="overflow-x-auto max-h-[670px] relative custom-scrollbar">
-            <table className="w-full text-center border-collapse text-xs">
+            <table className="w-full text-center border-collapse text-sm font-extrabold">
               {/* Super Headers */}
-              <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-black shadow-md">
+              <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-black shadow-md text-xs sm:text-sm">
                 <tr className="border-b border-[#1E3A8A]">
                   <th
                     rowSpan={2}
@@ -1267,7 +1283,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   )}
                   <th
                     rowSpan={2}
-                    className="py-3 px-3 bg-[#1E3A8A] border-l border-blue-800 text-amber-300 text-xs font-black min-w-[145px]"
+                    className="py-3 px-3 bg-[#1E3A8A] border-l border-blue-800 text-amber-300 text-sm font-black min-w-[145px]"
                   >
                     صافي المتبقي على صاحب المخبز
                   </th>
@@ -1280,7 +1296,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 </tr>
 
                 {/* Sub Columns Headers — Mandatory 4 Identifying Columns First */}
-                <tr className="bg-[#152E59] text-[11px] text-white font-black border-b-2 border-amber-400/70">
+                <tr className="bg-[#152E59] text-xs sm:text-sm text-white font-black border-b-2 border-amber-400/70">
                   {/* 1. Mandatory 4 Core Columns */}
                   <th className="py-2.5 px-2.5 border-l border-[#1E3A8A] min-w-[165px] text-right bg-[#102548] text-amber-200">
                     اسم المخبز
@@ -1349,7 +1365,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               </thead>
 
               {/* Table Body */}
-              <tbody className="divide-y divide-slate-200 font-bold text-slate-800">
+              <tbody className="divide-y divide-slate-200 font-extrabold text-slate-800 text-sm">
                 {paginatedDebts.length === 0 ? (
                   <tr>
                     <td colSpan={34} className="py-12 text-center text-slate-500 font-black">
@@ -2832,18 +2848,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
     onSave(record);
   };
 
-  // Escape key listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Esc') {
-        onClose();
-      }
-    };
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  // Escape key closing intentionally disabled per user preference so windows only close via explicit buttons
 
   if (!isOpen) return null;
 
@@ -2887,7 +2892,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                 onClose();
               }}
               className="p-1.5 rounded-xl bg-red-900/60 hover:bg-red-600 text-white transition cursor-pointer border border-red-500/50 hover:scale-105 active:scale-95 shadow-md"
-              title="إغلاق النافذة (Escape)"
+              title="إغلاق النافذة"
             >
               <X className="w-5 h-5 stroke-[2.5]" />
             </button>
@@ -3514,7 +3519,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
               }}
               className="px-5 py-2.5 border border-slate-300 rounded-lg text-xs font-black text-slate-700 hover:bg-slate-100 transition cursor-pointer"
             >
-              إلغاء النافذة (ESC)
+              إلغاء النافذة
             </button>
 
             <button

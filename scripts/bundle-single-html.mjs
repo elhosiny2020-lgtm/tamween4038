@@ -340,10 +340,19 @@ try {
   console.warn('Could not build/copy EXE in bundle step:', e);
 }
 
+// 6. Generate deployment zip archive for Cloudflare Pages / Vercel Free Hosting
+try {
+  const cp = await import('child_process');
+  cp.execSync('python3 -c "import shutil, os; shutil.make_archive(\'public/tamween-cloudflare-vercel-deployment\', \'zip\', \'dist\'); shutil.copyfile(\'public/tamween-cloudflare-vercel-deployment.zip\', \'dist/tamween-cloudflare-vercel-deployment.zip\')"');
+} catch (e) {
+  console.warn('Could not generate deployment zip archive:', e);
+}
+
 console.log(`Successfully generated:
 - tamween-system.html (${(htmlContent.length / 1024).toFixed(1)} KB)
 - منظومة وزارة التموين.html
 - منظومة وزارة التموين.url
 - تثبيت_أيقونة_المنظومة_على_سطح_المكتب.bat
-- منظومة_وزارة_التموين.exe`);
+- منظومة_وزارة_التموين.exe
+- tamween-cloudflare-vercel-deployment.zip`);
 
