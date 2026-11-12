@@ -35,56 +35,11 @@
 button,
 a[role="button"],
 .btn-interactive {
-  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
-              box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-              background-color 0.2s ease,
-              border-color 0.2s ease,
-              color 0.2s ease,
-              opacity 0.2s ease;
-  will-change: transform, box-shadow;
-}
-
-button:hover,
-a[role="button"]:hover,
-.btn-interactive:hover {
-  transform: translateY(-1.5px);
-}
-
-button:active,
-a[role="button"]:active,
-.btn-interactive:active {
-  transform: scale(0.96) translateY(0px) !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .sidebar-btn-erp {
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-              box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-              background 0.22s ease,
-              border-color 0.22s ease;
-}
-
-.sidebar-btn-erp:hover {
-  transform: translateX(-4px) translateY(-1px);
-}
-
-.sidebar-btn-erp:active {
-  transform: scale(0.97) translateX(-2px) !important;
-}
-
-.icon-animated {
-  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
-}
-button:hover .icon-animated,
-a:hover .icon-animated,
-.group:hover .icon-animated {
-  transform: scale(1.14) rotate(-3deg);
-}
-
-.icon-spin-hover {
-  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-}
-button:hover .icon-spin-hover {
-  transform: rotate(35deg) scale(1.1);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 /* Enlarged bold numbers with tabular alignment */
@@ -109,11 +64,10 @@ tr.total-summary-row,
 tfoot tr.total-summary-row,
 tr.total-summary-row:hover,
 tfoot tr.total-summary-row:hover {
-  background: linear-gradient(90deg, #09152B 0%, #0F2342 50%, #16325B 100%) !important;
+  background: #0F2342 !important;
   color: #fde68a !important;
   font-weight: 900 !important;
   border-top: 3px solid #f59e0b !important;
-  box-shadow: 0 -4px 16px rgba(9, 21, 43, 0.22) !important;
 }
 
 tr.total-summary-row td,
@@ -127,7 +81,7 @@ tfoot tr.total-summary-row:hover td {
 /* Subtotal rows for Local Units and Villages */
 tr.local-unit-total-row,
 tr.local-unit-total-row:hover {
-  background: linear-gradient(90deg, #0F2342 0%, #1E3A8A 100%) !important;
+  background: #1E3A8A !important;
   color: #fde68a !important;
   font-weight: 900 !important;
 }
@@ -140,7 +94,7 @@ tr.local-unit-total-row:hover td {
 
 tr.village-total-row,
 tr.village-total-row:hover {
-  background: linear-gradient(90deg, #bae6fd 0%, #dbeafe 100%) !important;
+  background: #dbeafe !important;
   color: #0f2342 !important;
   font-weight: 900 !important;
 }
@@ -154,61 +108,17 @@ tr.village-total-row:hover td {
 /* Professional Navy/Royal-Blue row highlight for selected and hovered rows (Never White) */
 tr.row-selected {
   background-color: #bfdbfe !important;
-  box-shadow: inset 0 0 0 2px #1e3a8a !important;
   font-weight: 800 !important;
 }
 
 tr.row-selected td {
   background-color: #bfdbfe !important;
   color: #0f2342 !important;
-  border-top-color: #60a5fa !important;
-  border-bottom-color: #60a5fa !important;
 }
 
-/* Smooth Table Row Hover — Rich Royal Blue / Navy Highlight instead of White */
-tbody tr {
-  transition: background-color 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
-}
-
-tbody tr:not(.total-summary-row):not(.local-unit-total-row):not(.village-total-row):hover {
-  background-color: #bfdbfe !important;
-  box-shadow: inset 0 0 0 1.5px #1e40af !important;
-}
-
-tbody tr:not(.total-summary-row):not(.local-unit-total-row):not(.village-total-row):hover td {
-  background-color: #bfdbfe !important;
-  color: #0f2342 !important;
-}
-
-/* Dark-themed modal tables row hover */
-.bg-slate-950 tbody tr:not(.total-summary-row):hover,
-.bg-slate-900 tbody tr:not(.total-summary-row):hover {
-  background-color: #1e3a8a !important;
-}
-
-.bg-slate-950 tbody tr:not(.total-summary-row):hover td,
-.bg-slate-900 tbody tr:not(.total-summary-row):hover td {
-  background-color: #1e3a8a !important;
-  color: #fde68a !important;
-}
-
-/* Buttons & Menus Hover — Replace white/light hover with Navy & Gold */
-button:not(.gsi-material-button):hover {
-  border-color: #1e3a8a;
-}
-
-button.bg-white:not(.gsi-material-button):hover,
-button.bg-slate-50:not(.gsi-material-button):hover,
-button.bg-slate-100:not(.gsi-material-button):hover {
-  background-color: #0f2342 !important;
-  color: #fde68a !important;
-  border-color: #f59e0b !important;
-}
-
-button.bg-white:not(.gsi-material-button):hover svg,
-button.bg-slate-50:not(.gsi-material-button):hover svg,
-button.bg-slate-100:not(.gsi-material-button):hover svg {
-  color: #fde68a !important;
+/* Fast Table Row Hover without expensive multi-not selectors */
+tbody tr:hover {
+  background-color: #eff6ff;
 }
 
 select:hover,
@@ -216,27 +126,6 @@ select:focus {
   background-color: #dbeafe !important;
   color: #0f2342 !important;
   border-color: #1e3a8a !important;
-}
-
-
-/* Force pure black (#000000) text inside all report containers (.print-container) both on screen and in print/PDF */
-.print-container,
-.print-container * {
-  color: #000000 !important;
-  -webkit-text-fill-color: #000000 !important;
-}
-
-.print-container th {
-  background-color: #e2e8f0 !important;
-  color: #000000 !important;
-  border-color: #000000 !important;
-}
-
-.print-container tfoot tr,
-.print-container tfoot td {
-  background-color: #cbd5e1 !important;
-  color: #000000 !important;
-  border-color: #000000 !important;
 }
 
 /* Eliminate GPU compositing lag when opening/closing modal dialogs */

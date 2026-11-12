@@ -27,6 +27,7 @@ const PURE_HEX_REPORT_STYLES = `
     color: #0f172a !important;
     direction: rtl !important;
     font-weight: 700 !important;
+    line-height: 1.4 !important;
   }
   .no-print {
     display: none !important;
@@ -42,7 +43,7 @@ const PURE_HEX_REPORT_STYLES = `
     width: 100% !important;
     max-width: 100% !important;
     margin: 0 !important;
-    padding: 4mm !important;
+    padding: 5mm !important;
     background-color: #ffffff !important;
     color: #0f172a !important;
     direction: rtl !important;
@@ -51,6 +52,8 @@ const PURE_HEX_REPORT_STYLES = `
     height: auto !important;
     zoom: 1 !important;
     transform: none !important;
+    border: 1.5px solid #0f2342 !important;
+    border-radius: 8px !important;
   }
   /* Layout Utilities for Headers, Summary Strips, and Footers */
   .flex { display: flex !important; }
@@ -78,6 +81,11 @@ const PURE_HEX_REPORT_STYLES = `
   .grid-cols-8, .lg\\:grid-cols-8 { grid-template-columns: repeat(8, minmax(0, 1fr)) !important; }
   .sm\\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
   .sm\\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .space-y-5 > * + * { margin-top: 14px !important; }
+  .space-y-4 > * + * { margin-top: 12px !important; }
+  .space-y-3 > * + * { margin-top: 10px !important; }
+  .space-y-2 > * + * { margin-top: 6px !important; }
+  .space-y-0\\.5 > * + * { margin-top: 2px !important; }
   .text-right { text-align: right !important; }
   .text-left { text-align: left !important; }
   .text-center { text-align: center !important; }
@@ -87,6 +95,16 @@ const PURE_HEX_REPORT_STYLES = `
   .block { display: block !important; }
   .inline-block { display: inline-block !important; }
   .w-full { width: 100% !important; }
+  .w-14 { width: 52px !important; }
+  .h-14 { height: 52px !important; }
+  .mx-auto { margin-left: auto !important; margin-right: auto !important; }
+  .text-\\[8px\\], .text-\\[9px\\] { font-size: 7.5pt !important; }
+  .text-\\[10px\\], .text-\\[10\\.5px\\], .text-\\[11px\\] { font-size: 8.5pt !important; }
+  .text-xs { font-size: 9pt !important; }
+  .text-sm { font-size: 10pt !important; }
+  .text-base, .text-lg, h1 { font-size: 12pt !important; font-weight: 900 !important; margin: 2px 0 !important; }
+  h3, h4, p { margin: 2px 0 !important; }
+  .p-1 { padding: 4px !important; }
   .p-1\\.5 { padding: 6px !important; }
   .p-2 { padding: 8px !important; }
   .p-2\\.5 { padding: 10px !important; }
@@ -94,34 +112,42 @@ const PURE_HEX_REPORT_STYLES = `
   .px-2 { padding-left: 8px !important; padding-right: 8px !important; }
   .px-2\\.5 { padding-left: 10px !important; padding-right: 10px !important; }
   .px-3 { padding-left: 12px !important; padding-right: 12px !important; }
+  .px-3\\.5 { padding-left: 14px !important; padding-right: 14px !important; }
   .px-4 { padding-left: 16px !important; padding-right: 16px !important; }
   .py-1 { padding-top: 4px !important; padding-bottom: 4px !important; }
   .py-1\\.5 { padding-top: 6px !important; padding-bottom: 6px !important; }
   .py-2 { padding-top: 8px !important; padding-bottom: 8px !important; }
   .pb-2 { padding-bottom: 8px !important; }
   .pb-3 { padding-bottom: 12px !important; }
-  .pb-4 { padding-bottom: 16px !important; }
+  .pb-4 { padding-bottom: 14px !important; }
+  .pt-1 { padding-top: 4px !important; }
   .pt-2 { padding-top: 8px !important; }
   .pt-3 { padding-top: 12px !important; }
-  .pt-4 { padding-top: 16px !important; }
+  .pt-4 { padding-top: 14px !important; }
+  .mt-0\\.5 { margin-top: 2px !important; }
   .mt-1 { margin-top: 4px !important; }
   .mt-2 { margin-top: 8px !important; }
-  .mt-4 { margin-top: 16px !important; }
-  .mt-6 { margin-top: 20px !important; }
-  .mt-8 { margin-top: 24px !important; }
+  .mt-3 { margin-top: 10px !important; }
+  .mt-4 { margin-top: 12px !important; }
+  .mt-5 { margin-top: 16px !important; }
+  .mt-6 { margin-top: 18px !important; }
+  .mt-8 { margin-top: 22px !important; }
   .mb-2 { margin-bottom: 8px !important; }
   .mb-3 { margin-bottom: 12px !important; }
-  .mb-4 { margin-bottom: 16px !important; }
+  .mb-4 { margin-bottom: 14px !important; }
   .rounded, .rounded-lg, .rounded-xl, .rounded-2xl { border-radius: 6px !important; }
-  .border { border: 1px solid #0f2342 !important; }
+  .rounded-full { border-radius: 9999px !important; }
+  .border { border: 1px solid #cbd5e1 !important; }
+  .border-black { border-color: #0f2342 !important; }
   .border-b, .border-b-2 { border-bottom: 2px solid #0f2342 !important; }
   .border-t, .border-t-2 { border-top: 1.5px solid #0f2342 !important; }
-  .border-dashed { border-style: dashed !important; }
-  .bg-amber-50, .bg-amber-100, .bg-amber-100\\/90 { background-color: #fef3c7 !important; color: #0f172a !important; }
+  .border-dashed { border-style: dashed !important; border-color: #64748b !important; }
+  .bg-amber-50, .bg-amber-50\\/70, .bg-amber-100, .bg-amber-100\\/90 { background-color: #fef3c7 !important; color: #0f172a !important; }
   .bg-slate-50, .bg-slate-100 { background-color: #f8fafc !important; color: #0f172a !important; }
   .bg-blue-50, .bg-blue-50\\/70, .bg-cyan-50 { background-color: #eff6ff !important; color: #0f2342 !important; }
-  .bg-emerald-50, .bg-emerald-50\\/70 { background-color: #ecfdf5 !important; color: #064e3b !important; }
-  .bg-purple-50 { background-color: #faf5ff !important; color: #3b0764 !important; }
+  .bg-emerald-50, .bg-emerald-50\\/70, .bg-teal-50 { background-color: #ecfdf5 !important; color: #064e3b !important; }
+  .bg-purple-50, .bg-indigo-50 { background-color: #faf5ff !important; color: #3b0764 !important; }
+  .bg-red-50 { background-color: #fef2f2 !important; color: #7f1d1d !important; }
 
   /* Official Governmental Report Table Styling */
   table {
@@ -157,16 +183,17 @@ const PURE_HEX_REPORT_STYLES = `
     -webkit-text-fill-color: #ffffff !important;
     border: 1px solid #1e3a8a !important;
     font-weight: 800 !important;
-    padding: 5px 4px !important;
+    padding: 6px 5px !important;
     text-align: center !important;
     vertical-align: middle !important;
+    line-height: 1.25 !important;
   }
   tbody td, td {
     display: table-cell !important;
     border: 1px solid #94a3b8 !important;
     color: #0f172a !important;
     -webkit-text-fill-color: #0f172a !important;
-    padding: 4px 4px !important;
+    padding: 5px 4px !important;
     word-break: break-word !important;
     line-height: 1.3 !important;
     text-align: center !important;
@@ -185,7 +212,7 @@ const PURE_HEX_REPORT_STYLES = `
     -webkit-text-fill-color: #0f2342 !important;
     font-weight: 900 !important;
     border: 1.5px solid #0f2342 !important;
-    padding: 6px 4px !important;
+    padding: 6px 5px !important;
   }
   .report-font-compact th, .report-font-compact td { font-size: 7.5pt !important; }
   .report-font-standard th, .report-font-standard td { font-size: 8.5pt !important; }
@@ -194,8 +221,8 @@ const PURE_HEX_REPORT_STYLES = `
     font-weight: 800 !important;
   }
   img {
-    max-width: 54px !important;
-    max-height: 54px !important;
+    max-width: 52px !important;
+    max-height: 52px !important;
     object-fit: contain !important;
   }
 `;

@@ -162,12 +162,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       return 'كشف حسابات المستخدمين والأدوار الوظيفية والصلاحيات المعتمدة';
     }
 
+    const adminName = systemConfig.administrationTitle || 'إدارة تموين مركز المحلة الكبرى';
     const locationSuffix =
       selectedVillage === 'ALL'
-        ? 'لكافة قرى ووحدات مركز المحلة الكبرى'
+        ? `لكافة القرى والوحدات التابعة لـ (${adminName})`
         : selectedUnit !== 'ALL'
-        ? `لقرية ${selectedVillage} - وحدة ${selectedUnit}`
-        : `لقرية ${selectedVillage} ووحداتها المحلية`;
+        ? `لقرية ${selectedVillage} - وحدة ${selectedUnit} (${adminName})`
+        : `لقرية ${selectedVillage} ووحداتها المحلية (${adminName})`;
 
     if (reportType === 'debts') {
       if (debtFilterStatus === 'OVER_20K') {
@@ -194,7 +195,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     }
 
     return `كشف حصر وتشغيل المخابز البلدية والحصص التموينية ${locationSuffix}`;
-  }, [reportType, selectedVillage, selectedUnit, debtFilterStatus, bakeryDebtFilter]);
+  }, [reportType, selectedVillage, selectedUnit, debtFilterStatus, bakeryDebtFilter, systemConfig.administrationTitle]);
 
   // Filtered bakeries for bakeries report
   const filteredBakeries = useMemo(() => {
@@ -889,14 +890,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       }}
     >
       <style>{`
-        .print-container, .print-container * {
-          color: #000000 !important;
-          -webkit-text-fill-color: #000000 !important;
-        }
         .print-container th {
-          background-color: #e2e8f0 !important;
-          color: #000000 !important;
-          border-color: #000000 !important;
+          background-color: #e2e8f0;
+          color: #000000;
+          border-color: #000000;
         }
         @media print {
           .no-print { display: none !important; }
@@ -1346,8 +1343,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             </div>
           </div>
 
-          {/* Column Checklist Accordion - Open by default so all 32 fields are visible */}
-          <details open className="bg-white border border-slate-300 rounded-xl p-2.5 text-xs">
+          {/* Column Checklist Accordion - Collapsed by default for zero DOM lag */}
+          {reportType === 'bakeries' && (
+          <details className="bg-white border border-slate-300 rounded-xl p-2.5 text-xs">
             <summary className="font-black text-slate-800 cursor-pointer flex flex-wrap items-center justify-between gap-2 select-none">
               <span className="flex items-center gap-1.5">
                 <SlidersHorizontal className="w-4 h-4 text-amber-700" />
@@ -1404,13 +1402,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               ))}
             </div>
           </details>
+          )}
         </div>
 
         {/* Printable Sheet View - Full Landscape Canvas */}
         <div className="report-scroll-wrapper flex-1 overflow-x-auto overflow-y-auto p-2 sm:p-4 bg-slate-300/80 print:bg-white print:p-0 print:overflow-visible">
           <div
             style={{
-              zoom: `${zoomLevel}%`,
+              zoom: zoomLevel !== 100 ? `${zoomLevel}%` : undefined,
               minWidth: '1350px',
             }}
             className="report-zoom-wrapper w-full"
@@ -2683,7 +2682,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                   </div>
                 </div>
                 <div>
-                  <p>مدير إدارة تموين مركز المحلة الكبرى</p>
+                  <p>مدير {systemConfig.administrationTitle || 'إدارة تموين مركز المحلة الكبرى'}</p>
                   <div className="h-12 flex items-end justify-center text-[10px] text-slate-400">
                     (خاتم شعار الجمهورية)
                   </div>

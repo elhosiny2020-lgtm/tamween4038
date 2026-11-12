@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
-import { AppUser, SystemConfig } from '../types';
+import { AppUser, SystemConfig, SupplyBranch } from '../types';
 import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { ParticleCanvas } from './ParticleCanvas';
 import { CartoonBakeryScene } from './CartoonBakeryScene';
-import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Sparkles, Building2, KeyRound, Download, Laptop } from 'lucide-react';
+import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Building2, KeyRound, Download, PlusCircle, CheckCircle2 } from 'lucide-react';
 import { downloadWindowsExeLauncher } from '../utils/htmlExporter';
 
 interface LoginModalProps {
   systemConfig: SystemConfig;
   users: AppUser[];
+  branches?: SupplyBranch[];
+  activeBranchId?: string;
+  onSelectBranch?: (branchId: string) => void;
+  onOpenBranchesManager?: () => void;
   onLoginSuccess: (user: AppUser) => void;
   onRegisterUser: (newUser: AppUser) => void;
   logoutReason?: string | null;
@@ -17,6 +21,10 @@ interface LoginModalProps {
 export const LoginModal: React.FC<LoginModalProps> = ({
   systemConfig,
   users,
+  branches = [],
+  activeBranchId = 'branch-mahalla',
+  onSelectBranch,
+  onOpenBranchesManager,
   onLoginSuccess,
   onRegisterUser,
   logoutReason,
@@ -28,6 +36,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [role, setRole] = useState<'admin' | 'inspector' | 'auditor'>('inspector');
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  const activeBranchObj = branches.find((b) => b.id === activeBranchId);
+  const activeBranchTitle = activeBranchObj?.name || systemConfig.administrationTitle;
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +59,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     );
 
     if (found) {
-      setSuccessMsg('تم تسجيل الدخول بنجاح، جاري فتح المنظومة التموينية...');
+      setSuccessMsg(`تم تسجيل الدخول بنجاح، جاري فتح واجهة (${activeBranchTitle})...`);
       setTimeout(() => {
         onLoginSuccess(found);
       }, 150);
@@ -117,10 +128,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         {/* Login & Register Card */}
         <div className="w-full lg:w-1/2 max-w-md bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border-2 border-amber-500/30 overflow-hidden transform transition-all duration-300">
           {/* Top Header with Emblem */}
-          <div className="bg-gradient-to-b from-slate-950 via-slate-900 to-amber-950 p-6 text-center text-white relative border-b border-amber-500/40">
-            <div className="flex justify-center mb-3">
+          <div className="bg-gradient-to-b from-slate-950 via-slate-900 to-amber-950 p-5 text-center text-white relative border-b border-amber-500/40">
+            <div className="flex justify-center mb-2.5">
               <div className="relative">
-                <div className="w-20 h-20 rounded-2xl bg-white p-2 shadow-xl border-2 border-amber-400 flex items-center justify-center transform hover:scale-105 transition-transform duration-300">
+                <div className="w-16 h-16 rounded-2xl bg-white p-2 shadow-xl border-2 border-amber-400 flex items-center justify-center transform hover:scale-105 transition-transform duration-300">
                   <img
                     src={systemConfig.logoBase64 || DEFAULT_OFFICIAL_LOGO}
                     alt="شعار وزارة التموين والتجارة الداخلية"
@@ -133,20 +144,64 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </div>
             </div>
 
-            <div className="inline-block bg-amber-400 px-3 py-0.5 rounded-full shadow-sm mb-1.5 border border-amber-300">
-              <h2 className="text-xs font-black text-black tracking-wider">
+            <div className="inline-block bg-amber-400 px-3 py-0.5 rounded-full shadow-sm mb-1 border border-amber-300">
+              <h2 className="text-[11px] font-black text-black tracking-wider">
                 جمهورية مصر العربية • وزارة التموين والتجارة الداخلية
               </h2>
             </div>
-            <h1 className="text-base font-black text-white leading-snug">
-              {systemConfig.governorateTitle}
+            <h1 className="text-sm font-black text-white leading-snug">
+              {activeBranchObj?.governorateTitle || systemConfig.governorateTitle} — {activeBranchObj?.directorateTitle || systemConfig.directorateTitle}
             </h1>
-            <p className="text-xs text-amber-100 font-bold mt-0.5">
-              {systemConfig.directorateTitle}
-            </p>
-            <div className="inline-block mt-2 px-3.5 py-1 bg-amber-400 border border-amber-300 rounded-full text-xs font-black text-black shadow-sm">
-              {systemConfig.administrationTitle}
+            <div className="inline-block mt-1.5 px-3.5 py-1 bg-amber-400 border border-amber-300 rounded-full text-xs font-black text-black shadow-sm">
+              {activeBranchTitle}
             </div>
+          </div>
+
+          {/* Branch Selection Box on Login Interface */}
+          <div className="bg-indigo-950/95 text-white p-3.5 border-b-2 border-amber-400/70" dir="rtl">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <label className="text-xs font-black text-amber-300 flex items-center gap-1.5">
+                <Building2 className="w-4 h-4 text-amber-400" />
+                اختر واجهة الإدارة التموينية للدخول عليها:
+              </label>
+              {onOpenBranchesManager && (
+                <button
+                  type="button"
+                  onClick={onOpenBranchesManager}
+                  className="px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
+                  title="فتح قسم الفروع لإضافة أو حذف إدارة تموينية"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  قسم الفروع (إضافة / حذف)
+                </button>
+              )}
+            </div>
+
+            {branches.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-32 overflow-y-auto pr-0.5">
+                {branches.map((branch) => {
+                  const isSelected = branch.id === activeBranchId;
+                  return (
+                    <button
+                      key={branch.id}
+                      type="button"
+                      onClick={() => onSelectBranch && onSelectBranch(branch.id)}
+                      className={`px-2.5 py-2 rounded-xl text-right font-black text-xs flex items-center justify-between gap-1.5 border transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-emerald-500 text-slate-950 border-amber-300 shadow-md ring-2 ring-amber-300/50'
+                          : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-indigo-800'
+                      }`}
+                    >
+                      <span className="truncate">{branch.name}</span>
+                      {isSelected && <CheckCircle2 className="w-4 h-4 shrink-0 text-slate-950" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[10px] font-bold text-indigo-200 mt-1.5 text-center">
+              🔒 كل إدارة تموينية منفصلة تماماً في البيانات والمخابز والمديونيات عن الإدارات الأخرى
+            </p>
           </div>
 
           {/* Tab Selector */}

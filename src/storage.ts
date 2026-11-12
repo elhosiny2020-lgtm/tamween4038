@@ -6,7 +6,8 @@ import {
   SystemConfig,
   AppUser,
   DailyBakeryTask,
-  InboxChatMessage
+  InboxChatMessage,
+  SupplyBranch
 } from './types';
 import {
   DEFAULT_SYSTEM_CONFIG,
@@ -50,6 +51,8 @@ export interface MergeConflictItem {
 }
 
 export interface AppState {
+  activeBranchId?: string;
+  branches?: SupplyBranch[];
   bakeries: Bakery[];
   debts: DebtRecord[];
   villages: VillageHierarchy[];
@@ -74,7 +77,35 @@ const DB_NAME = 'TamweenGharbiaDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'app_state';
 
-const KEYS = {
+export const DEFAULT_BRANCH_ID = 'branch-mahalla';
+
+export const DEFAULT_SUPPLY_BRANCHES: SupplyBranch[] = [
+  {
+    id: 'branch-mahalla',
+    name: 'إدارة تموين مركز المحلة الكبرى',
+    governorateTitle: 'محافظة الغربية',
+    directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+    description: 'الإدارة التموينية لمركز المحلة الكبرى (القاعدة الأساسية)',
+    createdAt: '2025-01-01',
+    isDefault: true,
+  },
+  {
+    id: 'branch-samanoud',
+    name: 'إدارة تموين سمنود',
+    governorateTitle: 'محافظة الغربية',
+    directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+    description: 'الإدارة التموينية لمركز ومدينة سمنود (قاعدة بيانات مستقلة)',
+    createdAt: '2025-01-01',
+    isDefault: false,
+  },
+];
+
+const BRANCH_META_KEYS = {
+  BRANCHES_LIST: 'TAMWEEN_BRANCHES_LIST_V1',
+  ACTIVE_BRANCH_ID: 'TAMWEEN_ACTIVE_BRANCH_ID_V1',
+};
+
+const BASE_KEYS = {
   INITIALIZED: 'TAMWEEN_INITIALIZED_V3',
   SESSION: 'TAMWEEN_SESSION_V3',
   BAKERIES: 'TAMWEEN_BAKERIES_V3',
@@ -98,6 +129,235 @@ const KEYS = {
   AUTOSAVE_TIMESTAMP: 'TAMWEEN_AUTOSAVE_TIMESTAMP_V3',
   MERGE_CONFLICTS: 'TAMWEEN_MERGE_CONFLICTS_LOG',
 };
+
+const KEYS = BASE_KEYS;
+
+export function getScopedKeysForBranch(branchId?: string): typeof BASE_KEYS {
+  const targetId = branchId || getActiveBranchId();
+  if (!targetId || targetId === DEFAULT_BRANCH_ID) {
+    return BASE_KEYS;
+  }
+  const suffix = `__${targetId}`;
+  return {
+    INITIALIZED: `${BASE_KEYS.INITIALIZED}${suffix}`,
+    SESSION: BASE_KEYS.SESSION, // Session user stays unified or scoped on login
+    BAKERIES: `${BASE_KEYS.BAKERIES}${suffix}`,
+    DEBTS: `${BASE_KEYS.DEBTS}${suffix}`,
+    VILLAGES: `${BASE_KEYS.VILLAGES}${suffix}`,
+    ENTITIES: `${BASE_KEYS.ENTITIES}${suffix}`,
+    VIOLATIONS: `${BASE_KEYS.VIOLATIONS}${suffix}`,
+    ACTIVITY_STATUSES: `${BASE_KEYS.ACTIVITY_STATUSES}${suffix}`,
+    BAKERY_CATEGORIES: `${BASE_KEYS.BAKERY_CATEGORIES}${suffix}`,
+    BREAD_TYPES: `${BASE_KEYS.BREAD_TYPES}${suffix}`,
+    BREAD_TYPE_COUNTS: `${BASE_KEYS.BREAD_TYPE_COUNTS}${suffix}`,
+    LINE_TYPES: `${BASE_KEYS.LINE_TYPES}${suffix}`,
+    FUEL_TYPES: `${BASE_KEYS.FUEL_TYPES}${suffix}`,
+    PAYMENT_METHODS: `${BASE_KEYS.PAYMENT_METHODS}${suffix}`,
+    DAILY_TASKS: `${BASE_KEYS.DAILY_TASKS}${suffix}`,
+    INBOX_MESSAGES: `${BASE_KEYS.INBOX_MESSAGES}${suffix}`,
+    COLUMNS: `${BASE_KEYS.COLUMNS}${suffix}`,
+    CONFIG: `${BASE_KEYS.CONFIG}${suffix}`,
+    USERS: `${BASE_KEYS.USERS}${suffix}`,
+    AUTOSAVE_BACKUP: `${BASE_KEYS.AUTOSAVE_BACKUP}${suffix}`,
+    AUTOSAVE_TIMESTAMP: `${BASE_KEYS.AUTOSAVE_TIMESTAMP}${suffix}`,
+    MERGE_CONFLICTS: `${BASE_KEYS.MERGE_CONFLICTS}${suffix}`,
+  };
+}
+
+export function getBranchesList(): SupplyBranch[] {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(BRANCH_META_KEYS.BRANCHES_LIST);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+      localStorage.setItem(BRANCH_META_KEYS.BRANCHES_LIST, JSON.stringify(DEFAULT_SUPPLY_BRANCHES));
+    }
+  } catch {}
+  return DEFAULT_SUPPLY_BRANCHES;
+}
+
+export function saveBranchesList(branches: SupplyBranch[]): void {
+  try {
+    if (typeof localStorage !== 'undefined' && Array.isArray(branches) && branches.length > 0) {
+      localStorage.setItem(BRANCH_META_KEYS.BRANCHES_LIST, JSON.stringify(branches));
+    }
+  } catch {}
+}
+
+export function getActiveBranchId(): string {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(BRANCH_META_KEYS.ACTIVE_BRANCH_ID);
+      const branches = getBranchesList();
+      if (saved && branches.some((b) => b.id === saved)) {
+        return saved;
+      }
+      return branches[0]?.id || DEFAULT_BRANCH_ID;
+    }
+  } catch {}
+  return DEFAULT_BRANCH_ID;
+}
+
+export function setActiveBranchId(branchId: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(BRANCH_META_KEYS.ACTIVE_BRANCH_ID, branchId);
+    }
+  } catch {}
+}
+
+export function getActiveBranch(): SupplyBranch {
+  const branches = getBranchesList();
+  const activeId = getActiveBranchId();
+  return branches.find((b) => b.id === activeId) || branches[0] || DEFAULT_SUPPLY_BRANCHES[0];
+}
+
+export function addSupplyBranch(
+  name: string,
+  directorateTitle = 'مديرية التموين والتجارة الداخلية بالغربية',
+  governorateTitle = 'محافظة الغربية',
+  description = ''
+): SupplyBranch {
+  const trimmedName = name.trim();
+  const branches = getBranchesList();
+  const newBranch: SupplyBranch = {
+    id: `branch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    name: trimmedName,
+    governorateTitle: governorateTitle.trim() || 'محافظة الغربية',
+    directorateTitle: directorateTitle.trim() || 'مديرية التموين والتجارة الداخلية بالغربية',
+    description: description.trim() || `قاعدة بيانات مستقلة - ${trimmedName}`,
+    createdAt: new Date().toISOString().slice(0, 10),
+    isDefault: false,
+  };
+  const updated = [...branches, newBranch];
+  saveBranchesList(updated);
+
+  // Initialize isolated empty storage for the new branch so no data ever leaks from other branches
+  const scopedKeys = getScopedKeysForBranch(newBranch.id);
+  const initialConfig: SystemConfig = {
+    ...DEFAULT_SYSTEM_CONFIG,
+    governorateTitle: newBranch.governorateTitle,
+    directorateTitle: newBranch.directorateTitle,
+    administrationTitle: newBranch.name,
+    logoBase64: DEFAULT_OFFICIAL_LOGO,
+  };
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(scopedKeys.INITIALIZED, 'true');
+      localStorage.setItem(scopedKeys.BAKERIES, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.DEBTS, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.VILLAGES, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.DAILY_TASKS, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.CONFIG, JSON.stringify(initialConfig));
+      localStorage.setItem(scopedKeys.USERS, JSON.stringify(INITIAL_USERS));
+    }
+  } catch {}
+
+  return newBranch;
+}
+
+export function deleteSupplyBranch(branchId: string): {
+  success: boolean;
+  message: string;
+  branches: SupplyBranch[];
+  nextActiveBranchId: string;
+} {
+  const branches = getBranchesList();
+  if (branches.length <= 1) {
+    return {
+      success: false,
+      message: 'لا يمكن حذف جميع الفروع؛ يجب الإبقاء على إدارة تموينية واحدة على الأقل في المنظومة.',
+      branches,
+      nextActiveBranchId: branches[0].id,
+    };
+  }
+  const target = branches.find((b) => b.id === branchId);
+  if (!target) {
+    return {
+      success: false,
+      message: 'الفرع المطلوب حذفه غير موجود.',
+      branches,
+      nextActiveBranchId: getActiveBranchId(),
+    };
+  }
+
+  const remaining = branches.filter((b) => b.id !== branchId);
+  saveBranchesList(remaining);
+
+  // Clean up isolated storage for deleted branch (if not default legacy keyset)
+  if (branchId !== DEFAULT_BRANCH_ID) {
+    const scopedKeys = getScopedKeysForBranch(branchId);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        Object.values(scopedKeys).forEach((k) => {
+          if (k !== BASE_KEYS.SESSION) {
+            localStorage.removeItem(k);
+          }
+        });
+      }
+    } catch {}
+  } else {
+    // If the user explicitly deletes the default branch, clear its data keys
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(BASE_KEYS.BAKERIES, JSON.stringify([]));
+        localStorage.setItem(BASE_KEYS.DEBTS, JSON.stringify([]));
+        localStorage.setItem(BASE_KEYS.VILLAGES, JSON.stringify([]));
+      }
+    } catch {}
+  }
+
+  const currentActive = getActiveBranchId();
+  const nextActive = currentActive === branchId ? remaining[0].id : currentActive;
+  setActiveBranchId(nextActive);
+
+  return {
+    success: true,
+    message: `تم حذف "${target.name}" وجميع بياناته المنفصلة بنجاح.`,
+    branches: remaining,
+    nextActiveBranchId: nextActive,
+  };
+}
+
+export function getBranchSummaryStats(branchId: string): {
+  bakeriesCount: number;
+  debtsCount: number;
+  villagesCount: number;
+} {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return { bakeriesCount: 0, debtsCount: 0, villagesCount: 0 };
+    }
+    const scoped = getScopedKeysForBranch(branchId);
+    const rawBakeries = localStorage.getItem(scoped.BAKERIES);
+    const rawDebts = localStorage.getItem(scoped.DEBTS);
+    const rawVillages = localStorage.getItem(scoped.VILLAGES);
+
+    if (branchId === DEFAULT_BRANCH_ID && !rawBakeries) {
+      return {
+        bakeriesCount: INITIAL_BAKERIES.length,
+        debtsCount: INITIAL_DEBTS.length,
+        villagesCount: DEFAULT_VILLAGES_HIERARCHY.length,
+      };
+    }
+
+    const bakeries = rawBakeries ? JSON.parse(rawBakeries) : [];
+    const debts = rawDebts ? JSON.parse(rawDebts) : [];
+    const villages = rawVillages ? JSON.parse(rawVillages) : [];
+    return {
+      bakeriesCount: Array.isArray(bakeries) ? bakeries.length : 0,
+      debtsCount: Array.isArray(debts) ? debts.length : 0,
+      villagesCount: Array.isArray(villages) ? villages.length : 0,
+    };
+  } catch {
+    return { bakeriesCount: 0, debtsCount: 0, villagesCount: 0 };
+  }
+}
 
 function normalizeBakeryPerCapita(b: Bakery): Bakery {
   return normalizeBakeryCalculations({
@@ -395,14 +655,24 @@ export function isDefaultSeedState(
   return sameBakeries && sameDebts;
 }
 
-export async function loadInitialState(): Promise<AppState> {
+export async function loadInitialState(requestedBranchId?: string): Promise<AppState> {
+  const branchesList = getBranchesList();
+  const activeBranchId = requestedBranchId && branchesList.some((b) => b.id === requestedBranchId)
+    ? requestedBranchId
+    : getActiveBranchId();
+  setActiveBranchId(activeBranchId);
+  const activeBranchObj =
+    branchesList.find((b) => b.id === activeBranchId) || branchesList[0] || DEFAULT_SUPPLY_BRANCHES[0];
+  const isDefaultBranch = activeBranchId === DEFAULT_BRANCH_ID;
+  const scopedKeys = getScopedKeysForBranch(activeBranchId);
+
   try {
     // 1. Read local state from localStorage first so we can compare timestamps & detect untouched default seed
     interface PreloadedStatePayload extends Partial<AppState> {
       exportTimestamp?: string;
     }
     const preloaded =
-      typeof window !== 'undefined'
+      isDefaultBranch && typeof window !== 'undefined'
         ? (window as unknown as { PRELOADED_TAMWEEN_STATE?: PreloadedStatePayload })
             .PRELOADED_TAMWEEN_STATE
         : undefined;
@@ -428,58 +698,59 @@ export async function loadInitialState(): Promise<AppState> {
     let hasExplicitUserSave = false;
 
     try {
-      localTimestamp = localStorage.getItem(KEYS.AUTOSAVE_TIMESTAMP) || '';
-      hasExplicitUserSave = localStorage.getItem('TAMWEEN_EXPLICIT_USER_SAVE') === 'true';
-      if (localStorage.getItem(KEYS.BAKERIES)) {
-        bakeries = JSON.parse(localStorage.getItem(KEYS.BAKERIES)!);
+      localTimestamp = localStorage.getItem(scopedKeys.AUTOSAVE_TIMESTAMP) || '';
+      hasExplicitUserSave =
+        localStorage.getItem(isDefaultBranch ? 'TAMWEEN_EXPLICIT_USER_SAVE' : `TAMWEEN_EXPLICIT_USER_SAVE__${activeBranchId}`) === 'true';
+      if (localStorage.getItem(scopedKeys.BAKERIES)) {
+        bakeries = JSON.parse(localStorage.getItem(scopedKeys.BAKERIES)!);
       }
-      if (localStorage.getItem(KEYS.DEBTS)) {
-        debts = JSON.parse(localStorage.getItem(KEYS.DEBTS)!);
+      if (localStorage.getItem(scopedKeys.DEBTS)) {
+        debts = JSON.parse(localStorage.getItem(scopedKeys.DEBTS)!);
       }
-      if (localStorage.getItem(KEYS.VILLAGES)) {
-        villages = JSON.parse(localStorage.getItem(KEYS.VILLAGES)!);
+      if (localStorage.getItem(scopedKeys.VILLAGES)) {
+        villages = JSON.parse(localStorage.getItem(scopedKeys.VILLAGES)!);
       }
-      if (localStorage.getItem(KEYS.ENTITIES)) {
-        issuingEntities = JSON.parse(localStorage.getItem(KEYS.ENTITIES)!);
+      if (localStorage.getItem(scopedKeys.ENTITIES)) {
+        issuingEntities = JSON.parse(localStorage.getItem(scopedKeys.ENTITIES)!);
       }
-      if (localStorage.getItem(KEYS.VIOLATIONS)) {
-        violationTypes = JSON.parse(localStorage.getItem(KEYS.VIOLATIONS)!);
+      if (localStorage.getItem(scopedKeys.VIOLATIONS)) {
+        violationTypes = JSON.parse(localStorage.getItem(scopedKeys.VIOLATIONS)!);
       }
-      if (localStorage.getItem(KEYS.ACTIVITY_STATUSES)) {
-        activityStatuses = JSON.parse(localStorage.getItem(KEYS.ACTIVITY_STATUSES)!);
+      if (localStorage.getItem(scopedKeys.ACTIVITY_STATUSES)) {
+        activityStatuses = JSON.parse(localStorage.getItem(scopedKeys.ACTIVITY_STATUSES)!);
       }
-      if (localStorage.getItem(KEYS.BAKERY_CATEGORIES)) {
-        bakeryCategories = JSON.parse(localStorage.getItem(KEYS.BAKERY_CATEGORIES)!);
+      if (localStorage.getItem(scopedKeys.BAKERY_CATEGORIES)) {
+        bakeryCategories = JSON.parse(localStorage.getItem(scopedKeys.BAKERY_CATEGORIES)!);
       }
-      if (localStorage.getItem(KEYS.BREAD_TYPES)) {
-        breadTypes = JSON.parse(localStorage.getItem(KEYS.BREAD_TYPES)!);
+      if (localStorage.getItem(scopedKeys.BREAD_TYPES)) {
+        breadTypes = JSON.parse(localStorage.getItem(scopedKeys.BREAD_TYPES)!);
       }
-      if (localStorage.getItem(KEYS.BREAD_TYPE_COUNTS)) {
-        breadTypeCounts = JSON.parse(localStorage.getItem(KEYS.BREAD_TYPE_COUNTS)!);
+      if (localStorage.getItem(scopedKeys.BREAD_TYPE_COUNTS)) {
+        breadTypeCounts = JSON.parse(localStorage.getItem(scopedKeys.BREAD_TYPE_COUNTS)!);
       }
-      if (localStorage.getItem(KEYS.LINE_TYPES)) {
-        lineTypes = JSON.parse(localStorage.getItem(KEYS.LINE_TYPES)!);
+      if (localStorage.getItem(scopedKeys.LINE_TYPES)) {
+        lineTypes = JSON.parse(localStorage.getItem(scopedKeys.LINE_TYPES)!);
       }
-      if (localStorage.getItem(KEYS.FUEL_TYPES)) {
-        fuelTypes = JSON.parse(localStorage.getItem(KEYS.FUEL_TYPES)!);
+      if (localStorage.getItem(scopedKeys.FUEL_TYPES)) {
+        fuelTypes = JSON.parse(localStorage.getItem(scopedKeys.FUEL_TYPES)!);
       }
-      if (localStorage.getItem(KEYS.PAYMENT_METHODS)) {
-        paymentMethods = JSON.parse(localStorage.getItem(KEYS.PAYMENT_METHODS)!);
+      if (localStorage.getItem(scopedKeys.PAYMENT_METHODS)) {
+        paymentMethods = JSON.parse(localStorage.getItem(scopedKeys.PAYMENT_METHODS)!);
       }
-      if (localStorage.getItem(KEYS.DAILY_TASKS)) {
-        dailyTasks = JSON.parse(localStorage.getItem(KEYS.DAILY_TASKS)!);
+      if (localStorage.getItem(scopedKeys.DAILY_TASKS)) {
+        dailyTasks = JSON.parse(localStorage.getItem(scopedKeys.DAILY_TASKS)!);
       }
-      if (localStorage.getItem(KEYS.INBOX_MESSAGES)) {
-        inboxMessages = JSON.parse(localStorage.getItem(KEYS.INBOX_MESSAGES)!);
+      if (localStorage.getItem(scopedKeys.INBOX_MESSAGES)) {
+        inboxMessages = JSON.parse(localStorage.getItem(scopedKeys.INBOX_MESSAGES)!);
       }
-      if (localStorage.getItem(KEYS.COLUMNS)) {
-        columnTitles = JSON.parse(localStorage.getItem(KEYS.COLUMNS)!);
+      if (localStorage.getItem(scopedKeys.COLUMNS)) {
+        columnTitles = JSON.parse(localStorage.getItem(scopedKeys.COLUMNS)!);
       }
-      if (localStorage.getItem(KEYS.CONFIG)) {
-        systemConfig = JSON.parse(localStorage.getItem(KEYS.CONFIG)!);
+      if (localStorage.getItem(scopedKeys.CONFIG)) {
+        systemConfig = JSON.parse(localStorage.getItem(scopedKeys.CONFIG)!);
       }
-      if (localStorage.getItem(KEYS.USERS)) {
-        users = JSON.parse(localStorage.getItem(KEYS.USERS)!);
+      if (localStorage.getItem(scopedKeys.USERS)) {
+        users = JSON.parse(localStorage.getItem(scopedKeys.USERS)!);
       }
     } catch (lsErr) {
       console.warn('LocalStorage read error or restricted:', lsErr);
@@ -488,7 +759,7 @@ export async function loadInitialState(): Promise<AppState> {
     // Session check helper
     const resolveCurrentUser = (activeUsersList: AppUser[]): AppUser | null => {
       try {
-        const savedSessionStr = sessionStorage.getItem(KEYS.SESSION);
+        const savedSessionStr = sessionStorage.getItem(BASE_KEYS.SESSION);
         localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
         if (savedSessionStr) {
           const parsedSession: AppUser = JSON.parse(savedSessionStr);
@@ -501,12 +772,55 @@ export async function loadInitialState(): Promise<AppState> {
       return null;
     };
 
+    // For non-default branches (e.g., سمنود or any newly added branch), return strictly isolated state
+    if (!isDefaultBranch) {
+      const syncedIsolated = synchronizeBakeryAndDebts(
+        (bakeries ?? []).map(normalizeBakeryPerCapita),
+        debts ?? []
+      );
+      const isolatedUsers = users ?? INITIAL_USERS;
+      const isolatedConfig: SystemConfig = {
+        ...DEFAULT_SYSTEM_CONFIG,
+        ...(systemConfig || {}),
+        governorateTitle: activeBranchObj.governorateTitle || 'محافظة الغربية',
+        directorateTitle: activeBranchObj.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+        administrationTitle: activeBranchObj.name,
+        logoBase64: DEFAULT_OFFICIAL_LOGO,
+      };
+      const isolatedState: AppState = {
+        activeBranchId,
+        branches: branchesList,
+        bakeries: syncedIsolated.bakeries,
+        debts: syncedIsolated.debts,
+        villages: villages ?? [],
+        issuingEntities: issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
+        violationTypes: violationTypes ?? DEFAULT_VIOLATION_TYPES,
+        activityStatuses: activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
+        bakeryCategories: bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
+        breadTypes: breadTypes ?? DEFAULT_BREAD_TYPES,
+        breadTypeCounts: breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
+        lineTypes: lineTypes ?? DEFAULT_LINE_TYPES,
+        fuelTypes: fuelTypes ?? DEFAULT_FUEL_TYPES,
+        paymentMethods: paymentMethods ?? PAYMENT_METHODS,
+        dailyTasks: dailyTasks ?? [],
+        inboxMessages: inboxMessages ?? [],
+        columnTitles: columnTitles ? { ...DEFAULT_COLUMN_TITLES, ...columnTitles } : DEFAULT_COLUMN_TITLES,
+        systemConfig: isolatedConfig,
+        users: isolatedUsers,
+        currentUser: resolveCurrentUser(isolatedUsers),
+      };
+      try {
+        localStorage.setItem(scopedKeys.INITIALIZED, 'true');
+      } catch {}
+      return isolatedState;
+    }
+
     const isUntouchedDefault =
       !hasExplicitUserSave && isDefaultSeedState(bakeries, debts);
     const localTimeMs =
       !isUntouchedDefault && localTimestamp ? Date.parse(localTimestamp) || 0 : 0;
 
-    // 2. Fetch latest database from Cloud / Supabase and compare with local state
+    // 2. Fetch latest database from Cloud / Supabase and compare with local state (ONLY for default branch)
     let cloudHasData = false;
     try {
       const supaRes = await fetchDatabaseFromSupabase();
@@ -532,6 +846,8 @@ export async function loadInitialState(): Promise<AppState> {
           );
           const adoptedUsers = supaRes.data.users ?? INITIAL_USERS;
           const adoptedState: AppState = {
+            activeBranchId,
+            branches: branchesList,
             bakeries: syncedCloud.bakeries,
             debts: syncedCloud.debts,
             villages: supaRes.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
@@ -553,15 +869,16 @@ export async function loadInitialState(): Promise<AppState> {
               ? {
                   ...DEFAULT_SYSTEM_CONFIG,
                   ...supaRes.data.systemConfig,
+                  administrationTitle: activeBranchObj.name,
                   logoBase64: DEFAULT_OFFICIAL_LOGO,
                 }
-              : { ...DEFAULT_SYSTEM_CONFIG, logoBase64: DEFAULT_OFFICIAL_LOGO },
+              : { ...DEFAULT_SYSTEM_CONFIG, administrationTitle: activeBranchObj.name, logoBase64: DEFAULT_OFFICIAL_LOGO },
             users: adoptedUsers,
             currentUser: resolveCurrentUser(adoptedUsers),
           };
 
           try {
-            localStorage.setItem(KEYS.INITIALIZED, 'true');
+            localStorage.setItem(scopedKeys.INITIALIZED, 'true');
           } catch {}
 
           // Persist locally WITHOUT re-pushing to cloud
@@ -619,7 +936,7 @@ export async function loadInitialState(): Promise<AppState> {
       users = INITIAL_USERS;
 
       try {
-        localStorage.setItem(KEYS.INITIALIZED, 'true');
+        localStorage.setItem(scopedKeys.INITIALIZED, 'true');
       } catch {}
     }
 
@@ -646,6 +963,7 @@ export async function loadInitialState(): Promise<AppState> {
     systemConfig = systemConfig
       ? { ...DEFAULT_SYSTEM_CONFIG, ...systemConfig }
       : { ...DEFAULT_SYSTEM_CONFIG };
+    systemConfig.administrationTitle = activeBranchObj.name;
     systemConfig.logoBase64 = DEFAULT_OFFICIAL_LOGO;
     users = users ?? INITIAL_USERS;
 
@@ -700,6 +1018,8 @@ export async function loadInitialState(): Promise<AppState> {
     const currentUser = resolveCurrentUser(activeUsers);
 
     const finalLocalState: AppState = {
+      activeBranchId,
+      branches: branchesList,
       bakeries,
       debts,
       villages,
@@ -721,28 +1041,62 @@ export async function loadInitialState(): Promise<AppState> {
     };
 
     // If this device has newer user-recorded data than the cloud, push it to the cloud immediately so all other devices sync!
-    if (!isUntouchedDefault && bakeries && bakeries.length > 0) {
-      autoSyncToSupabase(
-        finalLocalState,
-        true,
-        localTimestamp || new Date().toISOString()
-      ).catch(() => {});
-    } else if (!cloudHasData && !isDefaultSeedState(bakeries, debts)) {
-      autoSyncToSupabase(
-        finalLocalState,
-        true,
-        localTimestamp || new Date().toISOString()
-      ).catch(() => {});
+    if (isDefaultBranch) {
+      if (!isUntouchedDefault && bakeries && bakeries.length > 0) {
+        autoSyncToSupabase(
+          finalLocalState,
+          true,
+          localTimestamp || new Date().toISOString()
+        ).catch(() => {});
+      } else if (!cloudHasData && !isDefaultSeedState(bakeries, debts)) {
+        autoSyncToSupabase(
+          finalLocalState,
+          true,
+          localTimestamp || new Date().toISOString()
+        ).catch(() => {});
+      }
     }
 
     return finalLocalState;
   } catch (criticalErr) {
     console.error('Critical fallback in loadInitialState:', criticalErr);
+    if (!isDefaultBranch) {
+      return {
+        activeBranchId,
+        branches: branchesList,
+        bakeries: [],
+        debts: [],
+        villages: [],
+        issuingEntities: DEFAULT_ISSUING_ENTITIES,
+        violationTypes: DEFAULT_VIOLATION_TYPES,
+        activityStatuses: DEFAULT_ACTIVITY_STATUSES,
+        bakeryCategories: DEFAULT_BAKERY_CATEGORIES,
+        breadTypes: DEFAULT_BREAD_TYPES,
+        breadTypeCounts: DEFAULT_BREAD_TYPE_COUNTS,
+        lineTypes: DEFAULT_LINE_TYPES,
+        fuelTypes: DEFAULT_FUEL_TYPES,
+        paymentMethods: PAYMENT_METHODS,
+        dailyTasks: [],
+        inboxMessages: [],
+        columnTitles: DEFAULT_COLUMN_TITLES,
+        systemConfig: {
+          ...DEFAULT_SYSTEM_CONFIG,
+          governorateTitle: activeBranchObj.governorateTitle,
+          directorateTitle: activeBranchObj.directorateTitle,
+          administrationTitle: activeBranchObj.name,
+          logoBase64: DEFAULT_OFFICIAL_LOGO,
+        },
+        users: INITIAL_USERS,
+        currentUser: null,
+      };
+    }
     const fallbackSync = synchronizeBakeryAndDebts(
       INITIAL_BAKERIES.map(normalizeBakeryPerCapita),
       INITIAL_DEBTS
     );
     return {
+      activeBranchId,
+      branches: branchesList,
       bakeries: fallbackSync.bakeries,
       debts: fallbackSync.debts,
       villages: DEFAULT_VILLAGES_HIERARCHY,
@@ -765,11 +1119,17 @@ export async function loadInitialState(): Promise<AppState> {
   }
 }
 
-// Persist both to IndexedDB and LocalStorage synchronously & asynchronously
+// Persist both to IndexedDB and LocalStorage synchronously & asynchronously (strictly scoped to active branch)
 export async function persistFullState(
   state: Omit<AppState, 'currentUser'> & { currentUser?: AppUser | null },
   options?: { skipCloudSync?: boolean; customTimestamp?: string }
 ): Promise<void> {
+  const targetBranchId = state.activeBranchId || getActiveBranchId();
+  const isDefaultBranch = targetBranchId === DEFAULT_BRANCH_ID;
+  const scopedKeys = getScopedKeysForBranch(targetBranchId);
+  const branchesList = state.branches || getBranchesList();
+  const branchObj = branchesList.find((b) => b.id === targetBranchId);
+
   const {
     bakeries,
     debts,
@@ -783,8 +1143,8 @@ export async function persistFullState(
     lineTypes = DEFAULT_LINE_TYPES,
     fuelTypes = DEFAULT_FUEL_TYPES,
     paymentMethods = PAYMENT_METHODS,
-    dailyTasks = INITIAL_DAILY_TASKS,
-    inboxMessages = INITIAL_INBOX_MESSAGES,
+    dailyTasks = isDefaultBranch ? INITIAL_DAILY_TASKS : [],
+    inboxMessages = isDefaultBranch ? INITIAL_INBOX_MESSAGES : [],
     columnTitles,
     systemConfig,
     users,
@@ -797,46 +1157,52 @@ export async function persistFullState(
   const normalizedBakeries = synced.bakeries;
   const normalizedDebts = synced.debts;
 
-  // Guarantee official Egyptian Ministry logo from GitHub is permanently locked in saved config
+  // Guarantee official Egyptian Ministry logo and branch administration title are locked in saved config
   const lockedConfig: SystemConfig = {
     ...(systemConfig || DEFAULT_SYSTEM_CONFIG),
+    administrationTitle: branchObj?.name || systemConfig?.administrationTitle || DEFAULT_SYSTEM_CONFIG.administrationTitle,
     logoBase64: DEFAULT_OFFICIAL_LOGO,
   };
 
   const snapshotTimestamp = options?.customTimestamp || new Date().toISOString();
 
-  // LocalStorage
+  // LocalStorage (strictly scoped to targetBranchId)
   try {
     localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
     if (!options?.skipCloudSync) {
-      localStorage.setItem('TAMWEEN_EXPLICIT_USER_SAVE', 'true');
+      localStorage.setItem(
+        isDefaultBranch ? 'TAMWEEN_EXPLICIT_USER_SAVE' : `TAMWEEN_EXPLICIT_USER_SAVE__${targetBranchId}`,
+        'true'
+      );
     }
-    localStorage.setItem(KEYS.AUTOSAVE_TIMESTAMP, snapshotTimestamp);
-    localStorage.setItem(KEYS.BAKERIES, JSON.stringify(normalizedBakeries));
-    localStorage.setItem(KEYS.DEBTS, JSON.stringify(normalizedDebts));
-    localStorage.setItem(KEYS.VILLAGES, JSON.stringify(villages));
-    localStorage.setItem(KEYS.ENTITIES, JSON.stringify(issuingEntities));
-    localStorage.setItem(KEYS.VIOLATIONS, JSON.stringify(violationTypes));
-    localStorage.setItem(KEYS.ACTIVITY_STATUSES, JSON.stringify(activityStatuses));
-    localStorage.setItem(KEYS.BAKERY_CATEGORIES, JSON.stringify(bakeryCategories));
-    localStorage.setItem(KEYS.BREAD_TYPES, JSON.stringify(breadTypes));
-    localStorage.setItem(KEYS.BREAD_TYPE_COUNTS, JSON.stringify(breadTypeCounts));
-    localStorage.setItem(KEYS.LINE_TYPES, JSON.stringify(lineTypes));
-    localStorage.setItem(KEYS.FUEL_TYPES, JSON.stringify(fuelTypes));
-    localStorage.setItem(KEYS.PAYMENT_METHODS, JSON.stringify(paymentMethods));
-    localStorage.setItem(KEYS.DAILY_TASKS, JSON.stringify(dailyTasks));
-    localStorage.setItem(KEYS.INBOX_MESSAGES, JSON.stringify(inboxMessages));
-    localStorage.setItem(KEYS.COLUMNS, JSON.stringify(columnTitles));
-    localStorage.setItem(KEYS.CONFIG, JSON.stringify(lockedConfig));
-    localStorage.setItem(KEYS.USERS, JSON.stringify(users));
+    localStorage.setItem(scopedKeys.AUTOSAVE_TIMESTAMP, snapshotTimestamp);
+    localStorage.setItem(scopedKeys.BAKERIES, JSON.stringify(normalizedBakeries));
+    localStorage.setItem(scopedKeys.DEBTS, JSON.stringify(normalizedDebts));
+    localStorage.setItem(scopedKeys.VILLAGES, JSON.stringify(villages));
+    localStorage.setItem(scopedKeys.ENTITIES, JSON.stringify(issuingEntities));
+    localStorage.setItem(scopedKeys.VIOLATIONS, JSON.stringify(violationTypes));
+    localStorage.setItem(scopedKeys.ACTIVITY_STATUSES, JSON.stringify(activityStatuses));
+    localStorage.setItem(scopedKeys.BAKERY_CATEGORIES, JSON.stringify(bakeryCategories));
+    localStorage.setItem(scopedKeys.BREAD_TYPES, JSON.stringify(breadTypes));
+    localStorage.setItem(scopedKeys.BREAD_TYPE_COUNTS, JSON.stringify(breadTypeCounts));
+    localStorage.setItem(scopedKeys.LINE_TYPES, JSON.stringify(lineTypes));
+    localStorage.setItem(scopedKeys.FUEL_TYPES, JSON.stringify(fuelTypes));
+    localStorage.setItem(scopedKeys.PAYMENT_METHODS, JSON.stringify(paymentMethods));
+    localStorage.setItem(scopedKeys.DAILY_TASKS, JSON.stringify(dailyTasks));
+    localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify(inboxMessages));
+    localStorage.setItem(scopedKeys.COLUMNS, JSON.stringify(columnTitles));
+    localStorage.setItem(scopedKeys.CONFIG, JSON.stringify(lockedConfig));
+    localStorage.setItem(scopedKeys.USERS, JSON.stringify(users));
   } catch (err) {
     console.warn('LocalStorage quota limit reached, relying primarily on IndexedDB', err);
   }
 
   const backupSnapshot = {
     timestamp: snapshotTimestamp,
+    branchId: targetBranchId,
     gmailEmail: lockedConfig.gmailEmail ?? localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ?? '',
     state: {
+      activeBranchId: targetBranchId,
       bakeries: normalizedBakeries,
       debts: normalizedDebts,
       villages,
@@ -857,71 +1223,73 @@ export async function persistFullState(
     },
   };
 
-  // Single-transaction IndexedDB batch write (zero UI lag)
+  // Single-transaction IndexedDB batch write (zero UI lag, scoped to branch)
   await idbSetBatch([
-    [KEYS.BAKERIES, normalizedBakeries],
-    [KEYS.DEBTS, normalizedDebts],
-    [KEYS.VILLAGES, villages],
-    [KEYS.ENTITIES, issuingEntities],
-    [KEYS.VIOLATIONS, violationTypes],
-    [KEYS.ACTIVITY_STATUSES, activityStatuses],
-    [KEYS.BAKERY_CATEGORIES, bakeryCategories],
-    [KEYS.BREAD_TYPES, breadTypes],
-    [KEYS.BREAD_TYPE_COUNTS, breadTypeCounts],
-    [KEYS.LINE_TYPES, lineTypes],
-    [KEYS.FUEL_TYPES, fuelTypes],
-    [KEYS.PAYMENT_METHODS, paymentMethods],
-    [KEYS.DAILY_TASKS, dailyTasks],
-    [KEYS.INBOX_MESSAGES, inboxMessages],
-    [KEYS.COLUMNS, columnTitles],
-    [KEYS.CONFIG, lockedConfig],
-    [KEYS.USERS, users],
-    [KEYS.AUTOSAVE_BACKUP, backupSnapshot],
+    [scopedKeys.BAKERIES, normalizedBakeries],
+    [scopedKeys.DEBTS, normalizedDebts],
+    [scopedKeys.VILLAGES, villages],
+    [scopedKeys.ENTITIES, issuingEntities],
+    [scopedKeys.VIOLATIONS, violationTypes],
+    [scopedKeys.ACTIVITY_STATUSES, activityStatuses],
+    [scopedKeys.BAKERY_CATEGORIES, bakeryCategories],
+    [scopedKeys.BREAD_TYPES, breadTypes],
+    [scopedKeys.BREAD_TYPE_COUNTS, breadTypeCounts],
+    [scopedKeys.LINE_TYPES, lineTypes],
+    [scopedKeys.FUEL_TYPES, fuelTypes],
+    [scopedKeys.PAYMENT_METHODS, paymentMethods],
+    [scopedKeys.DAILY_TASKS, dailyTasks],
+    [scopedKeys.INBOX_MESSAGES, inboxMessages],
+    [scopedKeys.COLUMNS, columnTitles],
+    [scopedKeys.CONFIG, lockedConfig],
+    [scopedKeys.USERS, users],
+    [scopedKeys.AUTOSAVE_BACKUP, backupSnapshot],
   ]);
 
   // Defer secondary snapshot serialization & cloud/disk sync off the main UI thread
   setTimeout(() => {
     try {
       const serializedSnapshot = JSON.stringify(backupSnapshot);
-      localStorage.setItem(KEYS.AUTOSAVE_BACKUP, serializedSnapshot);
+      localStorage.setItem(scopedKeys.AUTOSAVE_BACKUP, serializedSnapshot);
 
-      const driveAutoSync =
-        lockedConfig.googleDriveAutoSync !== false &&
-        localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
-      if (driveAutoSync) {
-        const gmailKey = (
-          lockedConfig.gmailEmail ||
-          localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
-          'ELHOSINY2020@gmail.com'
-        )
-          .trim()
-          .toLowerCase();
-        const drivePayloadStr = JSON.stringify({
-          version: '3.0-google-drive-autosync',
-          timestamp: backupSnapshot.timestamp,
-          gmailEmail: gmailKey,
-          destinationType: 'GOOGLE_DRIVE',
-          targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
-          bakeriesCount: normalizedBakeries.length,
-          debtsCount: normalizedDebts.length,
-          data: backupSnapshot.state,
-        });
-        localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
-        localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
-      }
+      if (isDefaultBranch) {
+        const driveAutoSync =
+          lockedConfig.googleDriveAutoSync !== false &&
+          localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
+        if (driveAutoSync) {
+          const gmailKey = (
+            lockedConfig.gmailEmail ||
+            localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
+            'ELHOSINY2020@gmail.com'
+          )
+            .trim()
+            .toLowerCase();
+          const drivePayloadStr = JSON.stringify({
+            version: '3.0-google-drive-autosync',
+            timestamp: backupSnapshot.timestamp,
+            gmailEmail: gmailKey,
+            destinationType: 'GOOGLE_DRIVE',
+            targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
+            bakeriesCount: normalizedBakeries.length,
+            debtsCount: normalizedDebts.length,
+            data: backupSnapshot.state,
+          });
+          localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
+          localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
+        }
 
-      if (!options?.skipCloudSync) {
-        autoSyncToSupabase(
-          backupSnapshot.state as AppState,
-          true,
-          backupSnapshot.timestamp
-        ).catch(() => {});
-        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-          try {
-            const bc = new BroadcastChannel('tamween_cross_device_sync');
-            bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp });
-            bc.close();
-          } catch {}
+        if (!options?.skipCloudSync) {
+          autoSyncToSupabase(
+            backupSnapshot.state as AppState,
+            true,
+            backupSnapshot.timestamp
+          ).catch(() => {});
+          if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+            try {
+              const bc = new BroadcastChannel('tamween_cross_device_sync');
+              bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp, branchId: targetBranchId });
+              bc.close();
+            } catch {}
+          }
         }
       }
     } catch {
@@ -986,19 +1354,20 @@ export async function fetchLatestServerState(): Promise<{
 }
 
 export function getLatestAutoSaveInfo(): { timestamp: string | null; bakeryCount?: number; debtCount?: number } | null {
+  const scopedKeys = getScopedKeysForBranch(getActiveBranchId());
   try {
-    const raw = localStorage.getItem(KEYS.AUTOSAVE_BACKUP);
+    const raw = localStorage.getItem(scopedKeys.AUTOSAVE_BACKUP);
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
-        timestamp: parsed.timestamp || localStorage.getItem(KEYS.AUTOSAVE_TIMESTAMP) || null,
+        timestamp: parsed.timestamp || localStorage.getItem(scopedKeys.AUTOSAVE_TIMESTAMP) || null,
         bakeryCount: parsed.state?.bakeries?.length,
         debtCount: parsed.state?.debts?.length,
       };
     }
   } catch {}
 
-  const ts = localStorage.getItem(KEYS.AUTOSAVE_TIMESTAMP);
+  const ts = localStorage.getItem(scopedKeys.AUTOSAVE_TIMESTAMP);
   if (ts) {
     return { timestamp: ts };
   }
@@ -1006,9 +1375,11 @@ export function getLatestAutoSaveInfo(): { timestamp: string | null; bakeryCount
 }
 
 export async function getLatestAutoSaveBackup(): Promise<{ timestamp: string; state: Partial<AppState> } | null> {
+  const activeBranchId = getActiveBranchId();
+  const scopedKeys = getScopedKeysForBranch(activeBranchId);
   // 1. Try LocalStorage
   try {
-    const raw = localStorage.getItem(KEYS.AUTOSAVE_BACKUP);
+    const raw = localStorage.getItem(scopedKeys.AUTOSAVE_BACKUP);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && parsed.state) return parsed;
@@ -1017,14 +1388,14 @@ export async function getLatestAutoSaveBackup(): Promise<{ timestamp: string; st
 
   // 2. Try IndexedDB
   try {
-    const idbVal = await idbGet<{ timestamp: string; state: Partial<AppState> }>(KEYS.AUTOSAVE_BACKUP);
+    const idbVal = await idbGet<{ timestamp: string; state: Partial<AppState> }>(scopedKeys.AUTOSAVE_BACKUP);
     if (idbVal && idbVal.state) {
       return idbVal;
     }
   } catch {}
 
-  // 3. Try Preloaded data in HTML window if available
-  if (typeof window !== 'undefined') {
+  // 3. Try Preloaded data in HTML window ONLY for default branch
+  if (activeBranchId === DEFAULT_BRANCH_ID && typeof window !== 'undefined') {
     const preloaded = (window as unknown as { PRELOADED_TAMWEEN_STATE?: Partial<AppState> & { exportTimestamp?: string } }).PRELOADED_TAMWEEN_STATE;
     if (preloaded && (preloaded.bakeries || preloaded.debts)) {
       return {
@@ -1041,14 +1412,14 @@ export async function mergeAutoSaveOntoCurrent(currentState: AppState): Promise<
   try {
     const autoSave = await getLatestAutoSaveBackup();
     if (!autoSave || !autoSave.state) {
-      return { success: false, message: 'لا توجد نسخة محفوظة تلقائياً سابقة للدمج في ذاكرة هذا الجهاز.' };
+      return { success: false, message: 'لا توجد نسخة محفوظة تلقائياً سابقة للدمج في ذاكرة هذه الإدارة.' };
     }
     const mergedState = mergeStates(currentState, autoSave.state);
     await persistFullState(mergedState);
     const dateFormatted = autoSave.timestamp ? new Date(autoSave.timestamp).toLocaleString('ar-EG') : 'الحالية';
     return {
       success: true,
-      message: `تم بنجاح دمج آخر قاعدة بيانات محفوظة تلقائياً (${dateFormatted}) مع قاعدة بيانات هذا الجهاز! الإجمالي الحالي: (${mergedState.bakeries.length}) مخبز و (${mergedState.debts.length}) مديونية.`,
+      message: `تم بنجاح دمج آخر قاعدة بيانات محفوظة تلقائياً (${dateFormatted}) مع قاعدة بيانات هذه الإدارة! الإجمالي الحالي: (${mergedState.bakeries.length}) مخبز و (${mergedState.debts.length}) مديونية.`,
       newState: mergedState,
     };
   } catch (err: unknown) {
@@ -1245,11 +1616,14 @@ export interface MergeResult {
  */
 export async function autoDiscoverAndMergeAllDatabases(currentState: AppState): Promise<MergeResult> {
   try {
+    const activeBranchId = currentState.activeBranchId || getActiveBranchId();
+    const isDefaultBranch = activeBranchId === DEFAULT_BRANCH_ID;
+    const scopedKeys = getScopedKeysForBranch(activeBranchId);
     const discoveredDatasets: Array<Partial<AppState>> = [];
 
-    // 1. Check auto-save in localStorage
+    // 1. Check auto-save in localStorage for the active branch
     try {
-      const rawAuto = localStorage.getItem(KEYS.AUTOSAVE_BACKUP);
+      const rawAuto = localStorage.getItem(scopedKeys.AUTOSAVE_BACKUP);
       if (rawAuto) {
         const parsed = JSON.parse(rawAuto);
         if (parsed.state) discoveredDatasets.push(parsed.state);
@@ -1257,35 +1631,41 @@ export async function autoDiscoverAndMergeAllDatabases(currentState: AppState): 
       }
     } catch {}
 
-    // 2. Check IndexedDB auto-save
+    // 2. Check IndexedDB auto-save for the active branch
     try {
-      const idbVal = await idbGet<{ timestamp?: string; state?: Partial<AppState> }>(KEYS.AUTOSAVE_BACKUP);
+      const idbVal = await idbGet<{ timestamp?: string; state?: Partial<AppState> }>(scopedKeys.AUTOSAVE_BACKUP);
       if (idbVal?.state) discoveredDatasets.push(idbVal.state);
     } catch {}
 
-    // 3. Check window.PRELOADED_TAMWEEN_STATE
-    if (typeof window !== 'undefined') {
+    // 3. Check window.PRELOADED_TAMWEEN_STATE ONLY for the default branch
+    if (isDefaultBranch && typeof window !== 'undefined') {
       const preloaded = (window as unknown as { PRELOADED_TAMWEEN_STATE?: Partial<AppState> }).PRELOADED_TAMWEEN_STATE;
       if (preloaded && (preloaded.bakeries || preloaded.debts)) {
         discoveredDatasets.push(preloaded);
       }
     }
 
-    // 4. Check any backup or snapshot keys in localStorage
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.includes('backup') || key.includes('BACKUP') || key.includes('snapshot'))) {
-          const val = localStorage.getItem(key);
-          if (val && val.startsWith('{')) {
-            const parsed = JSON.parse(val);
-            if (parsed.data) discoveredDatasets.push(parsed.data);
-            else if (parsed.state) discoveredDatasets.push(parsed.state);
-            else if (parsed.bakeries) discoveredDatasets.push(parsed);
+    // 4. Check any backup or snapshot keys in localStorage belonging to this branch
+    if (isDefaultBranch) {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (
+            key &&
+            !key.includes('__branch-') &&
+            (key.includes('backup') || key.includes('BACKUP') || key.includes('snapshot'))
+          ) {
+            const val = localStorage.getItem(key);
+            if (val && val.startsWith('{')) {
+              const parsed = JSON.parse(val);
+              if (parsed.data) discoveredDatasets.push(parsed.data);
+              else if (parsed.state) discoveredDatasets.push(parsed.state);
+              else if (parsed.bakeries) discoveredDatasets.push(parsed);
+            }
           }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     if (discoveredDatasets.length === 0) {
       return {

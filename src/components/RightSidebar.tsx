@@ -79,6 +79,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   debtsCount,
   alertsCount,
   largeDebtsCount,
+  administrationTitle,
   totalBakeriesCount,
   totalDebtsCount,
   expiredLicensesCount,
@@ -200,6 +201,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       iconBg: 'bg-gradient-to-br from-amber-400 to-orange-600 text-slate-950 shadow-sm shadow-amber-950',
       activeBorder: 'border-amber-500/60',
       items: [
+        {
+          id: 'branches-manage',
+          label: 'قسم الفروع والإدارات التموينية',
+          subtitle: 'إضافة وحذف الإدارات وتبديل واجهة الفرع',
+          icon: <Layers className="w-4 h-4 shrink-0" />,
+          badge: 'فروع',
+          badgeColor: 'emerald',
+        },
         {
           id: 'data-edit-bakery',
           label: 'تعديل البيانات',
@@ -352,7 +361,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
             )}
             <div className="truncate">
               <div className="text-[13px] font-black text-white truncate tracking-tight leading-tight">
-                إدارة تموين المحلة الكبرى
+                {administrationTitle || 'إدارة تموين مركز المحلة الكبرى'}
               </div>
               <div className="text-[10px] text-amber-300/90 font-bold truncate mt-0.5">
                 منظومة الرقابة التموينية الذكية

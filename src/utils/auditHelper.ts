@@ -1168,6 +1168,9 @@ export function matchesVillageOrUnitFilter(
   selectedUnit: string,
   villagesHierarchy: { village: string; localUnits: string[] }[] = []
 ): boolean {
+  if ((!selectedVillage || selectedVillage === 'ALL') && (!selectedUnit || selectedUnit === 'ALL')) {
+    return true;
+  }
   const itemVillageNorm = normalizeArabicText(item.village);
   const itemUnitNorm = normalizeArabicText(item.localUnit);
 

@@ -625,6 +625,8 @@ interface ReportsCenterViewProps {
   onOpenLegacyReportModal?: () => void;
 }
 
+const SHARED_INT_FORMATTER = new Intl.NumberFormat('en-US');
+
 function safeFormatNum(val: unknown, decimals = 0): string {
   const num = Number(val);
   if (!Number.isFinite(num) || Number.isNaN(num)) {
@@ -633,7 +635,7 @@ function safeFormatNum(val: unknown, decimals = 0): string {
   if (decimals > 0) {
     return num.toFixed(decimals);
   }
-  return Math.round(num).toLocaleString('en-US');
+  return SHARED_INT_FORMATTER.format(Math.round(num));
 }
 
 export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
@@ -677,22 +679,29 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
 
   const reportPrintRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (initialReportId) {
-      setSelectedReportId(initialReportId);
-    }
-  }, [initialReportId]);
-
-  useEffect(() => {
-    setOrderedColumnKeys(currentReportDef.defaultColumns);
-    // Auto-select landscape when columns > 8
-    if (currentReportDef.defaultColumns.length > 8) {
+  const handleSelectReport = (rep: ReportDefinition) => {
+    setSelectedReportId(rep.id);
+    setOrderedColumnKeys(rep.defaultColumns);
+    if (rep.defaultColumns.length > 8) {
       setOrientation('landscape');
     }
-    if (currentReportDef.id === 'bak-single' && filterBakeryId === 'ALL' && bakeries.length > 0) {
+    if (rep.id === 'bak-single' && filterBakeryId === 'ALL' && bakeries.length > 0) {
       setFilterBakeryId(bakeries[0].id);
+    } else if (rep.id !== 'bak-single' && selectedReportId === 'bak-single') {
+      setFilterBakeryId('ALL');
     }
-  }, [currentReportDef, bakeries]);
+  };
+
+  useEffect(() => {
+    if (initialReportId) {
+      const def = OFFICIAL_REPORTS_CATALOG.find((r) => r.id === initialReportId) || OFFICIAL_REPORTS_CATALOG[0];
+      setSelectedReportId(def.id);
+      setOrderedColumnKeys(def.defaultColumns);
+      if (def.defaultColumns.length > 8) {
+        setOrientation('landscape');
+      }
+    }
+  }, [initialReportId]);
 
   // Debt map per bakery
   const bakeryDebtMap = useMemo(() => {
@@ -733,10 +742,17 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     return Array.from(units);
   }, [villages, bakeries, filterVillage]);
 
-  // Filtered bakeries for the active report
+  const reportSpecialFilter =
+    selectedReportId === 'bak-single'
+      ? 'bak-single'
+      : selectedReportId === 'comp-review'
+      ? 'comp-review'
+      : 'standard';
+
+  // Filtered bakeries for the active report (memoized on reportSpecialFilter so switching between standard reports is 0ms)
   const filteredBakeries = useMemo(() => {
     return bakeries.filter((b) => {
-      if (selectedReportId === 'bak-single' && filterBakeryId !== 'ALL' && b.id !== filterBakeryId) {
+      if (reportSpecialFilter === 'bak-single' && filterBakeryId !== 'ALL' && b.id !== filterBakeryId) {
         return false;
       }
       if (filterBakeryId !== 'ALL' && b.id !== filterBakeryId) {
@@ -752,7 +768,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
         const mult = String(extractBreadLoafMultiplier(b.breadTypeCount));
         if (mult !== filterMultiplier) return false;
       }
-      if (selectedReportId === 'comp-review') {
+      if (reportSpecialFilter === 'comp-review') {
         const hasMissing =
           !b.bakeryOwnerName ||
           !b.machineNumber ||
@@ -775,7 +791,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     });
   }, [
     bakeries,
-    selectedReportId,
+    reportSpecialFilter,
     filterBakeryId,
     filterVillage,
     filterLocalUnit,
@@ -1270,7 +1286,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
               <button
                 key={rep.id}
                 type="button"
-                onClick={() => setSelectedReportId(rep.id)}
+                onClick={() => handleSelectReport(rep)}
                 className={`p-3 rounded-xl border text-right transition flex flex-col justify-between cursor-pointer ${
                   isActive
                     ? 'bg-[#0F2342] text-white border-[#1E40AF] shadow-sm'
@@ -1542,7 +1558,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
       <div className="bg-slate-200/70 border border-slate-300 rounded-2xl p-4 md:p-6 overflow-x-auto shadow-inner">
         <div
           ref={reportPrintRef}
-          style={{ zoom: previewZoom / 100 }}
+          style={{ zoom: previewZoom !== 100 ? previewZoom / 100 : undefined }}
           className="print-container bg-white text-slate-900 rounded-xl shadow-lg border border-slate-300 p-6 md:p-8 mx-auto max-w-[1800px] space-y-5"
         >
           {/* 4.1 Official Report Header (رأس التقرير الموحد) */}
@@ -1557,10 +1573,10 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
               )}
               <div>
                 <p className="text-xs font-extrabold text-slate-700">
-                  محافظة الغربية · مديرية التموين والتجارة الداخلية بالغربية
+                  {systemConfig.governorateTitle || 'محافظة الغربية'} · {systemConfig.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'}
                 </p>
                 <p className="text-sm font-black text-[#0F2342] mt-0.5">
-                  إدارة تموين مركز المحلة الكبرى — منظومة إدارة بيانات المخابز والتموين
+                  {systemConfig.administrationTitle || 'إدارة تموين مركز المحلة الكبرى'} — منظومة إدارة بيانات المخابز والتموين
                 </p>
               </div>
             </div>
@@ -1755,7 +1771,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                 <p className="text-slate-400 mt-5 text-[11px]">التوقيع: ........................</p>
               </div>
               <div className="border border-dashed border-slate-300 rounded-xl p-3">
-                <p className="text-[#0F2342]">مدير إدارة تموين مركز المحلة الكبرى</p>
+                <p className="text-[#0F2342]">مدير {systemConfig.administrationTitle || 'إدارة تموين مركز المحلة الكبرى'}</p>
                 <p className="text-slate-400 mt-5 text-[11px]">التوقيع: ........................</p>
               </div>
               <div className="border border-dashed border-slate-300 rounded-xl p-3">
@@ -1766,7 +1782,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
 
             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold text-slate-500 pt-2 border-t border-slate-200">
               <span>
-                منظومة إدارة تموين مركز المحلة الكبرى — استخراج آلي معتمد من قاعدة البيانات الفعلية
+                منظومة {systemConfig.administrationTitle || 'إدارة تموين مركز المحلة الكبرى'} — استخراج آلي معتمد من قاعدة البيانات الفعلية
               </span>
               <span>
                 تاريخ الإصدار: {issueTimestamp} · رقم التقرير: {reportSerialNumber} · صفحة 1 من 1

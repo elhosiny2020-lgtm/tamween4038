@@ -379,3 +379,31 @@ test('calculateBakeriesColumnTotals sums all beneficiaries, all averages, and al
   assert.equal(totals.avg2025, (0.42 * 2).toFixed(2));
   assert.equal(totals.perCapitaAverage, (0.42 * 2).toFixed(2));
 });
+
+import {
+  DEFAULT_BRANCH_ID,
+  DEFAULT_SUPPLY_BRANCHES,
+  getScopedKeysForBranch,
+} from '../storage';
+
+test('getScopedKeysForBranch isolates non-default supply branches from default Mahalla branch keys', () => {
+  const mahallaKeys = getScopedKeysForBranch(DEFAULT_BRANCH_ID);
+  const samanoudKeys = getScopedKeysForBranch('branch-samanoud');
+  const customKeys = getScopedKeysForBranch('branch-zefta');
+
+  // Default branch keeps exact backward-compatible keys so zero existing data is lost
+  assert.equal(mahallaKeys.BAKERIES, 'TAMWEEN_BAKERIES_V3');
+  assert.equal(mahallaKeys.DEBTS, 'TAMWEEN_DEBTS_V3');
+
+  // Other branches get strictly isolated storage keys
+  assert.equal(samanoudKeys.BAKERIES, 'TAMWEEN_BAKERIES_V3__branch-samanoud');
+  assert.equal(samanoudKeys.DEBTS, 'TAMWEEN_DEBTS_V3__branch-samanoud');
+  assert.notEqual(mahallaKeys.BAKERIES, samanoudKeys.BAKERIES);
+  assert.notEqual(samanoudKeys.BAKERIES, customKeys.BAKERIES);
+
+  // Default branches list contains Mahalla and Samanoud
+  assert.equal(DEFAULT_SUPPLY_BRANCHES.length >= 2, true);
+  assert.equal(DEFAULT_SUPPLY_BRANCHES[0].id, 'branch-mahalla');
+  assert.equal(DEFAULT_SUPPLY_BRANCHES[1].id, 'branch-samanoud');
+});
+

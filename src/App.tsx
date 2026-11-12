@@ -7,10 +7,14 @@ import {
   SystemConfig,
   AppUser,
   DailyAlertConfig,
-  InboxChatMessage
+  InboxChatMessage,
+  SupplyBranch
 } from './types';
 import {
   AppState,
+  DEFAULT_BRANCH_ID,
+  getBranchesList,
+  setActiveBranchId,
   loadInitialState,
   persistFullState,
   saveSessionUser,
@@ -96,6 +100,7 @@ import { ReportsCenterView, ReportTemplateId } from './components/ReportsCenterV
 import { HomeDashboardView } from './components/HomeDashboardView';
 import { BakeryDetailsModal } from './components/BakeryDetailsModal';
 import { GoogleWorkspaceModal } from './components/GoogleWorkspaceModal';
+import { BranchesManagerModal } from './components/BranchesManagerModal';
 import { HighDebtAlertNotification } from './types';
 import {
   downloadUpdatedAppHtml,
@@ -313,6 +318,7 @@ export default function App() {
   const [isInboxModalOpen, setIsInboxModalOpen] = useState(false);
   const [isDailyBriefingModalOpen, setIsDailyBriefingModalOpen] = useState(false);
   const [isDisplaySettingsModalOpen, setIsDisplaySettingsModalOpen] = useState(false);
+  const [isBranchesModalOpen, setIsBranchesModalOpen] = useState(false);
   const [isGoogleWorkspaceModalOpen, setIsGoogleWorkspaceModalOpen] = useState(false);
   const [googleWorkspaceInitialTab, setGoogleWorkspaceInitialTab] = useState<'calendar' | 'tasks' | 'forms'>('calendar');
   const [debtsColumnGroup, setDebtsColumnGroup] = useState<'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL'>('ALL');
@@ -488,6 +494,10 @@ export default function App() {
 
       setAppState((current) => {
         if (!current) return current;
+        // Strict Branch Isolation: never overwrite non-default branches with default cloud sync
+        if ((current.activeBranchId || DEFAULT_BRANCH_ID) !== DEFAULT_BRANCH_ID) {
+          return current;
+        }
 
         const localTs = localStorage.getItem('TAMWEEN_AUTOSAVE_TIMESTAMP_V3') || '';
         const hasExplicitUserSave = localStorage.getItem('TAMWEEN_EXPLICIT_USER_SAVE') === 'true';
@@ -1189,7 +1199,53 @@ export default function App() {
 
   const [isSyncingWithCloud, setIsSyncingWithCloud] = useState(false);
 
+  const handleSwitchBranch = useCallback(
+    async (targetBranchId: string, updatedBranchesList?: SupplyBranch[]) => {
+      setActiveBranchId(targetBranchId);
+      setSelectedVillage('ALL');
+      setSelectedUnit('ALL');
+      setSelectedActivity('ALL');
+      setSelectedDebtFilter('ALL');
+      setSelectedCategoryFilter('ALL');
+      setSelectedLicenseExpiryFilter('ALL');
+      setSelectedBreadTypeFilter('ALL');
+      setSelectedFuelTypeFilter('ALL');
+      setSearchTerm('');
+      setCurrentPage(1);
+      setDebtFilterBakeryId(undefined);
+      setDetailsBakery(null);
+
+      const loaded = await loadInitialState(targetBranchId);
+      const branchesToUse = updatedBranchesList || getBranchesList();
+      const branchObj = branchesToUse.find((b) => b.id === targetBranchId);
+      setAppState((prev) => ({
+        ...loaded,
+        activeBranchId: targetBranchId,
+        branches: branchesToUse,
+        currentUser: prev?.currentUser || loaded.currentUser,
+        systemConfig: {
+          ...loaded.systemConfig,
+          administrationTitle: branchObj?.name || loaded.systemConfig.administrationTitle,
+        },
+      }));
+      setSaveToast({
+        id: Date.now(),
+        message: `تم الدخول إلى واجهة (${branchObj?.name || 'الإدارة التموينية'}) بقاعدة بيانات مستقلة ومنفصلة تماماً`,
+        timestamp: getArabicTimestamp(),
+      });
+    },
+    []
+  );
+
   const handleManualCloudPull = useCallback(async () => {
+    if ((appStateRef.current?.activeBranchId || DEFAULT_BRANCH_ID) !== DEFAULT_BRANCH_ID) {
+      setSaveToast({
+        id: Date.now(),
+        message: `بيانات (${appStateRef.current?.systemConfig?.administrationTitle}) معزولة ومستقلة تماماً عن باقي الإدارات ومؤمنة محلياً.`,
+        timestamp: getArabicTimestamp(),
+      });
+      return;
+    }
     setIsSyncingWithCloud(true);
     try {
       let snap: {
@@ -1322,41 +1378,72 @@ export default function App() {
     };
   };
 
-  // If not logged in, show Animated Login
+  // If not logged in, show Animated Login + Branches Manager Modal
   if (!appState.currentUser) {
+    const activeBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+    const branchesList = appState.branches || getBranchesList();
     return (
-      <LoginModal
-        systemConfig={appState.systemConfig}
-        users={appState.users}
-        logoutReason={logoutReason}
-        onLoginSuccess={(user) => {
-          setLogoutReason(null);
-          saveSessionUser(user);
-          const mergedState = performGmailDriveAdditiveMerge(appState, user);
-          const updatedUsers = mergedState.users.map((u) => (u.id === user.id ? { ...u, ...user } : u));
-          const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: user };
-          triggerSave(
-            finalState,
-            user.gmailEmail
-              ? `تم الدخول ودمج ملفات JSON المرتبطة بجيميل (${user.gmailEmail}) تلقائياً بدون حذف أي بيانات`
-              : 'تم تسجيل الدخول وفتح شاشة التنبيه اليومي بنجاح'
-          );
-          setIsDailyBriefingModalOpen(true);
-        }}
-        onRegisterUser={(newUser) => {
-          const baseWithUser: AppState = {
-            ...appState,
-            users: [...appState.users, newUser],
-          };
-          const mergedState = performGmailDriveAdditiveMerge(baseWithUser, newUser);
-          triggerSave(
-            { ...mergedState, currentUser: null },
-            newUser.gmailEmail
-              ? `تم تسجيل الحساب وربطه بجيميل (${newUser.gmailEmail}) ودمج ملفات JSON بدون حذف أي بيانات`
-              : 'تم تسجيل وحفظ المستخدم الجديد بنجاح'
-          );
-        }}
-      />
+      <>
+        <LoginModal
+          systemConfig={appState.systemConfig}
+          users={appState.users}
+          logoutReason={logoutReason}
+          branches={branchesList}
+          activeBranchId={activeBranchId}
+          onSelectBranch={(branchId) => {
+            handleSwitchBranch(branchId, branchesList);
+          }}
+          onOpenBranchesManager={() => setIsBranchesModalOpen(true)}
+          onLoginSuccess={(user) => {
+            setLogoutReason(null);
+            saveSessionUser(user);
+            const mergedState = performGmailDriveAdditiveMerge(appState, user);
+            const updatedUsers = mergedState.users.map((u) => (u.id === user.id ? { ...u, ...user } : u));
+            const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: user };
+            triggerSave(
+              finalState,
+              `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`
+            );
+            setIsDailyBriefingModalOpen(true);
+          }}
+          onRegisterUser={(newUser) => {
+            const baseWithUser: AppState = {
+              ...appState,
+              users: [...appState.users, newUser],
+            };
+            const mergedState = performGmailDriveAdditiveMerge(baseWithUser, newUser);
+            triggerSave(
+              { ...mergedState, currentUser: null },
+              'تم تسجيل وحفظ المستخدم الجديد بنجاح'
+            );
+          }}
+        />
+        <BranchesManagerModal
+          isOpen={isBranchesModalOpen}
+          onClose={() => setIsBranchesModalOpen(false)}
+          branches={branchesList}
+          activeBranchId={activeBranchId}
+          onBranchesChange={(updatedBranches, nextBranchId) => {
+            if (nextBranchId !== activeBranchId) {
+              handleSwitchBranch(nextBranchId, updatedBranches);
+            } else {
+              const activeObj = updatedBranches.find((b) => b.id === nextBranchId);
+              setAppState((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      branches: updatedBranches,
+                      systemConfig: {
+                        ...prev.systemConfig,
+                        administrationTitle: activeObj?.name || prev.systemConfig.administrationTitle,
+                      },
+                    }
+                  : prev
+              );
+            }
+          }}
+        />
+      </>
     );
   }
 
@@ -1721,7 +1808,10 @@ export default function App() {
         setIsWeeklyInstallmentsModalOpen(true);
         break;
 
-      // 4. قسم الحفظ والنسخ
+      // 4. قسم الحفظ والنسخ والفروع
+      case 'branches-manage':
+        setIsBranchesModalOpen(true);
+        break;
       case 'ops-save-data':
         triggerSave(appState, 'تم حفظ وتثبيت كافة التغييرات في قاعدة البيانات بنجاح');
         break;
@@ -1892,6 +1982,17 @@ export default function App() {
                 {getRoleNameArabic(appState.currentUser.role, appState.systemConfig)}
               </span>
             </div>
+
+            {/* Branches / Supply Departments Manager & Switcher Button */}
+            <button
+              type="button"
+              onClick={() => setIsBranchesModalOpen(true)}
+              className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-amber-400"
+              title="قسم الفروع والإدارات التموينية (إضافة وحذف الإدارات وتبديل واجهة الإدارة التموينية)"
+            >
+              <Building2 className="w-3.5 h-3.5 text-slate-950" />
+              <span>قسم الفروع ({ (appState.branches || getBranchesList()).length })</span>
+            </button>
 
             {/* Account Settings Button */}
             <button
@@ -4482,6 +4583,34 @@ export default function App() {
         debts={appState.debts}
         dailyTasks={appState.dailyTasks || []}
         initialTab={googleWorkspaceInitialTab}
+      />
+
+      {/* Multi-Branch / Supply Departments Manager Modal (قسم الفروع والإدارات التموينية) */}
+      <BranchesManagerModal
+        isOpen={isBranchesModalOpen}
+        onClose={() => setIsBranchesModalOpen(false)}
+        branches={appState.branches || getBranchesList()}
+        activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+        onBranchesChange={(updatedBranches, nextBranchId) => {
+          const currentBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+          if (nextBranchId !== currentBranchId) {
+            handleSwitchBranch(nextBranchId, updatedBranches);
+          } else {
+            const activeObj = updatedBranches.find((b) => b.id === nextBranchId);
+            setAppState((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    branches: updatedBranches,
+                    systemConfig: {
+                      ...prev.systemConfig,
+                      administrationTitle: activeObj?.name || prev.systemConfig.administrationTitle,
+                    },
+                  }
+                : prev
+            );
+          }
+        }}
       />
     </div>
   );

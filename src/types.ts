@@ -297,6 +297,17 @@ export interface DailyBakeryTask {
   createdAt: string;
 }
 
+export interface SupplyBranch {
+  id: string;
+  name: string; // مثال: إدارة تموين مركز المحلة الكبرى / إدارة تموين سمنود
+  governorateTitle: string;
+  directorateTitle: string;
+  description?: string;
+  createdAt: string;
+  isDefault?: boolean;
+}
+
 export type { AppState } from './storage';
+
 
 
