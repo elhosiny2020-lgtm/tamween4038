@@ -25,6 +25,8 @@ import {
   setupDiskAutoBackup,
   getActiveDiskBackupInfo,
   mergeStates,
+  mergeUsersList,
+  saveBranchesList,
   fetchLatestServerState,
   syncStateToServer,
   isDefaultSeedState
@@ -494,9 +496,70 @@ export default function App() {
 
       setAppState((current) => {
         if (!current) return current;
-        // Strict Branch Isolation: never overwrite non-default branches with default cloud sync
-        if ((current.activeBranchId || DEFAULT_BRANCH_ID) !== DEFAULT_BRANCH_ID) {
-          return current;
+
+        // 1. Always merge unified users (passwords & permissions), branches list, and global role permissions across all devices & branches
+        const mergedUsers = mergeUsersList(current.users, incomingData.users);
+        let mergedBranches = current.branches || getBranchesList();
+        if (Array.isArray(incomingData.branches) && incomingData.branches.length > 0) {
+          const bMap = new Map<string, SupplyBranch>();
+          mergedBranches.forEach((b) => bMap.set(b.id, b));
+          incomingData.branches.forEach((b) => {
+            if (b && b.id && b.name) bMap.set(b.id, b);
+          });
+          mergedBranches = Array.from(bMap.values());
+          saveBranchesList(mergedBranches);
+        }
+
+        const updatedRolePermissions =
+          incomingData.systemConfig?.rolePermissions || current.systemConfig.rolePermissions;
+        const updatedRoleLabels =
+          incomingData.systemConfig?.roleLabels || current.systemConfig.roleLabels;
+
+        const currentBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+
+        // 2. Strict Branch Isolation: if on a non-default branch, never overwrite with default branch bakeries/debts
+        if (currentBranchId !== DEFAULT_BRANCH_ID) {
+          const remotePartitions = (incomingData as unknown as { branchPartitions?: Record<string, Partial<AppState>> }).branchPartitions;
+          const myPartition = remotePartitions?.[currentBranchId];
+          let nextBakeries = current.bakeries;
+          let nextDebts = current.debts;
+          let nextVillages = current.villages;
+
+          if (
+            myPartition &&
+            current.bakeries.length === 0 &&
+            Array.isArray(myPartition.bakeries) &&
+            myPartition.bakeries.length > 0
+          ) {
+            const syncedIso = synchronizeBakeryAndDebts(
+              myPartition.bakeries,
+              myPartition.debts || []
+            );
+            nextBakeries = syncedIso.bakeries;
+            nextDebts = syncedIso.debts;
+            nextVillages = myPartition.villages || current.villages;
+          }
+
+          const updatedNonDefault: AppState = {
+            ...current,
+            users: mergedUsers,
+            branches: mergedBranches,
+            bakeries: nextBakeries,
+            debts: nextDebts,
+            villages: nextVillages,
+            systemConfig: {
+              ...current.systemConfig,
+              ...(updatedRolePermissions ? { rolePermissions: updatedRolePermissions } : {}),
+              ...(updatedRoleLabels ? { roleLabels: updatedRoleLabels } : {}),
+            },
+          };
+
+          persistFullState(updatedNonDefault, {
+            skipCloudSync: true,
+            customTimestamp: remoteTimestamp || new Date().toISOString(),
+          }).catch(() => {});
+
+          return updatedNonDefault;
         }
 
         const localTs = localStorage.getItem('TAMWEEN_AUTOSAVE_TIMESTAMP_V3') || '';
@@ -506,18 +569,31 @@ export default function App() {
         const localTimeMs = !isLocalDefault && localTs ? Date.parse(localTs) || 0 : 0;
         const remoteTimeMs = remoteTimestamp ? Date.parse(remoteTimestamp) || Date.now() : Date.now();
 
-        // If local device has strictly newer user-saved data than an older cloud snapshot, don't overwrite it
+        // Even if local bakeries are newer, still adopt any newly synced users/passwords/branches
         if (!isLocalDefault && localTimeMs > remoteTimeMs + 1000) {
+          if (mergedUsers.length !== current.users.length || JSON.stringify(mergedUsers) !== JSON.stringify(current.users)) {
+            return {
+              ...current,
+              users: mergedUsers,
+              branches: mergedBranches,
+              systemConfig: {
+                ...current.systemConfig,
+                ...(updatedRolePermissions ? { rolePermissions: updatedRolePermissions } : {}),
+                ...(updatedRoleLabels ? { roleLabels: updatedRoleLabels } : {}),
+              },
+            };
+          }
           return current;
         }
 
-        // Avoid redundant re-renders if timestamp and counts are identical
+        // Avoid redundant re-renders if timestamp, counts, and users are identical
         if (
           !isLocalDefault &&
           remoteTimestamp &&
           localTs === remoteTimestamp &&
           current.bakeries.length === incomingData.bakeries.length &&
-          current.debts.length === (incomingData.debts?.length || 0)
+          current.debts.length === (incomingData.debts?.length || 0) &&
+          JSON.stringify(mergedUsers) === JSON.stringify(current.users)
         ) {
           return current;
         }
@@ -527,11 +603,22 @@ export default function App() {
           incomingData.debts || []
         );
 
+        const activeBranchObj = mergedBranches.find((b) => b.id === currentBranchId);
         const updated: AppState = {
           ...current,
           ...incomingData,
+          activeBranchId: currentBranchId,
+          branches: mergedBranches,
+          users: mergedUsers,
           bakeries: synced.bakeries,
           debts: synced.debts,
+          systemConfig: {
+            ...current.systemConfig,
+            ...(incomingData.systemConfig || {}),
+            ...(updatedRolePermissions ? { rolePermissions: updatedRolePermissions } : {}),
+            ...(updatedRoleLabels ? { roleLabels: updatedRoleLabels } : {}),
+            administrationTitle: activeBranchObj?.name || current.systemConfig.administrationTitle,
+          },
           currentUser: current.currentUser,
         };
 
@@ -1378,72 +1465,33 @@ export default function App() {
     };
   };
 
-  // If not logged in, show Animated Login + Branches Manager Modal
+  // If not logged in, show Animated Login with Branch Dropdown Selector
   if (!appState.currentUser) {
     const activeBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const branchesList = appState.branches || getBranchesList();
     return (
-      <>
-        <LoginModal
-          systemConfig={appState.systemConfig}
-          users={appState.users}
-          logoutReason={logoutReason}
-          branches={branchesList}
-          activeBranchId={activeBranchId}
-          onSelectBranch={(branchId) => {
-            handleSwitchBranch(branchId, branchesList);
-          }}
-          onOpenBranchesManager={() => setIsBranchesModalOpen(true)}
-          onLoginSuccess={(user) => {
-            setLogoutReason(null);
-            saveSessionUser(user);
-            const mergedState = performGmailDriveAdditiveMerge(appState, user);
-            const updatedUsers = mergedState.users.map((u) => (u.id === user.id ? { ...u, ...user } : u));
-            const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: user };
-            triggerSave(
-              finalState,
-              `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`
-            );
-            setIsDailyBriefingModalOpen(true);
-          }}
-          onRegisterUser={(newUser) => {
-            const baseWithUser: AppState = {
-              ...appState,
-              users: [...appState.users, newUser],
-            };
-            const mergedState = performGmailDriveAdditiveMerge(baseWithUser, newUser);
-            triggerSave(
-              { ...mergedState, currentUser: null },
-              'تم تسجيل وحفظ المستخدم الجديد بنجاح'
-            );
-          }}
-        />
-        <BranchesManagerModal
-          isOpen={isBranchesModalOpen}
-          onClose={() => setIsBranchesModalOpen(false)}
-          branches={branchesList}
-          activeBranchId={activeBranchId}
-          onBranchesChange={(updatedBranches, nextBranchId) => {
-            if (nextBranchId !== activeBranchId) {
-              handleSwitchBranch(nextBranchId, updatedBranches);
-            } else {
-              const activeObj = updatedBranches.find((b) => b.id === nextBranchId);
-              setAppState((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      branches: updatedBranches,
-                      systemConfig: {
-                        ...prev.systemConfig,
-                        administrationTitle: activeObj?.name || prev.systemConfig.administrationTitle,
-                      },
-                    }
-                  : prev
-              );
-            }
-          }}
-        />
-      </>
+      <LoginModal
+        systemConfig={appState.systemConfig}
+        users={appState.users}
+        logoutReason={logoutReason}
+        branches={branchesList}
+        activeBranchId={activeBranchId}
+        onSelectBranch={(branchId) => {
+          handleSwitchBranch(branchId, branchesList);
+        }}
+        onLoginSuccess={(user) => {
+          setLogoutReason(null);
+          saveSessionUser(user);
+          const mergedState = performGmailDriveAdditiveMerge(appState, user);
+          const updatedUsers = mergedState.users.map((u) => (u.id === user.id ? { ...u, ...user } : u));
+          const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: user };
+          triggerSave(
+            finalState,
+            `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`
+          );
+          setIsDailyBriefingModalOpen(true);
+        }}
+      />
     );
   }
 
@@ -4591,6 +4639,9 @@ export default function App() {
         onClose={() => setIsBranchesModalOpen(false)}
         branches={appState.branches || getBranchesList()}
         activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+        onSelectBranch={(branchId) => {
+          handleSwitchBranch(branchId, appState.branches || getBranchesList());
+        }}
         onBranchesChange={(updatedBranches, nextBranchId) => {
           const currentBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
           if (nextBranchId !== currentBranchId) {

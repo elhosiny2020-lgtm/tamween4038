@@ -185,6 +185,7 @@ export interface SystemConfig {
   logoBase64: string;
   dailyAlertConfig?: DailyAlertConfig;
   rolePermissions?: Record<string, string[]>;
+  roleLabels?: Record<string, string>;
   customRoles?: CustomJobRole[];
   gmailEmail?: string;
   gmailPassword?: string;

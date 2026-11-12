@@ -384,9 +384,10 @@ import {
   DEFAULT_BRANCH_ID,
   DEFAULT_SUPPLY_BRANCHES,
   getScopedKeysForBranch,
+  mergeUsersList,
 } from '../storage';
 
-test('getScopedKeysForBranch isolates non-default supply branches from default Mahalla branch keys', () => {
+test('getScopedKeysForBranch isolates non-default supply branches from default Mahalla branch keys while keeping USERS unified', () => {
   const mahallaKeys = getScopedKeysForBranch(DEFAULT_BRANCH_ID);
   const samanoudKeys = getScopedKeysForBranch('branch-samanoud');
   const customKeys = getScopedKeysForBranch('branch-zefta');
@@ -395,15 +396,42 @@ test('getScopedKeysForBranch isolates non-default supply branches from default M
   assert.equal(mahallaKeys.BAKERIES, 'TAMWEEN_BAKERIES_V3');
   assert.equal(mahallaKeys.DEBTS, 'TAMWEEN_DEBTS_V3');
 
-  // Other branches get strictly isolated storage keys
+  // Other branches get strictly isolated storage keys for operational data
   assert.equal(samanoudKeys.BAKERIES, 'TAMWEEN_BAKERIES_V3__branch-samanoud');
   assert.equal(samanoudKeys.DEBTS, 'TAMWEEN_DEBTS_V3__branch-samanoud');
   assert.notEqual(mahallaKeys.BAKERIES, samanoudKeys.BAKERIES);
   assert.notEqual(samanoudKeys.BAKERIES, customKeys.BAKERIES);
+
+  // Users and credentials remain unified across all branches
+  assert.equal(mahallaKeys.USERS, 'TAMWEEN_USERS_V3');
+  assert.equal(samanoudKeys.USERS, 'TAMWEEN_USERS_V3');
+  assert.equal(customKeys.USERS, 'TAMWEEN_USERS_V3');
 
   // Default branches list contains Mahalla and Samanoud
   assert.equal(DEFAULT_SUPPLY_BRANCHES.length >= 2, true);
   assert.equal(DEFAULT_SUPPLY_BRANCHES[0].id, 'branch-mahalla');
   assert.equal(DEFAULT_SUPPLY_BRANCHES[1].id, 'branch-samanoud');
 });
+
+test('mergeUsersList preserves customized passwords and permissions across devices and branches without resetting to default', () => {
+  const baseUsers = INITIAL_USERS.map((u) => ({ ...u }));
+  const incomingWithUpdatedPass = INITIAL_USERS.map((u) =>
+    u.username === 'admin'
+      ? { ...u, password: 'MyNewSecretPassword999!', customPermissions: ['ADD_BAKERY', 'DELETE_BAKERY'] }
+      : u
+  );
+
+  // 1. When incoming has customized password and base has default password -> adopts custom password & permissions
+  const merged1 = mergeUsersList(baseUsers, incomingWithUpdatedPass);
+  const admin1 = merged1.find((u) => u.username === 'admin');
+  assert.equal(admin1?.password, 'MyNewSecretPassword999!');
+  assert.deepEqual(admin1?.customPermissions, ['ADD_BAKERY', 'DELETE_BAKERY']);
+
+  // 2. When local has customized password and incoming has default seed -> preserves local customized password
+  const merged2 = mergeUsersList(merged1, INITIAL_USERS);
+  const admin2 = merged2.find((u) => u.username === 'admin');
+  assert.equal(admin2?.password, 'MyNewSecretPassword999!');
+  assert.deepEqual(admin2?.customPermissions, ['ADD_BAKERY', 'DELETE_BAKERY']);
+});
+
 

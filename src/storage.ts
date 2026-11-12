@@ -172,7 +172,7 @@ export function mergeUsersList(
 ): AppUser[] {
   const defaultPassByUsername = new Map<string, string>();
   INITIAL_USERS.forEach((u) => {
-    defaultPassByUsername.set(u.username.toLowerCase(), u.password);
+    defaultPassByUsername.set(u.username.toLowerCase(), u.password || '');
   });
 
   const userMap = new Map<string, AppUser>();
