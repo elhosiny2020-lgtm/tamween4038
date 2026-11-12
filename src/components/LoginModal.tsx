@@ -33,22 +33,19 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState<'admin' | 'inspector' | 'auditor'>('inspector');
-  const [userFieldUnlocked, setUserFieldUnlocked] = useState(false);
-  const [passFieldUnlocked, setPassFieldUnlocked] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Always clear username & password when the login screen mounts or on logout so user types it manually every time
+  // Always clear username & password when the login screen mounts, on logout, or when switching branches so user types it manually every time
   useEffect(() => {
     setUsername('');
     setPassword('');
-    setUserFieldUnlocked(false);
-    setPassFieldUnlocked(false);
+    setErrorMsg('');
     try {
       localStorage.removeItem('TAMWEEN_LAST_USERNAME');
       sessionStorage.removeItem('TAMWEEN_LAST_USERNAME');
     } catch {}
-  }, [logoutReason]);
+  }, [logoutReason, activeBranchId]);
 
   const activeBranchObj = branches.find((b) => b.id === activeBranchId);
   const activeBranchTitle = activeBranchObj?.name || systemConfig.administrationTitle;
@@ -291,11 +288,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                       name="manual_auth_user_input"
                       id="manual_auth_user_input"
                       required
-                      readOnly={!userFieldUnlocked}
-                      onFocus={() => setUserFieldUnlocked(true)}
-                      onMouseDown={() => setUserFieldUnlocked(true)}
-                      onTouchStart={() => setUserFieldUnlocked(true)}
-                      onKeyDown={() => setUserFieldUnlocked(true)}
                       autoComplete="off"
                       autoCorrect="off"
                       autoCapitalize="off"
@@ -323,11 +315,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                       name="manual_auth_pass_input"
                       id="manual_auth_pass_input"
                       required
-                      readOnly={!passFieldUnlocked}
-                      onFocus={() => setPassFieldUnlocked(true)}
-                      onMouseDown={() => setPassFieldUnlocked(true)}
-                      onTouchStart={() => setPassFieldUnlocked(true)}
-                      onKeyDown={() => setPassFieldUnlocked(true)}
                       autoComplete="new-password"
                       autoCorrect="off"
                       autoCapitalize="off"

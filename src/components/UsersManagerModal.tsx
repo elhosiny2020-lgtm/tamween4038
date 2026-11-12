@@ -27,6 +27,7 @@ import {
 interface UsersManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
+  branchName?: string;
   users: AppUser[];
   currentUser: AppUser | null;
   onAddUser: (user: AppUser) => void;
@@ -81,6 +82,7 @@ const ROLE_DEFINITIONS: {
 export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   isOpen,
   onClose,
+  branchName,
   users,
   currentUser,
   onAddUser,
@@ -261,11 +263,16 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
           <div className="flex items-center gap-2.5">
             <Users className="w-6 h-6 text-amber-300" />
             <div>
-              <h3 className="text-base font-black">
-                إدارة حسابات المستخدمين وتعديل الاسم بالكامل والصلاحيات الموسعة
+              <h3 className="text-base font-black flex items-center gap-2 flex-wrap">
+                <span>ملف حسابات المستخدمين وكلمات المرور والصلاحيات المستقل</span>
+                {branchName && (
+                  <span className="text-[11px] bg-emerald-400 text-slate-950 font-black px-2.5 py-0.5 rounded-full">
+                    خاص بـ: {branchName} (منفصل تماماً عن باقي الإدارات)
+                  </span>
+                )}
               </h3>
               <p className="text-[11px] text-amber-200 font-bold">
-                تعديل فوري لبيانات أي مستخدم وخانة الاسم بالكامل في أي وقت، مع تحكم تفصيلي في 16 صلاحية رقابية وإدارية
+                كل إدارة تموينية لها يوزرنيم وباسورد وصلاحيات مستقلة تماماً مع تزامن تلقائي فوري لفتح الحساب من أي جهاز آخر
               </p>
             </div>
           </div>

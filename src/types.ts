@@ -207,6 +207,7 @@ export interface AppUser {
   gmailPassword?: string;
   googleDriveAutoSync?: boolean;
   customPermissions?: string[];
+  branchId?: string;
   createdAt?: string;
 }
 

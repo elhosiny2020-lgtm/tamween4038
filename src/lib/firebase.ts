@@ -273,8 +273,24 @@ export async function syncSharedStateToFirestore(
     const bakeriesCount = Array.isArray(state.bakeries) ? state.bakeries.length : 0;
     const debtsCount = Array.isArray(state.debts) ? state.debts.length : 0;
 
-    // Prune very large non-essential fields if any to stay safely under 1MB Firestore doc limit
+    // Prune redundant logoBase64 inside branchPartitions to stay well under 1MB Firestore doc limit while preserving all branches & auth vaults
+    let compactPartitions: Record<string, any> | undefined = undefined;
+    if (state.branchPartitions && typeof state.branchPartitions === 'object') {
+      compactPartitions = {};
+      Object.entries(state.branchPartitions).forEach(([bId, part]: [string, any]) => {
+        if (!part) return;
+        compactPartitions![bId] = {
+          ...part,
+          systemConfig: part.systemConfig
+            ? { ...part.systemConfig, logoBase64: undefined }
+            : undefined,
+        };
+      });
+    }
+
     const cleanState = {
+      activeBranchId: state.activeBranchId,
+      branches: state.branches,
       bakeries: state.bakeries || [],
       debts: state.debts || [],
       villages: state.villages,
@@ -290,8 +306,12 @@ export async function syncSharedStateToFirestore(
       dailyTasks: state.dailyTasks,
       inboxMessages: state.inboxMessages,
       columnTitles: state.columnTitles,
-      systemConfig: state.systemConfig,
+      systemConfig: state.systemConfig
+        ? { ...state.systemConfig, logoBase64: undefined }
+        : undefined,
       users: state.users,
+      branchPartitions: compactPartitions,
+      branchAuthVaults: state.branchAuthVaults,
     };
 
     const payloadJson = JSON.stringify(cleanState);

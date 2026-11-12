@@ -34,6 +34,11 @@ import {
   isDefaultSeedState
 } from './storage';
 import {
+  loadBranchAuthVault,
+  saveBranchAuthVault,
+  sanitizeBranchUsers,
+} from './services/branchAuthVault';
+import {
   DEFAULT_SYSTEM_CONFIG,
   DEFAULT_VILLAGES_HIERARCHY,
   DEFAULT_ISSUING_ENTITIES,
@@ -1225,26 +1230,76 @@ export default function App() {
       setDebtFilterBakeryId(undefined);
       setDetailsBakery(null);
 
-      const loaded = await loadInitialState(targetBranchId);
       const branchesToUse = updatedBranchesList || getBranchesList();
       const branchObj = branchesToUse.find((b) => b.id === targetBranchId);
+
+      // 1. Immediately apply local branch partition & isolated branch auth vault (0ms UI response)
+      const immediatePartition = readBranchPartitionFromLocal(targetBranchId);
+      const immediateVault = loadBranchAuthVault(targetBranchId, branchObj?.name);
+
+      setAppState((prev) => {
+        if (!prev) return prev;
+        const prevUser = prev.currentUser;
+        // Only keep user logged in if they actually exist in the target branch's isolated vault with matching credentials
+        const resolvedBranchUser = prevUser
+          ? immediateVault.users.find(
+              (u) =>
+                u.username.toLowerCase() === prevUser.username.toLowerCase() &&
+                (u.password || '') === (prevUser.password || '')
+            ) || null
+          : null;
+        if (prevUser && !resolvedBranchUser) {
+          saveSessionUser(null);
+        } else if (resolvedBranchUser) {
+          saveSessionUser(resolvedBranchUser);
+        }
+        return {
+          ...prev,
+          ...(immediatePartition as AppState),
+          activeBranchId: targetBranchId,
+          branches: branchesToUse,
+          users: immediateVault.users,
+          currentUser: resolvedBranchUser,
+          systemConfig: {
+            ...prev.systemConfig,
+            ...(immediatePartition.systemConfig || {}),
+            administrationTitle: branchObj?.name || prev.systemConfig.administrationTitle,
+            rolePermissions: immediateVault.rolePermissions,
+            roleLabels: immediateVault.roleLabels,
+            customRoles: immediateVault.customRoles,
+            logoBase64: DEFAULT_OFFICIAL_LOGO,
+          },
+        };
+      });
+
+      // 2. Fetch latest cloud updates in background and refresh active branch state
+      const loaded = await loadInitialState(targetBranchId);
+      const refreshedVault = loadBranchAuthVault(targetBranchId, branchObj?.name);
       setAppState((prev) => {
         const prevUser = prev?.currentUser;
         const resolvedBranchUser = prevUser
-          ? loaded.users.find(
+          ? refreshedVault.users.find(
               (u) =>
-                u.id === prevUser.id ||
-                u.username.toLowerCase() === prevUser.username.toLowerCase()
-            ) || prevUser
-          : loaded.currentUser;
+                u.username.toLowerCase() === prevUser.username.toLowerCase() &&
+                (u.password || '') === (prevUser.password || '')
+            ) || null
+          : null;
+        if (prevUser && !resolvedBranchUser) {
+          saveSessionUser(null);
+        }
         return {
           ...loaded,
           activeBranchId: targetBranchId,
           branches: branchesToUse,
+          users: refreshedVault.users,
           currentUser: resolvedBranchUser,
           systemConfig: {
             ...loaded.systemConfig,
             administrationTitle: branchObj?.name || loaded.systemConfig.administrationTitle,
+            rolePermissions: refreshedVault.rolePermissions,
+            roleLabels: refreshedVault.roleLabels,
+            customRoles: refreshedVault.customRoles,
+            logoBase64: DEFAULT_OFFICIAL_LOGO,
           },
         };
       });
@@ -1423,10 +1478,15 @@ export default function App() {
         }}
         onLoginSuccess={(user) => {
           setLogoutReason(null);
-          saveSessionUser(user);
-          const mergedState = performGmailDriveAdditiveMerge(appState, user);
-          const updatedUsers = mergedState.users.map((u) => (u.id === user.id ? { ...u, ...user } : u));
-          const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: user };
+          const scopedUser: AppUser = { ...user, branchId: activeBranchId };
+          saveSessionUser(scopedUser);
+          const mergedState = performGmailDriveAdditiveMerge(appState, scopedUser);
+          const updatedUsers = sanitizeBranchUsers(
+            mergedState.users.map((u) => (u.id === scopedUser.id ? { ...u, ...scopedUser } : u)),
+            activeBranchId,
+            appState.systemConfig.administrationTitle
+          );
+          const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: scopedUser };
           triggerSave(
             finalState,
             `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`
@@ -1434,14 +1494,31 @@ export default function App() {
           setIsDailyBriefingModalOpen(true);
         }}
         onRegisterUser={(newUser) => {
+          const scopedNewUser: AppUser = {
+            ...newUser,
+            branchId: activeBranchId,
+            department: newUser.department || appState.systemConfig.administrationTitle,
+          };
+          const updatedUsers = sanitizeBranchUsers(
+            [...appState.users, scopedNewUser],
+            activeBranchId,
+            appState.systemConfig.administrationTitle
+          );
+          saveBranchAuthVault(activeBranchId, {
+            branchName: appState.systemConfig.administrationTitle,
+            users: updatedUsers,
+            rolePermissions: appState.systemConfig.rolePermissions,
+            roleLabels: appState.systemConfig.roleLabels,
+            customRoles: appState.systemConfig.customRoles,
+          });
           const baseWithUser: AppState = {
             ...appState,
-            users: [...appState.users, newUser],
+            users: updatedUsers,
           };
-          const mergedState = performGmailDriveAdditiveMerge(baseWithUser, newUser);
+          const mergedState = performGmailDriveAdditiveMerge(baseWithUser, scopedNewUser);
           triggerSave(
             { ...mergedState, currentUser: null },
-            'تم تسجيل وحفظ المستخدم الجديد بنجاح'
+            `تم تسجيل وحفظ المستخدم الجديد (${scopedNewUser.username}) في ملف صلاحيات (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً بنجاح`
           );
         }}
       />
@@ -4135,73 +4212,180 @@ export default function App() {
         />
       )}
 
-      {/* 8. Users & Inspectors Manager Modal */}
+      {/* 8. Users & Inspectors Manager Modal (Strictly Isolated per Supply Administration / Branch) */}
       {isUsersModalOpen && (
         <UsersManagerModal
           isOpen={isUsersModalOpen}
           onClose={() => setIsUsersModalOpen(false)}
+          branchName={appState.systemConfig.administrationTitle}
           users={appState.users}
           currentUser={appState.currentUser}
-          onAddUser={(newUser) =>
-            triggerSave({ ...appState, users: [...appState.users, newUser] }, 'تم إضافة وحفظ المستخدم الجديد بنجاح')
-          }
+          onAddUser={(newUser) => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const scopedUser: AppUser = {
+              ...newUser,
+              branchId,
+              department: newUser.department || appState.systemConfig.administrationTitle,
+            };
+            const updatedUsers = sanitizeBranchUsers(
+              [...appState.users, scopedUser],
+              branchId,
+              appState.systemConfig.administrationTitle
+            );
+            saveBranchAuthVault(branchId, {
+              branchName: appState.systemConfig.administrationTitle,
+              users: updatedUsers,
+              rolePermissions: appState.systemConfig.rolePermissions,
+              roleLabels: appState.systemConfig.roleLabels,
+              customRoles: appState.systemConfig.customRoles,
+            });
+            triggerSave(
+              { ...appState, users: updatedUsers },
+              `تم إضافة وحفظ المستخدم (${scopedUser.username}) في ملف صلاحيات (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً لجميع الأجهزة`
+            );
+          }}
           onUpdateUser={(updatedUser) => {
-            const updatedUsers = appState.users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
-            const isCurrent = appState.currentUser?.id === updatedUser.id;
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const scopedUser: AppUser = { ...updatedUser, branchId };
+            const updatedUsers = sanitizeBranchUsers(
+              appState.users.map((u) => (u.id === scopedUser.id ? scopedUser : u)),
+              branchId,
+              appState.systemConfig.administrationTitle
+            );
+            const isCurrent = appState.currentUser?.id === scopedUser.id;
             if (isCurrent) {
-              saveSessionUser(updatedUser);
+              saveSessionUser(scopedUser);
             }
+            saveBranchAuthVault(branchId, {
+              branchName: appState.systemConfig.administrationTitle,
+              users: updatedUsers,
+              rolePermissions: appState.systemConfig.rolePermissions,
+              roleLabels: appState.systemConfig.roleLabels,
+              customRoles: appState.systemConfig.customRoles,
+            });
             triggerSave(
               {
                 ...appState,
                 users: updatedUsers,
-                currentUser: isCurrent ? updatedUser : appState.currentUser,
+                currentUser: isCurrent ? scopedUser : appState.currentUser,
               },
-              `تم حفظ تعديل بيانات الحساب والاسم بالكامل (${updatedUser.fullName}) والصلاحيات بنجاح`
+              `تم حفظ تعديل بيانات الحساب (${scopedUser.fullName}) والصلاحيات في ملف (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً`
             );
           }}
           onDeleteUser={(userId) => {
-            const updatedUsers = appState.users.filter((u) => u.id !== userId);
-            triggerSave({ ...appState, users: updatedUsers }, 'تم حذف المستخدم وتحديث القائمة بنجاح');
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const updatedUsers = sanitizeBranchUsers(
+              appState.users.filter((u) => u.id !== userId),
+              branchId,
+              appState.systemConfig.administrationTitle
+            );
+            saveBranchAuthVault(branchId, {
+              branchName: appState.systemConfig.administrationTitle,
+              users: updatedUsers,
+              rolePermissions: appState.systemConfig.rolePermissions,
+              roleLabels: appState.systemConfig.roleLabels,
+              customRoles: appState.systemConfig.customRoles,
+            });
+            triggerSave(
+              { ...appState, users: updatedUsers },
+              `تم حذف المستخدم من ملف صلاحيات (${appState.systemConfig.administrationTitle}) ومزامنة التحديث سحابياً`
+            );
           }}
         />
       )}
 
-      {/* 8.1 Advanced Role Permissions & Users Management Modal (إعدادات الصلاحيات المتقدمة في SystemConfig) */}
+      {/* 8.1 Advanced Role Permissions & Users Management Modal (إعدادات الصلاحيات المتقدمة في SystemConfig - مستقلة لكل إدارة) */}
       {isAdvancedPermissionsModalOpen && (
         <AdvancedPermissionsModal
           isOpen={isAdvancedPermissionsModalOpen}
           onClose={() => setIsAdvancedPermissionsModalOpen(false)}
           systemConfig={appState.systemConfig}
-          onSaveSystemConfig={(updatedConfig: SystemConfig) =>
+          onSaveSystemConfig={(updatedConfig: SystemConfig) => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            saveBranchAuthVault(branchId, {
+              branchName: appState.systemConfig.administrationTitle,
+              users: appState.users,
+              rolePermissions: updatedConfig.rolePermissions,
+              roleLabels: updatedConfig.roleLabels,
+              customRoles: updatedConfig.customRoles,
+            });
             triggerSave(
               { ...appState, systemConfig: updatedConfig },
-              'تم حفظ إعدادات الصلاحيات المتقدمة والأدوار الوظيفية في SystemConfig بنجاح'
-            )
-          }
+              `تم حفظ إعدادات الصلاحيات المتقدمة والأدوار لـ (${appState.systemConfig.administrationTitle}) ومزامنتها سحابياً لجميع الأجهزة`
+            );
+          }}
           users={appState.users}
           currentUser={appState.currentUser}
-          onAddUser={(newUser) =>
-            triggerSave({ ...appState, users: [...appState.users, newUser] }, `تم إضافة وحفظ المستخدم الجديد (${newUser.fullName}) بنجاح`)
-          }
+          onAddUser={(newUser) => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const scopedUser: AppUser = {
+              ...newUser,
+              branchId,
+              department: newUser.department || appState.systemConfig.administrationTitle,
+            };
+            const updatedUsers = sanitizeBranchUsers(
+              [...appState.users, scopedUser],
+              branchId,
+              appState.systemConfig.administrationTitle
+            );
+            saveBranchAuthVault(branchId, {
+              branchName: appState.systemConfig.administrationTitle,
+              users: updatedUsers,
+              rolePermissions: appState.systemConfig.rolePermissions,
+              roleLabels: appState.systemConfig.roleLabels,
+              customRoles: appState.systemConfig.customRoles,
+            });
+            triggerSave(
+              { ...appState, users: updatedUsers },
+              `تم إضافة وحفظ المستخدم الجديد (${scopedUser.fullName}) في ملف (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً`
+            );
+          }}
           onUpdateUser={(updatedUser) => {
-            const updatedUsers = appState.users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
-            const isCurrent = appState.currentUser?.id === updatedUser.id;
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const scopedUser: AppUser = { ...updatedUser, branchId };
+            const updatedUsers = sanitizeBranchUsers(
+              appState.users.map((u) => (u.id === scopedUser.id ? scopedUser : u)),
+              branchId,
+              appState.systemConfig.administrationTitle
+            );
+            const isCurrent = appState.currentUser?.id === scopedUser.id;
             if (isCurrent) {
-              saveSessionUser(updatedUser);
+              saveSessionUser(scopedUser);
             }
+            saveBranchAuthVault(branchId, {
+              branchName: appState.systemConfig.administrationTitle,
+              users: updatedUsers,
+              rolePermissions: appState.systemConfig.rolePermissions,
+              roleLabels: appState.systemConfig.roleLabels,
+              customRoles: appState.systemConfig.customRoles,
+            });
             triggerSave(
               {
                 ...appState,
                 users: updatedUsers,
-                currentUser: isCurrent ? updatedUser : appState.currentUser,
+                currentUser: isCurrent ? scopedUser : appState.currentUser,
               },
-              `تم حفظ تعديل بيانات الحساب والاسم بالكامل (${updatedUser.fullName}) واليوزر والباسورد والدور الوظيفي بنجاح`
+              `تم حفظ تعديل بيانات الحساب (${scopedUser.fullName}) واليوزر والباسورد في ملف (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً`
             );
           }}
           onDeleteUser={(userId) => {
-            const updatedUsers = appState.users.filter((u) => u.id !== userId);
-            triggerSave({ ...appState, users: updatedUsers }, 'تم حذف المستخدم وتحديث القائمة بنجاح');
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const updatedUsers = sanitizeBranchUsers(
+              appState.users.filter((u) => u.id !== userId),
+              branchId,
+              appState.systemConfig.administrationTitle
+            );
+            saveBranchAuthVault(branchId, {
+              branchName: appState.systemConfig.administrationTitle,
+              users: updatedUsers,
+              rolePermissions: appState.systemConfig.rolePermissions,
+              roleLabels: appState.systemConfig.roleLabels,
+              customRoles: appState.systemConfig.customRoles,
+            });
+            triggerSave(
+              { ...appState, users: updatedUsers },
+              `تم حذف المستخدم من ملف (${appState.systemConfig.administrationTitle}) ومزامنة القائمة سحابياً`
+            );
           }}
         />
       )}

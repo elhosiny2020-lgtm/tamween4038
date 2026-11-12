@@ -460,10 +460,66 @@ test('mergeUsersList and buildFullCloudMultiBranchPayload preserve customized pa
   const payload = buildFullCloudMultiBranchPayload(samanoudState, '2026-11-12T15:00:00Z');
   assert.equal(Boolean(payload.branchPartitions['branch-samanoud']), true);
   assert.equal(Boolean(payload.branchPartitions['branch-mahalla']), true);
+  assert.equal(Boolean(payload.branchAuthVaults['branch-samanoud']), true);
+  assert.equal(Boolean(payload.branchAuthVaults['branch-mahalla']), true);
   assert.deepEqual(payload.branchPartitions['branch-samanoud'].systemConfig?.rolePermissions, {
+    ...getDefaultRolePermissionsMap(),
     inspector: ['ADD_BAKERY'],
   });
 });
 
+import {
+  sanitizeBranchUsers,
+  getBranchAuthVaultKey,
+} from '../services/branchAuthVault';
 
+test('branchAuthVault strictly isolates usernames, passwords, and permissions per branch without cross-branch leakage', () => {
+  assert.equal(
+    getBranchAuthVaultKey('branch-samanoud'),
+    'TAMWEEN_BRANCH_AUTH_VAULT_V1__branch-samanoud'
+  );
+  assert.equal(
+    getBranchAuthVaultKey('branch-mahalla'),
+    'TAMWEEN_BRANCH_AUTH_VAULT_V1__branch-mahalla'
+  );
+  assert.notEqual(
+    getBranchAuthVaultKey('branch-samanoud'),
+    getBranchAuthVaultKey('branch-mahalla')
+  );
 
+  const mixedUsers: AppUser[] = [
+    {
+      id: 'u-samanoud-1',
+      username: 'samanoud_mgr',
+      password: 'SamanoudSecretPassword1!',
+      fullName: 'مدير تموين سمنود',
+      role: 'admin',
+      branchId: 'branch-samanoud',
+    },
+    {
+      id: 'u-mahalla-1',
+      username: 'mahalla_mgr',
+      password: 'MahallaSecretPassword2!',
+      fullName: 'مدير تموين المحلة',
+      role: 'admin',
+      branchId: 'branch-mahalla',
+    },
+  ];
+
+  const samanoudOnly = sanitizeBranchUsers(mixedUsers, 'branch-samanoud', 'إدارة تموين سمنود');
+  const mahallaOnly = sanitizeBranchUsers(mixedUsers, 'branch-mahalla', 'إدارة تموين مركز المحلة الكبرى');
+
+  // Samanoud vault must ONLY contain Samanoud user and NEVER see Mahalla user
+  assert.equal(samanoudOnly.length, 1);
+  assert.equal(samanoudOnly[0].username, 'samanoud_mgr');
+  assert.equal(samanoudOnly[0].password, 'SamanoudSecretPassword1!');
+  assert.equal(samanoudOnly[0].branchId, 'branch-samanoud');
+  assert.equal(samanoudOnly.some((u) => u.username === 'mahalla_mgr'), false);
+
+  // Mahalla vault must ONLY contain Mahalla user and NEVER see Samanoud user
+  assert.equal(mahallaOnly.length, 1);
+  assert.equal(mahallaOnly[0].username, 'mahalla_mgr');
+  assert.equal(mahallaOnly[0].password, 'MahallaSecretPassword2!');
+  assert.equal(mahallaOnly[0].branchId, 'branch-mahalla');
+  assert.equal(mahallaOnly.some((u) => u.username === 'samanoud_mgr'), false);
+});

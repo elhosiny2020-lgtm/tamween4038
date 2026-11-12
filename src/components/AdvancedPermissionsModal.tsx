@@ -130,6 +130,35 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     return merged;
   });
 
+  // Sync rolePermissions and roleTabs whenever the active branch's systemConfig changes or syncs from cloud
+  useEffect(() => {
+    const defaults = getDefaultRolePermissionsMap();
+    const existing = systemConfig.rolePermissions || {};
+    const merged: Record<string, string[]> = {
+      admin: existing.admin ? [...existing.admin] : [...defaults.admin],
+      supervisor: existing.supervisor ? [...existing.supervisor] : [...defaults.supervisor],
+      auditor: existing.auditor ? [...existing.auditor] : [...defaults.auditor],
+      inspector: existing.inspector ? [...existing.inspector] : [...defaults.inspector],
+      data_entry: existing.data_entry ? [...existing.data_entry] : [...defaults.data_entry],
+      viewer: existing.viewer ? [...existing.viewer] : [...defaults.viewer],
+    };
+    Object.keys(existing).forEach((k) => {
+      if (!merged[k]) {
+        merged[k] = [...existing[k]];
+      }
+    });
+    setRolePermissions(merged);
+
+    const customList: RoleTabItem[] = (systemConfig.customRoles || []).map((cr) => ({
+      role: cr.id,
+      shortTitle: cr.title,
+      fullTitle: cr.fullTitle || cr.title,
+      badgeColor: cr.badgeColor || 'from-purple-600 to-indigo-700',
+      isCustom: true,
+    }));
+    setRoleTabs([...DEFAULT_ROLE_TABS, ...customList]);
+  }, [systemConfig.administrationTitle, systemConfig.rolePermissions, systemConfig.customRoles]);
+
   // Add New User state
   const [newFullName, setNewFullName] = useState('');
   const [newUsername, setNewUsername] = useState('');
@@ -380,13 +409,13 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-black tracking-wide flex items-center gap-2 flex-wrap">
-                <span>إدارة المستخدمين والأدوار الوظيفية وإعدادات الصلاحيات المتقدمة</span>
-                <span className="text-[11px] bg-amber-400 text-slate-950 font-black px-2.5 py-0.5 rounded-full">
-                  الاسم بالكامل • اليوزر • الباسورد • الأدوار
+                <span>ملف الصلاحيات والمستخدمين المستقل لـ ({systemConfig.administrationTitle})</span>
+                <span className="text-[11px] bg-emerald-400 text-slate-950 font-black px-2.5 py-0.5 rounded-full">
+                  منفصل تماماً عن أي إدارة أخرى • تزامن تلقائي لجميع الأجهزة
                 </span>
               </h2>
               <p className="text-xs text-amber-200 font-bold mt-0.5">
-                إضافة وحذف وتعديل المستخدمين (الاسم بالكامل، اليوزر، الباسورد) + إضافة وحذف أي دور وظيفي وتحديد صلاحياته
+                إضافة وحذف وتعديل المستخدمين (اليوزرنيم، الباسورد، الاسم بالكامل) والصلاحيات الخاصة بهذه الإدارة فقط دون ظهورها في أي إدارة أخرى
               </p>
             </div>
           </div>

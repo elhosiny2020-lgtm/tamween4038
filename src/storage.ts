@@ -40,6 +40,14 @@ import {
   loadSharedStateFromFirestore,
 } from './lib/firebase';
 import { autoSyncToSupabase, fetchDatabaseFromSupabase } from './lib/supabase';
+import {
+  BranchAuthVaultRecord,
+  loadBranchAuthVault,
+  saveBranchAuthVault,
+  sanitizeBranchUsers,
+  collectAllBranchAuthVaults,
+  syncAllBranchAuthVaultsFromCloud,
+} from './services/branchAuthVault';
 
 export interface MergeConflictItem {
   id: string;
@@ -728,15 +736,19 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
   };
 
   if (typeof localStorage === 'undefined') {
+    const fallbackVault = loadBranchAuthVault(branchId, branchObj?.name);
     return {
       activeBranchId: branchId,
       bakeries: isDefault ? INITIAL_BAKERIES : [],
       debts: isDefault ? INITIAL_DEBTS : [],
       villages: isDefault ? DEFAULT_VILLAGES_HIERARCHY : [],
-      users: INITIAL_USERS,
+      users: fallbackVault.users,
       systemConfig: {
         ...DEFAULT_SYSTEM_CONFIG,
         administrationTitle: branchObj?.name || DEFAULT_SYSTEM_CONFIG.administrationTitle,
+        rolePermissions: fallbackVault.rolePermissions,
+        roleLabels: fallbackVault.roleLabels,
+        customRoles: fallbackVault.customRoles,
         logoBase64: DEFAULT_OFFICIAL_LOGO,
       },
     };
@@ -745,7 +757,6 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
   const rawBake = localStorage.getItem(bKeys.BAKERIES);
   const rawDebts = localStorage.getItem(bKeys.DEBTS);
   const rawVillages = localStorage.getItem(bKeys.VILLAGES);
-  const rawUsers = localStorage.getItem(bKeys.USERS);
   const rawConfig = localStorage.getItem(bKeys.CONFIG);
 
   const bakeries = safeParse<Bakery[]>(rawBake, isDefault ? INITIAL_BAKERIES : []);
@@ -754,7 +765,11 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
     rawVillages,
     isDefault ? DEFAULT_VILLAGES_HIERARCHY : []
   );
-  const users = safeParse<AppUser[]>(rawUsers, INITIAL_USERS);
+
+  // Load isolated branch auth vault (usernames, passwords, rolePermissions, customRoles strictly isolated per branch)
+  const branchVault = loadBranchAuthVault(branchId, branchObj?.name);
+  const users = branchVault.users;
+
   const parsedConfig = safeParse<SystemConfig>(rawConfig, {
     ...DEFAULT_SYSTEM_CONFIG,
     governorateTitle: branchObj?.governorateTitle || 'محافظة الغربية',
@@ -765,7 +780,7 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
 
   return {
     activeBranchId: branchId,
-    updatedAt: localStorage.getItem(bKeys.AUTOSAVE_TIMESTAMP) || '',
+    updatedAt: localStorage.getItem(bKeys.AUTOSAVE_TIMESTAMP) || branchVault.updatedAt || '',
     bakeries,
     debts,
     villages,
@@ -791,6 +806,9 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
       ...DEFAULT_SYSTEM_CONFIG,
       ...parsedConfig,
       administrationTitle: branchObj?.name || parsedConfig.administrationTitle || DEFAULT_SYSTEM_CONFIG.administrationTitle,
+      rolePermissions: branchVault.rolePermissions || parsedConfig.rolePermissions,
+      roleLabels: branchVault.roleLabels || parsedConfig.roleLabels,
+      customRoles: branchVault.customRoles || parsedConfig.customRoles,
       logoBase64: DEFAULT_OFFICIAL_LOGO,
     },
     users,
@@ -839,14 +857,13 @@ export function writeBranchPartitionToLocal(
     const remoteTs = part.updatedAt || fallbackTimestamp || '';
     const remoteTimeMs = remoteTs ? Date.parse(remoteTs) || Date.now() : Date.now();
 
-    // Always merge branch-specific users so customized passwords & customPermissions for this branch sync across devices
-    if (Array.isArray(part.users) && part.users.length > 0) {
-      const mergedBranchUsers =
-        remoteTimeMs >= localTimeMs
-          ? mergeUsersList(existingUsers, part.users)
-          : mergeUsersList(part.users, existingUsers);
-      localStorage.setItem(bKeys.USERS, JSON.stringify(mergedBranchUsers));
-    }
+    // Sync isolated branch auth vault (usernames, passwords, rolePermissions, customRoles) for this branch
+    syncAllBranchAuthVaultsFromCloud(
+      undefined,
+      { [branchId]: part },
+      remoteTs
+    );
+    const updatedVault = loadBranchAuthVault(branchId, branchObj?.name);
 
     // Adopt full branch partition if local branch is untouched, empty, or older/equal to cloud partition
     if (isLocalUntouched || remoteTimeMs >= localTimeMs) {
@@ -912,6 +929,9 @@ export function writeBranchPartitionToLocal(
             part.systemConfig?.administrationTitle ||
             existingConfig?.administrationTitle ||
             DEFAULT_SYSTEM_CONFIG.administrationTitle,
+          rolePermissions: updatedVault.rolePermissions,
+          roleLabels: updatedVault.roleLabels,
+          customRoles: updatedVault.customRoles,
           logoBase64: DEFAULT_OFFICIAL_LOGO,
         };
         localStorage.setItem(bKeys.CONFIG, JSON.stringify(mergedCfg));
@@ -943,10 +963,13 @@ export function syncAllBranchesFromCloudPayload(
     saveBranchesList(Array.from(branchMap.values()));
   }
 
-  // 2. Sync root payload into default branch partition
+  // 2. Sync root payload & all branch partitions
   const remotePartitions =
     (cloudData as unknown as { branchPartitions?: Record<string, BranchPartitionPayload> })
       .branchPartitions || {};
+  const remoteAuthVaults =
+    (cloudData as unknown as { branchAuthVaults?: Record<string, BranchAuthVaultRecord> })
+      .branchAuthVaults;
 
   const defaultPartition: BranchPartitionPayload = remotePartitions[DEFAULT_BRANCH_ID] || {
     ...cloudData,
@@ -960,31 +983,71 @@ export function syncAllBranchesFromCloudPayload(
     if (!bId || bId === DEFAULT_BRANCH_ID || !part) return;
     writeBranchPartitionToLocal(bId, part, remoteTimestamp);
   });
+
+  // 4. Sync dedicated branch auth vaults across all branches
+  if (remoteAuthVaults) {
+    syncAllBranchAuthVaultsFromCloud(remoteAuthVaults, remotePartitions, remoteTimestamp);
+  }
 }
 
 export function buildFullCloudMultiBranchPayload(
   activeState: Omit<AppState, 'currentUser'> & { currentUser?: AppUser | null },
   snapshotTimestamp: string
-): AppState & { branchPartitions: Record<string, BranchPartitionPayload> } {
+): AppState & {
+  branchPartitions: Record<string, BranchPartitionPayload>;
+  branchAuthVaults: Record<string, BranchAuthVaultRecord>;
+} {
   const targetBranchId = activeState.activeBranchId || getActiveBranchId();
   const branchesList = activeState.branches || getBranchesList();
 
+  const branchAuthVaults = collectAllBranchAuthVaults(
+    branchesList,
+    targetBranchId,
+    activeState.users,
+    activeState.systemConfig,
+    snapshotTimestamp
+  );
+
   const branchPartitions: Record<string, BranchPartitionPayload> = {};
   branchesList.forEach((b) => {
+    const vault = branchAuthVaults[b.id] || loadBranchAuthVault(b.id, b.name);
     if (b.id === targetBranchId) {
       branchPartitions[b.id] = {
         ...activeState,
         activeBranchId: b.id,
+        users: vault.users,
+        systemConfig: {
+          ...DEFAULT_SYSTEM_CONFIG,
+          ...(activeState.systemConfig || {}),
+          administrationTitle: b.name,
+          rolePermissions: vault.rolePermissions,
+          roleLabels: vault.roleLabels,
+          customRoles: vault.customRoles,
+          logoBase64: DEFAULT_OFFICIAL_LOGO,
+        },
         updatedAt: snapshotTimestamp,
       };
     } else {
-      branchPartitions[b.id] = readBranchPartitionFromLocal(b.id);
+      const localPart = readBranchPartitionFromLocal(b.id);
+      branchPartitions[b.id] = {
+        ...localPart,
+        users: vault.users,
+        systemConfig: {
+          ...DEFAULT_SYSTEM_CONFIG,
+          ...(localPart.systemConfig || {}),
+          administrationTitle: b.name,
+          rolePermissions: vault.rolePermissions,
+          roleLabels: vault.roleLabels,
+          customRoles: vault.customRoles,
+          logoBase64: DEFAULT_OFFICIAL_LOGO,
+        },
+      };
     }
   });
 
   const defaultBranchState =
     targetBranchId === DEFAULT_BRANCH_ID
-      ? activeState
+      ? branchPartitions[DEFAULT_BRANCH_ID]
       : branchPartitions[DEFAULT_BRANCH_ID] || readBranchPartitionFromLocal(DEFAULT_BRANCH_ID);
 
   return {
@@ -1002,6 +1065,7 @@ export function buildFullCloudMultiBranchPayload(
     },
     currentUser: null,
     branchPartitions,
+    branchAuthVaults,
   };
 }
 
@@ -1034,10 +1098,12 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
   try {
     // 1. Fetch latest multi-branch database from Supabase / Cloud first and sync all branch partitions locally
     let cloudHasData = false;
+    let cloudTimestampMs = 0;
     try {
       const supaRes = await fetchDatabaseFromSupabase();
       if (supaRes && supaRes.success && supaRes.data) {
         cloudHasData = true;
+        cloudTimestampMs = supaRes.timestamp ? Date.parse(supaRes.timestamp) || 0 : 0;
         syncAllBranchesFromCloudPayload(supaRes.data, supaRes.timestamp);
       }
     } catch (supaErr) {
@@ -1209,14 +1275,18 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       }
     } catch {}
 
-    // If this branch has explicit user saves locally, ensure multi-branch payload is synced to Supabase
+    // If this branch has explicit user saves locally that are newer than cloud (or cloud is empty), push to Supabase
     const hasExplicitUserSave =
       typeof localStorage !== 'undefined' &&
       localStorage.getItem(
         isDefaultBranch ? 'TAMWEEN_EXPLICIT_USER_SAVE' : `TAMWEEN_EXPLICIT_USER_SAVE__${activeBranchId}`
       ) === 'true';
 
-    if (hasExplicitUserSave || (!cloudHasData && !isDefaultSeedState(bakeries, debts))) {
+    const localTsMs = localPartition.updatedAt ? Date.parse(localPartition.updatedAt) || 0 : 0;
+    if (
+      (hasExplicitUserSave && (!cloudHasData || localTsMs > cloudTimestampMs)) ||
+      (!cloudHasData && !isDefaultSeedState(bakeries, debts))
+    ) {
       const ts = localPartition.updatedAt || new Date().toISOString();
       const fullPayload = buildFullCloudMultiBranchPayload(finalLocalState, ts);
       autoSyncToSupabase(fullPayload, true, ts).catch(() => {});
@@ -1336,6 +1406,18 @@ export async function persistFullState(
   };
 
   const snapshotTimestamp = options?.customTimestamp || new Date().toISOString();
+  const isolatedBranchUsers = sanitizeBranchUsers(users, targetBranchId, branchObj?.name);
+
+  // Save to dedicated branch auth vault (strictly isolated usernames, passwords, and permissions per branch)
+  saveBranchAuthVault(targetBranchId, {
+    branchName: branchObj?.name,
+    users: isolatedBranchUsers,
+    rolePermissions: lockedConfig.rolePermissions,
+    roleLabels: lockedConfig.roleLabels,
+    customRoles: lockedConfig.customRoles,
+    updatedAt: snapshotTimestamp,
+    markExplicitSave: !options?.skipCloudSync,
+  });
 
   // LocalStorage (100% isolated per branch, including branch-specific users & role permissions)
   try {
@@ -1363,7 +1445,7 @@ export async function persistFullState(
     localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify(inboxMessages));
     localStorage.setItem(scopedKeys.COLUMNS, JSON.stringify(columnTitles));
     localStorage.setItem(scopedKeys.CONFIG, JSON.stringify(lockedConfig));
-    localStorage.setItem(scopedKeys.USERS, JSON.stringify(users));
+    localStorage.setItem(scopedKeys.USERS, JSON.stringify(isolatedBranchUsers));
   } catch (err) {
     console.warn('LocalStorage quota limit reached, relying primarily on IndexedDB', err);
   }
@@ -1391,7 +1473,7 @@ export async function persistFullState(
       inboxMessages,
       columnTitles,
       systemConfig: lockedConfig,
-      users,
+      users: isolatedBranchUsers,
     },
   };
 
