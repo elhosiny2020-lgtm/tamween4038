@@ -512,9 +512,15 @@ export default function App() {
         const activeBranchObj = mergedBranches.find((b) => b.id === currentBranchId);
         const syncedPartition = readBranchPartitionFromLocal(currentBranchId);
 
-        const nextBakeries = syncedPartition.bakeries || current.bakeries;
-        const nextDebts = syncedPartition.debts || current.debts;
-        const nextUsers = syncedPartition.users || current.users;
+        const nextBakeries = Array.isArray(syncedPartition.bakeries)
+          ? syncedPartition.bakeries
+          : current.bakeries;
+        const nextDebts = Array.isArray(syncedPartition.debts)
+          ? syncedPartition.debts
+          : current.debts;
+        const nextUsers = Array.isArray(syncedPartition.users) && syncedPartition.users.length > 0
+          ? syncedPartition.users
+          : current.users;
         const nextConfig: SystemConfig = {
           ...current.systemConfig,
           ...(syncedPartition.systemConfig || {}),
@@ -1502,10 +1508,12 @@ export default function App() {
             appState.systemConfig.administrationTitle
           );
           const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: scopedUser };
-          triggerSave(
-            finalState,
-            `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`
-          );
+          setAppState(finalState);
+          setSaveToast({
+            id: Date.now(),
+            message: `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`,
+            timestamp: getArabicTimestamp(),
+          });
           setIsDailyBriefingModalOpen(true);
         }}
         onRegisterUser={(newUser) => {

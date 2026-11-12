@@ -357,9 +357,18 @@ export async function loadSharedStateFromFirestore(): Promise<{
   debtsCount: number;
 } | null> {
   try {
-    let snap = await getDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID));
+    let snap;
+    try {
+      snap = await getDocFromServer(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID));
+    } catch {
+      snap = await getDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID));
+    }
     if (!snap.exists()) {
-      snap = await getDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID));
+      try {
+        snap = await getDocFromServer(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID));
+      } catch {
+        snap = await getDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID));
+      }
     }
     if (!snap.exists()) return null;
     const item = snap.data();

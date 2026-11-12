@@ -923,26 +923,11 @@ export function writeBranchPartitionToLocal(
     );
     const updatedVault = loadBranchAuthVault(branchId, branchObj?.name);
 
-    // Determine if incoming cloud partition should be adopted locally:
-    // 1. Local branch is untouched or empty
-    // 2. Local has default seed data only while remote has customized bakeries
-    // 3. Remote timestamp is newer than or equal to local timestamp
-    // 4. Local has not explicitly saved anything while remote has data
-    const remoteHasBakeries = Array.isArray(part.bakeries) && part.bakeries.length > 0;
-    const localHasSeedOnly = isDefault && isDefaultSeedState(existingBake, existingDebts);
-    const localIsEmpty = existingBake.length === 0 && existingDebts.length === 0;
-    const shouldAdopt =
-      isLocalUntouched ||
-      localIsEmpty ||
-      (localHasSeedOnly && remoteHasBakeries) ||
-      remoteTimeMs >= localTimeMs ||
-      (!hasExplicitSave && remoteHasBakeries);
-
-    if (shouldAdopt) {
-      const synced = synchronizeBakeryAndDebts(
-        (part.bakeries || []).map(normalizeBakeryPerCapita),
-        part.debts || []
-      );
+    // Always adopt incoming cloud partitions across all devices so edits on any device reflect immediately
+    const synced = synchronizeBakeryAndDebts(
+      (part.bakeries || []).map(normalizeBakeryPerCapita),
+      part.debts || []
+    );
       if (Array.isArray(part.bakeries)) {
         localStorage.setItem(bKeys.BAKERIES, JSON.stringify(synced.bakeries));
       }
@@ -1012,7 +997,6 @@ export function writeBranchPartitionToLocal(
         localStorage.setItem(bKeys.AUTOSAVE_TIMESTAMP, remoteTs);
       }
       localStorage.setItem(bKeys.INITIALIZED, 'true');
-    }
   } catch (err) {
     console.warn('Error writing branch partition to local storage:', err);
   }
@@ -1368,18 +1352,8 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       }
     } catch {}
 
-    // If this branch has explicit user saves locally that are newer than cloud (or cloud is empty), push to Supabase
-    const hasExplicitUserSave =
-      typeof localStorage !== 'undefined' &&
-      localStorage.getItem(
-        isDefaultBranch ? 'TAMWEEN_EXPLICIT_USER_SAVE' : `TAMWEEN_EXPLICIT_USER_SAVE__${activeBranchId}`
-      ) === 'true';
-
-    const localTsMs = localPartition.updatedAt ? Date.parse(localPartition.updatedAt) || 0 : 0;
-    if (
-      (hasExplicitUserSave && (!cloudHasData || localTsMs > cloudTimestampMs)) ||
-      (!cloudHasData && !isDefaultSeedState(bakeries, debts))
-    ) {
+    // Only seed cloud on initial boot IF the cloud database was completely empty
+    if (!cloudHasData && !isDefaultSeedState(bakeries, debts)) {
       const ts = localPartition.updatedAt || new Date().toISOString();
       const fullPayload = buildFullCloudMultiBranchPayload(finalLocalState, ts);
       autoSyncToSupabase(fullPayload, true, ts).catch(() => {});
