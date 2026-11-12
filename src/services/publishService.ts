@@ -1,6 +1,6 @@
 import { AppState } from '../types';
 import { generateStandaloneHtml } from '../utils/htmlExporter';
-import { syncSharedStateToFirestore } from '../lib/firebase';
+import { autoSyncToSupabase, migrateDatabaseToSupabase } from '../lib/supabase';
 
 export type PublishStage = 'IDLE' | 'STARTING' | 'PREPARING' | 'UPLOADING' | 'VERIFYING' | 'SUCCESS' | 'ERROR';
 
@@ -135,20 +135,13 @@ export async function executePublishProcess(
       { details: { bakeriesCount, debtsCount, bundleSizeKB } }
     );
 
-    // Sync directly to Google Cloud Firestore & server snapshot for seamless multi-device persistence
+    // Sync directly to Supabase Cloud DB for seamless multi-device persistence
     try {
-      await syncSharedStateToFirestore(state);
+      await autoSyncToSupabase(state);
+      await migrateDatabaseToSupabase(state);
     } catch (e) {
-      console.warn('Publish Firestore sync non-fatal warning:', e);
+      console.warn('Publish Supabase sync non-fatal warning:', e);
     }
-
-    try {
-      await fetch('/api/backup/snapshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(state),
-      });
-    } catch {}
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 35000); // 35 second timeout
