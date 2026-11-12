@@ -103,6 +103,8 @@ export const DEFAULT_SUPPLY_BRANCHES: SupplyBranch[] = [
 const BRANCH_META_KEYS = {
   BRANCHES_LIST: 'TAMWEEN_BRANCHES_LIST_V1',
   ACTIVE_BRANCH_ID: 'TAMWEEN_ACTIVE_BRANCH_ID_V1',
+  GLOBAL_ROLE_CONFIG: 'TAMWEEN_GLOBAL_ROLE_CONFIG_V1',
+  USERS_UPDATED_AT: 'TAMWEEN_USERS_UPDATED_AT_V1',
 };
 
 const BASE_KEYS = {
@@ -140,7 +142,7 @@ export function getScopedKeysForBranch(branchId?: string): typeof BASE_KEYS {
   const suffix = `__${targetId}`;
   return {
     INITIALIZED: `${BASE_KEYS.INITIALIZED}${suffix}`,
-    SESSION: BASE_KEYS.SESSION, // Session user stays unified or scoped on login
+    SESSION: BASE_KEYS.SESSION,
     BAKERIES: `${BASE_KEYS.BAKERIES}${suffix}`,
     DEBTS: `${BASE_KEYS.DEBTS}${suffix}`,
     VILLAGES: `${BASE_KEYS.VILLAGES}${suffix}`,
@@ -157,11 +159,70 @@ export function getScopedKeysForBranch(branchId?: string): typeof BASE_KEYS {
     INBOX_MESSAGES: `${BASE_KEYS.INBOX_MESSAGES}${suffix}`,
     COLUMNS: `${BASE_KEYS.COLUMNS}${suffix}`,
     CONFIG: `${BASE_KEYS.CONFIG}${suffix}`,
-    USERS: `${BASE_KEYS.USERS}${suffix}`,
+    USERS: BASE_KEYS.USERS, // Unified users, passwords & permissions across ALL branches
     AUTOSAVE_BACKUP: `${BASE_KEYS.AUTOSAVE_BACKUP}${suffix}`,
     AUTOSAVE_TIMESTAMP: `${BASE_KEYS.AUTOSAVE_TIMESTAMP}${suffix}`,
     MERGE_CONFLICTS: `${BASE_KEYS.MERGE_CONFLICTS}${suffix}`,
   };
+}
+
+export function mergeUsersList(
+  baseUsers: AppUser[] | null | undefined,
+  incomingUsers: AppUser[] | null | undefined
+): AppUser[] {
+  const defaultPassByUsername = new Map<string, string>();
+  INITIAL_USERS.forEach((u) => {
+    defaultPassByUsername.set(u.username.toLowerCase(), u.password);
+  });
+
+  const userMap = new Map<string, AppUser>();
+  (baseUsers || INITIAL_USERS).forEach((u) => {
+    if (u && u.username) {
+      userMap.set(u.id || u.username.toLowerCase(), { ...u });
+    }
+  });
+
+  (incomingUsers || []).forEach((inc) => {
+    if (!inc || !inc.username) return;
+    let matchedKey: string | null = userMap.has(inc.id) ? inc.id : null;
+    if (!matchedKey) {
+      for (const [k, ex] of userMap.entries()) {
+        if (ex.username.toLowerCase() === inc.username.toLowerCase()) {
+          matchedKey = k;
+          break;
+        }
+      }
+    }
+
+    if (matchedKey) {
+      const existing = userMap.get(matchedKey)!;
+      const defaultPass = defaultPassByUsername.get(existing.username.toLowerCase());
+      const incHasCustomPass = inc.password && inc.password !== defaultPass;
+      const exHasCustomPass = existing.password && existing.password !== defaultPass;
+
+      const resolvedPassword = incHasCustomPass
+        ? inc.password
+        : exHasCustomPass
+        ? existing.password
+        : inc.password || existing.password;
+
+      userMap.set(matchedKey, {
+        ...existing,
+        ...inc,
+        id: existing.id,
+        password: resolvedPassword,
+        customPermissions:
+          Array.isArray(inc.customPermissions) && inc.customPermissions.length > 0
+            ? inc.customPermissions
+            : existing.customPermissions,
+      });
+    } else {
+      userMap.set(inc.id || inc.username.toLowerCase(), { ...inc });
+    }
+  });
+
+  const result = Array.from(userMap.values());
+  return result.length > 0 ? result : INITIAL_USERS;
 }
 
 export function getBranchesList(): SupplyBranch[] {
@@ -254,7 +315,6 @@ export function addSupplyBranch(
       localStorage.setItem(scopedKeys.DAILY_TASKS, JSON.stringify([]));
       localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify([]));
       localStorage.setItem(scopedKeys.CONFIG, JSON.stringify(initialConfig));
-      localStorage.setItem(scopedKeys.USERS, JSON.stringify(INITIAL_USERS));
     }
   } catch {}
 
@@ -289,13 +349,13 @@ export function deleteSupplyBranch(branchId: string): {
   const remaining = branches.filter((b) => b.id !== branchId);
   saveBranchesList(remaining);
 
-  // Clean up isolated storage for deleted branch (if not default legacy keyset)
+  // Clean up isolated storage for deleted branch (never delete unified session or users)
   if (branchId !== DEFAULT_BRANCH_ID) {
     const scopedKeys = getScopedKeysForBranch(branchId);
     try {
       if (typeof localStorage !== 'undefined') {
         Object.values(scopedKeys).forEach((k) => {
-          if (k !== BASE_KEYS.SESSION) {
+          if (k !== BASE_KEYS.SESSION && k !== BASE_KEYS.USERS) {
             localStorage.removeItem(k);
           }
         });
@@ -568,16 +628,7 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
     localUnits: Array.from(units),
   }));
 
-  const userMap = new Map<string, AppUser>();
-  base.users.forEach((u) => userMap.set(u.id, u));
-  (incoming.users || []).forEach((u) => {
-    const existingByUsername = Array.from(userMap.values()).find(
-      (ex) => ex.username.toLowerCase() === u.username.toLowerCase()
-    );
-    if (!existingByUsername && !userMap.has(u.id)) {
-      userMap.set(u.id, u);
-    }
-  });
+  const mergedUsers = mergeUsersList(base.users, incoming.users);
 
   const taskMap = new Map<string, DailyBakeryTask>();
   (base.dailyTasks || INITIAL_DAILY_TASKS).forEach((t) => taskMap.set(t.id, t));
@@ -596,7 +647,7 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
     bakeries: synced.bakeries,
     debts: synced.debts,
     villages: mergedVillages.length > 0 ? mergedVillages : base.villages,
-    users: Array.from(userMap.values()),
+    users: mergedUsers,
     issuingEntities: Array.from(new Set([...base.issuingEntities, ...(incoming.issuingEntities || [])])),
     violationTypes: Array.from(new Set([...base.violationTypes, ...(incoming.violationTypes || [])])),
     activityStatuses: Array.from(new Set([...base.activityStatuses, ...(incoming.activityStatuses || [])])),
@@ -772,7 +823,88 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       return null;
     };
 
-    // For non-default branches (e.g., سمنود or any newly added branch), return strictly isolated state
+    // Read global role permissions & labels shared across all branches
+    let globalRoleConfig: { rolePermissions?: SystemConfig['rolePermissions']; roleLabels?: SystemConfig['roleLabels'] } = {};
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const rawGlobalRole = localStorage.getItem(BRANCH_META_KEYS.GLOBAL_ROLE_CONFIG);
+        if (rawGlobalRole) {
+          globalRoleConfig = JSON.parse(rawGlobalRole) || {};
+        }
+      }
+    } catch {}
+
+    // 2. Fetch latest database from Cloud / Supabase to sync unified users/passwords/permissions, branches list, and branch data across devices
+    let cloudHasData = false;
+    let supaRes: Awaited<ReturnType<typeof fetchDatabaseFromSupabase>> | null = null;
+    try {
+      supaRes = await fetchDatabaseFromSupabase();
+      if (supaRes && supaRes.success && supaRes.data) {
+        // Sync unified users (passwords, roles, permissions) from cloud across all devices & branches
+        if (Array.isArray(supaRes.data.users) && supaRes.data.users.length > 0) {
+          users = mergeUsersList(users, supaRes.data.users);
+          try {
+            localStorage.setItem(BASE_KEYS.USERS, JSON.stringify(users));
+          } catch {}
+        }
+        // Sync global rolePermissions & roleLabels across devices
+        if (supaRes.data.systemConfig?.rolePermissions || supaRes.data.systemConfig?.roleLabels) {
+          globalRoleConfig = {
+            rolePermissions: supaRes.data.systemConfig.rolePermissions || globalRoleConfig.rolePermissions,
+            roleLabels: supaRes.data.systemConfig.roleLabels || globalRoleConfig.roleLabels,
+          };
+          try {
+            localStorage.setItem(BRANCH_META_KEYS.GLOBAL_ROLE_CONFIG, JSON.stringify(globalRoleConfig));
+          } catch {}
+        }
+        // Sync branches list across devices
+        if (Array.isArray(supaRes.data.branches) && supaRes.data.branches.length > 0) {
+          const branchMap = new Map<string, SupplyBranch>();
+          branchesList.forEach((b) => branchMap.set(b.id, b));
+          supaRes.data.branches.forEach((b) => {
+            if (b && b.id && b.name) branchMap.set(b.id, b);
+          });
+          const mergedBranches = Array.from(branchMap.values());
+          saveBranchesList(mergedBranches);
+        }
+        // Sync isolated non-default branch partitions across devices if present
+        const remotePartitions = (supaRes.data as unknown as { branchPartitions?: Record<string, Partial<AppState>> }).branchPartitions;
+        if (remotePartitions && typeof remotePartitions === 'object') {
+          Object.entries(remotePartitions).forEach(([bId, part]) => {
+            if (!bId || bId === DEFAULT_BRANCH_ID || !part) return;
+            const bKeys = getScopedKeysForBranch(bId);
+            try {
+              const existingBakeRaw = localStorage.getItem(bKeys.BAKERIES);
+              const existingBake = existingBakeRaw ? JSON.parse(existingBakeRaw) : [];
+              if ((!existingBake || existingBake.length === 0) && Array.isArray(part.bakeries) && part.bakeries.length > 0) {
+                localStorage.setItem(bKeys.BAKERIES, JSON.stringify(part.bakeries));
+                if (bId === activeBranchId) bakeries = part.bakeries;
+              }
+              const existingDebtsRaw = localStorage.getItem(bKeys.DEBTS);
+              const existingDebts = existingDebtsRaw ? JSON.parse(existingDebtsRaw) : [];
+              if ((!existingDebts || existingDebts.length === 0) && Array.isArray(part.debts) && part.debts.length > 0) {
+                localStorage.setItem(bKeys.DEBTS, JSON.stringify(part.debts));
+                if (bId === activeBranchId) debts = part.debts;
+              }
+              const existingVillagesRaw = localStorage.getItem(bKeys.VILLAGES);
+              const existingVillages = existingVillagesRaw ? JSON.parse(existingVillagesRaw) : [];
+              if ((!existingVillages || existingVillages.length === 0) && Array.isArray(part.villages) && part.villages.length > 0) {
+                localStorage.setItem(bKeys.VILLAGES, JSON.stringify(part.villages));
+                if (bId === activeBranchId) villages = part.villages;
+              }
+            } catch {}
+          });
+        }
+      }
+    } catch (supaErr) {
+      console.warn('Cloud boot load skipped or network offline:', supaErr);
+    }
+
+    const updatedBranchesList = getBranchesList();
+    const resolvedBranchObj =
+      updatedBranchesList.find((b) => b.id === activeBranchId) || activeBranchObj;
+
+    // For non-default branches (e.g., سمنود or any newly added branch), return strictly isolated state with unified users & permissions
     if (!isDefaultBranch) {
       const syncedIsolated = synchronizeBakeryAndDebts(
         (bakeries ?? []).map(normalizeBakeryPerCapita),
@@ -782,14 +914,16 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       const isolatedConfig: SystemConfig = {
         ...DEFAULT_SYSTEM_CONFIG,
         ...(systemConfig || {}),
-        governorateTitle: activeBranchObj.governorateTitle || 'محافظة الغربية',
-        directorateTitle: activeBranchObj.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-        administrationTitle: activeBranchObj.name,
+        ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
+        ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
+        governorateTitle: resolvedBranchObj.governorateTitle || 'محافظة الغربية',
+        directorateTitle: resolvedBranchObj.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+        administrationTitle: resolvedBranchObj.name,
         logoBase64: DEFAULT_OFFICIAL_LOGO,
       };
       const isolatedState: AppState = {
         activeBranchId,
-        branches: branchesList,
+        branches: updatedBranchesList,
         bakeries: syncedIsolated.bakeries,
         debts: syncedIsolated.debts,
         villages: villages ?? [],
@@ -820,78 +954,71 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     const localTimeMs =
       !isUntouchedDefault && localTimestamp ? Date.parse(localTimestamp) || 0 : 0;
 
-    // 2. Fetch latest database from Cloud / Supabase and compare with local state (ONLY for default branch)
-    let cloudHasData = false;
-    try {
-      const supaRes = await fetchDatabaseFromSupabase();
+    if (
+      supaRes &&
+      supaRes.success &&
+      supaRes.data &&
+      (Array.isArray(supaRes.data.bakeries) || Array.isArray(supaRes.data.debts))
+    ) {
+      cloudHasData = true;
+      const cloudTimeMs = supaRes.timestamp ? Date.parse(supaRes.timestamp) || Date.now() : Date.now();
+
+      // Adopt cloud state if local state is untouched default seed, empty, or older/equal to cloud
       if (
-        supaRes &&
-        supaRes.success &&
-        supaRes.data &&
-        (Array.isArray(supaRes.data.bakeries) || Array.isArray(supaRes.data.debts))
+        isUntouchedDefault ||
+        !bakeries ||
+        bakeries.length === 0 ||
+        cloudTimeMs >= localTimeMs
       ) {
-        cloudHasData = true;
-        const cloudTimeMs = supaRes.timestamp ? Date.parse(supaRes.timestamp) || Date.now() : Date.now();
+        const syncedCloud = synchronizeBakeryAndDebts(
+          (supaRes.data.bakeries || []).map(normalizeBakeryPerCapita),
+          supaRes.data.debts ?? []
+        );
+        const adoptedUsers = mergeUsersList(users, supaRes.data.users);
+        const adoptedState: AppState = {
+          activeBranchId,
+          branches: updatedBranchesList,
+          bakeries: syncedCloud.bakeries,
+          debts: syncedCloud.debts,
+          villages: supaRes.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
+          issuingEntities: supaRes.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
+          violationTypes: supaRes.data.violationTypes ?? DEFAULT_VIOLATION_TYPES,
+          activityStatuses: supaRes.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
+          bakeryCategories: supaRes.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
+          breadTypes: supaRes.data.breadTypes ?? DEFAULT_BREAD_TYPES,
+          breadTypeCounts: supaRes.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
+          lineTypes: supaRes.data.lineTypes ?? DEFAULT_LINE_TYPES,
+          fuelTypes: supaRes.data.fuelTypes ?? DEFAULT_FUEL_TYPES,
+          paymentMethods: supaRes.data.paymentMethods ?? PAYMENT_METHODS,
+          dailyTasks: supaRes.data.dailyTasks ?? INITIAL_DAILY_TASKS,
+          inboxMessages: supaRes.data.inboxMessages ?? INITIAL_INBOX_MESSAGES,
+          columnTitles: supaRes.data.columnTitles
+            ? { ...DEFAULT_COLUMN_TITLES, ...supaRes.data.columnTitles }
+            : DEFAULT_COLUMN_TITLES,
+          systemConfig: {
+            ...DEFAULT_SYSTEM_CONFIG,
+            ...(supaRes.data.systemConfig || {}),
+            ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
+            ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
+            administrationTitle: resolvedBranchObj.name,
+            logoBase64: DEFAULT_OFFICIAL_LOGO,
+          },
+          users: adoptedUsers,
+          currentUser: resolveCurrentUser(adoptedUsers),
+        };
 
-        // Adopt cloud state if local state is untouched default seed, empty, or older/equal to cloud
-        if (
-          isUntouchedDefault ||
-          !bakeries ||
-          bakeries.length === 0 ||
-          cloudTimeMs >= localTimeMs
-        ) {
-          const syncedCloud = synchronizeBakeryAndDebts(
-            (supaRes.data.bakeries || []).map(normalizeBakeryPerCapita),
-            supaRes.data.debts ?? []
-          );
-          const adoptedUsers = supaRes.data.users ?? INITIAL_USERS;
-          const adoptedState: AppState = {
-            activeBranchId,
-            branches: branchesList,
-            bakeries: syncedCloud.bakeries,
-            debts: syncedCloud.debts,
-            villages: supaRes.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
-            issuingEntities: supaRes.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
-            violationTypes: supaRes.data.violationTypes ?? DEFAULT_VIOLATION_TYPES,
-            activityStatuses: supaRes.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
-            bakeryCategories: supaRes.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
-            breadTypes: supaRes.data.breadTypes ?? DEFAULT_BREAD_TYPES,
-            breadTypeCounts: supaRes.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
-            lineTypes: supaRes.data.lineTypes ?? DEFAULT_LINE_TYPES,
-            fuelTypes: supaRes.data.fuelTypes ?? DEFAULT_FUEL_TYPES,
-            paymentMethods: supaRes.data.paymentMethods ?? PAYMENT_METHODS,
-            dailyTasks: supaRes.data.dailyTasks ?? INITIAL_DAILY_TASKS,
-            inboxMessages: supaRes.data.inboxMessages ?? INITIAL_INBOX_MESSAGES,
-            columnTitles: supaRes.data.columnTitles
-              ? { ...DEFAULT_COLUMN_TITLES, ...supaRes.data.columnTitles }
-              : DEFAULT_COLUMN_TITLES,
-            systemConfig: supaRes.data.systemConfig
-              ? {
-                  ...DEFAULT_SYSTEM_CONFIG,
-                  ...supaRes.data.systemConfig,
-                  administrationTitle: activeBranchObj.name,
-                  logoBase64: DEFAULT_OFFICIAL_LOGO,
-                }
-              : { ...DEFAULT_SYSTEM_CONFIG, administrationTitle: activeBranchObj.name, logoBase64: DEFAULT_OFFICIAL_LOGO },
-            users: adoptedUsers,
-            currentUser: resolveCurrentUser(adoptedUsers),
-          };
+        try {
+          localStorage.setItem(scopedKeys.INITIALIZED, 'true');
+        } catch {}
 
-          try {
-            localStorage.setItem(scopedKeys.INITIALIZED, 'true');
-          } catch {}
+        // Persist locally WITHOUT re-pushing to cloud
+        persistFullState(adoptedState, {
+          skipCloudSync: true,
+          customTimestamp: supaRes.timestamp,
+        }).catch(() => {});
 
-          // Persist locally WITHOUT re-pushing to cloud
-          persistFullState(adoptedState, {
-            skipCloudSync: true,
-            customTimestamp: supaRes.timestamp,
-          }).catch(() => {});
-
-          return adoptedState;
-        }
+        return adoptedState;
       }
-    } catch (supaErr) {
-      console.warn('Cloud boot load skipped or network offline:', supaErr);
     }
 
     // 3. If standalone preloaded file is opened, adopt only if local state is empty
@@ -932,8 +1059,12 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       dailyTasks = INITIAL_DAILY_TASKS;
       inboxMessages = INITIAL_INBOX_MESSAGES;
       columnTitles = DEFAULT_COLUMN_TITLES;
-      systemConfig = DEFAULT_SYSTEM_CONFIG;
-      users = INITIAL_USERS;
+      systemConfig = {
+        ...DEFAULT_SYSTEM_CONFIG,
+        ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
+        ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
+      };
+      users = users && users.length > 0 ? users : INITIAL_USERS;
 
       try {
         localStorage.setItem(scopedKeys.INITIALIZED, 'true');
@@ -961,11 +1092,20 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     inboxMessages = inboxMessages ?? INITIAL_INBOX_MESSAGES;
     columnTitles = columnTitles ?? DEFAULT_COLUMN_TITLES;
     systemConfig = systemConfig
-      ? { ...DEFAULT_SYSTEM_CONFIG, ...systemConfig }
-      : { ...DEFAULT_SYSTEM_CONFIG };
+      ? {
+          ...DEFAULT_SYSTEM_CONFIG,
+          ...systemConfig,
+          ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
+          ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
+        }
+      : {
+          ...DEFAULT_SYSTEM_CONFIG,
+          ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
+          ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
+        };
     systemConfig.administrationTitle = activeBranchObj.name;
     systemConfig.logoBase64 = DEFAULT_OFFICIAL_LOGO;
-    users = users ?? INITIAL_USERS;
+    users = users && users.length > 0 ? users : INITIAL_USERS;
 
     if (columnTitles) {
       columnTitles = {
@@ -1166,13 +1306,22 @@ export async function persistFullState(
 
   const snapshotTimestamp = options?.customTimestamp || new Date().toISOString();
 
-  // LocalStorage (strictly scoped to targetBranchId)
+  // LocalStorage (strictly scoped to targetBranchId, with unified users & role permissions)
   try {
     localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
     if (!options?.skipCloudSync) {
       localStorage.setItem(
         isDefaultBranch ? 'TAMWEEN_EXPLICIT_USER_SAVE' : `TAMWEEN_EXPLICIT_USER_SAVE__${targetBranchId}`,
         'true'
+      );
+    }
+    if (lockedConfig.rolePermissions || lockedConfig.roleLabels) {
+      localStorage.setItem(
+        BRANCH_META_KEYS.GLOBAL_ROLE_CONFIG,
+        JSON.stringify({
+          rolePermissions: lockedConfig.rolePermissions,
+          roleLabels: lockedConfig.roleLabels,
+        })
       );
     }
     localStorage.setItem(scopedKeys.AUTOSAVE_TIMESTAMP, snapshotTimestamp);
@@ -1192,7 +1341,7 @@ export async function persistFullState(
     localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify(inboxMessages));
     localStorage.setItem(scopedKeys.COLUMNS, JSON.stringify(columnTitles));
     localStorage.setItem(scopedKeys.CONFIG, JSON.stringify(lockedConfig));
-    localStorage.setItem(scopedKeys.USERS, JSON.stringify(users));
+    localStorage.setItem(BASE_KEYS.USERS, JSON.stringify(users));
   } catch (err) {
     console.warn('LocalStorage quota limit reached, relying primarily on IndexedDB', err);
   }
@@ -1203,6 +1352,7 @@ export async function persistFullState(
     gmailEmail: lockedConfig.gmailEmail ?? localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ?? '',
     state: {
       activeBranchId: targetBranchId,
+      branches: branchesList,
       bakeries: normalizedBakeries,
       debts: normalizedDebts,
       villages,
@@ -1223,7 +1373,7 @@ export async function persistFullState(
     },
   };
 
-  // Single-transaction IndexedDB batch write (zero UI lag, scoped to branch)
+  // Single-transaction IndexedDB batch write (zero UI lag, scoped to branch, unified users)
   await idbSetBatch([
     [scopedKeys.BAKERIES, normalizedBakeries],
     [scopedKeys.DEBTS, normalizedDebts],
@@ -1241,7 +1391,7 @@ export async function persistFullState(
     [scopedKeys.INBOX_MESSAGES, inboxMessages],
     [scopedKeys.COLUMNS, columnTitles],
     [scopedKeys.CONFIG, lockedConfig],
-    [scopedKeys.USERS, users],
+    [BASE_KEYS.USERS, users],
     [scopedKeys.AUTOSAVE_BACKUP, backupSnapshot],
   ]);
 
@@ -1251,45 +1401,97 @@ export async function persistFullState(
       const serializedSnapshot = JSON.stringify(backupSnapshot);
       localStorage.setItem(scopedKeys.AUTOSAVE_BACKUP, serializedSnapshot);
 
-      if (isDefaultBranch) {
-        const driveAutoSync =
-          lockedConfig.googleDriveAutoSync !== false &&
-          localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
-        if (driveAutoSync) {
-          const gmailKey = (
-            lockedConfig.gmailEmail ||
-            localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
-            'ELHOSINY2020@gmail.com'
-          )
-            .trim()
-            .toLowerCase();
-          const drivePayloadStr = JSON.stringify({
-            version: '3.0-google-drive-autosync',
-            timestamp: backupSnapshot.timestamp,
-            gmailEmail: gmailKey,
-            destinationType: 'GOOGLE_DRIVE',
-            targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
-            bakeriesCount: normalizedBakeries.length,
-            debtsCount: normalizedDebts.length,
-            data: backupSnapshot.state,
-          });
-          localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
-          localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
+      if (!options?.skipCloudSync) {
+        // Collect isolated branch partitions for non-default branches so each branch stays 100% isolated across devices
+        const branchPartitions: Record<string, { bakeries: Bakery[]; debts: DebtRecord[]; villages: VillageHierarchy[] }> = {};
+        branchesList.forEach((b) => {
+          if (b.id !== DEFAULT_BRANCH_ID) {
+            if (b.id === targetBranchId) {
+              branchPartitions[b.id] = {
+                bakeries: normalizedBakeries,
+                debts: normalizedDebts,
+                villages,
+              };
+            } else {
+              try {
+                const bKeys = getScopedKeysForBranch(b.id);
+                const rawB = localStorage.getItem(bKeys.BAKERIES);
+                const rawD = localStorage.getItem(bKeys.DEBTS);
+                const rawV = localStorage.getItem(bKeys.VILLAGES);
+                branchPartitions[b.id] = {
+                  bakeries: rawB ? JSON.parse(rawB) : [],
+                  debts: rawD ? JSON.parse(rawD) : [],
+                  villages: rawV ? JSON.parse(rawV) : [],
+                };
+              } catch {}
+            }
+          }
+        });
+
+        let defaultBranchBakeries = normalizedBakeries;
+        let defaultBranchDebts = normalizedDebts;
+        let defaultBranchVillages = villages;
+        if (!isDefaultBranch) {
+          try {
+            const rawDefB = localStorage.getItem(BASE_KEYS.BAKERIES);
+            const rawDefD = localStorage.getItem(BASE_KEYS.DEBTS);
+            const rawDefV = localStorage.getItem(BASE_KEYS.VILLAGES);
+            defaultBranchBakeries = rawDefB ? JSON.parse(rawDefB) : INITIAL_BAKERIES;
+            defaultBranchDebts = rawDefD ? JSON.parse(rawDefD) : INITIAL_DEBTS;
+            defaultBranchVillages = rawDefV ? JSON.parse(rawDefV) : DEFAULT_VILLAGES_HIERARCHY;
+          } catch {}
         }
 
-        if (!options?.skipCloudSync) {
-          autoSyncToSupabase(
-            backupSnapshot.state as AppState,
-            true,
-            backupSnapshot.timestamp
-          ).catch(() => {});
-          if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-            try {
-              const bc = new BroadcastChannel('tamween_cross_device_sync');
-              bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp, branchId: targetBranchId });
-              bc.close();
-            } catch {}
+        const cloudStatePayload = {
+          ...backupSnapshot.state,
+          activeBranchId: DEFAULT_BRANCH_ID,
+          branches: branchesList,
+          bakeries: defaultBranchBakeries,
+          debts: defaultBranchDebts,
+          villages: defaultBranchVillages,
+          users,
+          branchPartitions,
+        };
+
+        if (isDefaultBranch) {
+          const driveAutoSync =
+            lockedConfig.googleDriveAutoSync !== false &&
+            localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
+          if (driveAutoSync) {
+            const gmailKey = (
+              lockedConfig.gmailEmail ||
+              localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
+              'ELHOSINY2020@gmail.com'
+            )
+              .trim()
+              .toLowerCase();
+            const drivePayloadStr = JSON.stringify({
+              version: '3.0-google-drive-autosync',
+              timestamp: backupSnapshot.timestamp,
+              gmailEmail: gmailKey,
+              destinationType: 'GOOGLE_DRIVE',
+              targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
+              bakeriesCount: defaultBranchBakeries.length,
+              debtsCount: defaultBranchDebts.length,
+              data: cloudStatePayload,
+            });
+            localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
+            localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
           }
+        }
+
+        autoSyncToSupabase(
+          cloudStatePayload as unknown as AppState,
+          true,
+          backupSnapshot.timestamp
+        ).catch(() => {});
+
+        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+          try {
+            const bc = new BroadcastChannel('tamween_cross_device_sync');
+            bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp, branchId: targetBranchId });
+            bc.close();
+          } catch {}
         }
       }
     } catch {
