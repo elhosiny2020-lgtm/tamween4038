@@ -592,7 +592,19 @@ export default function App() {
       } catch {}
     }
 
+    // 4. Background heartbeat auto-sync interval (every 10s) to guarantee automatic background sync on all devices
+    const autoPollInterval = setInterval(() => {
+      fetchDatabaseFromSupabase()
+        .then((res) => {
+          if (res && res.success && res.data) {
+            applyIncomingCloudState(res.data, res.timestamp);
+          }
+        })
+        .catch(() => {});
+    }, 10000);
+
     return () => {
+      clearInterval(autoPollInterval);
       unsubscribeSupabase();
       if (bc) {
         try {
