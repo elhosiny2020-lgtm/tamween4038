@@ -906,15 +906,29 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     setIsExportingPdf(true);
     setPdfStageMessage('بدء تجهيز ملف PDF...');
     try {
-      await exportElementToPdf(reportPrintRef.current, {
+      const success = await exportElementToPdf(reportPrintRef.current, {
         title: currentReportDef.title,
         paperSize,
         orientation,
         margins,
         onProgress: (msg) => setPdfStageMessage(msg),
       });
+      if (!success) {
+        printHtmlElementA4(reportPrintRef.current, currentReportDef.title, 'report-font-standard', {
+          paperSize,
+          orientation,
+          margins,
+        });
+      }
       setPresetToast(`تم تصدير وتنزيل ملف PDF (${currentReportDef.title}) بنجاح`);
       setTimeout(() => setPresetToast(''), 4000);
+    } catch (err) {
+      console.warn('PDF export fallback triggered:', err);
+      printHtmlElementA4(reportPrintRef.current, currentReportDef.title, 'report-font-standard', {
+        paperSize,
+        orientation,
+        margins,
+      });
     } finally {
       setIsExportingPdf(false);
       setPdfStageMessage('');

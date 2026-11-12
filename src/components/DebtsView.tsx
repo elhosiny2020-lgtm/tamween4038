@@ -494,8 +494,19 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     if (isExportingPdf || !debtsPrintRef.current) return;
     setIsExportingPdf(true);
     try {
-      await exportElementToPdf(debtsPrintRef.current, {
+      const success = await exportElementToPdf(debtsPrintRef.current, {
         title: 'تقرير_سجل_مديونيات_المخابز',
+        paperSize: 'a4',
+        orientation: 'landscape',
+      });
+      if (!success) {
+        printHtmlElementA4(debtsPrintRef.current, 'تقرير_سجل_مديونيات_المخابز', 'report-font-standard', {
+          paperSize: 'a4',
+          orientation: 'landscape',
+        });
+      }
+    } catch {
+      printHtmlElementA4(debtsPrintRef.current, 'تقرير_سجل_مديونيات_المخابز', 'report-font-standard', {
         paperSize: 'a4',
         orientation: 'landscape',
       });
