@@ -1491,6 +1491,17 @@ export default function App() {
           );
           setIsDailyBriefingModalOpen(true);
         }}
+        onRegisterUser={(newUser) => {
+          const baseWithUser: AppState = {
+            ...appState,
+            users: [...appState.users, newUser],
+          };
+          const mergedState = performGmailDriveAdditiveMerge(baseWithUser, newUser);
+          triggerSave(
+            { ...mergedState, currentUser: null },
+            'تم تسجيل وحفظ المستخدم الجديد بنجاح'
+          );
+        }}
       />
     );
   }

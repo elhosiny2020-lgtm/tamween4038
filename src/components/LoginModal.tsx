@@ -3,7 +3,7 @@ import { AppUser, SystemConfig, SupplyBranch } from '../types';
 import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { ParticleCanvas } from './ParticleCanvas';
 import { CartoonBakeryScene } from './CartoonBakeryScene';
-import { Lock, User, ShieldCheck, LogIn, AlertCircle, Building2, KeyRound, Download, ChevronDown } from 'lucide-react';
+import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Building2, KeyRound, Download, ChevronDown } from 'lucide-react';
 import { downloadWindowsExeLauncher } from '../utils/htmlExporter';
 
 interface LoginModalProps {
@@ -14,7 +14,7 @@ interface LoginModalProps {
   onSelectBranch?: (branchId: string) => void;
   onOpenBranchesManager?: () => void;
   onLoginSuccess: (user: AppUser) => void;
-  onRegisterUser?: (newUser: AppUser) => void;
+  onRegisterUser: (newUser: AppUser) => void;
   logoutReason?: string | null;
 }
 
@@ -25,10 +25,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   activeBranchId = 'branch-mahalla',
   onSelectBranch,
   onLoginSuccess,
+  onRegisterUser,
   logoutReason,
 }) => {
+  const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [role, setRole] = useState<'admin' | 'inspector' | 'auditor'>('inspector');
   const [userFieldUnlocked, setUserFieldUnlocked] = useState(false);
   const [passFieldUnlocked, setPassFieldUnlocked] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -56,7 +60,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
     const trimmedUser = username.trim();
     if (!trimmedUser || !password) {
-      setErrorMsg('يرجى كتابة اسم المستخدم وكلمة المرور يدوياً للدخول');
+      setErrorMsg('يرجى إدخال اسم المستخدم وكلمة المرور');
       return;
     }
 
@@ -68,7 +72,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     );
 
     if (found) {
-      setSuccessMsg(`تم التحقق بنجاح، جاري الدخول إلى (${activeBranchTitle})...`);
+      setSuccessMsg(`تم تسجيل الدخول بنجاح، جاري فتح واجهة (${activeBranchTitle})...`);
       const authenticatedUser = { ...found };
       setUsername('');
       setPassword('');
@@ -76,8 +80,51 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         onLoginSuccess(authenticatedUser);
       }, 150);
     } else {
-      setErrorMsg('بيانات الدخول غير صحيحة، يرجى التحقق من اسم المستخدم والرقم السري');
+      setErrorMsg('بيانات الدخول غير صحيحة، يرجى التحقق من اسم المستخدم وكلمة المرور');
     }
+  };
+
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    const trimmedUser = username.trim();
+    const trimmedName = fullName.trim();
+
+    if (!trimmedUser || !password || !trimmedName) {
+      setErrorMsg('يرجى استيفاء كافة الحقول المطلوبة للتسجيل');
+      return;
+    }
+
+    if (trimmedUser.length < 3) {
+      setErrorMsg('اسم المستخدم يجب ألا يقل عن 3 أحرف');
+      return;
+    }
+
+    if (users.some((u) => u.username.toLowerCase() === trimmedUser.toLowerCase())) {
+      setErrorMsg('اسم المستخدم مسجل مسبقاً، يرجى اختيار اسم آخر');
+      return;
+    }
+
+    const newUser: AppUser = {
+      id: `u-${Date.now()}`,
+      username: trimmedUser,
+      fullName: trimmedName,
+      password,
+      role,
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+
+    onRegisterUser(newUser);
+    setSuccessMsg('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول مباشرة.');
+    setTimeout(() => {
+      setIsRegistering(false);
+      setUsername('');
+      setPassword('');
+      setFullName('');
+      setSuccessMsg('');
+    }, 500);
   };
 
   return (
@@ -96,7 +143,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           <CartoonBakeryScene />
         </div>
 
-        {/* Login Card */}
+        {/* Login & Register Card */}
         <div className="w-full lg:w-1/2 max-w-md bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border-2 border-amber-500/30 overflow-hidden transform transition-all duration-300">
           {/* Top Header with Emblem */}
           <div className="bg-gradient-to-b from-slate-950 via-slate-900 to-amber-950 p-5 text-center text-white relative border-b border-amber-500/40">
@@ -161,12 +208,45 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </p>
           </div>
 
-          {/* Header Bar */}
-          <div className="flex border-b border-slate-200 bg-slate-100/90 p-1.5">
-            <div className="w-full py-2 rounded-xl text-xs font-black flex items-center justify-center gap-2 bg-amber-400 text-black shadow-sm border border-amber-300">
+          {/* Tab Selector (تسجيل الدخول / حساب جديد) */}
+          <div className="flex border-b border-slate-200 bg-slate-100/90 p-1.5 gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegistering(false);
+                setUsername('');
+                setPassword('');
+                setErrorMsg('');
+                setSuccessMsg('');
+              }}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                !isRegistering
+                  ? 'bg-amber-400 text-black font-black shadow-md border border-amber-300'
+                  : 'text-black hover:text-black hover:bg-slate-200/80'
+              }`}
+            >
               <LogIn className="w-4 h-4 text-black" />
-              <span className="text-black font-black">بوابة تسجيل الدخول المؤمنة</span>
-            </div>
+              <span className="text-black font-black">تسجيل الدخول</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegistering(true);
+                setUsername('');
+                setPassword('');
+                setFullName('');
+                setErrorMsg('');
+                setSuccessMsg('');
+              }}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                isRegistering
+                  ? 'bg-amber-600 text-white shadow-md'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <UserPlus className="w-4 h-4" />
+              حساب جديد
+            </button>
           </div>
 
           {/* Form Body */}
@@ -192,98 +272,176 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleLogin} className="space-y-4" autoComplete="off" noValidate>
-              {/* Decoy inputs to prevent browser password managers from prefilling credentials */}
-              <input type="text" name="decoy_username_prevent_autofill" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
-              <input type="password" name="decoy_password_prevent_autofill" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
+            {!isRegistering ? (
+              <form onSubmit={handleLogin} className="space-y-4" autoComplete="off" noValidate>
+                {/* Fake inputs to prevent browser autofill heuristics */}
+                <input type="text" name="prevent_autofill_user" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
+                <input type="password" name="prevent_autofill_pass" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
 
-              <div>
-                <label htmlFor="manual_auth_user_input" className="block text-xs font-black text-slate-700 mb-1.5">
-                  اسم المستخدم
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
-                    <User className="w-4 h-4" />
+                <div>
+                  <label htmlFor="manual_auth_user_input" className="block text-xs font-black text-slate-700 mb-1.5">
+                    اسم المستخدم أو كود المفتش
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="text"
+                      name="manual_auth_user_input"
+                      id="manual_auth_user_input"
+                      required
+                      readOnly={!userFieldUnlocked}
+                      onFocus={() => setUserFieldUnlocked(true)}
+                      onMouseDown={() => setUserFieldUnlocked(true)}
+                      onTouchStart={() => setUserFieldUnlocked(true)}
+                      onKeyDown={() => setUserFieldUnlocked(true)}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck="false"
+                      data-lpignore="true"
+                      data-form-type="other"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="أدخل اسم المستخدم يدوياً"
+                      className="w-full pr-10 pl-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-right shadow-inner"
+                    />
                   </div>
+                </div>
+
+                <div>
+                  <label htmlFor="manual_auth_pass_input" className="block text-xs font-black text-slate-700 mb-1.5">
+                    كلمة المرور
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="password"
+                      name="manual_auth_pass_input"
+                      id="manual_auth_pass_input"
+                      required
+                      readOnly={!passFieldUnlocked}
+                      onFocus={() => setPassFieldUnlocked(true)}
+                      onMouseDown={() => setPassFieldUnlocked(true)}
+                      onTouchStart={() => setPassFieldUnlocked(true)}
+                      onKeyDown={() => setPassFieldUnlocked(true)}
+                      autoComplete="new-password"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck="false"
+                      data-lpignore="true"
+                      data-form-type="other"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="أدخل كلمة المرور"
+                      className="w-full pr-10 pl-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-right shadow-inner"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-500 text-black rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-amber-300"
+                >
+                  <KeyRound className="w-4 h-4 text-black stroke-[2.5]" />
+                  <span className="text-black font-black text-sm">تسجيل الدخول والبدء في العمل</span>
+                </button>
+
+                {/* Direct Download EXE Application Button (تحميل المنظومة بالكامل على ملف EXE للويندوز) */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await downloadWindowsExeLauncher();
+                    }}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 via-rose-700 to-red-600 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-red-400/80 group"
+                    title="انقر لتحميل ملف تشغيل الويندوز المباشر (EXE) للعمل على الكمبيوتر بدون إنترنت"
+                  >
+                    <Download className="w-4 h-4 text-amber-300 stroke-[2.5] transition-transform duration-300 group-hover:translate-y-0.5" />
+                    <span className="text-white font-black text-xs">تحميل المنظومة بالكامل على ملف (EXE)</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleRegister} className="space-y-3" autoComplete="off" noValidate>
+                <input type="text" name="prevent_autofill_reg_user" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
+                <input type="password" name="prevent_autofill_reg_pass" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1">
+                    الاسم الكامل والصفة الوظيفية
+                  </label>
                   <input
                     type="text"
-                    name="manual_auth_user_input"
-                    id="manual_auth_user_input"
+                    name="reg_fullname"
                     required
-                    readOnly={!userFieldUnlocked}
-                    onFocus={() => setUserFieldUnlocked(true)}
-                    onMouseDown={() => setUserFieldUnlocked(true)}
-                    onTouchStart={() => setUserFieldUnlocked(true)}
-                    onKeyDown={() => setUserFieldUnlocked(true)}
                     autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck="false"
-                    data-lpignore="true"
-                    data-form-type="other"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="مثال: أحمد عبد الله - رئيس مكتب تموين"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white text-right"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1">
+                    اسم المستخدم للدخول
+                  </label>
+                  <input
+                    type="text"
+                    name="reg_username"
+                    required
+                    autoComplete="off"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="اكتب اسم المستخدم يدوياً..."
-                    className="w-full pr-10 pl-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-right shadow-inner"
+                    placeholder="اسم المستخدم بالإنجليزية أو العربية"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white text-right"
                   />
                 </div>
-              </div>
 
-              <div>
-                <label htmlFor="manual_auth_pass_input" className="block text-xs font-black text-slate-700 mb-1.5">
-                  الرقم السري / كلمة المرور
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
-                    <Lock className="w-4 h-4" />
-                  </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1">
+                    كلمة المرور
+                  </label>
                   <input
                     type="password"
-                    name="manual_auth_pass_input"
-                    id="manual_auth_pass_input"
+                    name="reg_credential_new"
                     required
-                    readOnly={!passFieldUnlocked}
-                    onFocus={() => setPassFieldUnlocked(true)}
-                    onMouseDown={() => setPassFieldUnlocked(true)}
-                    onTouchStart={() => setPassFieldUnlocked(true)}
-                    onKeyDown={() => setPassFieldUnlocked(true)}
                     autoComplete="new-password"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck="false"
-                    data-lpignore="true"
-                    data-form-type="other"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="اكتب الرقم السري..."
-                    className="w-full pr-10 pl-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-right shadow-inner"
+                    placeholder="كلمة المرور"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white text-right"
                   />
                 </div>
-              </div>
 
-              <button
-                type="submit"
-                className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-500 text-black rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-amber-300"
-              >
-                <KeyRound className="w-4 h-4 text-black stroke-[2.5]" />
-                <span className="text-black font-black text-sm">تسجيل الدخول والبدء في العمل</span>
-              </button>
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1">
+                    المستوى الوظيفي / الصلاحية
+                  </label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as 'admin' | 'inspector' | 'auditor')}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="inspector">مفتش تموين / رقابة ميدانية</option>
+                    <option value="auditor">مراجع حسابات تموينية ومديونيات</option>
+                    <option value="admin">مدير إدارة / صلاحية إدارية كاملة</option>
+                  </select>
+                </div>
 
-              {/* Direct Download EXE Application Button (تحميل المنظومة بالكامل على ملف EXE للويندوز) */}
-              <div className="pt-2">
                 <button
-                  type="button"
-                  onClick={async () => {
-                    await downloadWindowsExeLauncher();
-                  }}
-                  className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 via-rose-700 to-red-600 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-red-400/80 group"
-                  title="انقر لتحميل ملف تشغيل الويندوز المباشر (EXE) للعمل على الكمبيوتر بدون إنترنت"
+                  type="submit"
+                  className="w-full mt-2 py-2.5 px-4 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
                 >
-                  <Download className="w-4 h-4 text-amber-300 stroke-[2.5] transition-transform duration-300 group-hover:translate-y-0.5" />
-                  <span className="text-white font-black text-xs">تحميل المنظومة بالكامل على ملف (EXE)</span>
+                  <UserPlus className="w-4 h-4 text-amber-200" />
+                  تأكيد تسجيل الحساب الجديد
                 </button>
-              </div>
-            </form>
+              </form>
+            )}
 
             {/* Attribution Watermark */}
             <div className="mt-5 pt-3.5 border-t border-slate-200 text-center">
