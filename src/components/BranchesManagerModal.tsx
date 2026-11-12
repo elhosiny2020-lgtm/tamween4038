@@ -17,6 +17,7 @@ import {
   addSupplyBranch,
   deleteSupplyBranch,
   getBranchSummaryStats,
+  sanitizeAndDeduplicateBranches,
 } from '../storage';
 
 interface BranchesManagerModalProps {
@@ -65,13 +66,14 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
       setStatusBanner({ type: 'error', text: 'يرجى إدخال اسم الإدارة التموينية / الفرع الجديد.' });
       return;
     }
-    if (branches.some((b) => b.name.trim() === trimmed)) {
+    const norm = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    if (branches.some((b) => norm(b.name) === norm(trimmed))) {
       setStatusBanner({ type: 'error', text: 'هذه الإدارة التموينية مضافة بالفعل في قائمة الفروع.' });
       return;
     }
 
     const created = addSupplyBranch(trimmed, newDirectorate, newGovernorate, newDescription);
-    const updatedList = [...branches, created];
+    const updatedList = sanitizeAndDeduplicateBranches([...branches, created]);
     onBranchesChange(updatedList, activeBranchId);
     setNewBranchName('');
     setNewDescription('');

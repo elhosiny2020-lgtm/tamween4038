@@ -389,6 +389,7 @@ import {
   syncAllBranchesFromCloudPayload,
   getBranchesList,
   readBranchPartitionFromLocal,
+  sanitizeAndDeduplicateBranches,
 } from '../storage';
 
 test('getScopedKeysForBranch isolates all keys (bakeries, debts, users, config/permissions, tools) per supply branch', () => {
@@ -628,4 +629,61 @@ test('syncAllBranchesFromCloudPayload propagates newly added branches across dev
     }
   }
 });
+
+test('sanitizeAndDeduplicateBranches eliminates duplicate branches by ID and normalized name', () => {
+  const duplicateInput: SupplyBranch[] = [
+    {
+      id: 'branch-mahalla',
+      name: 'إدارة تموين مركز المحلة الكبرى',
+      governorateTitle: 'محافظة الغربية',
+      directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+      description: 'أساسي',
+      createdAt: '2025-01-01',
+      isDefault: true,
+    },
+    {
+      id: 'branch-mahalla',
+      name: 'إدارة تموين مركز المحلة الكبرى',
+      governorateTitle: 'محافظة الغربية',
+      directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+      description: 'تكرار نفس المعرف',
+      createdAt: '2025-01-01',
+      isDefault: true,
+    },
+    {
+      id: 'branch-samanoud',
+      name: 'إدارة تموين سمنود',
+      governorateTitle: 'محافظة الغربية',
+      directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+      description: 'سمنود',
+      createdAt: '2025-01-01',
+      isDefault: false,
+    },
+    {
+      id: 'branch-samanoud-dup',
+      name: ' إدارة تموين سمنود ',
+      governorateTitle: 'محافظة الغربية',
+      directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+      description: 'تكرار نفس الاسم مع مسافات',
+      createdAt: '2025-01-01',
+      isDefault: false,
+    },
+    {
+      id: 'branch-zefta',
+      name: 'إدارة تموين زفتى',
+      governorateTitle: 'محافظة الغربية',
+      directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+      description: 'زفتى',
+      createdAt: '2025-01-01',
+      isDefault: false,
+    },
+  ];
+
+  const cleaned = sanitizeAndDeduplicateBranches(duplicateInput);
+  assert.equal(cleaned.length, 3);
+  assert.equal(cleaned.filter((b) => b.name === 'إدارة تموين سمنود').length, 1);
+  assert.equal(cleaned.filter((b) => b.name === 'إدارة تموين مركز المحلة الكبرى').length, 1);
+  assert.equal(cleaned.filter((b) => b.name === 'إدارة تموين زفتى').length, 1);
+});
+
 

@@ -233,6 +233,53 @@ export function mergeUsersList(
   return result.length > 0 ? result : INITIAL_USERS;
 }
 
+export function sanitizeAndDeduplicateBranches(branches: SupplyBranch[]): SupplyBranch[] {
+  if (!Array.isArray(branches) || branches.length === 0) {
+    return DEFAULT_SUPPLY_BRANCHES;
+  }
+
+  const normName = (str: string) => (str || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+  const result: SupplyBranch[] = [];
+  const seenIds = new Set<string>();
+  const seenNormNames = new Set<string>();
+
+  // Ensure default supply branches are prioritized with their canonical IDs
+  DEFAULT_SUPPLY_BRANCHES.forEach((db) => {
+    const incDefault = branches.find((b) => b && b.id === db.id) || db;
+    const nameKey = normName(incDefault.name);
+    if (!seenIds.has(incDefault.id) && !seenNormNames.has(nameKey)) {
+      seenIds.add(incDefault.id);
+      seenNormNames.add(nameKey);
+      result.push({
+        ...incDefault,
+        name: incDefault.name.trim(),
+      });
+    }
+  });
+
+  // Add remaining branches if neither ID nor normalized Name is seen
+  branches.forEach((b) => {
+    if (!b || !b.id || !b.name) return;
+    const id = b.id.trim();
+    const nameKey = normName(b.name);
+
+    if (seenIds.has(id) || seenNormNames.has(nameKey)) {
+      return;
+    }
+
+    seenIds.add(id);
+    seenNormNames.add(nameKey);
+    result.push({
+      ...b,
+      id,
+      name: b.name.trim(),
+    });
+  });
+
+  return result.length > 0 ? result : DEFAULT_SUPPLY_BRANCHES;
+}
+
 export function getBranchesList(): SupplyBranch[] {
   try {
     if (typeof localStorage !== 'undefined') {
@@ -240,7 +287,11 @@ export function getBranchesList(): SupplyBranch[] {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          const sanitized = sanitizeAndDeduplicateBranches(parsed);
+          if (sanitized.length !== parsed.length) {
+            localStorage.setItem(BRANCH_META_KEYS.BRANCHES_LIST, JSON.stringify(sanitized));
+          }
+          return sanitized;
         }
       }
       localStorage.setItem(BRANCH_META_KEYS.BRANCHES_LIST, JSON.stringify(DEFAULT_SUPPLY_BRANCHES));
@@ -252,7 +303,8 @@ export function getBranchesList(): SupplyBranch[] {
 export function saveBranchesList(branches: SupplyBranch[]): void {
   try {
     if (typeof localStorage !== 'undefined' && Array.isArray(branches) && branches.length > 0) {
-      localStorage.setItem(BRANCH_META_KEYS.BRANCHES_LIST, JSON.stringify(branches));
+      const sanitized = sanitizeAndDeduplicateBranches(branches);
+      localStorage.setItem(BRANCH_META_KEYS.BRANCHES_LIST, JSON.stringify(sanitized));
     }
   } catch {}
 }
@@ -292,7 +344,13 @@ export function addSupplyBranch(
   description = ''
 ): SupplyBranch {
   const trimmedName = name.trim();
+  const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
   const branches = getBranchesList();
+  const existing = branches.find((b) => norm(b.name) === norm(trimmedName));
+  if (existing) {
+    return existing;
+  }
+
   const newBranch: SupplyBranch = {
     id: `branch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: trimmedName,
@@ -302,7 +360,7 @@ export function addSupplyBranch(
     createdAt: new Date().toISOString().slice(0, 10),
     isDefault: false,
   };
-  const updated = [...branches, newBranch];
+  const updated = sanitizeAndDeduplicateBranches([...branches, newBranch]);
   saveBranchesList(updated);
 
   // Initialize isolated empty storage for the new branch so no data ever leaks from other branches
@@ -966,14 +1024,13 @@ export function syncAllBranchesFromCloudPayload(
 ): void {
   if (!cloudData) return;
 
-  // 1. Sync branches list across all devices
+  // 1. Sync branches list across all devices safely with zero duplicates
   const currentBranches = getBranchesList();
-  const branchMap = new Map<string, SupplyBranch>();
-  DEFAULT_SUPPLY_BRANCHES.forEach((b) => branchMap.set(b.id, b));
-  currentBranches.forEach((b) => branchMap.set(b.id, b));
+  const rawBranches: SupplyBranch[] = [...DEFAULT_SUPPLY_BRANCHES, ...currentBranches];
+
   if (Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
     cloudData.branches.forEach((b) => {
-      if (b && b.id && b.name) branchMap.set(b.id, b);
+      if (b && b.id && b.name) rawBranches.push(b);
     });
   }
 
@@ -987,10 +1044,10 @@ export function syncAllBranchesFromCloudPayload(
 
   // Also include any branch ID present in branchPartitions
   Object.keys(remotePartitions).forEach((bId) => {
-    if (bId && !branchMap.has(bId)) {
+    if (bId) {
       const pName = remotePartitions[bId]?.systemConfig?.administrationTitle;
       if (pName) {
-        branchMap.set(bId, {
+        rawBranches.push({
           id: bId,
           name: pName,
           directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
@@ -1002,7 +1059,9 @@ export function syncAllBranchesFromCloudPayload(
       }
     }
   });
-  saveBranchesList(Array.from(branchMap.values()));
+
+  const deduplicatedBranches = sanitizeAndDeduplicateBranches(rawBranches);
+  saveBranchesList(deduplicatedBranches);
 
   const defaultPartition: BranchPartitionPayload = remotePartitions[DEFAULT_BRANCH_ID] || {
     ...cloudData,
@@ -1031,7 +1090,7 @@ export function buildFullCloudMultiBranchPayload(
   branchAuthVaults: Record<string, BranchAuthVaultRecord>;
 } {
   const targetBranchId = activeState.activeBranchId || getActiveBranchId();
-  const branchesList = activeState.branches || getBranchesList();
+  const branchesList = sanitizeAndDeduplicateBranches(activeState.branches || getBranchesList());
 
   const branchAuthVaults = collectAllBranchAuthVaults(
     branchesList,
