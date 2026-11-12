@@ -41,6 +41,7 @@ import {
   migrateDatabaseToSupabase,
   fetchDatabaseFromSupabase,
   clearSupabaseDatabaseData,
+  setSupabaseCloudDisabled,
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
 } from '../lib/supabase';
@@ -67,6 +68,7 @@ import {
   RefreshCw,
   ExternalLink,
   Database,
+  ShieldAlert,
   ArrowRight,
   UploadCloud,
   RotateCw,
@@ -126,7 +128,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   onFactoryReset,
 }) => {
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
-  const [showConfirmReset, setShowConfirmReset] = useState(false);
+  const [resetStep, setResetStep] = useState<0 | 1 | 2 | 3>(0);
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Dedicated Publish Engine State
@@ -1023,6 +1025,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleSaveAndTestSupabaseConfig = async () => {
     setIsProcessing(true);
     setStatusMsg({ text: 'جاري حفظ إعدادات Supabase والتحقق من الاتصال...', type: 'info' });
+    setSupabaseCloudDisabled(false);
     const newCfg = saveSupabaseConfig(supabaseUrlInput, supabaseKeyInput);
     setSupabaseCfg(newCfg);
     const testRes = await testSupabaseConnection();
@@ -1053,7 +1056,9 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleMigrateAllDatabaseToSupabase = async () => {
     setIsProcessing(true);
     setStatusMsg({ text: 'جاري نقل وترحيل ومزامنة كافة جداول قاعدة البيانات (المخابز والمديونيات) إلى Supabase...', type: 'info' });
+    setSupabaseCloudDisabled(false);
     const res = await migrateDatabaseToSupabase(currentState);
+    setSupabaseCfg(getSupabaseConfig());
     setIsProcessing(false);
     if (res.success) {
       const nowAr = new Date().toLocaleString('ar-EG');
@@ -1068,13 +1073,18 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleRestoreFromSupabaseDatabase = async () => {
     setIsProcessing(true);
     setStatusMsg({ text: 'جاري استرجاع وتحميل أحدث قاعدة بيانات من Supabase...', type: 'info' });
+    setSupabaseCloudDisabled(false);
     const res = await fetchDatabaseFromSupabase();
+    setSupabaseCfg(getSupabaseConfig());
     setIsProcessing(false);
     if (res.success && res.data) {
-      const merged = mergeStates(currentState, res.data);
-      onRestoreState(merged);
+      onRestoreState({
+        ...currentState,
+        ...res.data,
+        currentUser: currentState.currentUser,
+      });
       setStatusMsg({
-        text: `تم بنجاح تحميل ودمج البيانات من Supabase! إجمالي المخابز: (${merged.bakeries.length}) مخبز و (${merged.debts.length}) مديونية دون حذف أي سجلات محلية.`,
+        text: `تم بنجاح تحميل أحدث بيانات مسجلة من السحابة (${res.data.bakeries?.length || 0} مخبز و ${res.data.debts?.length || 0} مديونية)!`,
         type: 'success',
       });
     } else {
@@ -1102,6 +1112,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     setSupabaseUrlInput('');
     setSupabaseKeyInput('');
     saveSupabaseConfig('', '');
+    setSupabaseCloudDisabled(true);
     setSupabaseCfg(getSupabaseConfig());
     setStatusMsg({
       text: 'تم إيقاف وإلغاء التخزين والمزامنة السحابية لـ Supabase بنجاح 🚫',
@@ -1250,16 +1261,59 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
-  const handleReset = () => {
-    onFactoryReset();
-    setShowConfirmReset(false);
+  const handleReset = async () => {
+    // Prompt 1 warning
+    const confirm1 = window.confirm(
+      '⚠️ تحذير رقم (1 من 3): هل أنت متأكد تماماً من رغبتك في مسح كافة البيانات المدخلة وإعادة ضبط المصنع؟ سيتم تصفير المخابز والمديونيات والرسائل نهائياً!'
+    );
+    if (!confirm1) {
+      setResetStep(0);
+      return;
+    }
+
+    // Prompt 2 warning
+    const confirm2 = window.confirm(
+      '🚨 تحذير صارم رقم (2 من 3): تأكيد ثانٍ للحماية! هذا الإجراء سيقوم بحذف وإزالة جميع بيانات المخابز والمديونيات والرسائل المدخلة من هذا الجهاز ومن السحابة نهائياً ولا يمكن استرجاعها! هل تريد الاستمرار بحذف كافة البيانات؟'
+    );
+    if (!confirm2) {
+      setResetStep(0);
+      return;
+    }
+
+    // Prompt 3 warning
+    const confirm3 = window.confirm(
+      '🔥 التحذير الأخير والنهائي رقم (3 من 3): القرار النهائي الحتمي! هل تؤكد وتأذن بالنقر النهائي ومسح كافة البيانات المدخلة وتصفير المنظومة بالكامل والبدء من جديد؟'
+    );
+    if (!confirm3) {
+      setResetStep(0);
+      return;
+    }
+
+    setIsProcessing(true);
     setStatusMsg({
-      text: 'تمت إعادة ضبط المصنع ومسح كافة البيانات واستعادة الحالة الأولية بنجاح.',
-      type: 'success',
+      text: 'جاري مسح كافة البيانات المدخلة وتصفير المنظومة وقواعد البيانات وإعادة ضبط المصنع...',
+      type: 'info',
     });
-    setTimeout(() => {
-      window.location.reload();
-    }, 1200);
+
+    try {
+      await clearSupabaseDatabaseData().catch(() => {});
+      await onFactoryReset();
+      setResetStep(0);
+      setStatusMsg({
+        text: 'تمت إعادة ضبط المصنع ومسح كافة البيانات المدخلة واستعادة الحالة الأولية بنجاح.',
+        type: 'success',
+      });
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
+    } catch (err: any) {
+      setStatusMsg({
+        text: `فشل إعادة ضبط المصنع: ${err.message || 'خطأ غير معروف'}`,
+        type: 'error',
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -1743,6 +1797,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   </label>
                   <input
                     type="text"
+                    autoComplete="off"
                     value={supabaseUrlInput}
                     onChange={(e) => setSupabaseUrlInput(e.target.value)}
                     placeholder="https://xyzcompany.supabase.co"
@@ -1756,6 +1811,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   </label>
                   <input
                     type="password"
+                    autoComplete="new-password"
                     value={supabaseKeyInput}
                     onChange={(e) => setSupabaseKeyInput(e.target.value)}
                     placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
@@ -2774,45 +2830,115 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           </div>
 
           {/* SECTION 7: Factory Reset */}
-          <div className="p-3.5 bg-red-50/70 border border-red-200 rounded-2xl space-y-2">
+          <div className="p-3.5 bg-red-50/80 border-2 border-red-300 rounded-2xl space-y-2.5 shadow-xs">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-black text-red-900 flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-red-600 icon-animated" />
-                7. إعادة ضبط المصنع (Factory Reset)
+              <h4 className="text-xs font-black text-red-950 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-red-600 icon-animated shrink-0" />
+                <span>7. إعادة ضبط المصنع (Factory Reset - مسح البيانات المدخلة)</span>
               </h4>
-              <span className="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded">
-                إجراء حساس
+              <span className="text-[10px] font-black text-red-800 bg-red-200/80 px-2 py-0.5 rounded-lg border border-red-300">
+                إجراء حساس جداً
               </span>
             </div>
-            <p className="text-[11px] text-red-800 font-medium">
-              مسح كافة التعديلات والمخابز والمديونيات والعودة للبيانات الافتراضية الأولية فقط.
+            <p className="text-[11px] text-red-900 font-bold leading-relaxed">
+              مسح وتفريغ كافة البيانات والمدخلات (المخابز، المديونيات، والرسائل المدخلة) من الجهاز والسحابة وإعادة المنظومة لحالتها الأولى.
             </p>
 
-            {!showConfirmReset ? (
+            {resetStep === 0 && (
               <button
                 type="button"
-                onClick={() => setShowConfirmReset(true)}
-                className="px-3.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-900 border border-red-300 rounded-xl text-xs font-black transition"
+                onClick={() => setResetStep(1)}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black transition shadow-sm flex items-center gap-2 cursor-pointer border border-red-400"
               >
-                طلب إعادة ضبط المصنع
+                <Trash2 className="w-4 h-4 text-red-200" />
+                <span>طلب إعادة ضبط المصنع ومسح البيانات المدخلة 🗑️</span>
               </button>
-            ) : (
-              <div className="p-3 bg-red-100 border border-red-400 rounded-xl space-y-2">
-                <p className="text-xs font-black text-red-950">
-                  هل أنت متأكد تماماً؟ سيتم مسح كافة البيانات الحالية نهائياً!
+            )}
+
+            {/* STEP 1 / 3 WARNING */}
+            {resetStep === 1 && (
+              <div className="p-3.5 bg-red-100/90 border-2 border-red-500 rounded-xl space-y-2.5 text-xs animate-fadeIn">
+                <div className="flex items-center gap-2 font-black text-red-950 text-xs">
+                  <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 icon-animated" />
+                  <span>⚠️ تحذير رقم (1 من 3): طلب مسح كافة البيانات المدخلة وإعادة ضبط المصنع</span>
+                </div>
+                <p className="text-[11.5px] text-red-900 font-bold leading-relaxed">
+                  تنبيه هام جداً! أنت على وشك مسح كافة البيانات المدخلة في المنظومة (سجلات المخابز والمديونيات والمهام والرسائل) وتصفير القاعدة بالكامل من هذا الجهاز ومن السحابة. هل تريد البدء في استكمال إجراءات المسح الحتمي؟
                 </p>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 pt-1">
                   <button
-                    onClick={handleReset}
-                    className="px-4 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-xs font-black"
+                    type="button"
+                    onClick={() => setResetStep(2)}
+                    className="px-4 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-xs font-black shadow-sm transition flex items-center gap-1.5 cursor-pointer"
                   >
-                    نعم، امسح كل شيء وأعد للمصنع
+                    <span>استمرار للمرحلة التالية ⏩ (تحذير 2)</span>
                   </button>
                   <button
-                    onClick={() => setShowConfirmReset(false)}
-                    className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700"
+                    type="button"
+                    onClick={() => setResetStep(0)}
+                    className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
                   >
-                    تراجع
+                    إلغاء والتراجع ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 2 / 3 WARNING */}
+            {resetStep === 2 && (
+              <div className="p-3.5 bg-gradient-to-r from-red-900 to-rose-950 text-white border-2 border-amber-400 rounded-xl space-y-2.5 text-xs animate-pulse">
+                <div className="flex items-center gap-2 font-black text-amber-300 text-xs">
+                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>🚨 تحذير صارم رقم (2 من 3): تأكيد إضافي لحماية بياناتك من الحذف بالخطأ!</span>
+                </div>
+                <p className="text-[11.5px] text-red-100 font-bold leading-relaxed">
+                  تحذير خطير! هذا الإجراء سيقوم بحذف وإزالة جميع بيانات المخابز والمديونيات والتعديلات المسجلة نهائياً ولا يمكن استرجاعها إطلاقاً بعد المسح الإجباري! هل تريد الاستمرار بحذف كافة البيانات المدخلة؟
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setResetStep(3)}
+                    className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-black shadow-md transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>استمرار للمرحلة الأخيرة ⚠️ (تحذير 3)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResetStep(0)}
+                    className="px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-xs font-bold text-slate-200 hover:bg-slate-700 cursor-pointer"
+                  >
+                    إلغاء والتراجع ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 3 / 3 WARNING */}
+            {resetStep === 3 && (
+              <div className="p-4 bg-red-950 text-[#FEE2E2] border-4 border-red-600 rounded-2xl space-y-3 text-xs animate-fadeIn shadow-2xl">
+                <div className="flex items-center gap-2 font-black text-amber-300 text-sm">
+                  <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 icon-animated" />
+                  <span>🔥 التحذير الأخير والتأكيد النهائي (3 من 3): هل تأذن بالنقر النهائي ومسح كافة البيانات الآن؟</span>
+                </div>
+                <p className="text-[12px] text-rose-100 font-black leading-relaxed bg-red-900/60 p-2.5 rounded-xl border border-red-700">
+                  القرار النهائي والإنذار الأخير! بالنقر على الزر الأحمر أدناه، ستبدأ العملية المباشرة لمسح كافة البيانات المدخلة وتصفير المنظومة فوراً وتفريغها من هذا الجهاز ومن السحابة المشتركة. هل تؤكد المسح النهائي الحتمي وتصفير القاعدة؟
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={isProcessing}
+                    onClick={handleReset}
+                    className="px-5 py-2 bg-gradient-to-r from-red-600 via-rose-700 to-red-800 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-xl transition border-2 border-amber-300 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4 text-amber-300" />
+                    <span>🔥 نعم، نفذ المسح الشامل النهائي وتصفير البيانات الآن 🗑️</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResetStep(0)}
+                    className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-xs font-bold text-slate-200 hover:bg-slate-700 cursor-pointer"
+                  >
+                    إلغاء والتراجع الآمن ✕
                   </button>
                 </div>
               </div>

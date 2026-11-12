@@ -357,53 +357,55 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
   };
 }
 
+export function isDefaultSeedState(
+  bakeries?: Bakery[] | null,
+  debts?: DebtRecord[] | null
+): boolean {
+  if (!bakeries || !debts) return true;
+  if (bakeries.length === 0 && debts.length === 0) return true;
+  if (
+    bakeries.length !== INITIAL_BAKERIES.length ||
+    debts.length !== INITIAL_DEBTS.length
+  ) {
+    return false;
+  }
+  const sameBakeries = bakeries.every((b, idx) => {
+    const initB = INITIAL_BAKERIES[idx];
+    return (
+      initB &&
+      b.id === initB.id &&
+      b.bakeryOwnerName === initB.bakeryOwnerName &&
+      Number(b.actualQuota) === Number(initB.actualQuota) &&
+      Number(b.insuranceQuota) === Number(initB.insuranceQuota) &&
+      b.machineNumber === initB.machineNumber &&
+      b.activityStatus === initB.activityStatus
+    );
+  });
+  const sameDebts = debts.every((d, idx) => {
+    const initD = INITIAL_DEBTS[idx];
+    return (
+      initD &&
+      d.id === initD.id &&
+      Number(d.violationAmount) === Number(initD.violationAmount) &&
+      Number(d.paidViolationAmount) === Number(initD.paidViolationAmount) &&
+      Number(d.disposalBags) === Number(initD.disposalBags) &&
+      Number(d.paidDisposalAmount) === Number(initD.paidDisposalAmount)
+    );
+  });
+  return sameBakeries && sameDebts;
+}
+
 export async function loadInitialState(): Promise<AppState> {
   try {
-    // 0. EXCLUSIVE Primary Source of Truth: Fetch latest database directly from Supabase Cloud DB
-    try {
-      const supaRes = await fetchDatabaseFromSupabase();
-      if (
-        supaRes &&
-        supaRes.success &&
-        supaRes.data &&
-        (Array.isArray(supaRes.data.bakeries) || Array.isArray(supaRes.data.debts))
-      ) {
-        let supaBakeries = supaRes.data.bakeries.map(normalizeBakeryPerCapita);
-        let supaDebts = supaRes.data.debts ?? [];
-        try { localStorage.setItem(KEYS.INITIALIZED, 'true'); } catch {}
-        
-        return {
-          bakeries: supaBakeries,
-          debts: supaDebts,
-          villages: supaRes.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
-          issuingEntities: supaRes.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
-          violationTypes: supaRes.data.violationTypes ?? DEFAULT_VIOLATION_TYPES,
-          activityStatuses: supaRes.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
-          bakeryCategories: supaRes.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
-          breadTypes: supaRes.data.breadTypes ?? DEFAULT_BREAD_TYPES,
-          breadTypeCounts: supaRes.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
-          lineTypes: supaRes.data.lineTypes ?? DEFAULT_LINE_TYPES,
-          fuelTypes: supaRes.data.fuelTypes ?? DEFAULT_FUEL_TYPES,
-          paymentMethods: supaRes.data.paymentMethods ?? PAYMENT_METHODS,
-          dailyTasks: supaRes.data.dailyTasks ?? INITIAL_DAILY_TASKS,
-          inboxMessages: supaRes.data.inboxMessages ?? INITIAL_INBOX_MESSAGES,
-          columnTitles: supaRes.data.columnTitles ? { ...DEFAULT_COLUMN_TITLES, ...supaRes.data.columnTitles } : DEFAULT_COLUMN_TITLES,
-          systemConfig: supaRes.data.systemConfig ? { ...DEFAULT_SYSTEM_CONFIG, ...supaRes.data.systemConfig, logoBase64: DEFAULT_OFFICIAL_LOGO } : { ...DEFAULT_SYSTEM_CONFIG, logoBase64: DEFAULT_OFFICIAL_LOGO },
-          users: supaRes.data.users ?? INITIAL_USERS,
-          currentUser: null,
-        };
-      }
-    } catch (supaErr) {
-      console.warn('Supabase boot load skipped or network offline:', supaErr);
-    }
-
-    // 1. FAST PATH: Check if state is preloaded directly in the standalone HTML file
+    // 1. Read local state from localStorage first so we can compare timestamps & detect untouched default seed
     interface PreloadedStatePayload extends Partial<AppState> {
       exportTimestamp?: string;
     }
-    const preloaded = typeof window !== 'undefined'
-      ? (window as unknown as { PRELOADED_TAMWEEN_STATE?: PreloadedStatePayload }).PRELOADED_TAMWEEN_STATE
-      : undefined;
+    const preloaded =
+      typeof window !== 'undefined'
+        ? (window as unknown as { PRELOADED_TAMWEEN_STATE?: PreloadedStatePayload })
+            .PRELOADED_TAMWEEN_STATE
+        : undefined;
 
     let bakeries: Bakery[] | null = null;
     let debts: DebtRecord[] | null = null;
@@ -422,11 +424,12 @@ export async function loadInitialState(): Promise<AppState> {
     let columnTitles: ColumnTitles | null = null;
     let systemConfig: SystemConfig | null = null;
     let users: AppUser[] | null = null;
+    let localTimestamp = '';
+    let hasExplicitUserSave = false;
 
-    // Fast synchronous read from localStorage
-    let isInitialized = false;
     try {
-      isInitialized = localStorage.getItem(KEYS.INITIALIZED) === 'true';
+      localTimestamp = localStorage.getItem(KEYS.AUTOSAVE_TIMESTAMP) || '';
+      hasExplicitUserSave = localStorage.getItem('TAMWEEN_EXPLICIT_USER_SAVE') === 'true';
       if (localStorage.getItem(KEYS.BAKERIES)) {
         bakeries = JSON.parse(localStorage.getItem(KEYS.BAKERIES)!);
       }
@@ -482,7 +485,99 @@ export async function loadInitialState(): Promise<AppState> {
       console.warn('LocalStorage read error or restricted:', lsErr);
     }
 
-    // 2. If standalone preloaded file is opened, adopt only if local state is completely empty
+    // Session check helper
+    const resolveCurrentUser = (activeUsersList: AppUser[]): AppUser | null => {
+      try {
+        const savedSessionStr = sessionStorage.getItem(KEYS.SESSION);
+        localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
+        if (savedSessionStr) {
+          const parsedSession: AppUser = JSON.parse(savedSessionStr);
+          const match = activeUsersList.find(
+            (u) => u.id === parsedSession.id || u.username === parsedSession.username
+          );
+          if (match) return match;
+        }
+      } catch {}
+      return null;
+    };
+
+    const isUntouchedDefault =
+      !hasExplicitUserSave && isDefaultSeedState(bakeries, debts);
+    const localTimeMs =
+      !isUntouchedDefault && localTimestamp ? Date.parse(localTimestamp) || 0 : 0;
+
+    // 2. Fetch latest database from Cloud / Supabase and compare with local state
+    let cloudHasData = false;
+    try {
+      const supaRes = await fetchDatabaseFromSupabase();
+      if (
+        supaRes &&
+        supaRes.success &&
+        supaRes.data &&
+        (Array.isArray(supaRes.data.bakeries) || Array.isArray(supaRes.data.debts))
+      ) {
+        cloudHasData = true;
+        const cloudTimeMs = supaRes.timestamp ? Date.parse(supaRes.timestamp) || Date.now() : Date.now();
+
+        // Adopt cloud state if local state is untouched default seed, empty, or older/equal to cloud
+        if (
+          isUntouchedDefault ||
+          !bakeries ||
+          bakeries.length === 0 ||
+          cloudTimeMs >= localTimeMs
+        ) {
+          const syncedCloud = synchronizeBakeryAndDebts(
+            (supaRes.data.bakeries || []).map(normalizeBakeryPerCapita),
+            supaRes.data.debts ?? []
+          );
+          const adoptedUsers = supaRes.data.users ?? INITIAL_USERS;
+          const adoptedState: AppState = {
+            bakeries: syncedCloud.bakeries,
+            debts: syncedCloud.debts,
+            villages: supaRes.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
+            issuingEntities: supaRes.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
+            violationTypes: supaRes.data.violationTypes ?? DEFAULT_VIOLATION_TYPES,
+            activityStatuses: supaRes.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
+            bakeryCategories: supaRes.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
+            breadTypes: supaRes.data.breadTypes ?? DEFAULT_BREAD_TYPES,
+            breadTypeCounts: supaRes.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
+            lineTypes: supaRes.data.lineTypes ?? DEFAULT_LINE_TYPES,
+            fuelTypes: supaRes.data.fuelTypes ?? DEFAULT_FUEL_TYPES,
+            paymentMethods: supaRes.data.paymentMethods ?? PAYMENT_METHODS,
+            dailyTasks: supaRes.data.dailyTasks ?? INITIAL_DAILY_TASKS,
+            inboxMessages: supaRes.data.inboxMessages ?? INITIAL_INBOX_MESSAGES,
+            columnTitles: supaRes.data.columnTitles
+              ? { ...DEFAULT_COLUMN_TITLES, ...supaRes.data.columnTitles }
+              : DEFAULT_COLUMN_TITLES,
+            systemConfig: supaRes.data.systemConfig
+              ? {
+                  ...DEFAULT_SYSTEM_CONFIG,
+                  ...supaRes.data.systemConfig,
+                  logoBase64: DEFAULT_OFFICIAL_LOGO,
+                }
+              : { ...DEFAULT_SYSTEM_CONFIG, logoBase64: DEFAULT_OFFICIAL_LOGO },
+            users: adoptedUsers,
+            currentUser: resolveCurrentUser(adoptedUsers),
+          };
+
+          try {
+            localStorage.setItem(KEYS.INITIALIZED, 'true');
+          } catch {}
+
+          // Persist locally WITHOUT re-pushing to cloud
+          persistFullState(adoptedState, {
+            skipCloudSync: true,
+            customTimestamp: supaRes.timestamp,
+          }).catch(() => {});
+
+          return adoptedState;
+        }
+      }
+    } catch (supaErr) {
+      console.warn('Cloud boot load skipped or network offline:', supaErr);
+    }
+
+    // 3. If standalone preloaded file is opened, adopt only if local state is empty
     if (preloaded && preloaded.bakeries && preloaded.bakeries.length > 0) {
       if (!bakeries || bakeries.length === 0) {
         bakeries = preloaded.bakeries.map(normalizeBakeryPerCapita);
@@ -503,53 +598,32 @@ export async function loadInitialState(): Promise<AppState> {
         systemConfig = preloaded.systemConfig ?? DEFAULT_SYSTEM_CONFIG;
         users = preloaded.users ?? INITIAL_USERS;
       }
-    } else if (!isInitialized && (!bakeries || bakeries.length === 0)) {
-      // First run default seed (automatic external cloud import has been cancelled per user request)
+    } else if (!bakeries || bakeries.length === 0) {
+      // First run default seed in memory (do not push default seed to cloud)
       bakeries = INITIAL_BAKERIES.map(normalizeBakeryPerCapita);
       debts = INITIAL_DEBTS;
       villages = DEFAULT_VILLAGES_HIERARCHY;
       issuingEntities = DEFAULT_ISSUING_ENTITIES;
-        violationTypes = DEFAULT_VIOLATION_TYPES;
-        activityStatuses = DEFAULT_ACTIVITY_STATUSES;
-        bakeryCategories = DEFAULT_BAKERY_CATEGORIES;
-        breadTypes = DEFAULT_BREAD_TYPES;
-        breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS;
-        lineTypes = DEFAULT_LINE_TYPES;
-        fuelTypes = DEFAULT_FUEL_TYPES;
-        paymentMethods = PAYMENT_METHODS;
-        dailyTasks = INITIAL_DAILY_TASKS;
-        inboxMessages = INITIAL_INBOX_MESSAGES;
-        columnTitles = DEFAULT_COLUMN_TITLES;
-        systemConfig = DEFAULT_SYSTEM_CONFIG;
-        users = INITIAL_USERS;
+      violationTypes = DEFAULT_VIOLATION_TYPES;
+      activityStatuses = DEFAULT_ACTIVITY_STATUSES;
+      bakeryCategories = DEFAULT_BAKERY_CATEGORIES;
+      breadTypes = DEFAULT_BREAD_TYPES;
+      breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS;
+      lineTypes = DEFAULT_LINE_TYPES;
+      fuelTypes = DEFAULT_FUEL_TYPES;
+      paymentMethods = PAYMENT_METHODS;
+      dailyTasks = INITIAL_DAILY_TASKS;
+      inboxMessages = INITIAL_INBOX_MESSAGES;
+      columnTitles = DEFAULT_COLUMN_TITLES;
+      systemConfig = DEFAULT_SYSTEM_CONFIG;
+      users = INITIAL_USERS;
 
-        try {
-          localStorage.setItem(KEYS.INITIALIZED, 'true');
-        } catch {}
+      try {
+        localStorage.setItem(KEYS.INITIALIZED, 'true');
+      } catch {}
+    }
 
-        persistFullState({
-          bakeries,
-          debts,
-          villages,
-          issuingEntities,
-          violationTypes,
-          activityStatuses,
-          bakeryCategories,
-          breadTypes,
-          breadTypeCounts,
-          lineTypes,
-          fuelTypes,
-          paymentMethods,
-          dailyTasks,
-          inboxMessages,
-          columnTitles,
-          systemConfig,
-          users,
-          currentUser: null,
-        }).catch(() => {});
-      }
-
-    // 3. Fallback defaults if any section is empty
+    // 4. Fallback defaults if any section is empty
     const syncedInitial = synchronizeBakeryAndDebts(
       (bakeries ?? INITIAL_BAKERIES).map(normalizeBakeryPerCapita),
       debts ?? INITIAL_DEBTS
@@ -569,12 +643,12 @@ export async function loadInitialState(): Promise<AppState> {
     dailyTasks = dailyTasks ?? INITIAL_DAILY_TASKS;
     inboxMessages = inboxMessages ?? INITIAL_INBOX_MESSAGES;
     columnTitles = columnTitles ?? DEFAULT_COLUMN_TITLES;
-    systemConfig = systemConfig ? { ...DEFAULT_SYSTEM_CONFIG, ...systemConfig } : { ...DEFAULT_SYSTEM_CONFIG };
-    // Permanently lock and maintain official Egyptian Ministry logo from GitHub in database
+    systemConfig = systemConfig
+      ? { ...DEFAULT_SYSTEM_CONFIG, ...systemConfig }
+      : { ...DEFAULT_SYSTEM_CONFIG };
     systemConfig.logoBase64 = DEFAULT_OFFICIAL_LOGO;
     users = users ?? INITIAL_USERS;
 
-    // Sanitize and normalize column titles to ensure new required names are applied
     if (columnTitles) {
       columnTitles = {
         ...DEFAULT_COLUMN_TITLES,
@@ -586,13 +660,20 @@ export async function loadInitialState(): Promise<AppState> {
       if (columnTitles.actualQuota && columnTitles.actualQuota.includes('شوال')) {
         columnTitles.actualQuota = columnTitles.actualQuota.replace(/شوال/g, 'شيكارة');
       }
-      if (!columnTitles.bakeryCategory || columnTitles.bakeryCategory === 'تصنيف المخبز' || columnTitles.bakeryCategory === 'مخبز بلدي مدعم') {
+      if (
+        !columnTitles.bakeryCategory ||
+        columnTitles.bakeryCategory === 'تصنيف المخبز' ||
+        columnTitles.bakeryCategory === 'مخبز بلدي مدعم'
+      ) {
         columnTitles.bakeryCategory = 'نوع المخابز';
       }
       if (!columnTitles.flourBagPrice) {
         columnTitles.flourBagPrice = 'سعر الشيكارة';
       }
-      if (!columnTitles.perCapitaAverage || columnTitles.perCapitaAverage === 'متوسط الفرد للمخبز') {
+      if (
+        !columnTitles.perCapitaAverage ||
+        columnTitles.perCapitaAverage === 'متوسط الفرد للمخبز'
+      ) {
         columnTitles.perCapitaAverage = 'متوسط نصيب الفرد للمخبز';
       }
       if (columnTitles.beneficiaries2023 === 'مستفيدي 2023') {
@@ -615,26 +696,10 @@ export async function loadInitialState(): Promise<AppState> {
       }
     }
 
-    // Session check
-    let currentUser: AppUser | null = null;
-    let savedSessionStr: string | null = null;
-    try {
-      savedSessionStr = sessionStorage.getItem(KEYS.SESSION);
-      // Security enforcement: never keep plaintext Gmail passwords in localStorage
-      localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
-    } catch {}
     const activeUsers = users ?? INITIAL_USERS;
-    if (savedSessionStr) {
-      try {
-        const parsedSession: AppUser = JSON.parse(savedSessionStr);
-        const match = activeUsers.find(u => u.id === parsedSession.id || u.username === parsedSession.username);
-        if (match) {
-          currentUser = match;
-        }
-      } catch {}
-    }
+    const currentUser = resolveCurrentUser(activeUsers);
 
-    return {
+    const finalLocalState: AppState = {
       bakeries,
       debts,
       villages,
@@ -652,8 +717,25 @@ export async function loadInitialState(): Promise<AppState> {
       columnTitles,
       systemConfig,
       users: activeUsers,
-      currentUser
+      currentUser,
     };
+
+    // If this device has newer user-recorded data than the cloud, push it to the cloud immediately so all other devices sync!
+    if (!isUntouchedDefault && bakeries && bakeries.length > 0) {
+      autoSyncToSupabase(
+        finalLocalState,
+        true,
+        localTimestamp || new Date().toISOString()
+      ).catch(() => {});
+    } else if (!cloudHasData && !isDefaultSeedState(bakeries, debts)) {
+      autoSyncToSupabase(
+        finalLocalState,
+        true,
+        localTimestamp || new Date().toISOString()
+      ).catch(() => {});
+    }
+
+    return finalLocalState;
   } catch (criticalErr) {
     console.error('Critical fallback in loadInitialState:', criticalErr);
     const fallbackSync = synchronizeBakeryAndDebts(
@@ -684,7 +766,10 @@ export async function loadInitialState(): Promise<AppState> {
 }
 
 // Persist both to IndexedDB and LocalStorage synchronously & asynchronously
-export async function persistFullState(state: Omit<AppState, 'currentUser'> & { currentUser?: AppUser | null }): Promise<void> {
+export async function persistFullState(
+  state: Omit<AppState, 'currentUser'> & { currentUser?: AppUser | null },
+  options?: { skipCloudSync?: boolean; customTimestamp?: string }
+): Promise<void> {
   const {
     bakeries,
     debts,
@@ -702,7 +787,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     inboxMessages = INITIAL_INBOX_MESSAGES,
     columnTitles,
     systemConfig,
-    users
+    users,
   } = state;
 
   const synced = synchronizeBakeryAndDebts(
@@ -718,9 +803,15 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
     logoBase64: DEFAULT_OFFICIAL_LOGO,
   };
 
+  const snapshotTimestamp = options?.customTimestamp || new Date().toISOString();
+
   // LocalStorage
   try {
     localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
+    if (!options?.skipCloudSync) {
+      localStorage.setItem('TAMWEEN_EXPLICIT_USER_SAVE', 'true');
+    }
+    localStorage.setItem(KEYS.AUTOSAVE_TIMESTAMP, snapshotTimestamp);
     localStorage.setItem(KEYS.BAKERIES, JSON.stringify(normalizedBakeries));
     localStorage.setItem(KEYS.DEBTS, JSON.stringify(normalizedDebts));
     localStorage.setItem(KEYS.VILLAGES, JSON.stringify(villages));
@@ -743,7 +834,7 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
   }
 
   const backupSnapshot = {
-    timestamp: new Date().toISOString(),
+    timestamp: snapshotTimestamp,
     gmailEmail: lockedConfig.gmailEmail ?? localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ?? '',
     state: {
       bakeries: normalizedBakeries,
@@ -791,7 +882,6 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
   // Defer secondary snapshot serialization & cloud/disk sync off the main UI thread
   setTimeout(() => {
     try {
-      localStorage.setItem(KEYS.AUTOSAVE_TIMESTAMP, backupSnapshot.timestamp);
       const serializedSnapshot = JSON.stringify(backupSnapshot);
       localStorage.setItem(KEYS.AUTOSAVE_BACKUP, serializedSnapshot);
 
@@ -820,14 +910,19 @@ export async function persistFullState(state: Omit<AppState, 'currentUser'> & { 
         localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
       }
 
-      // Sync exclusively to Supabase in real-time (no automatic background merges or syncs to other services)
-      autoSyncToSupabase(backupSnapshot.state as AppState).catch(() => {});
-      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-        try {
-          const bc = new BroadcastChannel('tamween_cross_device_sync');
-          bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp });
-          bc.close();
-        } catch {}
+      if (!options?.skipCloudSync) {
+        autoSyncToSupabase(
+          backupSnapshot.state as AppState,
+          true,
+          backupSnapshot.timestamp
+        ).catch(() => {});
+        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+          try {
+            const bc = new BroadcastChannel('tamween_cross_device_sync');
+            bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp });
+            bc.close();
+          } catch {}
+        }
       }
     } catch {
       // Graceful fallback

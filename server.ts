@@ -59,11 +59,41 @@ async function startServer() {
   // Dedicated Supabase config storage for seamless cross-device synchronization
   const SUPABASE_CONFIG_PATH = path.resolve(__dirname, 'supabase_config.json');
   const SUPABASE_CONFIG_TMP = '/tmp/supabase_config.json';
+  const SUPABASE_LIVE_DB_TMP = '/tmp/tamween_supabase_live_db.json';
+
+  const isValidSupabaseUrl = (u: string): boolean => {
+    if (!u || typeof u !== 'string') return false;
+    try {
+      const parsed = new URL(u.trim());
+      return (
+        (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+        u.includes('.supabase.co') &&
+        !u.includes('xyzcompany.supabase.co') &&
+        !u.includes('tamween-cloud-sql.supabase.co')
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  // Clean up any accidentally autofilled invalid config files on startup
+  for (const cfgFile of [SUPABASE_CONFIG_PATH, SUPABASE_CONFIG_TMP]) {
+    if (fs.existsSync(cfgFile)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(cfgFile, 'utf-8'));
+        if (!isValidSupabaseUrl(parsed?.url)) {
+          fs.unlinkSync(cfgFile);
+        }
+      } catch {
+        try { fs.unlinkSync(cfgFile); } catch {}
+      }
+    }
+  }
 
   app.get('/api/supabase/config', (_req, res) => {
     try {
       let cfg = {
-        url: process.env.VITE_SUPABASE_URL || '',
+        url: isValidSupabaseUrl(process.env.VITE_SUPABASE_URL || '') ? (process.env.VITE_SUPABASE_URL || '') : '',
         anonKey: process.env.VITE_SUPABASE_ANON_KEY || '',
       };
       let foundPath = null;
@@ -73,8 +103,10 @@ async function startServer() {
       if (foundPath) {
         const raw = fs.readFileSync(foundPath, 'utf-8');
         const parsed = JSON.parse(raw);
-        if (parsed.url) cfg.url = parsed.url;
-        if (parsed.anonKey) cfg.anonKey = parsed.anonKey;
+        if (isValidSupabaseUrl(parsed.url) && parsed.anonKey) {
+          cfg.url = parsed.url;
+          cfg.anonKey = parsed.anonKey;
+        }
       }
       res.json({ success: true, url: cfg.url, anonKey: cfg.anonKey });
     } catch {
@@ -85,14 +117,64 @@ async function startServer() {
   app.post('/api/supabase/config', (req, res) => {
     try {
       const { url, anonKey } = req.body || {};
-      if (url && anonKey) {
-        const data = JSON.stringify({ url: String(url).trim(), anonKey: String(anonKey).trim() });
+      const cleanUrl = String(url || '').trim();
+      const cleanKey = String(anonKey || '').trim();
+      if (isValidSupabaseUrl(cleanUrl) && cleanKey) {
+        const data = JSON.stringify({ url: cleanUrl, anonKey: cleanKey });
         try { fs.writeFileSync(SUPABASE_CONFIG_PATH, data, 'utf-8'); } catch {}
         try { fs.writeFileSync(SUPABASE_CONFIG_TMP, data, 'utf-8'); } catch {}
+      } else if (!cleanUrl && !cleanKey) {
+        if (fs.existsSync(SUPABASE_CONFIG_PATH)) { try { fs.unlinkSync(SUPABASE_CONFIG_PATH); } catch {} }
+        if (fs.existsSync(SUPABASE_CONFIG_TMP)) { try { fs.unlinkSync(SUPABASE_CONFIG_TMP); } catch {} }
       }
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Live Supabase SQL/Cloud State synchronization endpoint for instant multi-device sync
+  app.get('/api/supabase/live-db', (_req, res) => {
+    try {
+      if (!fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
+        res.json({ success: true, exists: false, snapshot: null });
+        return;
+      }
+      const raw = fs.readFileSync(SUPABASE_LIVE_DB_TMP, 'utf-8');
+      const snapshot = JSON.parse(raw);
+      res.json({ success: true, exists: true, snapshot });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/supabase/live-db', (req, res) => {
+    try {
+      const body = req.body || {};
+      const stateData = body.data || body;
+      const timestamp = body.timestamp || new Date().toISOString();
+      const snapshot = {
+        version: '4.0-supabase-live-sql',
+        timestamp,
+        bakeriesCount: Array.isArray(stateData?.bakeries) ? stateData.bakeries.length : 0,
+        debtsCount: Array.isArray(stateData?.debts) ? stateData.debts.length : 0,
+        data: stateData,
+      };
+      fs.writeFileSync(SUPABASE_LIVE_DB_TMP, JSON.stringify(snapshot), 'utf-8');
+      res.json({ success: true, timestamp });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.delete('/api/supabase/live-db', (_req, res) => {
+    try {
+      if (fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
+        fs.unlinkSync(SUPABASE_LIVE_DB_TMP);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
     }
   });
 

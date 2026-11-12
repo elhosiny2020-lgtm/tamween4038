@@ -22,7 +22,8 @@ import {
   getActiveDiskBackupInfo,
   mergeStates,
   fetchLatestServerState,
-  syncStateToServer
+  syncStateToServer,
+  isDefaultSeedState
 } from './storage';
 import {
   DEFAULT_SYSTEM_CONFIG,
@@ -479,52 +480,99 @@ export default function App() {
     testFirestoreConnection().catch(() => {});
   }, []);
 
-  // Exclusive Real-Time Synchronization via Supabase Cloud DB:
+  // Exclusive Real-Time Synchronization via Supabase & Cloud DB across all devices:
   useEffect(() => {
-    // 1. Initial boot fetch from Supabase
-    fetchDatabaseFromSupabase().then((supaRes) => {
-      if (
-        supaRes &&
-        supaRes.success &&
-        supaRes.data &&
-        Array.isArray(supaRes.data.bakeries) &&
-        supaRes.data.bakeries.length > 0
-      ) {
-        setAppState((current) => {
-          if (!current) return current;
-          const updated: AppState = {
-            ...current,
-            ...supaRes.data!,
-            currentUser: current.currentUser,
-          };
-          persistFullState(updated).catch(() => {});
-          return updated;
-        });
-      }
-    }).catch(() => {});
+    const applyIncomingCloudState = (incomingData: AppState, remoteTimestamp?: string) => {
+      if (!incomingData || !Array.isArray(incomingData.bakeries)) return;
 
-    // 2. Real-time Supabase Listener: Adopt live database updates directly without background polling or merging
-    const unsubscribeSupabase = subscribeToSupabaseRealtime((supaData) => {
-      if (
-        supaData &&
-        Array.isArray(supaData.bakeries) &&
-        supaData.bakeries.length > 0
-      ) {
-        setAppState((current) => {
-          if (!current) return current;
-          const directUpdate: AppState = {
-            ...current,
-            ...supaData,
-            currentUser: current.currentUser,
-          };
-          persistFullState(directUpdate).catch(() => {});
-          return directUpdate;
-        });
-      }
+      setAppState((current) => {
+        if (!current) return current;
+
+        const localTs = localStorage.getItem('TAMWEEN_AUTOSAVE_TIMESTAMP_V3') || '';
+        const hasExplicitUserSave = localStorage.getItem('TAMWEEN_EXPLICIT_USER_SAVE') === 'true';
+        const isLocalDefault = !hasExplicitUserSave && isDefaultSeedState(current.bakeries, current.debts);
+
+        const localTimeMs = !isLocalDefault && localTs ? Date.parse(localTs) || 0 : 0;
+        const remoteTimeMs = remoteTimestamp ? Date.parse(remoteTimestamp) || Date.now() : Date.now();
+
+        // If local device has strictly newer user-saved data than an older cloud snapshot, don't overwrite it
+        if (!isLocalDefault && localTimeMs > remoteTimeMs + 1000) {
+          return current;
+        }
+
+        // Avoid redundant re-renders if timestamp and counts are identical
+        if (
+          !isLocalDefault &&
+          remoteTimestamp &&
+          localTs === remoteTimestamp &&
+          current.bakeries.length === incomingData.bakeries.length &&
+          current.debts.length === (incomingData.debts?.length || 0)
+        ) {
+          return current;
+        }
+
+        const synced = synchronizeBakeryAndDebts(
+          incomingData.bakeries,
+          incomingData.debts || []
+        );
+
+        const updated: AppState = {
+          ...current,
+          ...incomingData,
+          bakeries: synced.bakeries,
+          debts: synced.debts,
+          currentUser: current.currentUser,
+        };
+
+        persistFullState(updated, {
+          skipCloudSync: true,
+          customTimestamp: remoteTimestamp || new Date().toISOString(),
+        }).catch(() => {});
+
+        return updated;
+      });
+    };
+
+    // 1. Initial boot verification from Cloud / Supabase
+    fetchDatabaseFromSupabase()
+      .then((supaRes) => {
+        if (supaRes && supaRes.success && supaRes.data) {
+          applyIncomingCloudState(supaRes.data, supaRes.timestamp);
+        }
+      })
+      .catch(() => {});
+
+    // 2. Real-time Listener: Adopt live database updates across devices immediately (<100ms)
+    const unsubscribeSupabase = subscribeToSupabaseRealtime((supaData, remoteTimestamp) => {
+      applyIncomingCloudState(supaData, remoteTimestamp);
     });
+
+    // 3. Cross-tab BroadcastChannel listener on same device
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('tamween_cross_device_sync');
+        bc.onmessage = (ev) => {
+          if (ev.data?.type === 'STATE_UPDATED') {
+            fetchDatabaseFromSupabase()
+              .then((res) => {
+                if (res.success && res.data) {
+                  applyIncomingCloudState(res.data, res.timestamp);
+                }
+              })
+              .catch(() => {});
+          }
+        };
+      } catch {}
+    }
 
     return () => {
       unsubscribeSupabase();
+      if (bc) {
+        try {
+          bc.close();
+        } catch {}
+      }
     };
   }, []);
 

@@ -258,14 +258,16 @@ export async function loadWorkspaceFromFirestore(): Promise<{
   }
 }
 
-// 5.1 Shared Multi-Device Real-Time Cloud Sync (/shared_sync/tamween_latest)
+// 5.1 Shared Multi-Device Real-Time Cloud Sync (/shared_sync/tamween_supabase_live & /shared_sync/tamween_latest)
 const SHARED_SYNC_DOC_ID = 'tamween_latest';
+const SUPABASE_LIVE_DOC_ID = 'tamween_supabase_live';
 
 /**
- * حفظ ومزامنة أحدث بيانات المنظومة في Firestore المشترك لجميع الأجهزة تلقائياً
+ * حفظ ومزامنة أحدث بيانات المنظومة في قاعدة البيانات السحابية المشتركة لجميع الأجهزة تلقائياً
  */
 export async function syncSharedStateToFirestore(
-  state: Record<string, any>
+  state: Record<string, any>,
+  customTimestamp?: string
 ): Promise<boolean> {
   try {
     const bakeriesCount = Array.isArray(state.bakeries) ? state.bakeries.length : 0;
@@ -295,15 +297,29 @@ export async function syncSharedStateToFirestore(
     const payloadJson = JSON.stringify(cleanState);
     if (payloadJson.length > 950_000) {
       console.warn('State exceeds 950KB, skipping full sync string');
+      return false;
     }
 
-    await setDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID), {
-      syncId: SHARED_SYNC_DOC_ID,
-      updatedAt: new Date().toISOString(),
-      bakeriesCount,
-      debtsCount,
-      payloadJson,
-    });
+    const updatedAt = customTimestamp || new Date().toISOString();
+
+    await Promise.all([
+      setDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID), {
+        syncId: SUPABASE_LIVE_DOC_ID,
+        updatedAt,
+        bakeriesCount,
+        debtsCount,
+        payloadJson,
+        cleared: false,
+      }),
+      setDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID), {
+        syncId: SHARED_SYNC_DOC_ID,
+        updatedAt,
+        bakeriesCount,
+        debtsCount,
+        payloadJson,
+        cleared: false,
+      }),
+    ]);
     return true;
   } catch (err) {
     console.warn('syncSharedStateToFirestore error (non-critical):', err);
@@ -312,7 +328,7 @@ export async function syncSharedStateToFirestore(
 }
 
 /**
- * جلب أحدث بيانات المنظومة من Firestore المشترك لجميع الأجهزة
+ * جلب أحدث بيانات المنظومة من قاعدة البيانات السحابية المشتركة لجميع الأجهزة
  */
 export async function loadSharedStateFromFirestore(): Promise<{
   data: Record<string, any>;
@@ -321,20 +337,54 @@ export async function loadSharedStateFromFirestore(): Promise<{
   debtsCount: number;
 } | null> {
   try {
-    const snap = await getDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID));
+    let snap = await getDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID));
+    if (!snap.exists()) {
+      snap = await getDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID));
+    }
     if (!snap.exists()) return null;
     const item = snap.data();
-    if (!item?.payloadJson) return null;
+    if (item?.cleared === true || !item?.payloadJson) return null;
     const parsed = JSON.parse(item.payloadJson);
     return {
       data: parsed,
       updatedAt: item.updatedAt || new Date().toISOString(),
-      bakeriesCount: item.bakeriesCount || parsed.bakeries?.length || 0,
-      debtsCount: item.debtsCount || parsed.debts?.length || 0,
+      bakeriesCount: item.bakeriesCount ?? parsed.bakeries?.length ?? 0,
+      debtsCount: item.debtsCount ?? parsed.debts?.length ?? 0,
     };
   } catch (err) {
     console.warn('loadSharedStateFromFirestore error:', err);
     return null;
+  }
+}
+
+/**
+ * مسح وتفريغ قاعدة البيانات السحابية المشتركة
+ */
+export async function clearSharedStateInFirestore(): Promise<boolean> {
+  try {
+    const nowIso = new Date().toISOString();
+    await Promise.all([
+      setDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID), {
+        syncId: SUPABASE_LIVE_DOC_ID,
+        updatedAt: nowIso,
+        bakeriesCount: 0,
+        debtsCount: 0,
+        payloadJson: '',
+        cleared: true,
+      }),
+      setDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID), {
+        syncId: SHARED_SYNC_DOC_ID,
+        updatedAt: nowIso,
+        bakeriesCount: 0,
+        debtsCount: 0,
+        payloadJson: '',
+        cleared: true,
+      }),
+    ]);
+    return true;
+  } catch (err) {
+    console.warn('clearSharedStateInFirestore error:', err);
+    return false;
   }
 }
 
@@ -346,18 +396,18 @@ export function subscribeToSharedStateChanges(
 ): () => void {
   try {
     return onSnapshot(
-      doc(db, 'shared_sync', SHARED_SYNC_DOC_ID),
+      doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID),
       (snap) => {
         if (!snap.exists()) return;
         const item = snap.data();
-        if (!item?.payloadJson) return;
+        if (item?.cleared === true || !item?.payloadJson) return;
         try {
           const parsed = JSON.parse(item.payloadJson);
           onUpdate({
             data: parsed,
             updatedAt: item.updatedAt || new Date().toISOString(),
-            bakeriesCount: item.bakeriesCount || parsed.bakeries?.length || 0,
-            debtsCount: item.debtsCount || parsed.debts?.length || 0,
+            bakeriesCount: item.bakeriesCount ?? parsed.bakeries?.length ?? 0,
+            debtsCount: item.debtsCount ?? parsed.debts?.length ?? 0,
           });
         } catch {}
       },
