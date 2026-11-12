@@ -800,7 +800,10 @@ export async function fetchDatabaseFromSupabase(): Promise<{
   if (
     cloudSnap &&
     cloudSnap.data &&
-    (Array.isArray(cloudSnap.data.bakeries) || Array.isArray(cloudSnap.data.debts))
+    (Array.isArray(cloudSnap.data.bakeries) ||
+      Array.isArray(cloudSnap.data.debts) ||
+      Array.isArray(cloudSnap.data.branches) ||
+      cloudSnap.data.branchPartitions)
   ) {
     candidates.push({
       data: cloudSnap.data as AppState,
@@ -809,15 +812,21 @@ export async function fetchDatabaseFromSupabase(): Promise<{
     });
   }
 
+  const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
+  const serverTimestamp =
+    serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
   if (
     serverSnap &&
     serverSnap.success &&
-    serverSnap.data &&
-    (Array.isArray(serverSnap.data.bakeries) || Array.isArray(serverSnap.data.debts))
+    serverData &&
+    (Array.isArray(serverData.bakeries) ||
+      Array.isArray(serverData.debts) ||
+      Array.isArray(serverData.branches) ||
+      (serverData as any).branchPartitions)
   ) {
     candidates.push({
-      data: serverSnap.data as AppState,
-      timestamp: serverSnap.timestamp || new Date(0).toISOString(),
+      data: serverData as AppState,
+      timestamp: serverTimestamp,
       source: 'خادم التزامن المباشر (Live Sync Server)',
     });
   }
@@ -1089,7 +1098,13 @@ export function subscribeToSupabaseRealtime(
   // 1. Subscribe to built-in global Multi-Device Cloud Realtime Snapshot (< 100ms latency)
   try {
     const unsubCloud = subscribeToSharedStateChanges(({ data, updatedAt }) => {
-      if (data && (Array.isArray(data.bakeries) || Array.isArray(data.debts))) {
+      if (
+        data &&
+        (Array.isArray(data.bakeries) ||
+          Array.isArray(data.debts) ||
+          Array.isArray(data.branches) ||
+          data.branchPartitions)
+      ) {
         onUpdate(data as AppState, updatedAt);
       }
     });

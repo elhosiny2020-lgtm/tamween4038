@@ -865,8 +865,22 @@ export function writeBranchPartitionToLocal(
     );
     const updatedVault = loadBranchAuthVault(branchId, branchObj?.name);
 
-    // Adopt full branch partition if local branch is untouched, empty, or older/equal to cloud partition
-    if (isLocalUntouched || remoteTimeMs >= localTimeMs) {
+    // Determine if incoming cloud partition should be adopted locally:
+    // 1. Local branch is untouched or empty
+    // 2. Local has default seed data only while remote has customized bakeries
+    // 3. Remote timestamp is newer than or equal to local timestamp
+    // 4. Local has not explicitly saved anything while remote has data
+    const remoteHasBakeries = Array.isArray(part.bakeries) && part.bakeries.length > 0;
+    const localHasSeedOnly = isDefault && isDefaultSeedState(existingBake, existingDebts);
+    const localIsEmpty = existingBake.length === 0 && existingDebts.length === 0;
+    const shouldAdopt =
+      isLocalUntouched ||
+      localIsEmpty ||
+      (localHasSeedOnly && remoteHasBakeries) ||
+      remoteTimeMs >= localTimeMs ||
+      (!hasExplicitSave && remoteHasBakeries);
+
+    if (shouldAdopt) {
       const synced = synchronizeBakeryAndDebts(
         (part.bakeries || []).map(normalizeBakeryPerCapita),
         part.debts || []
@@ -954,13 +968,13 @@ export function syncAllBranchesFromCloudPayload(
 
   // 1. Sync branches list across all devices
   const currentBranches = getBranchesList();
+  const branchMap = new Map<string, SupplyBranch>();
+  DEFAULT_SUPPLY_BRANCHES.forEach((b) => branchMap.set(b.id, b));
+  currentBranches.forEach((b) => branchMap.set(b.id, b));
   if (Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
-    const branchMap = new Map<string, SupplyBranch>();
-    currentBranches.forEach((b) => branchMap.set(b.id, b));
     cloudData.branches.forEach((b) => {
       if (b && b.id && b.name) branchMap.set(b.id, b);
     });
-    saveBranchesList(Array.from(branchMap.values()));
   }
 
   // 2. Sync root payload & all branch partitions
@@ -970,6 +984,25 @@ export function syncAllBranchesFromCloudPayload(
   const remoteAuthVaults =
     (cloudData as unknown as { branchAuthVaults?: Record<string, BranchAuthVaultRecord> })
       .branchAuthVaults;
+
+  // Also include any branch ID present in branchPartitions
+  Object.keys(remotePartitions).forEach((bId) => {
+    if (bId && !branchMap.has(bId)) {
+      const pName = remotePartitions[bId]?.systemConfig?.administrationTitle;
+      if (pName) {
+        branchMap.set(bId, {
+          id: bId,
+          name: pName,
+          directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+          governorateTitle: 'محافظة الغربية',
+          description: `إدارة تموينية مستقلة - ${pName}`,
+          createdAt: new Date().toISOString().slice(0, 10),
+          isDefault: bId === DEFAULT_BRANCH_ID,
+        });
+      }
+    }
+  });
+  saveBranchesList(Array.from(branchMap.values()));
 
   const defaultPartition: BranchPartitionPayload = remotePartitions[DEFAULT_BRANCH_ID] || {
     ...cloudData,
@@ -1041,6 +1074,7 @@ export function buildFullCloudMultiBranchPayload(
           customRoles: vault.customRoles,
           logoBase64: DEFAULT_OFFICIAL_LOGO,
         },
+        updatedAt: localPart.updatedAt || snapshotTimestamp,
       };
     }
   });
@@ -1536,11 +1570,19 @@ export async function persistFullState(
           localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
         }
 
-        autoSyncToSupabase(
-          cloudStatePayload as unknown as AppState,
-          true,
-          backupSnapshot.timestamp
-        ).catch(() => {});
+        Promise.all([
+          syncSharedStateToFirestore(
+            cloudStatePayload as unknown as Record<string, any>,
+            backupSnapshot.timestamp
+          ),
+          autoSyncToSupabase(
+            cloudStatePayload as unknown as AppState,
+            true,
+            backupSnapshot.timestamp
+          ),
+        ]).catch((syncErr) => {
+          console.warn('Background cloud multi-device sync warning:', syncErr);
+        });
 
         if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
           try {

@@ -22,7 +22,7 @@ import {
   calculateYearlyAverage,
   calculatePerBakeryAverage,
 } from './auditHelper';
-import { DailyBakeryTask } from '../types';
+import { DailyBakeryTask, SupplyBranch } from '../types';
 
 test('calculatePerCapitaAverage returns strictly 2 decimal places (not 3)', () => {
   assert.equal(calculatePerCapitaAverage(32400, 38500), '0.84');
@@ -386,6 +386,9 @@ import {
   getScopedKeysForBranch,
   mergeUsersList,
   buildFullCloudMultiBranchPayload,
+  syncAllBranchesFromCloudPayload,
+  getBranchesList,
+  readBranchPartitionFromLocal,
 } from '../storage';
 
 test('getScopedKeysForBranch isolates all keys (bakeries, debts, users, config/permissions, tools) per supply branch', () => {
@@ -523,3 +526,106 @@ test('branchAuthVault strictly isolates usernames, passwords, and permissions pe
   assert.equal(mahallaOnly[0].branchId, 'branch-mahalla');
   assert.equal(mahallaOnly.some((u) => u.username === 'samanoud_mgr'), false);
 });
+
+test('syncAllBranchesFromCloudPayload propagates newly added branches across devices without data loss', () => {
+  const store = new Map<string, string>();
+  const origLocalStorage = (globalThis as any).localStorage;
+  (globalThis as any).localStorage = {
+    getItem: (key: string) => store.get(key) || null,
+    setItem: (key: string, val: string) => store.set(key, val),
+    removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear(),
+  };
+
+  try {
+    const incomingBranches: SupplyBranch[] = [
+      {
+        id: 'branch-mahalla',
+        name: 'إدارة تموين مركز المحلة الكبرى',
+        governorateTitle: 'محافظة الغربية',
+        directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+        description: 'الفرع الرئيسي',
+        createdAt: '2025-01-01',
+        isDefault: true,
+      },
+      {
+        id: 'branch-samanoud',
+        name: 'إدارة تموين سمنود',
+        governorateTitle: 'محافظة الغربية',
+        directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+        description: 'فرع سمنود',
+        createdAt: '2025-01-01',
+        isDefault: false,
+      },
+      {
+        id: 'branch-zefta',
+        name: 'إدارة تموين زفتى',
+        governorateTitle: 'محافظة الغربية',
+        directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+        description: 'فرع زفتى الجديد',
+        createdAt: '2025-01-01',
+        isDefault: false,
+      },
+    ];
+
+    const incomingPayload = {
+      branches: incomingBranches,
+      branchPartitions: {
+        'branch-zefta': {
+          activeBranchId: 'branch-zefta',
+          bakeries: [
+            {
+              id: 'b-zefta-1',
+              machineNumber: '998877',
+              bakeryOwnerName: 'مخبز زفتى النموذجي',
+              village: 'زفتى',
+              localUnit: 'المدينة',
+              insuranceValue: 2350,
+              insuranceQuota: 10,
+              actualQuota: 10,
+              loavesCount: 3000,
+              villagePopulation: 15000,
+              perCapitaAverage: '0.20',
+              beneficiaries2023: 14000,
+              avg2023: '0.21',
+              beneficiaries2024: 14500,
+              avg2024: '0.21',
+              beneficiaries2025: 15000,
+              avg2025: '0.20',
+              avgDiff: '-0.20',
+              flourBagPrice: 950,
+              breadType: 'بلدي مدعم ماو',
+              breadTypeCount: 1,
+              lineType: 'آلي كامل',
+              fuelType: 'غاز طبيعي',
+              activityStatus: 'شغال',
+            },
+          ],
+          debts: [],
+          systemConfig: {
+            ...DEFAULT_SYSTEM_CONFIG,
+            administrationTitle: 'إدارة تموين زفتى',
+          },
+          updatedAt: '2026-11-12T16:00:00Z',
+        },
+      },
+    };
+
+    syncAllBranchesFromCloudPayload(incomingPayload as any, '2026-11-12T16:00:00Z');
+
+    const branches = getBranchesList();
+    assert.equal(branches.some((b) => b.id === 'branch-zefta'), true);
+    assert.equal(branches.find((b) => b.id === 'branch-zefta')?.name, 'إدارة تموين زفتى');
+
+    const zeftaPartition = readBranchPartitionFromLocal('branch-zefta');
+    assert.equal(zeftaPartition.bakeries?.length, 1);
+    assert.equal(zeftaPartition.bakeries?.[0].bakeryOwnerName, 'مخبز زفتى النموذجي');
+  } finally {
+    if (origLocalStorage) {
+      (globalThis as any).localStorage = origLocalStorage;
+    } else {
+      delete (globalThis as any).localStorage;
+    }
+  }
+});
+

@@ -1231,6 +1231,9 @@ export default function App() {
       setDetailsBakery(null);
 
       const branchesToUse = updatedBranchesList || getBranchesList();
+      if (updatedBranchesList) {
+        saveBranchesList(branchesToUse);
+      }
       const branchObj = branchesToUse.find((b) => b.id === targetBranchId);
 
       // 1. Immediately apply local branch partition & isolated branch auth vault (0ms UI response)
@@ -2059,6 +2062,27 @@ export default function App() {
               <span className="text-[#1E40AF] font-semibold">
                 {getRoleNameArabic(appState.currentUser.role, appState.systemConfig)}
               </span>
+            </div>
+
+            {/* Header Direct Branch Dropdown Switcher (قائمة منسدلة لاختيار أي فرع مباشرة من الواجهة) */}
+            <div className="flex items-center gap-1.5 bg-slate-900 text-amber-300 px-2.5 py-1.5 rounded-lg border-2 border-amber-400/90 shadow-2xs">
+              <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <label htmlFor="header-branch-select" className="text-[11px] font-black text-amber-300 hidden md:inline">
+                الفرع / الإدارة:
+              </label>
+              <select
+                id="header-branch-select"
+                value={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                onChange={(e) => handleSwitchBranch(e.target.value, appState.branches || getBranchesList())}
+                className="bg-slate-900 text-amber-300 font-black text-xs cursor-pointer focus:outline-none pr-1"
+                title="اختيار الإدارة التموينية أو الفرع مباشرة"
+              >
+                {(appState.branches || getBranchesList()).map((branch) => (
+                  <option key={branch.id} value={branch.id} className="bg-slate-900 text-white font-bold">
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Branches / Supply Departments Manager & Switcher Button */}
@@ -4780,22 +4804,26 @@ export default function App() {
           handleSwitchBranch(branchId, appState.branches || getBranchesList());
         }}
         onBranchesChange={(updatedBranches, nextBranchId) => {
+          saveBranchesList(updatedBranches);
           const currentBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
-          if (nextBranchId !== currentBranchId) {
-            handleSwitchBranch(nextBranchId, updatedBranches);
+          const targetBranchId = nextBranchId || currentBranchId;
+          const activeObj = updatedBranches.find((b) => b.id === targetBranchId) || updatedBranches[0];
+
+          if (targetBranchId !== currentBranchId) {
+            handleSwitchBranch(targetBranchId, updatedBranches);
           } else {
-            const activeObj = updatedBranches.find((b) => b.id === nextBranchId);
-            setAppState((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    branches: updatedBranches,
-                    systemConfig: {
-                      ...prev.systemConfig,
-                      administrationTitle: activeObj?.name || prev.systemConfig.administrationTitle,
-                    },
-                  }
-                : prev
+            const nextState: AppState = {
+              ...appState,
+              branches: updatedBranches,
+              activeBranchId: targetBranchId,
+              systemConfig: {
+                ...appState.systemConfig,
+                administrationTitle: activeObj?.name || appState.systemConfig.administrationTitle,
+              },
+            };
+            triggerSave(
+              nextState,
+              `تم حفظ وتحديث قائمة الفروع والإدارات التموينية (${updatedBranches.length} إدارة) ومزامنتها سحابياً لجميع الأجهزة`
             );
           }
         }}
