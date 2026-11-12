@@ -1309,47 +1309,16 @@ export default function App() {
     );
   }
 
-  // Helper to perform non-destructive Gmail / Google Drive JSON merge on user login or registration
+  // Helper to maintain single definitive database instance without additive merging on login
   const performGmailDriveAdditiveMerge = (baseState: AppState, user: AppUser): AppState => {
-    const gmail =
-      user.gmailEmail ||
-      localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
-      baseState.systemConfig.gmailEmail ||
-      '';
-    if (!gmail.trim()) {
-      return { ...baseState, currentUser: user };
-    }
-    const gmailKey = gmail.trim().toLowerCase();
-    let workingState = { ...baseState, currentUser: user };
-
-    const sources = [
-      localStorage.getItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`),
-      localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD'),
-    ].filter(Boolean) as string[];
-
-    sources.forEach((rawStr) => {
-      try {
-        const parsed = JSON.parse(rawStr);
-        const sourceData = parsed.data || parsed.state || parsed;
-        if (sourceData && (Array.isArray(sourceData.bakeries) || Array.isArray(sourceData.debts))) {
-          const merged = mergeStates(workingState, sourceData as Partial<AppState>);
-          workingState = {
-            ...merged,
-            currentUser: user,
-            systemConfig: {
-              ...merged.systemConfig,
-              gmailEmail: gmail.trim(),
-              googleDriveAutoSync: true,
-              logoBase64: DEFAULT_OFFICIAL_LOGO,
-            },
-          };
-        }
-      } catch {
-        // ignore invalid JSON cache
-      }
-    });
-
-    return workingState;
+    return {
+      ...baseState,
+      currentUser: user,
+      systemConfig: {
+        ...baseState.systemConfig,
+        logoBase64: DEFAULT_OFFICIAL_LOGO,
+      },
+    };
   };
 
   // If not logged in, show Animated Login
