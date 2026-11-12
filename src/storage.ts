@@ -366,8 +366,7 @@ export async function loadInitialState(): Promise<AppState> {
         supaRes &&
         supaRes.success &&
         supaRes.data &&
-        Array.isArray(supaRes.data.bakeries) &&
-        supaRes.data.bakeries.length > 0
+        (Array.isArray(supaRes.data.bakeries) || Array.isArray(supaRes.data.debts))
       ) {
         let supaBakeries = supaRes.data.bakeries.map(normalizeBakeryPerCapita);
         let supaDebts = supaRes.data.debts ?? [];

@@ -839,66 +839,79 @@ let activeRealtimeChannel: any = null;
 /**
  * مزامنة تلقائية فورية مع Supabase عند أي تعديل دون الحاجة للضغط على أي زر
  */
-export async function autoSyncToSupabase(state: AppState): Promise<boolean> {
+export async function autoSyncToSupabase(state: AppState, immediate = false): Promise<boolean> {
   const cfg = getSupabaseConfig();
   if (!cfg.isConfigured) return false;
 
   const client = getSupabaseClient();
   if (!client) return false;
 
+  const doSync = async (): Promise<boolean> => {
+    try {
+      const snapshotPayload = {
+        version: '3.7-supabase-realtime-autosync',
+        timestamp: new Date().toISOString(),
+        bakeriesCount: Array.isArray(state?.bakeries) ? state.bakeries.length : 0,
+        debtsCount: Array.isArray(state?.debts) ? state.debts.length : 0,
+        data: state,
+      };
+
+      // 1. Send instant Realtime broadcast to all connected devices via WebSocket (<50ms)
+      try {
+        if (!activeRealtimeChannel) {
+          activeRealtimeChannel = client.channel('tamween_realtime_channel');
+          activeRealtimeChannel.subscribe();
+        }
+        activeRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'state_update',
+          payload: snapshotPayload,
+        });
+      } catch (bcastErr) {
+        console.warn('Realtime broadcast error (fallback to postgres):', bcastErr);
+      }
+
+      // 2. Upsert into backup_snapshots as 'latest_live_snapshot' for real-time Postgres changes
+      await client
+        .from('backup_snapshots')
+        .upsert(
+          {
+            id: 'latest_live_snapshot',
+            version: snapshotPayload.version,
+            timestamp: snapshotPayload.timestamp,
+            bakeries_count: snapshotPayload.bakeriesCount,
+            debts_count: snapshotPayload.debtsCount,
+            payload: snapshotPayload,
+          },
+          { onConflict: 'id' }
+        );
+
+      // 3. Background non-blocking migration of individual tables
+      migrateDatabaseToSupabase(state).catch(() => {});
+      return true;
+    } catch (err) {
+      console.warn('autoSyncToSupabase error (non-critical):', err);
+      return false;
+    }
+  };
+
+  if (immediate) {
+    if (autoSyncDebounceTimer) {
+      clearTimeout(autoSyncDebounceTimer);
+      autoSyncDebounceTimer = null;
+    }
+    return doSync();
+  }
+
   return new Promise((resolve) => {
     if (autoSyncDebounceTimer) {
       clearTimeout(autoSyncDebounceTimer);
     }
-    // Debounce by 1000ms to avoid flooding Supabase during fast typing
+    // Fast 300ms debounce for instant auto-saving
     autoSyncDebounceTimer = setTimeout(async () => {
-      try {
-        const snapshotPayload = {
-          version: '3.7-supabase-realtime-autosync',
-          timestamp: new Date().toISOString(),
-          bakeriesCount: state.bakeries.length,
-          debtsCount: state.debts.length,
-          data: state,
-        };
-
-        // 1. Send instant Realtime broadcast to all connected devices via WebSocket (<50ms)
-        try {
-          if (!activeRealtimeChannel) {
-            activeRealtimeChannel = client.channel('tamween_realtime_channel');
-            activeRealtimeChannel.subscribe();
-          }
-          activeRealtimeChannel.send({
-            type: 'broadcast',
-            event: 'state_update',
-            payload: snapshotPayload,
-          });
-        } catch (bcastErr) {
-          console.warn('Realtime broadcast error (fallback to postgres):', bcastErr);
-        }
-
-        // 2. Upsert into backup_snapshots as 'latest_live_snapshot' for real-time Postgres changes
-        await client
-          .from('backup_snapshots')
-          .upsert(
-            {
-              id: 'latest_live_snapshot',
-              version: snapshotPayload.version,
-              timestamp: snapshotPayload.timestamp,
-              bakeries_count: snapshotPayload.bakeriesCount,
-              debts_count: snapshotPayload.debtsCount,
-              payload: snapshotPayload,
-            },
-            { onConflict: 'id' }
-          );
-
-        // 3. Background non-blocking migration of individual tables
-        migrateDatabaseToSupabase(state).catch(() => {});
-        resolve(true);
-      } catch (err) {
-        console.warn('autoSyncToSupabase error (non-critical):', err);
-        resolve(false);
-      }
-    }, 1000);
+      const res = await doSync();
+      resolve(res);
+    }, 300);
   });
 }
 
