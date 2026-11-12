@@ -318,6 +318,7 @@ export default function App() {
   const [debtsColumnGroup, setDebtsColumnGroup] = useState<'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL'>('ALL');
   const [debtsPageSize, setDebtsPageSize] = useState<number>(50);
   const [showDebtsAlertsKeyModal, setShowDebtsAlertsKeyModal] = useState<boolean>(false);
+  const [openDebtScheduleSignal, setOpenDebtScheduleSignal] = useState<number>(0);
   const [externalDebtsManageListModal, setExternalDebtsManageListModal] = useState<'entities' | 'violations' | null>(null);
   const [masterEditorInitialCategory, setMasterEditorInitialCategory] = useState<DropdownCategoryKey>('ALL');
   const [dailyNotificationData, setDailyNotificationData] = useState<{
@@ -1705,6 +1706,12 @@ export default function App() {
         setDebtFilterBakeryId(undefined);
         setShowDebtsAlertsKeyModal(false);
         break;
+      case 'debts-add-schedule':
+        setActiveTab('debts');
+        setDebtFilterBakeryId(undefined);
+        setShowDebtsAlertsKeyModal(false);
+        setOpenDebtScheduleSignal((prev) => prev + 1);
+        break;
       case 'debts-alerts-key':
         setActiveTab('debts');
         setShowDebtsAlertsKeyModal(true);
@@ -2459,6 +2466,7 @@ export default function App() {
               debtsColumnGroup={debtsColumnGroup}
               debtsPageSize={debtsPageSize}
               onSafeSaveAndLogout={handleSafeSaveAndLogout}
+              openScheduleSignal={openDebtScheduleSignal}
             />
           ) : (
             /* BAKERIES DATABASE VIEW (إعادة تصميم قاعدة بيانات المخابز - البند 6) */
@@ -4116,6 +4124,7 @@ export default function App() {
           flourBagPrice={flourBagPrice}
           onUpdateFlourBagPrice={(price) => setFlourBagPrice(price)}
           systemConfig={appState.systemConfig}
+          currentUser={appState.currentUser}
         />
       )}
 

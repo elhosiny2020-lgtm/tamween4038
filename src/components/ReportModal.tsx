@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Bakery, DebtRecord, VillageHierarchy, ColumnTitles, SystemConfig, AppUser } from '../types';
 import {
-  sanitizeClonedDocumentForPdf,
-  sanitizeLiveStylesheets,
+  exportElementToPdf,
   printHtmlElementA4,
 } from '../utils/pdfHelper';
 import {
@@ -160,7 +159,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   // Dynamic Title Construction
   const dynamicReportTitle = useMemo(() => {
     if (reportType === 'users') {
-      return 'كشف حسابات المستخدمين والأدوار الوظيفية والصلاحيات (الاسم بالكامل • اليوزر • الباسورد)';
+      return 'كشف حسابات المستخدمين والأدوار الوظيفية والصلاحيات المعتمدة';
     }
 
     const locationSuffix =
@@ -286,10 +285,22 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     };
   }, [filteredDebts, bakeryDebtMap]);
 
+  // Pre-grouped debts by bakeryId for O(1) lookup (eliminates O(N*M) lag)
+  const debtsByBakeryMap = useMemo(() => {
+    const map = new Map<string, DebtRecord[]>();
+    for (let i = 0; i < debts.length; i++) {
+      const d = debts[i];
+      const list = map.get(d.bakeryId);
+      if (list) list.push(d);
+      else map.set(d.bakeryId, [d]);
+    }
+    return map;
+  }, [debts]);
+
   // Aggregated per-bakery debts & repayment calculations
   const bakeryDebtSummaries = useMemo(() => {
     return bakeries.map((b) => {
-      const bDebts = debts.filter((d) => d.bakeryId === b.id);
+      const bDebts = debtsByBakeryMap.get(b.id) || [];
       let totalViolations = 0;
       let paidViolations = 0;
       let totalAdded = 0;
@@ -340,7 +351,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         isOver20k,
       };
     });
-  }, [bakeries, debts]);
+  }, [bakeries, debtsByBakeryMap]);
 
   // Filtered per-bakery debts
   const filteredBakeryDebts = useMemo(() => {
@@ -438,69 +449,26 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     setActiveColumns(allTrue);
   };
 
-  // Instant HTML2PDF Download in Landscape A4 with performance protection
+  // Instant HTML2PDF Download in Landscape A4 with zero main-thread lag
   const handleDownloadPdf = async () => {
-    if (!printAreaRef.current) return;
+    if (!printAreaRef.current || isGeneratingPdf) return;
     setIsGeneratingPdf(true);
-
-    sanitizeLiveStylesheets();
-
-    const win = window as unknown as {
-      html2pdf?: () => {
-        from: (el: HTMLElement) => { set: (o: any) => { save: () => Promise<void> } };
-      };
-      loadHtml2PdfOnDemand?: () => Promise<any>;
-    };
-
-    if (typeof win.html2pdf !== 'function' && typeof win.loadHtml2PdfOnDemand === 'function') {
-      try {
-        await win.loadHtml2PdfOnDemand();
-      } catch (e) {
-        console.warn('html2pdf dynamic loading notice:', e);
-      }
-    }
-
-    const element = printAreaRef.current;
-    const opt = {
-      margin: [4, 4, 4, 4],
-      filename: `${dynamicReportTitle.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`,
-      image: { type: 'jpeg', quality: 0.96 },
-      html2canvas: {
-        scale: 1.5,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: 1440,
-        scrollX: 0,
-        scrollY: 0,
-        onclone: (clonedDoc: Document) => {
-          sanitizeClonedDocumentForPdf(clonedDoc);
-        },
-      },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
-    };
-
-    if (typeof win.html2pdf === 'function') {
-      const pdfTask = win
-        .html2pdf()
-        .from(element)
-        .set(opt)
-        .save();
-
-      const timeoutTask = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('PDF generation timed out')), 8000)
-      );
-
-      Promise.race([pdfTask, timeoutTask])
-        .then(() => setIsGeneratingPdf(false))
-        .catch((err: Error) => {
-          console.warn('PDF generation encountered issue, triggering direct fast print:', err);
-          setIsGeneratingPdf(false);
-          handlePrint();
-        });
-    } else {
+    const fontClass =
+      fontSizeMode === 'large'
+        ? 'report-font-large'
+        : fontSizeMode === 'compact'
+        ? 'report-font-compact'
+        : 'report-font-standard';
+    try {
+      await exportElementToPdf(printAreaRef.current, {
+        title: dynamicReportTitle,
+        paperSize: 'a4',
+        orientation: 'landscape',
+        margins: 'narrow',
+        fontClass,
+      });
+    } finally {
       setIsGeneratingPdf(false);
-      handlePrint();
     }
   };
 
@@ -602,7 +570,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         'م',
         'الاسم بالكامل (Full Name)',
         'اسم المستخدم (اليوزر - Username)',
-        'كلمة المرور (الباسورد - Password)',
+        'أعده',
         'الدور الوظيفي',
         'المسمى الوظيفي',
         'القسم / الإدارة',
@@ -619,7 +587,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           idx + 1,
           `"${(u.fullName || '').replace(/"/g, '""')}"`,
           `"${(u.username || '').replace(/"/g, '""')}"`,
-          `"${(u.password || 'admin').replace(/"/g, '""')}"`,
+          `"أعده: ${(currentUser?.fullName || currentUser?.username || 'م/ أحمد الحسيني').replace(/"/g, '""')}"`,
           `"${getRoleNameArabic(u.role, systemConfig)}"`,
           `"${u.jobTitle || 'مسئول تمويني'}"`,
           `"${u.department || 'إدارة تموين مركز المحلة الكبرى'}"`,
@@ -1147,7 +1115,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               }`}
             >
               <Users className="w-4 h-4 text-amber-300" />
-              كشف المستخدمين والصلاحيات (الاسم بالكامل • اليوزر • الباسورد) ({users.length})
+              كشف المستخدمين والصلاحيات ({users.length})
             </button>
           </div>
 
@@ -1160,7 +1128,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                   onChange={(e) => setIncludeUsersAppendix(e.target.checked)}
                   className="accent-amber-500 rounded w-3.5 h-3.5"
                 />
-                <span>إرفاق جدول المستخدمين (الاسم • اليوزر • الباسورد) بالكشف</span>
+                <span>إرفاق جدول المستخدمين والصلاحيات بالكشف</span>
               </label>
             )}
             <div className="text-[11px] font-bold text-amber-200">
@@ -1489,10 +1457,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                     </p>
                     <p>تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</p>
                     <div className="font-black text-black bg-amber-100 px-2.5 py-1 rounded border border-black text-[10.5px] mt-1 space-y-0.5 text-right" dir="rtl">
-                      <div>الاسم بالكامل: {currentUser?.fullName || 'م/ أحمد الحسيني'}</div>
                       <div>
-                        اليوزر: <span className="font-mono">{currentUser?.username || 'admin'}</span> | الباسورد:{' '}
-                        <span className="font-mono">{currentUser?.password || 'admin'}</span>
+                        أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
                       </div>
                     </div>
                   </div>
@@ -1633,7 +1599,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         <th className="border border-black py-1.5 px-1 w-10">م</th>
                         <th className="border border-black py-1.5 px-2">الاسم بالكامل (Full Name)</th>
                         <th className="border border-black py-1.5 px-2">اسم المستخدم (اليوزر - Username)</th>
-                        <th className="border border-black py-1.5 px-2">كلمة المرور (الباسورد - Password)</th>
+                        <th className="border border-black py-1.5 px-2">أعده</th>
                         <th className="border border-black py-1.5 px-2">الدور الوظيفي</th>
                         <th className="border border-black py-1.5 px-2">المسمى الوظيفي</th>
                         <th className="border border-black py-1.5 px-2">القسم / الإدارة</th>
@@ -1656,7 +1622,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                             <td className="border border-black py-1.5 px-1 num-enlarged font-black">{idx + 1}</td>
                             <td className="border border-black py-1.5 px-2 font-black text-right">{u.fullName}</td>
                             <td className="border border-black py-1.5 px-2 font-mono font-black">{u.username}</td>
-                            <td className="border border-black py-1.5 px-2 font-mono font-black">{u.password || 'admin'}</td>
+                            <td className="border border-black py-1.5 px-2 font-black">
+                              أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
+                            </td>
                             <td className="border border-black py-1.5 px-2 font-black">
                               {getRoleNameArabic(u.role, systemConfig)}
                             </td>
@@ -2637,7 +2605,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               {reportType !== 'users' && includeUsersAppendix && users.length > 0 && (
                 <div className="mt-6 pt-3 border-t-2 border-black space-y-2">
                   <h3 className="text-xs font-black text-black underline">
-                    بيان حسابات المستخدمين والأدوار الوظيفية والصلاحيات (الاسم بالكامل • اليوزر • الباسورد):
+                    بيان حسابات المستخدمين والأدوار الوظيفية والصلاحيات المعتمدة:
                   </h3>
                   <table className={`report-table-compact w-full text-center border-collapse border border-black leading-tight ${fontSizeClass}`}>
                     <thead>
@@ -2645,7 +2613,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                         <th className="border border-black py-1 px-1 w-10">م</th>
                         <th className="border border-black py-1 px-2">الاسم بالكامل</th>
                         <th className="border border-black py-1 px-2">اسم المستخدم (اليوزر)</th>
-                        <th className="border border-black py-1 px-2">كلمة المرور (الباسورد)</th>
+                        <th className="border border-black py-1 px-2">أعده</th>
                         <th className="border border-black py-1 px-2">الدور الوظيفي</th>
                         <th className="border border-black py-1 px-2">المسمى الوظيفي</th>
                         <th className="border border-black py-1 px-2">عدد الصلاحيات الممنوحة</th>
@@ -2664,7 +2632,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                             <td className="border border-black py-1 px-1 font-black">{idx + 1}</td>
                             <td className="border border-black py-1 px-2 font-black text-right">{u.fullName}</td>
                             <td className="border border-black py-1 px-2 font-mono font-black">{u.username}</td>
-                            <td className="border border-black py-1 px-2 font-mono font-black">{u.password || 'admin'}</td>
+                            <td className="border border-black py-1 px-2 font-black">
+                              أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
+                            </td>
                             <td className="border border-black py-1 px-2 font-black">{getRoleNameArabic(u.role, systemConfig)}</td>
                             <td className="border border-black py-1 px-2">{u.jobTitle || 'مسئول تمويني'}</td>
                             <td className="border border-black py-1 px-2 font-black">
@@ -2700,7 +2670,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                 <div>
                   <p>إعداد ومراجعة الإحصاء التمويني والمديونيات</p>
                   <p className="text-[11px] font-black text-amber-950 mt-1">
-                    الاسم بالكامل: {currentUser?.fullName || 'م/ أحمد الحسيني'} (اليوزر: {currentUser?.username || 'admin'})
+                    أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
                   </p>
                   <div className="h-8 flex items-end justify-center text-[10px] text-slate-400">
                     ................................

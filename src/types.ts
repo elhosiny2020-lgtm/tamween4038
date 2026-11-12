@@ -107,6 +107,15 @@ export interface DebtRecord {
   // (قيمة المخالفة + مخالفات قديمة - المبلغ المسدد) + (قيمة التصرف - السداد من التصرف) + (المضاف - المسدد من المضاف)
   netRemainingDebt: number;
 
+  // جدولة المديونيات على صاحب المخبز
+  isScheduled?: boolean; // هل المديونية مجدولة؟
+  scheduleInstallmentsCount?: number; // عدد الدفعات / الأقساط
+  schedulePeriodType?: 'أسبوعي' | 'نصف شهري' | 'شهري' | string; // دورية السداد
+  scheduleInstallmentValue?: number; // قيمة القسط الدوري (ج.م)
+  scheduleStartDate?: string; // تاريخ بداية الجدولة
+  schedulePaidInstallments?: number; // عدد الدفعات المسددة
+  scheduleStatus?: string; // حالة الجدولة (منتظم / قيد التحصيل / مكتمل / متأخر)
+
   notes?: string;
 }
 

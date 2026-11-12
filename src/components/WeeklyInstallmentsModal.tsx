@@ -318,9 +318,8 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                     <p className="font-bold">إخطار وجدولة سداد مديونية تموينية</p>
                     <p>تاريخ الإخطار: {new Date().toLocaleDateString('ar-EG')}</p>
                     <p className="text-red-700 font-black">مديونية كبرى &gt; 20,000 ج.م</p>
-                    <div className="font-black text-black bg-amber-100/90 px-2 py-1 rounded border border-black inline-block text-[10px] mt-0.5 text-right space-y-0.5">
-                      <div>الاسم بالكامل: {currentUser?.fullName || 'أحمد الحسيني'}</div>
-                      <div>اليوزر: {currentUser?.username || 'admin'} | الباسورد: {currentUser?.password || 'admin'}</div>
+                    <div className="font-black text-black bg-amber-100/90 px-2.5 py-1 rounded border border-black inline-block text-[10px] mt-0.5 text-right space-y-0.5">
+                      <div>أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})</div>
                     </div>
                   </div>
                 </div>
@@ -434,7 +433,9 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                   </div>
                   <div>
                     <p>رئيس قسم الرقابة التموينية بالمركز</p>
-                    <p className="text-[10px] text-slate-500 font-bold mt-1">متابعة التحصيل الأسبوعي</p>
+                    <p className="text-[10px] text-slate-700 font-bold mt-1">
+                      أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
+                    </p>
                     <div className="h-10 flex items-end justify-center text-[10px] text-slate-400">
                       التوقيع: ................................
                     </div>

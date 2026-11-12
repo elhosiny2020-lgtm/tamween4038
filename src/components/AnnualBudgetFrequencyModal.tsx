@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { Bakery, SystemConfig } from '../types';
-import { Calendar, DollarSign, FileSpreadsheet, Printer, X, Sparkles, TrendingUp, Award, Layers, RotateCcw } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { Bakery, SystemConfig, AppUser } from '../types';
+import { Calendar, FileSpreadsheet, Printer, X, RotateCcw, Download } from 'lucide-react';
+import { printHtmlElementA4, exportElementToPdf } from '../utils/pdfHelper';
 
 interface AnnualBudgetFrequencyModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface AnnualBudgetFrequencyModalProps {
   flourBagPrice: number;
   onUpdateFlourBagPrice: (price: number) => void;
   systemConfig: SystemConfig;
+  currentUser?: AppUser | null;
 }
 
 interface MonthData {
@@ -41,9 +43,12 @@ export const AnnualBudgetFrequencyModal: React.FC<AnnualBudgetFrequencyModalProp
   flourBagPrice,
   onUpdateFlourBagPrice,
   systemConfig,
+  currentUser,
 }) => {
   const [distributionMode, setDistributionMode] = useState<'EQUAL' | 'SEASONAL'>('SEASONAL');
   const [customWeights, setCustomWeights] = useState<Record<number, number>>({});
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const printRef = useRef<HTMLDivElement | null>(null);
 
   // Total Daily Quota across all active bakeries
   const totalDailyQuotaBags = useMemo(() => {
@@ -155,7 +160,26 @@ export const AnnualBudgetFrequencyModal: React.FC<AnnualBudgetFrequencyModalProp
   };
 
   const handlePrintReport = () => {
-    window.print();
+    printHtmlElementA4(
+      printRef.current,
+      `جدول_التكرار_السنوي_والمتوسطات_${new Date().toISOString().split('T')[0]}`,
+      'report-font-standard',
+      { paperSize: 'a4', orientation: 'landscape' }
+    );
+  };
+
+  const handleExportPdf = async () => {
+    if (!printRef.current || isExportingPdf) return;
+    setIsExportingPdf(true);
+    try {
+      await exportElementToPdf(printRef.current, {
+        title: 'جدول_التكرار_السنوي_وتوزيع_الميزانية_التقديرية',
+        paperSize: 'a4',
+        orientation: 'landscape',
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   return (
@@ -295,10 +319,34 @@ export const AnnualBudgetFrequencyModal: React.FC<AnnualBudgetFrequencyModalProp
           </div>
         </div>
 
-        {/* 12-Month Interactive Breakdown Table */}
-        <div className="bg-slate-950 border-2 border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
-          <div className="overflow-x-auto max-h-[420px]">
-            <table className="w-full text-center border-collapse text-xs">
+        {/* Printable Container for A4 Print & PDF */}
+        <div ref={printRef} className="space-y-4 print-container">
+          {/* Official Printable Header */}
+          <div className="hidden print:block border-b-2 border-slate-900 pb-3 mb-3">
+            <div className="flex items-center justify-between">
+              <div className="text-right text-xs font-black text-slate-900 space-y-0.5">
+                <p>جمهورية مصر العربية · {systemConfig.governorateTitle}</p>
+                <p>{systemConfig.directorateTitle}</p>
+                <p>{systemConfig.administrationTitle}</p>
+              </div>
+              <div className="text-center">
+                <h1 className="text-base font-black text-slate-900 underline">
+                  جدول التكرار السنوي وتوزيع الميزانية التقديرية ومتوسطات الحصص
+                </h1>
+              </div>
+              <div className="text-left text-[11px] font-black text-slate-900 space-y-0.5">
+                <p>تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</p>
+                <p className="bg-amber-100 px-2 py-0.5 rounded border border-slate-900">
+                  أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* 12-Month Interactive Breakdown Table */}
+          <div className="bg-slate-950 border-2 border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+            <div className="overflow-x-auto max-h-[420px]">
+              <table className="w-full text-center border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-black text-amber-300 font-black border-b border-slate-800">
                 <tr>
                   <th className="py-2.5 px-2 border-l border-slate-800">الشهر</th>
@@ -399,8 +447,24 @@ export const AnnualBudgetFrequencyModal: React.FC<AnnualBudgetFrequencyModalProp
           </div>
         </div>
 
+          {/* Official Print Footer with Prepared By */}
+          <div className="hidden print:block pt-4 border-t border-slate-400">
+            <div className="grid grid-cols-3 text-center text-xs font-black text-slate-900">
+              <div>
+                <p>أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})</p>
+              </div>
+              <div>
+                <p>رئيس قسم الرقابة التموينية</p>
+              </div>
+              <div>
+                <p>مدير الإدارة التموينية</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Modal Actions Footer */}
-        <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs no-print">
           <button
             type="button"
             onClick={() => setCustomWeights({})}
@@ -418,6 +482,16 @@ export const AnnualBudgetFrequencyModal: React.FC<AnnualBudgetFrequencyModalProp
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
               <span>تصدير كشف التكرار لـ Excel</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isExportingPdf}
+              onClick={handleExportPdf}
+              className="px-4 py-2 bg-red-800 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl font-black shadow-md border border-red-600 flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <Download className="w-4 h-4 text-red-200" />
+              <span>{isExportingPdf ? 'جاري التصدير...' : 'تصدير PDF'}</span>
             </button>
 
             <button

@@ -641,6 +641,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
   debts,
   villages,
   systemConfig,
+  currentUser,
   initialReportId = 'bak-all',
   onSelectBakeryDetails,
   onOpenLegacyReportModal,
@@ -1584,6 +1585,9 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                 <span className="text-slate-500">عدد السجلات: </span>
                 <span className="font-mono font-black text-[#1E40AF]">{filteredBakeries.length} مخبز</span>
               </div>
+              <div className="pt-1 mt-1 border-t border-slate-200 text-right font-black text-[#0F2342]">
+                أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
+              </div>
             </div>
           </div>
 
@@ -1741,7 +1745,10 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-xs font-extrabold text-slate-800 pt-2">
               <div className="border border-dashed border-slate-300 rounded-xl p-3">
                 <p className="text-[#0F2342]">إعداد المختص</p>
-                <p className="text-slate-400 mt-5 text-[11px]">التوقيع: ........................</p>
+                <p className="text-[11px] font-black text-amber-950 mt-1">
+                  أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
+                </p>
+                <p className="text-slate-400 mt-3 text-[11px]">التوقيع: ........................</p>
               </div>
               <div className="border border-dashed border-slate-300 rounded-xl p-3">
                 <p className="text-[#0F2342]">مراجعة رئيس القسم</p>

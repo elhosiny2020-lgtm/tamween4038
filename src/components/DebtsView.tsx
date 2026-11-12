@@ -83,6 +83,7 @@ interface DebtsViewProps {
   debtsColumnGroup?: 'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL';
   debtsPageSize?: number;
   onSafeSaveAndLogout?: () => void;
+  openScheduleSignal?: number;
 }
 
 export const DebtsView: React.FC<DebtsViewProps> = ({
@@ -109,6 +110,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   debtsColumnGroup = 'ALL',
   debtsPageSize = 50,
   onSafeSaveAndLogout,
+  openScheduleSignal = 0,
 }) => {
   const debtsPrintRef = React.useRef<HTMLDivElement>(null);
   const isViewer = currentUser?.role === 'viewer';
@@ -135,6 +137,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   // Modals state
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
   const [debtToEdit, setDebtToEdit] = useState<DebtRecord | null>(null);
+  const [focusScheduleInModal, setFocusScheduleInModal] = useState(false);
 
   const [isEntitiesModalOpen, setIsEntitiesModalOpen] = useState(false);
   const [isViolationsModalOpen, setIsViolationsModalOpen] = useState(false);
@@ -182,6 +185,20 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       };
     });
   }, [debts, bakeries]);
+
+  // Open Debt Scheduling modal when triggered from RightSidebar ("إضافة جدولة مديونيات")
+  useEffect(() => {
+    if (openScheduleSignal > 0) {
+      const targetDebt =
+        (selectedRowId ? enrichedDebts.find((d) => d.id === selectedRowId) : null) ||
+        enrichedDebts.find((d) => (d.netRemainingDebt || 0) > 0) ||
+        enrichedDebts[0] ||
+        null;
+      setDebtToEdit(targetDebt);
+      setFocusScheduleInModal(true);
+      setIsDebtModalOpen(true);
+    }
+  }, [openScheduleSignal]);
 
   // Filtering using pure helper function (supports dateFrom - dateTo, violationType, etc.)
   const filteredDebts = useMemo(() => {
@@ -378,6 +395,19 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       if (d.disposalPaymentMethod && d.disposalPaymentMethod !== '-') dispPayMethodsSet.add(d.disposalPaymentMethod);
     });
 
+    let scheduledCount = 0;
+    let sumInstallmentVal = 0;
+    let scheduleDatesCount = 0;
+    filteredDebts.forEach((d) => {
+      if (d.isScheduled || (d.scheduleInstallmentsCount && d.scheduleInstallmentsCount > 0)) {
+        scheduledCount += 1;
+        sumInstallmentVal +=
+          Number(d.scheduleInstallmentValue) ||
+          Math.ceil((Number(d.netRemainingDebt) || 0) / Math.max(1, Number(d.scheduleInstallmentsCount) || 4));
+        if (d.scheduleStartDate) scheduleDatesCount += 1;
+      }
+    });
+
     return {
       sumViol,
       sumOldViol,
@@ -393,6 +423,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       sumDispVal,
       sumPaidDisp,
       sumNetRem,
+      scheduledCount,
+      sumInstallmentVal,
+      scheduleDatesCount,
       uniqueBakeriesCount: bakeriesSet.size,
       uniqueMachinesCount: machinesSet.size,
       uniqueVillagesCount: villagesSet.size,
@@ -539,6 +572,26 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
 
         <div className="flex items-center flex-wrap justify-end gap-2.5 text-right">
+          {!isViewer && (
+            <button
+              type="button"
+              onClick={() => {
+                const targetDebt =
+                  (selectedRowId ? enrichedDebts.find((d) => d.id === selectedRowId) : null) ||
+                  enrichedDebts.find((d) => (d.netRemainingDebt || 0) > 0) ||
+                  enrichedDebts[0] ||
+                  null;
+                setDebtToEdit(targetDebt);
+                setFocusScheduleInModal(true);
+                setIsDebtModalOpen(true);
+              }}
+              className="px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 rounded-xl text-xs font-black flex items-center gap-2 shadow-lg border border-emerald-300 transition cursor-pointer"
+            >
+              <Calendar className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+              <span>إضافة جدولة مديونيات</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setIsAlertsKeyVisible((prev) => !prev)}
@@ -828,12 +881,33 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 type="button"
                 onClick={() => {
                   setDebtToEdit(null);
+                  setFocusScheduleInModal(false);
                   setIsDebtModalOpen(true);
                 }}
                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-l from-[#0F2342] to-[#1E3A8A] hover:from-[#1E3A8A] hover:to-[#2563EB] text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
               >
                 <Plus className="w-4 h-4 text-amber-300" />
                 <span>إضافة قيد مديونية / مخالفة جديدة</span>
+              </button>
+            )}
+
+            {!isViewer && (
+              <button
+                type="button"
+                onClick={() => {
+                  const targetDebt =
+                    (selectedRowId ? enrichedDebts.find((d) => d.id === selectedRowId) : null) ||
+                    enrichedDebts.find((d) => (d.netRemainingDebt || 0) > 0) ||
+                    enrichedDebts[0] ||
+                    null;
+                  setDebtToEdit(targetDebt);
+                  setFocusScheduleInModal(true);
+                  setIsDebtModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer border border-emerald-400/50"
+              >
+                <Calendar className="w-4 h-4 text-amber-300" />
+                <span>إضافة جدولة مديونيات</span>
               </button>
             )}
 
@@ -844,6 +918,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   const found = enrichedDebts.find((d) => d.id === selectedRowId);
                   if (found) {
                     setDebtToEdit(found);
+                    setFocusScheduleInModal(false);
                     setIsDebtModalOpen(true);
                   }
                 }}
@@ -1225,10 +1300,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 <img src={systemConfig.logoBase64} alt="شعار" className="w-full h-full object-contain" />
               </div>
             )}
-            <div className="text-left font-mono text-[10px] font-bold">
-              <p>تقرير سجل مديونيات المخابز</p>
+            <div className="text-left font-mono text-[10px] font-bold space-y-0.5">
+              <p className="font-black">تقرير سجل مديونيات المخابز وجدولة السداد</p>
               <p>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</p>
               <p>عدد القيود: {filteredDebts.length} قيد</p>
+              <p className="bg-amber-100 px-2 py-0.5 rounded border border-slate-900 font-black text-right" dir="rtl">
+                أعده: {currentUser?.fullName || 'م/ أحمد الحسيني'} ({currentUser?.username || 'admin'})
+              </p>
             </div>
           </div>
         </div>
@@ -1292,6 +1370,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       </th>
                     </>
                   )}
+                  <th
+                    colSpan={3}
+                    className="py-2.5 px-2 bg-[#0D3B2E] border-l border-[#1E3A8A] text-emerald-200 font-black"
+                  >
+                    7. جدولة المديونيات على صاحب المخبز
+                  </th>
                   <th
                     rowSpan={2}
                     className="py-3 px-3 bg-[#1E3A8A] border-l border-blue-800 text-amber-300 text-sm font-black min-w-[145px]"
@@ -1372,6 +1456,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A]">السداد من التصرف</th>
                     </>
                   )}
+
+                  {/* 7. Debt Scheduling on Bakery Owner */}
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[130px] bg-[#0F3F32] text-emerald-200">
+                    حالة الجدولة والدفعات
+                  </th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[100px] bg-[#0F3F32] text-emerald-200">
+                    قيمة القسط الدوري
+                  </th>
+                  <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[95px] bg-[#0F3F32] text-emerald-200">
+                    بداية الجدولة
+                  </th>
                 </tr>
               </thead>
 
@@ -1548,6 +1643,47 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                           </>
                         )}
 
+                        {/* 7. Debt Scheduling Columns on Bakery Owner */}
+                        <td className="py-2 px-2 border-l border-slate-200 bg-emerald-50/30">
+                          {d.isScheduled || (d.scheduleInstallmentsCount && d.scheduleInstallmentsCount > 0) ? (
+                            <div className="space-y-0.5">
+                              <span className="inline-block px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-900 border border-emerald-300 text-[11px] font-black">
+                                مجدولة ({d.schedulePaidInstallments || 0}/{d.scheduleInstallmentsCount || 4}{' '}
+                                {d.schedulePeriodType || 'أسبوعي'})
+                              </span>
+                              <span className="block text-[10px] font-bold text-emerald-800">
+                                {d.scheduleStatus || 'منتظم في السداد'}
+                              </span>
+                            </div>
+                          ) : d.netRemainingDebt > 0 ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDebtToEdit(d);
+                                setFocusScheduleInModal(true);
+                                setIsDebtModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black shadow-xs cursor-pointer transition no-print"
+                            >
+                              + جدولة المديونية
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400 font-bold">خالص</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 border-l border-slate-200 font-mono font-black text-emerald-800 bg-emerald-50/20">
+                          {d.isScheduled || (d.scheduleInstallmentsCount && d.scheduleInstallmentsCount > 0)
+                            ? `${(
+                                d.scheduleInstallmentValue ||
+                                Math.ceil(d.netRemainingDebt / Math.max(1, d.scheduleInstallmentsCount || 4))
+                              ).toLocaleString()} ج.م`
+                            : '—'}
+                        </td>
+                        <td className="py-2 px-2 border-l border-slate-200 font-mono text-xs text-slate-700 bg-emerald-50/20">
+                          {d.scheduleStartDate ? formatDateDDMMYYYY(d.scheduleStartDate) : '—'}
+                        </td>
+
                         {/* Net Remaining Debt */}
                         <td className="py-2.5 px-3 border-l border-slate-200 font-mono font-black bg-slate-50/60">
                           {d.netRemainingDebt > 0 ? (
@@ -1563,7 +1699,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                     setInstallmentBakeryId(d.bakeryId);
                                     setIsWeeklyInstallmentsOpen(true);
                                   }}
-                                  className="block mx-auto text-[10px] bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-md font-bold cursor-pointer transition"
+                                  className="block mx-auto text-[10px] bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-md font-bold cursor-pointer transition no-print"
                                 >
                                   دفعات أسبوعية (&gt;20 ألف)
                                 </button>
@@ -1598,6 +1734,20 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setDebtToEdit(d);
+                                    setFocusScheduleInModal(true);
+                                    setIsDebtModalOpen(true);
+                                  }}
+                                  className="px-2 py-1 bg-emerald-50 hover:bg-emerald-600 text-emerald-800 hover:text-white border border-emerald-300 rounded-lg transition cursor-pointer text-[10px] font-black"
+                                  title="جدولة المديونية على صاحب المخبز"
+                                >
+                                  جدولة
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDebtToEdit(d);
+                                    setFocusScheduleInModal(false);
                                     setIsDebtModalOpen(true);
                                   }}
                                   className="p-1.5 bg-blue-50 hover:bg-blue-100 text-[#1E40AF] border border-blue-200 rounded-lg transition cursor-pointer"
@@ -1744,6 +1894,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                         </td>
                       </>
                     )}
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
+                      {filteredTotals.scheduledCount}
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
+                      {filteredTotals.sumInstallmentVal.toLocaleString()}
+                    </td>
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-200 font-black">
+                      {filteredTotals.scheduleDatesCount}
+                    </td>
                     <td className="py-2.5 px-3 border-l border-[#1E3A5F] bg-[#162F57] text-amber-300 font-black text-sm">
                       {filteredTotals.sumNetRem.toLocaleString()} ج.م
                     </td>
@@ -1912,8 +2071,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       {isDebtModalOpen && (
         <DebtModalForm
           isOpen={isDebtModalOpen}
-          onClose={() => setIsDebtModalOpen(false)}
+          onClose={() => {
+            setIsDebtModalOpen(false);
+            setFocusScheduleInModal(false);
+          }}
           debtToEdit={debtToEdit}
+          initialFocusSchedule={focusScheduleInModal}
           bakeries={bakeries}
           issuingEntities={issuingEntities}
           violationTypes={violationTypes}
@@ -1922,6 +2085,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           onSave={(saved) => {
             onSaveDebt(saved);
             setIsDebtModalOpen(false);
+            setFocusScheduleInModal(false);
           }}
         />
       )}
@@ -2590,6 +2754,7 @@ interface DebtModalFormProps {
   isOpen: boolean;
   onClose: () => void;
   debtToEdit: DebtRecord | null;
+  initialFocusSchedule?: boolean;
   bakeries: Bakery[];
   issuingEntities: string[];
   violationTypes: string[];
@@ -2602,6 +2767,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   isOpen,
   onClose,
   debtToEdit,
+  initialFocusSchedule = false,
   bakeries,
   issuingEntities,
   violationTypes,
@@ -2686,6 +2852,39 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   const [paidDisposalAmount, setPaidDisposalAmount] = useState<number>(
     debtToEdit?.paidDisposalAmount || 0
   );
+
+  // Debt Scheduling on Bakery Owner (جدولة المديونيات على صاحب المخبز)
+  const [isScheduled, setIsScheduled] = useState<boolean>(
+    Boolean(debtToEdit?.isScheduled || initialFocusSchedule || (debtToEdit?.scheduleInstallmentsCount && debtToEdit.scheduleInstallmentsCount > 0))
+  );
+  const [scheduleInstallmentsCount, setScheduleInstallmentsCount] = useState<number>(
+    debtToEdit?.scheduleInstallmentsCount || 4
+  );
+  const [schedulePeriodType, setSchedulePeriodType] = useState<string>(
+    debtToEdit?.schedulePeriodType || 'أسبوعي'
+  );
+  const [scheduleInstallmentValue, setScheduleInstallmentValue] = useState<number>(
+    debtToEdit?.scheduleInstallmentValue || 0
+  );
+  const [scheduleStartDate, setScheduleStartDate] = useState<string>(
+    debtToEdit?.scheduleStartDate || new Date().toISOString().split('T')[0]
+  );
+  const [schedulePaidInstallments, setSchedulePaidInstallments] = useState<number>(
+    debtToEdit?.schedulePaidInstallments || 0
+  );
+  const [scheduleStatus, setScheduleStatus] = useState<string>(
+    debtToEdit?.scheduleStatus || 'منتظم في السداد'
+  );
+  const scheduleSectionRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (initialFocusSchedule) {
+      setIsScheduled(true);
+      setTimeout(() => {
+        scheduleSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 120);
+    }
+  }, [initialFocusSchedule]);
 
   const [notes, setNotes] = useState(debtToEdit?.notes || '');
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saved'>('idle');
@@ -2853,6 +3052,19 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
       remainingDisposal,
 
       netRemainingDebt,
+
+      isScheduled,
+      scheduleInstallmentsCount: isScheduled ? Math.max(1, Number(scheduleInstallmentsCount) || 4) : 0,
+      schedulePeriodType: isScheduled ? schedulePeriodType : undefined,
+      scheduleInstallmentValue: isScheduled
+        ? Number(scheduleInstallmentValue) > 0
+          ? Number(scheduleInstallmentValue)
+          : Math.ceil(netRemainingDebt / Math.max(1, Number(scheduleInstallmentsCount) || 4))
+        : 0,
+      scheduleStartDate: isScheduled ? scheduleStartDate : undefined,
+      schedulePaidInstallments: isScheduled ? Math.max(0, Number(schedulePaidInstallments) || 0) : 0,
+      scheduleStatus: isScheduled ? scheduleStatus : undefined,
+
       notes: notes.trim(),
     };
 
@@ -3505,6 +3717,180 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                 />
               </div>
             </div>
+          </div>
+
+          {/* Section 6: Debt Scheduling on Bakery Owner (جدولة المديونيات على صاحب المخبز) */}
+          <div
+            ref={scheduleSectionRef}
+            className={`border-2 rounded-xl p-4 transition-all space-y-3 ${
+              isScheduled
+                ? 'border-emerald-500 bg-emerald-50/40 shadow-md'
+                : 'border-slate-200 bg-slate-50/60'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-emerald-200">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-emerald-700" />
+                <h4 className="text-xs font-black text-emerald-950">
+                  6. جدولة المديونيات والمخالفات على صاحب المخبز (تقسيط المبلغ المتبقي)
+                </h4>
+              </div>
+              <label className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-emerald-700 text-white text-xs font-black cursor-pointer shadow-xs">
+                <input
+                  type="checkbox"
+                  checked={isScheduled}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setIsScheduled(checked);
+                    if (checked && !scheduleInstallmentValue && netRemainingDebt > 0) {
+                      setScheduleInstallmentValue(
+                        Math.ceil(netRemainingDebt / Math.max(1, scheduleInstallmentsCount || 4))
+                      );
+                    }
+                  }}
+                  className="w-4 h-4 accent-amber-400 rounded"
+                />
+                <span>تفعيل جدولة المديونية على صاحب المخبز</span>
+              </label>
+            </div>
+
+            {isScheduled && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-black text-slate-700 mb-1">
+                      دورية سداد الأقساط
+                    </label>
+                    <select
+                      value={schedulePeriodType}
+                      onChange={(e) => setSchedulePeriodType(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-emerald-400 rounded-lg text-xs font-black text-slate-900"
+                    >
+                      <option value="أسبوعي">قسط أسبوعي</option>
+                      <option value="نصف شهري">قسط نصف شهري</option>
+                      <option value="شهري">قسط شهري</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-black text-slate-700">
+                        عدد الأقساط / الدفعات
+                      </label>
+                      <div className="flex items-center gap-1">
+                        {[4, 6, 8, 12].map((cnt) => (
+                          <button
+                            key={cnt}
+                            type="button"
+                            onClick={() => {
+                              setScheduleInstallmentsCount(cnt);
+                              setScheduleInstallmentValue(Math.ceil(netRemainingDebt / cnt));
+                            }}
+                            className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-black border cursor-pointer ${
+                              scheduleInstallmentsCount === cnt
+                                ? 'bg-emerald-600 text-white border-emerald-700'
+                                : 'bg-white text-slate-700 border-slate-300'
+                            }`}
+                          >
+                            {cnt}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={scheduleInstallmentsCount}
+                      onChange={(e) => {
+                        const cnt = Math.max(1, parseInt(e.target.value) || 1);
+                        setScheduleInstallmentsCount(cnt);
+                        setScheduleInstallmentValue(Math.ceil(netRemainingDebt / cnt));
+                      }}
+                      className="w-full px-2.5 py-1.5 bg-white border border-emerald-400 rounded-lg text-xs font-black font-mono text-center"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-black text-slate-700 mb-1">
+                      قيمة القسط الدوري (ج.م)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={
+                        scheduleInstallmentValue ||
+                        Math.ceil(netRemainingDebt / Math.max(1, scheduleInstallmentsCount || 4))
+                      }
+                      onChange={(e) => setScheduleInstallmentValue(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-full px-2.5 py-1.5 bg-white border border-emerald-500 rounded-lg text-xs font-black font-mono text-emerald-800 text-center"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-black text-slate-700 mb-1">
+                      تاريخ بداية الجدولة
+                    </label>
+                    <input
+                      type="date"
+                      value={scheduleStartDate}
+                      onChange={(e) => setScheduleStartDate(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-emerald-400 rounded-lg text-xs font-bold text-slate-900"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-black text-slate-700 mb-1">
+                      الأقساط المسددة فعلياً
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={scheduleInstallmentsCount}
+                      value={schedulePaidInstallments}
+                      onChange={(e) =>
+                        setSchedulePaidInstallments(
+                          Math.min(scheduleInstallmentsCount, Math.max(0, parseInt(e.target.value) || 0))
+                        )
+                      }
+                      className="w-full px-2.5 py-1.5 bg-white border border-emerald-400 rounded-lg text-xs font-black font-mono text-center"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-black text-slate-700 mb-1">
+                      حالة الانتظام في الجدولة
+                    </label>
+                    <select
+                      value={scheduleStatus}
+                      onChange={(e) => setScheduleStatus(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-emerald-400 rounded-lg text-xs font-black text-slate-900"
+                    >
+                      <option value="منتظم في السداد">منتظم في السداد</option>
+                      <option value="قيد التحصيل والمتابعة">قيد التحصيل والمتابعة</option>
+                      <option value="متأخر عن القسط الدوري">متأخر عن القسط الدوري</option>
+                      <option value="مكتمل الجدولة والسداد">مكتمل الجدولة والسداد</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-emerald-900 text-white flex flex-wrap items-center justify-between gap-2 text-xs font-bold">
+                  <span>
+                    ملخص جدولة مديونية المخبز ({currentBakery?.bakeryOwnerName}): إجمالي صافي المتبقي{' '}
+                    <strong className="text-amber-300 font-mono">{netRemainingDebt.toLocaleString()} ج.م</strong> مقسم على{' '}
+                    <strong className="text-emerald-300 font-mono">{scheduleInstallmentsCount}</strong> دفعات ({schedulePeriodType})
+                  </span>
+                  <span className="bg-white/15 px-3 py-1 rounded-lg font-mono text-amber-300 font-black">
+                    قيمة الدفعة الواحدة:{' '}
+                    {(
+                      scheduleInstallmentValue ||
+                      Math.ceil(netRemainingDebt / Math.max(1, scheduleInstallmentsCount || 4))
+                    ).toLocaleString()}{' '}
+                    ج.م
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Notes */}
