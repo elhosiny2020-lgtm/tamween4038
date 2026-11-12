@@ -8,6 +8,10 @@ import {
   mergeStates,
   getMergeConflictsLog,
   clearMergeConflictsLog,
+  DEFAULT_BRANCH_ID,
+  getBranchesList,
+  syncAllBranchesFromCloudPayload,
+  readBranchPartitionFromLocal,
 } from '../storage';
 import {
   signInWithGoogleWorkspace,
@@ -1072,19 +1076,25 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   const handleRestoreFromSupabaseDatabase = async () => {
     setIsProcessing(true);
-    setStatusMsg({ text: 'جاري استرجاع وتحميل أحدث قاعدة بيانات من Supabase...', type: 'info' });
+    setStatusMsg({ text: 'جاري استرجاع وتحميل أحدث قاعدة بيانات لكافة الفروع من Supabase...', type: 'info' });
     setSupabaseCloudDisabled(false);
     const res = await fetchDatabaseFromSupabase();
     setSupabaseCfg(getSupabaseConfig());
     setIsProcessing(false);
     if (res.success && res.data) {
+      syncAllBranchesFromCloudPayload(res.data, res.timestamp);
+      const activeBranchId = currentState.activeBranchId || DEFAULT_BRANCH_ID;
+      const activePartition = readBranchPartitionFromLocal(activeBranchId);
+      const updatedBranches = getBranchesList();
       onRestoreState({
         ...currentState,
-        ...res.data,
+        ...(activePartition as AppState),
+        activeBranchId,
+        branches: updatedBranches,
         currentUser: currentState.currentUser,
       });
       setStatusMsg({
-        text: `تم بنجاح تحميل أحدث بيانات مسجلة من السحابة (${res.data.bakeries?.length || 0} مخبز و ${res.data.debts?.length || 0} مديونية)!`,
+        text: `تم بنجاح تحميل ومزامنة أحدث بيانات مسجلة من السحابة لهذا الفرع وكافة الفروع (${activePartition.bakeries?.length || 0} مخبز و ${activePartition.debts?.length || 0} مديونية)!`,
         type: 'success',
       });
     } else {

@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { AppState } from '../storage';
+import { AppState, buildFullCloudMultiBranchPayload } from '../storage';
 import { generateStandaloneHtml } from '../utils/htmlExporter';
 import {
   syncSharedStateToFirestore,
@@ -536,15 +536,16 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
   const nowIso = new Date().toISOString();
   const bakeriesCount = Array.isArray(state?.bakeries) ? state.bakeries.length : 0;
   const debtsCount = Array.isArray(state?.debts) ? state.debts.length : 0;
+  const fullCloudState = buildFullCloudMultiBranchPayload(state, nowIso);
 
-  // 1. Always sync to built-in Multi-Device Cloud Database & Server Live DB first
+  // 1. Always sync all branches to built-in Multi-Device Cloud Database & Server Live DB first
   const [cloudSynced, serverSynced] = await Promise.all([
-    syncSharedStateToFirestore(state as Record<string, any>, nowIso),
+    syncSharedStateToFirestore(fullCloudState as unknown as Record<string, any>, nowIso),
     typeof window !== 'undefined'
       ? fetch(getLiveDbApiUrl(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: state, timestamp: nowIso }),
+          body: JSON.stringify({ data: fullCloudState, timestamp: nowIso }),
         })
           .then((r) => r.ok)
           .catch(() => false)
@@ -557,7 +558,7 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
     safeSetItem('TAMWEEN_LAST_SUPABASE_SYNC', nowAr);
     return {
       success: cloudSynced || serverSynced,
-      message: `اكتمل نقل ومزامنة قاعدة البيانات على السحابة المشتركة بنجاح! تم حفظ (${bakeriesCount}) مخبز و (${debtsCount}) مديونية ومزامنتها لجميع الأجهزة فوراً.`,
+      message: `اكتمل نقل ومزامنة قاعدة البيانات وكافة الفروع على السحابة المشتركة بنجاح! تم حفظ (${bakeriesCount}) مخبز و (${debtsCount}) مديونية ومزامنتها لجميع الأجهزة فوراً.`,
       bakeriesUpserted: bakeriesCount,
       debtsUpserted: debtsCount,
       snapshotSaved: cloudSynced || serverSynced,
@@ -565,7 +566,7 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
       publicHtmlUrl: typeof window !== 'undefined' ? window.location.origin : '',
       details: {
         lastSync: nowAr,
-        htmlStatus: 'التزامن السحابي المباشر نشط عبر الرابط الموحد',
+        htmlStatus: 'التزامن السحابي المباشر نشط عبر الرابط الموحد لجميع الفروع',
       },
     };
   }
@@ -575,7 +576,7 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
     let debtsUpserted = 0;
     let snapshotSaved = cloudSynced || serverSynced;
 
-    // 1. Prepare snapshot payload
+    // 1. Prepare snapshot payload containing all branches (branchPartitions)
     const snapshotId = `snapshot-${Date.now()}`;
     const snapshotPayload = {
       version: '3.7-supabase-full-migration',
@@ -585,7 +586,7 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
       administration: state.systemConfig?.administrationTitle || 'قسم الرقابة التموينية وشئون المخابز',
       bakeriesCount,
       debtsCount,
-      data: state,
+      data: fullCloudState,
     };
 
     // 2. Try inserting full state snapshot into backup_snapshots table
@@ -987,22 +988,25 @@ export async function autoSyncToSupabase(
   const doSync = async (): Promise<boolean> => {
     try {
       const nowIso = customTimestamp || new Date().toISOString();
+      const fullPayloadState = (state as unknown as { branchPartitions?: unknown })?.branchPartitions
+        ? state
+        : buildFullCloudMultiBranchPayload(state, nowIso);
       const snapshotPayload = {
         version: '3.7-supabase-realtime-autosync',
         timestamp: nowIso,
-        bakeriesCount: Array.isArray(state?.bakeries) ? state.bakeries.length : 0,
-        debtsCount: Array.isArray(state?.debts) ? state.debts.length : 0,
-        data: state,
+        bakeriesCount: Array.isArray(fullPayloadState?.bakeries) ? fullPayloadState.bakeries.length : 0,
+        debtsCount: Array.isArray(fullPayloadState?.debts) ? fullPayloadState.debts.length : 0,
+        data: fullPayloadState,
       };
 
       // 1. Always push to built-in Multi-Device Cloud DB & Server Live DB in parallel
       const [cloudOk, serverOk] = await Promise.all([
-        syncSharedStateToFirestore(state as Record<string, any>, nowIso),
+        syncSharedStateToFirestore(fullPayloadState as unknown as Record<string, any>, nowIso),
         typeof window !== 'undefined'
           ? fetch(getLiveDbApiUrl(), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ data: state, timestamp: nowIso }),
+              body: JSON.stringify({ data: fullPayloadState, timestamp: nowIso }),
             })
               .then((r) => r.ok)
               .catch(() => false)

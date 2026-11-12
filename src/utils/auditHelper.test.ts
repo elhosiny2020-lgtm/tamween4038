@@ -385,9 +385,10 @@ import {
   DEFAULT_SUPPLY_BRANCHES,
   getScopedKeysForBranch,
   mergeUsersList,
+  buildFullCloudMultiBranchPayload,
 } from '../storage';
 
-test('getScopedKeysForBranch isolates non-default supply branches from default Mahalla branch keys while keeping USERS unified', () => {
+test('getScopedKeysForBranch isolates all keys (bakeries, debts, users, config/permissions, tools) per supply branch', () => {
   const mahallaKeys = getScopedKeysForBranch(DEFAULT_BRANCH_ID);
   const samanoudKeys = getScopedKeysForBranch('branch-samanoud');
   const customKeys = getScopedKeysForBranch('branch-zefta');
@@ -395,17 +396,18 @@ test('getScopedKeysForBranch isolates non-default supply branches from default M
   // Default branch keeps exact backward-compatible keys so zero existing data is lost
   assert.equal(mahallaKeys.BAKERIES, 'TAMWEEN_BAKERIES_V3');
   assert.equal(mahallaKeys.DEBTS, 'TAMWEEN_DEBTS_V3');
+  assert.equal(mahallaKeys.USERS, 'TAMWEEN_USERS_V3');
+  assert.equal(mahallaKeys.CONFIG, 'TAMWEEN_CONFIG_V3');
 
-  // Other branches get strictly isolated storage keys for operational data
+  // Other branches get strictly isolated storage keys for operational data, users, and permissions
   assert.equal(samanoudKeys.BAKERIES, 'TAMWEEN_BAKERIES_V3__branch-samanoud');
   assert.equal(samanoudKeys.DEBTS, 'TAMWEEN_DEBTS_V3__branch-samanoud');
+  assert.equal(samanoudKeys.USERS, 'TAMWEEN_USERS_V3__branch-samanoud');
+  assert.equal(samanoudKeys.CONFIG, 'TAMWEEN_CONFIG_V3__branch-samanoud');
   assert.notEqual(mahallaKeys.BAKERIES, samanoudKeys.BAKERIES);
-  assert.notEqual(samanoudKeys.BAKERIES, customKeys.BAKERIES);
-
-  // Users and credentials remain unified across all branches
-  assert.equal(mahallaKeys.USERS, 'TAMWEEN_USERS_V3');
-  assert.equal(samanoudKeys.USERS, 'TAMWEEN_USERS_V3');
-  assert.equal(customKeys.USERS, 'TAMWEEN_USERS_V3');
+  assert.notEqual(mahallaKeys.USERS, samanoudKeys.USERS);
+  assert.notEqual(mahallaKeys.CONFIG, samanoudKeys.CONFIG);
+  assert.notEqual(samanoudKeys.USERS, customKeys.USERS);
 
   // Default branches list contains Mahalla and Samanoud
   assert.equal(DEFAULT_SUPPLY_BRANCHES.length >= 2, true);
@@ -413,7 +415,7 @@ test('getScopedKeysForBranch isolates non-default supply branches from default M
   assert.equal(DEFAULT_SUPPLY_BRANCHES[1].id, 'branch-samanoud');
 });
 
-test('mergeUsersList preserves customized passwords and permissions across devices and branches without resetting to default', () => {
+test('mergeUsersList and buildFullCloudMultiBranchPayload preserve customized passwords, permissions, and isolated branch partitions', () => {
   const baseUsers = INITIAL_USERS.map((u) => ({ ...u }));
   const incomingWithUpdatedPass = INITIAL_USERS.map((u) =>
     u.username === 'admin'
@@ -427,11 +429,41 @@ test('mergeUsersList preserves customized passwords and permissions across devic
   assert.equal(admin1?.password, 'MyNewSecretPassword999!');
   assert.deepEqual(admin1?.customPermissions, ['ADD_BAKERY', 'DELETE_BAKERY']);
 
-  // 2. When local has customized password and incoming has default seed -> preserves local customized password
-  const merged2 = mergeUsersList(merged1, INITIAL_USERS);
-  const admin2 = merged2.find((u) => u.username === 'admin');
-  assert.equal(admin2?.password, 'MyNewSecretPassword999!');
-  assert.deepEqual(admin2?.customPermissions, ['ADD_BAKERY', 'DELETE_BAKERY']);
+  // 2. buildFullCloudMultiBranchPayload includes branchPartitions for all branches
+  const samanoudState: AppState = {
+    activeBranchId: 'branch-samanoud',
+    branches: DEFAULT_SUPPLY_BRANCHES,
+    bakeries: [],
+    debts: [],
+    villages: [],
+    issuingEntities: DEFAULT_ISSUING_ENTITIES,
+    violationTypes: DEFAULT_VIOLATION_TYPES,
+    activityStatuses: DEFAULT_ACTIVITY_STATUSES,
+    bakeryCategories: DEFAULT_BAKERY_CATEGORIES,
+    breadTypes: DEFAULT_BREAD_TYPES,
+    breadTypeCounts: DEFAULT_BREAD_TYPE_COUNTS,
+    lineTypes: DEFAULT_LINE_TYPES,
+    fuelTypes: DEFAULT_FUEL_TYPES,
+    paymentMethods: PAYMENT_METHODS,
+    dailyTasks: [],
+    inboxMessages: [],
+    columnTitles: DEFAULT_COLUMN_TITLES,
+    systemConfig: {
+      ...DEFAULT_SYSTEM_CONFIG,
+      administrationTitle: 'إدارة تموين سمنود',
+      rolePermissions: { inspector: ['ADD_BAKERY'] },
+    },
+    users: merged1,
+    currentUser: null,
+  };
+
+  const payload = buildFullCloudMultiBranchPayload(samanoudState, '2026-11-12T15:00:00Z');
+  assert.equal(Boolean(payload.branchPartitions['branch-samanoud']), true);
+  assert.equal(Boolean(payload.branchPartitions['branch-mahalla']), true);
+  assert.deepEqual(payload.branchPartitions['branch-samanoud'].systemConfig?.rolePermissions, {
+    inspector: ['ADD_BAKERY'],
+  });
 });
+
 
 

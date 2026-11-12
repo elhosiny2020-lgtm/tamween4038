@@ -27,6 +27,8 @@ import {
   mergeStates,
   mergeUsersList,
   saveBranchesList,
+  syncAllBranchesFromCloudPayload,
+  readBranchPartitionFromLocal,
   fetchLatestServerState,
   syncStateToServer,
   isDefaultSeedState
@@ -489,145 +491,66 @@ export default function App() {
     testFirestoreConnection().catch(() => {});
   }, []);
 
-  // Exclusive Real-Time Synchronization via Supabase & Cloud DB across all devices:
+  // Exclusive Real-Time Synchronization via Supabase & Cloud DB across all devices & all branches:
   useEffect(() => {
     const applyIncomingCloudState = (incomingData: AppState, remoteTimestamp?: string) => {
-      if (!incomingData || !Array.isArray(incomingData.bakeries)) return;
+      if (!incomingData) return;
+
+      // 1. Write all branch partitions from cloud payload into their respective isolated local storage keys
+      syncAllBranchesFromCloudPayload(incomingData, remoteTimestamp);
 
       setAppState((current) => {
         if (!current) return current;
 
-        // 1. Always merge unified users (passwords & permissions), branches list, and global role permissions across all devices & branches
-        const mergedUsers = mergeUsersList(current.users, incomingData.users);
-        let mergedBranches = current.branches || getBranchesList();
-        if (Array.isArray(incomingData.branches) && incomingData.branches.length > 0) {
-          const bMap = new Map<string, SupplyBranch>();
-          mergedBranches.forEach((b) => bMap.set(b.id, b));
-          incomingData.branches.forEach((b) => {
-            if (b && b.id && b.name) bMap.set(b.id, b);
-          });
-          mergedBranches = Array.from(bMap.values());
-          saveBranchesList(mergedBranches);
-        }
-
-        const updatedRolePermissions =
-          incomingData.systemConfig?.rolePermissions || current.systemConfig.rolePermissions;
-        const updatedRoleLabels =
-          incomingData.systemConfig?.roleLabels || current.systemConfig.roleLabels;
-
         const currentBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+        const mergedBranches = getBranchesList();
+        const activeBranchObj = mergedBranches.find((b) => b.id === currentBranchId);
+        const syncedPartition = readBranchPartitionFromLocal(currentBranchId);
 
-        // 2. Strict Branch Isolation: if on a non-default branch, never overwrite with default branch bakeries/debts
-        if (currentBranchId !== DEFAULT_BRANCH_ID) {
-          const remotePartitions = (incomingData as unknown as { branchPartitions?: Record<string, Partial<AppState>> }).branchPartitions;
-          const myPartition = remotePartitions?.[currentBranchId];
-          let nextBakeries = current.bakeries;
-          let nextDebts = current.debts;
-          let nextVillages = current.villages;
+        const nextBakeries = syncedPartition.bakeries || current.bakeries;
+        const nextDebts = syncedPartition.debts || current.debts;
+        const nextUsers = syncedPartition.users || current.users;
+        const nextConfig: SystemConfig = {
+          ...current.systemConfig,
+          ...(syncedPartition.systemConfig || {}),
+          administrationTitle: activeBranchObj?.name || current.systemConfig.administrationTitle,
+          logoBase64: DEFAULT_OFFICIAL_LOGO,
+        };
 
-          if (
-            myPartition &&
-            current.bakeries.length === 0 &&
-            Array.isArray(myPartition.bakeries) &&
-            myPartition.bakeries.length > 0
-          ) {
-            const syncedIso = synchronizeBakeryAndDebts(
-              myPartition.bakeries,
-              myPartition.debts || []
-            );
-            nextBakeries = syncedIso.bakeries;
-            nextDebts = syncedIso.debts;
-            nextVillages = myPartition.villages || current.villages;
-          }
+        // Resolve currentUser against the branch's updated users list so branch-specific permissions apply immediately
+        const resolvedCurrentUser = current.currentUser
+          ? nextUsers.find(
+              (u) =>
+                u.id === current.currentUser!.id ||
+                u.username.toLowerCase() === current.currentUser!.username.toLowerCase()
+            ) || current.currentUser
+          : null;
 
-          const updatedNonDefault: AppState = {
-            ...current,
-            users: mergedUsers,
-            branches: mergedBranches,
-            bakeries: nextBakeries,
-            debts: nextDebts,
-            villages: nextVillages,
-            systemConfig: {
-              ...current.systemConfig,
-              ...(updatedRolePermissions ? { rolePermissions: updatedRolePermissions } : {}),
-              ...(updatedRoleLabels ? { roleLabels: updatedRoleLabels } : {}),
-            },
-          };
-
-          persistFullState(updatedNonDefault, {
-            skipCloudSync: true,
-            customTimestamp: remoteTimestamp || new Date().toISOString(),
-          }).catch(() => {});
-
-          return updatedNonDefault;
-        }
-
-        const localTs = localStorage.getItem('TAMWEEN_AUTOSAVE_TIMESTAMP_V3') || '';
-        const hasExplicitUserSave = localStorage.getItem('TAMWEEN_EXPLICIT_USER_SAVE') === 'true';
-        const isLocalDefault = !hasExplicitUserSave && isDefaultSeedState(current.bakeries, current.debts);
-
-        const localTimeMs = !isLocalDefault && localTs ? Date.parse(localTs) || 0 : 0;
-        const remoteTimeMs = remoteTimestamp ? Date.parse(remoteTimestamp) || Date.now() : Date.now();
-
-        // Even if local bakeries are newer, still adopt any newly synced users/passwords/branches
-        if (!isLocalDefault && localTimeMs > remoteTimeMs + 1000) {
-          if (mergedUsers.length !== current.users.length || JSON.stringify(mergedUsers) !== JSON.stringify(current.users)) {
-            return {
-              ...current,
-              users: mergedUsers,
-              branches: mergedBranches,
-              systemConfig: {
-                ...current.systemConfig,
-                ...(updatedRolePermissions ? { rolePermissions: updatedRolePermissions } : {}),
-                ...(updatedRoleLabels ? { roleLabels: updatedRoleLabels } : {}),
-              },
-            };
-          }
-          return current;
-        }
-
-        // Avoid redundant re-renders if timestamp, counts, and users are identical
+        // Avoid redundant re-renders if nothing changed for the active branch
         if (
-          !isLocalDefault &&
-          remoteTimestamp &&
-          localTs === remoteTimestamp &&
-          current.bakeries.length === incomingData.bakeries.length &&
-          current.debts.length === (incomingData.debts?.length || 0) &&
-          JSON.stringify(mergedUsers) === JSON.stringify(current.users)
+          current.bakeries.length === nextBakeries.length &&
+          current.debts.length === nextDebts.length &&
+          JSON.stringify(current.bakeries) === JSON.stringify(nextBakeries) &&
+          JSON.stringify(current.debts) === JSON.stringify(nextDebts) &&
+          JSON.stringify(current.users) === JSON.stringify(nextUsers) &&
+          JSON.stringify(current.systemConfig) === JSON.stringify(nextConfig) &&
+          JSON.stringify(current.branches) === JSON.stringify(mergedBranches)
         ) {
           return current;
         }
 
-        const synced = synchronizeBakeryAndDebts(
-          incomingData.bakeries,
-          incomingData.debts || []
-        );
-
-        const activeBranchObj = mergedBranches.find((b) => b.id === currentBranchId);
-        const updated: AppState = {
+        return {
           ...current,
-          ...incomingData,
+          ...(syncedPartition as AppState),
           activeBranchId: currentBranchId,
           branches: mergedBranches,
-          users: mergedUsers,
-          bakeries: synced.bakeries,
-          debts: synced.debts,
-          systemConfig: {
-            ...current.systemConfig,
-            ...(incomingData.systemConfig || {}),
-            ...(updatedRolePermissions ? { rolePermissions: updatedRolePermissions } : {}),
-            ...(updatedRoleLabels ? { roleLabels: updatedRoleLabels } : {}),
-            administrationTitle: activeBranchObj?.name || current.systemConfig.administrationTitle,
-          },
-          currentUser: current.currentUser,
+          bakeries: nextBakeries,
+          debts: nextDebts,
+          villages: syncedPartition.villages || current.villages,
+          users: nextUsers,
+          systemConfig: nextConfig,
+          currentUser: resolvedCurrentUser,
         };
-
-        persistFullState(updated, {
-          skipCloudSync: true,
-          customTimestamp: remoteTimestamp || new Date().toISOString(),
-        }).catch(() => {});
-
-        return updated;
       });
     };
 
@@ -1305,19 +1228,29 @@ export default function App() {
       const loaded = await loadInitialState(targetBranchId);
       const branchesToUse = updatedBranchesList || getBranchesList();
       const branchObj = branchesToUse.find((b) => b.id === targetBranchId);
-      setAppState((prev) => ({
-        ...loaded,
-        activeBranchId: targetBranchId,
-        branches: branchesToUse,
-        currentUser: prev?.currentUser || loaded.currentUser,
-        systemConfig: {
-          ...loaded.systemConfig,
-          administrationTitle: branchObj?.name || loaded.systemConfig.administrationTitle,
-        },
-      }));
+      setAppState((prev) => {
+        const prevUser = prev?.currentUser;
+        const resolvedBranchUser = prevUser
+          ? loaded.users.find(
+              (u) =>
+                u.id === prevUser.id ||
+                u.username.toLowerCase() === prevUser.username.toLowerCase()
+            ) || prevUser
+          : loaded.currentUser;
+        return {
+          ...loaded,
+          activeBranchId: targetBranchId,
+          branches: branchesToUse,
+          currentUser: resolvedBranchUser,
+          systemConfig: {
+            ...loaded.systemConfig,
+            administrationTitle: branchObj?.name || loaded.systemConfig.administrationTitle,
+          },
+        };
+      });
       setSaveToast({
         id: Date.now(),
-        message: `تم الدخول إلى واجهة (${branchObj?.name || 'الإدارة التموينية'}) بقاعدة بيانات مستقلة ومنفصلة تماماً`,
+        message: `تم الدخول إلى واجهة (${branchObj?.name || 'الإدارة التموينية'}) بقاعدة بيانات وصلاحيات مستقلة ومنفصلة تماماً`,
         timestamp: getArabicTimestamp(),
       });
     },
@@ -1325,58 +1258,67 @@ export default function App() {
   );
 
   const handleManualCloudPull = useCallback(async () => {
-    if ((appStateRef.current?.activeBranchId || DEFAULT_BRANCH_ID) !== DEFAULT_BRANCH_ID) {
-      setSaveToast({
-        id: Date.now(),
-        message: `بيانات (${appStateRef.current?.systemConfig?.administrationTitle}) معزولة ومستقلة تماماً عن باقي الإدارات ومؤمنة محلياً.`,
-        timestamp: getArabicTimestamp(),
-      });
-      return;
-    }
     setIsSyncingWithCloud(true);
     try {
-      let snap: {
-        data?: Partial<AppState>;
-        bakeriesCount?: number;
-        debtsCount?: number;
-        savedAt?: string;
-      } | null = null;
+      const supaRes = await fetchDatabaseFromSupabase();
+      let cloudData: Partial<AppState> | undefined = supaRes.success ? supaRes.data : undefined;
+      let savedAt: string | undefined = supaRes.timestamp;
 
-      try {
-        const firestoreSnap = await loadSharedStateFromFirestore();
-        if (
-          firestoreSnap &&
-          firestoreSnap.data &&
-          Array.isArray(firestoreSnap.data.bakeries) &&
-          firestoreSnap.data.bakeries.length > 0
-        ) {
-          snap = {
-            data: firestoreSnap.data,
-            bakeriesCount: firestoreSnap.bakeriesCount,
-            debtsCount: firestoreSnap.debtsCount,
-            savedAt: firestoreSnap.updatedAt,
-          };
-        }
-      } catch {}
-
-      if (!snap) {
-        snap = await fetchLatestServerState();
+      if (!cloudData) {
+        try {
+          const firestoreSnap = await loadSharedStateFromFirestore();
+          if (firestoreSnap && firestoreSnap.data) {
+            cloudData = firestoreSnap.data;
+            savedAt = firestoreSnap.updatedAt;
+          }
+        } catch {}
       }
 
-      if (snap && snap.data && Array.isArray(snap.data.bakeries) && snap.data.bakeries.length > 0) {
+      if (!cloudData) {
+        const serverSnap = await fetchLatestServerState();
+        if (serverSnap && serverSnap.data) {
+          cloudData = serverSnap.data;
+          savedAt = serverSnap.savedAt;
+        }
+      }
+
+      if (cloudData) {
+        syncAllBranchesFromCloudPayload(cloudData, savedAt);
         setAppState((prev) => {
           if (!prev) return prev;
-          const merged = mergeStates(prev, snap!.data!);
-          persistFullState(merged).catch(() => {});
+          const currentBranchId = prev.activeBranchId || DEFAULT_BRANCH_ID;
+          const updatedBranches = getBranchesList();
+          const branchObj = updatedBranches.find((b) => b.id === currentBranchId);
+          const syncedPartition = readBranchPartitionFromLocal(currentBranchId);
+          const nextUsers = syncedPartition.users || prev.users;
+          const resolvedUser = prev.currentUser
+            ? nextUsers.find(
+                (u) =>
+                  u.id === prev.currentUser!.id ||
+                  u.username.toLowerCase() === prev.currentUser!.username.toLowerCase()
+              ) || prev.currentUser
+            : null;
           return {
-            ...merged,
-            currentUser: prev.currentUser,
+            ...prev,
+            ...(syncedPartition as AppState),
+            activeBranchId: currentBranchId,
+            branches: updatedBranches,
+            users: nextUsers,
+            systemConfig: {
+              ...prev.systemConfig,
+              ...(syncedPartition.systemConfig || {}),
+              administrationTitle: branchObj?.name || prev.systemConfig.administrationTitle,
+              logoBase64: DEFAULT_OFFICIAL_LOGO,
+            },
+            currentUser: resolvedUser,
           };
         });
-        const dateStr = snap.savedAt ? new Date(snap.savedAt).toLocaleTimeString('ar-EG') : '';
+        const activeBranchId = appStateRef.current?.activeBranchId || DEFAULT_BRANCH_ID;
+        const activePart = readBranchPartitionFromLocal(activeBranchId);
+        const dateStr = savedAt ? new Date(savedAt).toLocaleTimeString('ar-EG') : '';
         setSaveToast({
           id: Date.now(),
-          message: `تمت مزامنة أحدث البيانات السحابية بنجاح (${snap.bakeriesCount} مخبز • ${snap.debtsCount} قيد مديونية - توقيت: ${dateStr})`,
+          message: `تمت مزامنة أحدث البيانات والصلاحيات السحابية لجميع الفروع بنجاح (${activePart.bakeries?.length || 0} مخبز • ${activePart.debts?.length || 0} قيد مديونية بالفرع الحالي - توقيت: ${dateStr})`,
           timestamp: getArabicTimestamp(),
         });
       } else {

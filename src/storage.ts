@@ -159,7 +159,7 @@ export function getScopedKeysForBranch(branchId?: string): typeof BASE_KEYS {
     INBOX_MESSAGES: `${BASE_KEYS.INBOX_MESSAGES}${suffix}`,
     COLUMNS: `${BASE_KEYS.COLUMNS}${suffix}`,
     CONFIG: `${BASE_KEYS.CONFIG}${suffix}`,
-    USERS: BASE_KEYS.USERS, // Unified users, passwords & permissions across ALL branches
+    USERS: `${BASE_KEYS.USERS}${suffix}`, // Strictly isolated users & permissions per branch
     AUTOSAVE_BACKUP: `${BASE_KEYS.AUTOSAVE_BACKUP}${suffix}`,
     AUTOSAVE_TIMESTAMP: `${BASE_KEYS.AUTOSAVE_TIMESTAMP}${suffix}`,
     MERGE_CONFLICTS: `${BASE_KEYS.MERGE_CONFLICTS}${suffix}`,
@@ -315,6 +315,7 @@ export function addSupplyBranch(
       localStorage.setItem(scopedKeys.DAILY_TASKS, JSON.stringify([]));
       localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify([]));
       localStorage.setItem(scopedKeys.CONFIG, JSON.stringify(initialConfig));
+      localStorage.setItem(scopedKeys.USERS, JSON.stringify(INITIAL_USERS));
     }
   } catch {}
 
@@ -349,16 +350,17 @@ export function deleteSupplyBranch(branchId: string): {
   const remaining = branches.filter((b) => b.id !== branchId);
   saveBranchesList(remaining);
 
-  // Clean up isolated storage for deleted branch (never delete unified session or users)
+  // Clean up isolated storage for deleted branch (never delete active session key)
   if (branchId !== DEFAULT_BRANCH_ID) {
     const scopedKeys = getScopedKeysForBranch(branchId);
     try {
       if (typeof localStorage !== 'undefined') {
         Object.values(scopedKeys).forEach((k) => {
-          if (k !== BASE_KEYS.SESSION && k !== BASE_KEYS.USERS) {
+          if (k !== BASE_KEYS.SESSION) {
             localStorage.removeItem(k);
           }
         });
+        localStorage.removeItem(`TAMWEEN_EXPLICIT_USER_SAVE__${branchId}`);
       }
     } catch {}
   } else {
@@ -706,19 +708,352 @@ export function isDefaultSeedState(
   return sameBakeries && sameDebts;
 }
 
+export interface BranchPartitionPayload extends Partial<AppState> {
+  updatedAt?: string;
+}
+
+export function readBranchPartitionFromLocal(branchId: string): BranchPartitionPayload {
+  const isDefault = branchId === DEFAULT_BRANCH_ID;
+  const bKeys = getScopedKeysForBranch(branchId);
+  const branches = getBranchesList();
+  const branchObj = branches.find((b) => b.id === branchId);
+
+  const safeParse = <T>(raw: string | null, fallback: T): T => {
+    if (!raw) return fallback;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return fallback;
+    }
+  };
+
+  if (typeof localStorage === 'undefined') {
+    return {
+      activeBranchId: branchId,
+      bakeries: isDefault ? INITIAL_BAKERIES : [],
+      debts: isDefault ? INITIAL_DEBTS : [],
+      villages: isDefault ? DEFAULT_VILLAGES_HIERARCHY : [],
+      users: INITIAL_USERS,
+      systemConfig: {
+        ...DEFAULT_SYSTEM_CONFIG,
+        administrationTitle: branchObj?.name || DEFAULT_SYSTEM_CONFIG.administrationTitle,
+        logoBase64: DEFAULT_OFFICIAL_LOGO,
+      },
+    };
+  }
+
+  const rawBake = localStorage.getItem(bKeys.BAKERIES);
+  const rawDebts = localStorage.getItem(bKeys.DEBTS);
+  const rawVillages = localStorage.getItem(bKeys.VILLAGES);
+  const rawUsers = localStorage.getItem(bKeys.USERS);
+  const rawConfig = localStorage.getItem(bKeys.CONFIG);
+
+  const bakeries = safeParse<Bakery[]>(rawBake, isDefault ? INITIAL_BAKERIES : []);
+  const debts = safeParse<DebtRecord[]>(rawDebts, isDefault ? INITIAL_DEBTS : []);
+  const villages = safeParse<VillageHierarchy[]>(
+    rawVillages,
+    isDefault ? DEFAULT_VILLAGES_HIERARCHY : []
+  );
+  const users = safeParse<AppUser[]>(rawUsers, INITIAL_USERS);
+  const parsedConfig = safeParse<SystemConfig>(rawConfig, {
+    ...DEFAULT_SYSTEM_CONFIG,
+    governorateTitle: branchObj?.governorateTitle || 'محافظة الغربية',
+    directorateTitle: branchObj?.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+    administrationTitle: branchObj?.name || DEFAULT_SYSTEM_CONFIG.administrationTitle,
+    logoBase64: DEFAULT_OFFICIAL_LOGO,
+  });
+
+  return {
+    activeBranchId: branchId,
+    updatedAt: localStorage.getItem(bKeys.AUTOSAVE_TIMESTAMP) || '',
+    bakeries,
+    debts,
+    villages,
+    issuingEntities: safeParse<string[]>(localStorage.getItem(bKeys.ENTITIES), DEFAULT_ISSUING_ENTITIES),
+    violationTypes: safeParse<string[]>(localStorage.getItem(bKeys.VIOLATIONS), DEFAULT_VIOLATION_TYPES),
+    activityStatuses: safeParse<string[]>(localStorage.getItem(bKeys.ACTIVITY_STATUSES), DEFAULT_ACTIVITY_STATUSES),
+    bakeryCategories: safeParse<string[]>(localStorage.getItem(bKeys.BAKERY_CATEGORIES), DEFAULT_BAKERY_CATEGORIES),
+    breadTypes: safeParse<string[]>(localStorage.getItem(bKeys.BREAD_TYPES), DEFAULT_BREAD_TYPES),
+    breadTypeCounts: safeParse<string[]>(localStorage.getItem(bKeys.BREAD_TYPE_COUNTS), DEFAULT_BREAD_TYPE_COUNTS),
+    lineTypes: safeParse<string[]>(localStorage.getItem(bKeys.LINE_TYPES), DEFAULT_LINE_TYPES),
+    fuelTypes: safeParse<string[]>(localStorage.getItem(bKeys.FUEL_TYPES), DEFAULT_FUEL_TYPES),
+    paymentMethods: safeParse<string[]>(localStorage.getItem(bKeys.PAYMENT_METHODS), PAYMENT_METHODS),
+    dailyTasks: safeParse<DailyBakeryTask[]>(
+      localStorage.getItem(bKeys.DAILY_TASKS),
+      isDefault ? INITIAL_DAILY_TASKS : []
+    ),
+    inboxMessages: safeParse<InboxChatMessage[]>(
+      localStorage.getItem(bKeys.INBOX_MESSAGES),
+      isDefault ? INITIAL_INBOX_MESSAGES : []
+    ),
+    columnTitles: safeParse<ColumnTitles>(localStorage.getItem(bKeys.COLUMNS), DEFAULT_COLUMN_TITLES),
+    systemConfig: {
+      ...DEFAULT_SYSTEM_CONFIG,
+      ...parsedConfig,
+      administrationTitle: branchObj?.name || parsedConfig.administrationTitle || DEFAULT_SYSTEM_CONFIG.administrationTitle,
+      logoBase64: DEFAULT_OFFICIAL_LOGO,
+    },
+    users,
+  };
+}
+
+export function writeBranchPartitionToLocal(
+  branchId: string,
+  part: BranchPartitionPayload,
+  fallbackTimestamp?: string
+): void {
+  if (!part || typeof localStorage === 'undefined') return;
+  const isDefault = branchId === DEFAULT_BRANCH_ID;
+  const bKeys = getScopedKeysForBranch(branchId);
+  const branches = getBranchesList();
+  const branchObj = branches.find((b) => b.id === branchId);
+
+  try {
+    const localTs = localStorage.getItem(bKeys.AUTOSAVE_TIMESTAMP) || '';
+    const explicitSaveKey = isDefault
+      ? 'TAMWEEN_EXPLICIT_USER_SAVE'
+      : `TAMWEEN_EXPLICIT_USER_SAVE__${branchId}`;
+    const hasExplicitSave = localStorage.getItem(explicitSaveKey) === 'true';
+
+    let existingBake: Bakery[] = [];
+    let existingDebts: DebtRecord[] = [];
+    let existingUsers: AppUser[] | null = null;
+    let existingConfig: SystemConfig | null = null;
+
+    try {
+      const rB = localStorage.getItem(bKeys.BAKERIES);
+      if (rB) existingBake = JSON.parse(rB);
+      const rD = localStorage.getItem(bKeys.DEBTS);
+      if (rD) existingDebts = JSON.parse(rD);
+      const rU = localStorage.getItem(bKeys.USERS);
+      if (rU) existingUsers = JSON.parse(rU);
+      const rC = localStorage.getItem(bKeys.CONFIG);
+      if (rC) existingConfig = JSON.parse(rC);
+    } catch {}
+
+    const isLocalUntouched = isDefault
+      ? !hasExplicitSave && isDefaultSeedState(existingBake, existingDebts)
+      : !hasExplicitSave && existingBake.length === 0 && existingDebts.length === 0;
+
+    const localTimeMs = !isLocalUntouched && localTs ? Date.parse(localTs) || 0 : 0;
+    const remoteTs = part.updatedAt || fallbackTimestamp || '';
+    const remoteTimeMs = remoteTs ? Date.parse(remoteTs) || Date.now() : Date.now();
+
+    // Always merge branch-specific users so customized passwords & customPermissions for this branch sync across devices
+    if (Array.isArray(part.users) && part.users.length > 0) {
+      const mergedBranchUsers =
+        remoteTimeMs >= localTimeMs
+          ? mergeUsersList(existingUsers, part.users)
+          : mergeUsersList(part.users, existingUsers);
+      localStorage.setItem(bKeys.USERS, JSON.stringify(mergedBranchUsers));
+    }
+
+    // Adopt full branch partition if local branch is untouched, empty, or older/equal to cloud partition
+    if (isLocalUntouched || remoteTimeMs >= localTimeMs) {
+      const synced = synchronizeBakeryAndDebts(
+        (part.bakeries || []).map(normalizeBakeryPerCapita),
+        part.debts || []
+      );
+      if (Array.isArray(part.bakeries)) {
+        localStorage.setItem(bKeys.BAKERIES, JSON.stringify(synced.bakeries));
+      }
+      if (Array.isArray(part.debts)) {
+        localStorage.setItem(bKeys.DEBTS, JSON.stringify(synced.debts));
+      }
+      if (Array.isArray(part.villages)) {
+        localStorage.setItem(bKeys.VILLAGES, JSON.stringify(part.villages));
+      }
+      if (Array.isArray(part.issuingEntities)) {
+        localStorage.setItem(bKeys.ENTITIES, JSON.stringify(part.issuingEntities));
+      }
+      if (Array.isArray(part.violationTypes)) {
+        localStorage.setItem(bKeys.VIOLATIONS, JSON.stringify(part.violationTypes));
+      }
+      if (Array.isArray(part.activityStatuses)) {
+        localStorage.setItem(bKeys.ACTIVITY_STATUSES, JSON.stringify(part.activityStatuses));
+      }
+      if (Array.isArray(part.bakeryCategories)) {
+        localStorage.setItem(bKeys.BAKERY_CATEGORIES, JSON.stringify(part.bakeryCategories));
+      }
+      if (Array.isArray(part.breadTypes)) {
+        localStorage.setItem(bKeys.BREAD_TYPES, JSON.stringify(part.breadTypes));
+      }
+      if (Array.isArray(part.breadTypeCounts)) {
+        localStorage.setItem(bKeys.BREAD_TYPE_COUNTS, JSON.stringify(part.breadTypeCounts));
+      }
+      if (Array.isArray(part.lineTypes)) {
+        localStorage.setItem(bKeys.LINE_TYPES, JSON.stringify(part.lineTypes));
+      }
+      if (Array.isArray(part.fuelTypes)) {
+        localStorage.setItem(bKeys.FUEL_TYPES, JSON.stringify(part.fuelTypes));
+      }
+      if (Array.isArray(part.paymentMethods)) {
+        localStorage.setItem(bKeys.PAYMENT_METHODS, JSON.stringify(part.paymentMethods));
+      }
+      if (Array.isArray(part.dailyTasks)) {
+        localStorage.setItem(bKeys.DAILY_TASKS, JSON.stringify(part.dailyTasks));
+      }
+      if (Array.isArray(part.inboxMessages)) {
+        localStorage.setItem(bKeys.INBOX_MESSAGES, JSON.stringify(part.inboxMessages));
+      }
+      if (part.columnTitles) {
+        localStorage.setItem(
+          bKeys.COLUMNS,
+          JSON.stringify({ ...DEFAULT_COLUMN_TITLES, ...part.columnTitles })
+        );
+      }
+      if (part.systemConfig || existingConfig) {
+        const mergedCfg: SystemConfig = {
+          ...DEFAULT_SYSTEM_CONFIG,
+          ...(existingConfig || {}),
+          ...(part.systemConfig || {}),
+          administrationTitle:
+            branchObj?.name ||
+            part.systemConfig?.administrationTitle ||
+            existingConfig?.administrationTitle ||
+            DEFAULT_SYSTEM_CONFIG.administrationTitle,
+          logoBase64: DEFAULT_OFFICIAL_LOGO,
+        };
+        localStorage.setItem(bKeys.CONFIG, JSON.stringify(mergedCfg));
+      }
+      if (remoteTs) {
+        localStorage.setItem(bKeys.AUTOSAVE_TIMESTAMP, remoteTs);
+      }
+      localStorage.setItem(bKeys.INITIALIZED, 'true');
+    }
+  } catch (err) {
+    console.warn('Error writing branch partition to local storage:', err);
+  }
+}
+
+export function syncAllBranchesFromCloudPayload(
+  cloudData: Partial<AppState> | null | undefined,
+  remoteTimestamp?: string
+): void {
+  if (!cloudData) return;
+
+  // 1. Sync branches list across all devices
+  const currentBranches = getBranchesList();
+  if (Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
+    const branchMap = new Map<string, SupplyBranch>();
+    currentBranches.forEach((b) => branchMap.set(b.id, b));
+    cloudData.branches.forEach((b) => {
+      if (b && b.id && b.name) branchMap.set(b.id, b);
+    });
+    saveBranchesList(Array.from(branchMap.values()));
+  }
+
+  // 2. Sync root payload into default branch partition
+  const remotePartitions =
+    (cloudData as unknown as { branchPartitions?: Record<string, BranchPartitionPayload> })
+      .branchPartitions || {};
+
+  const defaultPartition: BranchPartitionPayload = remotePartitions[DEFAULT_BRANCH_ID] || {
+    ...cloudData,
+    activeBranchId: DEFAULT_BRANCH_ID,
+    updatedAt: remoteTimestamp,
+  };
+  writeBranchPartitionToLocal(DEFAULT_BRANCH_ID, defaultPartition, remoteTimestamp);
+
+  // 3. Sync every isolated branch partition in branchPartitions
+  Object.entries(remotePartitions).forEach(([bId, part]) => {
+    if (!bId || bId === DEFAULT_BRANCH_ID || !part) return;
+    writeBranchPartitionToLocal(bId, part, remoteTimestamp);
+  });
+}
+
+export function buildFullCloudMultiBranchPayload(
+  activeState: Omit<AppState, 'currentUser'> & { currentUser?: AppUser | null },
+  snapshotTimestamp: string
+): AppState & { branchPartitions: Record<string, BranchPartitionPayload> } {
+  const targetBranchId = activeState.activeBranchId || getActiveBranchId();
+  const branchesList = activeState.branches || getBranchesList();
+
+  const branchPartitions: Record<string, BranchPartitionPayload> = {};
+  branchesList.forEach((b) => {
+    if (b.id === targetBranchId) {
+      branchPartitions[b.id] = {
+        ...activeState,
+        activeBranchId: b.id,
+        updatedAt: snapshotTimestamp,
+      };
+    } else {
+      branchPartitions[b.id] = readBranchPartitionFromLocal(b.id);
+    }
+  });
+
+  const defaultBranchState =
+    targetBranchId === DEFAULT_BRANCH_ID
+      ? activeState
+      : branchPartitions[DEFAULT_BRANCH_ID] || readBranchPartitionFromLocal(DEFAULT_BRANCH_ID);
+
+  return {
+    ...(defaultBranchState as AppState),
+    activeBranchId: DEFAULT_BRANCH_ID,
+    branches: branchesList,
+    bakeries: defaultBranchState.bakeries || INITIAL_BAKERIES,
+    debts: defaultBranchState.debts || INITIAL_DEBTS,
+    villages: defaultBranchState.villages || DEFAULT_VILLAGES_HIERARCHY,
+    users: defaultBranchState.users || INITIAL_USERS,
+    systemConfig: {
+      ...DEFAULT_SYSTEM_CONFIG,
+      ...(defaultBranchState.systemConfig || {}),
+      logoBase64: DEFAULT_OFFICIAL_LOGO,
+    },
+    currentUser: null,
+    branchPartitions,
+  };
+}
+
 export async function loadInitialState(requestedBranchId?: string): Promise<AppState> {
-  const branchesList = getBranchesList();
-  const activeBranchId = requestedBranchId && branchesList.some((b) => b.id === requestedBranchId)
-    ? requestedBranchId
-    : getActiveBranchId();
+  const initialBranches = getBranchesList();
+  const activeBranchId =
+    requestedBranchId && initialBranches.some((b) => b.id === requestedBranchId)
+      ? requestedBranchId
+      : getActiveBranchId();
   setActiveBranchId(activeBranchId);
-  const activeBranchObj =
-    branchesList.find((b) => b.id === activeBranchId) || branchesList[0] || DEFAULT_SUPPLY_BRANCHES[0];
   const isDefaultBranch = activeBranchId === DEFAULT_BRANCH_ID;
   const scopedKeys = getScopedKeysForBranch(activeBranchId);
 
+  // Session check helper scoped to active branch's users list
+  const resolveCurrentUser = (activeUsersList: AppUser[]): AppUser | null => {
+    try {
+      const savedSessionStr = sessionStorage.getItem(BASE_KEYS.SESSION);
+      localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
+      if (savedSessionStr) {
+        const parsedSession: AppUser = JSON.parse(savedSessionStr);
+        const match = activeUsersList.find(
+          (u) => u.id === parsedSession.id || u.username.toLowerCase() === parsedSession.username.toLowerCase()
+        );
+        if (match) return match;
+      }
+    } catch {}
+    return null;
+  };
+
   try {
-    // 1. Read local state from localStorage first so we can compare timestamps & detect untouched default seed
+    // 1. Fetch latest multi-branch database from Supabase / Cloud first and sync all branch partitions locally
+    let cloudHasData = false;
+    try {
+      const supaRes = await fetchDatabaseFromSupabase();
+      if (supaRes && supaRes.success && supaRes.data) {
+        cloudHasData = true;
+        syncAllBranchesFromCloudPayload(supaRes.data, supaRes.timestamp);
+      }
+    } catch (supaErr) {
+      console.warn('Cloud boot load skipped or network offline:', supaErr);
+    }
+
+    const updatedBranchesList = getBranchesList();
+    const activeBranchObj =
+      updatedBranchesList.find((b) => b.id === activeBranchId) ||
+      updatedBranchesList[0] ||
+      DEFAULT_SUPPLY_BRANCHES[0];
+
+    // 2. Read isolated state for activeBranchId from its scoped keys
+    const localPartition = readBranchPartitionFromLocal(activeBranchId);
+
+    // 3. Check standalone preloaded state for default branch if local storage is empty
     interface PreloadedStatePayload extends Partial<AppState> {
       exportTimestamp?: string;
     }
@@ -728,302 +1063,28 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
             .PRELOADED_TAMWEEN_STATE
         : undefined;
 
-    let bakeries: Bakery[] | null = null;
-    let debts: DebtRecord[] | null = null;
-    let villages: VillageHierarchy[] | null = null;
-    let issuingEntities: string[] | null = null;
-    let violationTypes: string[] | null = null;
-    let activityStatuses: string[] | null = null;
-    let bakeryCategories: string[] | null = null;
-    let breadTypes: string[] | null = null;
-    let breadTypeCounts: string[] | null = null;
-    let lineTypes: string[] | null = null;
-    let fuelTypes: string[] | null = null;
-    let paymentMethods: string[] | null = null;
-    let dailyTasks: DailyBakeryTask[] | null = null;
-    let inboxMessages: InboxChatMessage[] | null = null;
-    let columnTitles: ColumnTitles | null = null;
-    let systemConfig: SystemConfig | null = null;
-    let users: AppUser[] | null = null;
-    let localTimestamp = '';
-    let hasExplicitUserSave = false;
+    let bakeries = localPartition.bakeries;
+    let debts = localPartition.debts;
+    let villages = localPartition.villages;
+    let issuingEntities = localPartition.issuingEntities;
+    let violationTypes = localPartition.violationTypes;
+    let activityStatuses = localPartition.activityStatuses;
+    let bakeryCategories = localPartition.bakeryCategories;
+    let breadTypes = localPartition.breadTypes;
+    let breadTypeCounts = localPartition.breadTypeCounts;
+    let lineTypes = localPartition.lineTypes;
+    let fuelTypes = localPartition.fuelTypes;
+    let paymentMethods = localPartition.paymentMethods;
+    let dailyTasks = localPartition.dailyTasks;
+    let inboxMessages = localPartition.inboxMessages;
+    let columnTitles = localPartition.columnTitles;
+    let systemConfig = localPartition.systemConfig;
+    let users = localPartition.users;
 
-    try {
-      localTimestamp = localStorage.getItem(scopedKeys.AUTOSAVE_TIMESTAMP) || '';
-      hasExplicitUserSave =
-        localStorage.getItem(isDefaultBranch ? 'TAMWEEN_EXPLICIT_USER_SAVE' : `TAMWEEN_EXPLICIT_USER_SAVE__${activeBranchId}`) === 'true';
-      if (localStorage.getItem(scopedKeys.BAKERIES)) {
-        bakeries = JSON.parse(localStorage.getItem(scopedKeys.BAKERIES)!);
-      }
-      if (localStorage.getItem(scopedKeys.DEBTS)) {
-        debts = JSON.parse(localStorage.getItem(scopedKeys.DEBTS)!);
-      }
-      if (localStorage.getItem(scopedKeys.VILLAGES)) {
-        villages = JSON.parse(localStorage.getItem(scopedKeys.VILLAGES)!);
-      }
-      if (localStorage.getItem(scopedKeys.ENTITIES)) {
-        issuingEntities = JSON.parse(localStorage.getItem(scopedKeys.ENTITIES)!);
-      }
-      if (localStorage.getItem(scopedKeys.VIOLATIONS)) {
-        violationTypes = JSON.parse(localStorage.getItem(scopedKeys.VIOLATIONS)!);
-      }
-      if (localStorage.getItem(scopedKeys.ACTIVITY_STATUSES)) {
-        activityStatuses = JSON.parse(localStorage.getItem(scopedKeys.ACTIVITY_STATUSES)!);
-      }
-      if (localStorage.getItem(scopedKeys.BAKERY_CATEGORIES)) {
-        bakeryCategories = JSON.parse(localStorage.getItem(scopedKeys.BAKERY_CATEGORIES)!);
-      }
-      if (localStorage.getItem(scopedKeys.BREAD_TYPES)) {
-        breadTypes = JSON.parse(localStorage.getItem(scopedKeys.BREAD_TYPES)!);
-      }
-      if (localStorage.getItem(scopedKeys.BREAD_TYPE_COUNTS)) {
-        breadTypeCounts = JSON.parse(localStorage.getItem(scopedKeys.BREAD_TYPE_COUNTS)!);
-      }
-      if (localStorage.getItem(scopedKeys.LINE_TYPES)) {
-        lineTypes = JSON.parse(localStorage.getItem(scopedKeys.LINE_TYPES)!);
-      }
-      if (localStorage.getItem(scopedKeys.FUEL_TYPES)) {
-        fuelTypes = JSON.parse(localStorage.getItem(scopedKeys.FUEL_TYPES)!);
-      }
-      if (localStorage.getItem(scopedKeys.PAYMENT_METHODS)) {
-        paymentMethods = JSON.parse(localStorage.getItem(scopedKeys.PAYMENT_METHODS)!);
-      }
-      if (localStorage.getItem(scopedKeys.DAILY_TASKS)) {
-        dailyTasks = JSON.parse(localStorage.getItem(scopedKeys.DAILY_TASKS)!);
-      }
-      if (localStorage.getItem(scopedKeys.INBOX_MESSAGES)) {
-        inboxMessages = JSON.parse(localStorage.getItem(scopedKeys.INBOX_MESSAGES)!);
-      }
-      if (localStorage.getItem(scopedKeys.COLUMNS)) {
-        columnTitles = JSON.parse(localStorage.getItem(scopedKeys.COLUMNS)!);
-      }
-      if (localStorage.getItem(scopedKeys.CONFIG)) {
-        systemConfig = JSON.parse(localStorage.getItem(scopedKeys.CONFIG)!);
-      }
-      if (localStorage.getItem(scopedKeys.USERS)) {
-        users = JSON.parse(localStorage.getItem(scopedKeys.USERS)!);
-      }
-    } catch (lsErr) {
-      console.warn('LocalStorage read error or restricted:', lsErr);
-    }
-
-    // Session check helper
-    const resolveCurrentUser = (activeUsersList: AppUser[]): AppUser | null => {
-      try {
-        const savedSessionStr = sessionStorage.getItem(BASE_KEYS.SESSION);
-        localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
-        if (savedSessionStr) {
-          const parsedSession: AppUser = JSON.parse(savedSessionStr);
-          const match = activeUsersList.find(
-            (u) => u.id === parsedSession.id || u.username === parsedSession.username
-          );
-          if (match) return match;
-        }
-      } catch {}
-      return null;
-    };
-
-    // Read global role permissions & labels shared across all branches
-    let globalRoleConfig: { rolePermissions?: SystemConfig['rolePermissions']; roleLabels?: SystemConfig['roleLabels'] } = {};
-    try {
-      if (typeof localStorage !== 'undefined') {
-        const rawGlobalRole = localStorage.getItem(BRANCH_META_KEYS.GLOBAL_ROLE_CONFIG);
-        if (rawGlobalRole) {
-          globalRoleConfig = JSON.parse(rawGlobalRole) || {};
-        }
-      }
-    } catch {}
-
-    // 2. Fetch latest database from Cloud / Supabase to sync unified users/passwords/permissions, branches list, and branch data across devices
-    let cloudHasData = false;
-    let supaRes: Awaited<ReturnType<typeof fetchDatabaseFromSupabase>> | null = null;
-    try {
-      supaRes = await fetchDatabaseFromSupabase();
-      if (supaRes && supaRes.success && supaRes.data) {
-        // Sync unified users (passwords, roles, permissions) from cloud across all devices & branches
-        if (Array.isArray(supaRes.data.users) && supaRes.data.users.length > 0) {
-          users = mergeUsersList(users, supaRes.data.users);
-          try {
-            localStorage.setItem(BASE_KEYS.USERS, JSON.stringify(users));
-          } catch {}
-        }
-        // Sync global rolePermissions & roleLabels across devices
-        if (supaRes.data.systemConfig?.rolePermissions || supaRes.data.systemConfig?.roleLabels) {
-          globalRoleConfig = {
-            rolePermissions: supaRes.data.systemConfig.rolePermissions || globalRoleConfig.rolePermissions,
-            roleLabels: supaRes.data.systemConfig.roleLabels || globalRoleConfig.roleLabels,
-          };
-          try {
-            localStorage.setItem(BRANCH_META_KEYS.GLOBAL_ROLE_CONFIG, JSON.stringify(globalRoleConfig));
-          } catch {}
-        }
-        // Sync branches list across devices
-        if (Array.isArray(supaRes.data.branches) && supaRes.data.branches.length > 0) {
-          const branchMap = new Map<string, SupplyBranch>();
-          branchesList.forEach((b) => branchMap.set(b.id, b));
-          supaRes.data.branches.forEach((b) => {
-            if (b && b.id && b.name) branchMap.set(b.id, b);
-          });
-          const mergedBranches = Array.from(branchMap.values());
-          saveBranchesList(mergedBranches);
-        }
-        // Sync isolated non-default branch partitions across devices if present
-        const remotePartitions = (supaRes.data as unknown as { branchPartitions?: Record<string, Partial<AppState>> }).branchPartitions;
-        if (remotePartitions && typeof remotePartitions === 'object') {
-          Object.entries(remotePartitions).forEach(([bId, part]) => {
-            if (!bId || bId === DEFAULT_BRANCH_ID || !part) return;
-            const bKeys = getScopedKeysForBranch(bId);
-            try {
-              const existingBakeRaw = localStorage.getItem(bKeys.BAKERIES);
-              const existingBake = existingBakeRaw ? JSON.parse(existingBakeRaw) : [];
-              if ((!existingBake || existingBake.length === 0) && Array.isArray(part.bakeries) && part.bakeries.length > 0) {
-                localStorage.setItem(bKeys.BAKERIES, JSON.stringify(part.bakeries));
-                if (bId === activeBranchId) bakeries = part.bakeries;
-              }
-              const existingDebtsRaw = localStorage.getItem(bKeys.DEBTS);
-              const existingDebts = existingDebtsRaw ? JSON.parse(existingDebtsRaw) : [];
-              if ((!existingDebts || existingDebts.length === 0) && Array.isArray(part.debts) && part.debts.length > 0) {
-                localStorage.setItem(bKeys.DEBTS, JSON.stringify(part.debts));
-                if (bId === activeBranchId) debts = part.debts;
-              }
-              const existingVillagesRaw = localStorage.getItem(bKeys.VILLAGES);
-              const existingVillages = existingVillagesRaw ? JSON.parse(existingVillagesRaw) : [];
-              if ((!existingVillages || existingVillages.length === 0) && Array.isArray(part.villages) && part.villages.length > 0) {
-                localStorage.setItem(bKeys.VILLAGES, JSON.stringify(part.villages));
-                if (bId === activeBranchId) villages = part.villages;
-              }
-            } catch {}
-          });
-        }
-      }
-    } catch (supaErr) {
-      console.warn('Cloud boot load skipped or network offline:', supaErr);
-    }
-
-    const updatedBranchesList = getBranchesList();
-    const resolvedBranchObj =
-      updatedBranchesList.find((b) => b.id === activeBranchId) || activeBranchObj;
-
-    // For non-default branches (e.g., سمنود or any newly added branch), return strictly isolated state with unified users & permissions
-    if (!isDefaultBranch) {
-      const syncedIsolated = synchronizeBakeryAndDebts(
-        (bakeries ?? []).map(normalizeBakeryPerCapita),
-        debts ?? []
-      );
-      const isolatedUsers = users ?? INITIAL_USERS;
-      const isolatedConfig: SystemConfig = {
-        ...DEFAULT_SYSTEM_CONFIG,
-        ...(systemConfig || {}),
-        ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
-        ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
-        governorateTitle: resolvedBranchObj.governorateTitle || 'محافظة الغربية',
-        directorateTitle: resolvedBranchObj.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-        administrationTitle: resolvedBranchObj.name,
-        logoBase64: DEFAULT_OFFICIAL_LOGO,
-      };
-      const isolatedState: AppState = {
-        activeBranchId,
-        branches: updatedBranchesList,
-        bakeries: syncedIsolated.bakeries,
-        debts: syncedIsolated.debts,
-        villages: villages ?? [],
-        issuingEntities: issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
-        violationTypes: violationTypes ?? DEFAULT_VIOLATION_TYPES,
-        activityStatuses: activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
-        bakeryCategories: bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
-        breadTypes: breadTypes ?? DEFAULT_BREAD_TYPES,
-        breadTypeCounts: breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
-        lineTypes: lineTypes ?? DEFAULT_LINE_TYPES,
-        fuelTypes: fuelTypes ?? DEFAULT_FUEL_TYPES,
-        paymentMethods: paymentMethods ?? PAYMENT_METHODS,
-        dailyTasks: dailyTasks ?? [],
-        inboxMessages: inboxMessages ?? [],
-        columnTitles: columnTitles ? { ...DEFAULT_COLUMN_TITLES, ...columnTitles } : DEFAULT_COLUMN_TITLES,
-        systemConfig: isolatedConfig,
-        users: isolatedUsers,
-        currentUser: resolveCurrentUser(isolatedUsers),
-      };
-      try {
-        localStorage.setItem(scopedKeys.INITIALIZED, 'true');
-      } catch {}
-      return isolatedState;
-    }
-
-    const isUntouchedDefault =
-      !hasExplicitUserSave && isDefaultSeedState(bakeries, debts);
-    const localTimeMs =
-      !isUntouchedDefault && localTimestamp ? Date.parse(localTimestamp) || 0 : 0;
-
-    if (
-      supaRes &&
-      supaRes.success &&
-      supaRes.data &&
-      (Array.isArray(supaRes.data.bakeries) || Array.isArray(supaRes.data.debts))
-    ) {
-      cloudHasData = true;
-      const cloudTimeMs = supaRes.timestamp ? Date.parse(supaRes.timestamp) || Date.now() : Date.now();
-
-      // Adopt cloud state if local state is untouched default seed, empty, or older/equal to cloud
-      if (
-        isUntouchedDefault ||
-        !bakeries ||
-        bakeries.length === 0 ||
-        cloudTimeMs >= localTimeMs
-      ) {
-        const syncedCloud = synchronizeBakeryAndDebts(
-          (supaRes.data.bakeries || []).map(normalizeBakeryPerCapita),
-          supaRes.data.debts ?? []
-        );
-        const adoptedUsers = mergeUsersList(users, supaRes.data.users);
-        const adoptedState: AppState = {
-          activeBranchId,
-          branches: updatedBranchesList,
-          bakeries: syncedCloud.bakeries,
-          debts: syncedCloud.debts,
-          villages: supaRes.data.villages ?? DEFAULT_VILLAGES_HIERARCHY,
-          issuingEntities: supaRes.data.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
-          violationTypes: supaRes.data.violationTypes ?? DEFAULT_VIOLATION_TYPES,
-          activityStatuses: supaRes.data.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES,
-          bakeryCategories: supaRes.data.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES,
-          breadTypes: supaRes.data.breadTypes ?? DEFAULT_BREAD_TYPES,
-          breadTypeCounts: supaRes.data.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
-          lineTypes: supaRes.data.lineTypes ?? DEFAULT_LINE_TYPES,
-          fuelTypes: supaRes.data.fuelTypes ?? DEFAULT_FUEL_TYPES,
-          paymentMethods: supaRes.data.paymentMethods ?? PAYMENT_METHODS,
-          dailyTasks: supaRes.data.dailyTasks ?? INITIAL_DAILY_TASKS,
-          inboxMessages: supaRes.data.inboxMessages ?? INITIAL_INBOX_MESSAGES,
-          columnTitles: supaRes.data.columnTitles
-            ? { ...DEFAULT_COLUMN_TITLES, ...supaRes.data.columnTitles }
-            : DEFAULT_COLUMN_TITLES,
-          systemConfig: {
-            ...DEFAULT_SYSTEM_CONFIG,
-            ...(supaRes.data.systemConfig || {}),
-            ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
-            ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
-            administrationTitle: resolvedBranchObj.name,
-            logoBase64: DEFAULT_OFFICIAL_LOGO,
-          },
-          users: adoptedUsers,
-          currentUser: resolveCurrentUser(adoptedUsers),
-        };
-
-        try {
-          localStorage.setItem(scopedKeys.INITIALIZED, 'true');
-        } catch {}
-
-        // Persist locally WITHOUT re-pushing to cloud
-        persistFullState(adoptedState, {
-          skipCloudSync: true,
-          customTimestamp: supaRes.timestamp,
-        }).catch(() => {});
-
-        return adoptedState;
-      }
-    }
-
-    // 3. If standalone preloaded file is opened, adopt only if local state is empty
-    if (preloaded && preloaded.bakeries && preloaded.bakeries.length > 0) {
-      if (!bakeries || bakeries.length === 0) {
+    if (isDefaultBranch && preloaded && preloaded.bakeries && preloaded.bakeries.length > 0) {
+      const hasRawLocal =
+        typeof localStorage !== 'undefined' && Boolean(localStorage.getItem(scopedKeys.BAKERIES));
+      if (!hasRawLocal) {
         bakeries = preloaded.bakeries.map(normalizeBakeryPerCapita);
         debts = preloaded.debts ?? INITIAL_DEBTS;
         villages = preloaded.villages ?? DEFAULT_VILLAGES_HIERARCHY;
@@ -1042,43 +1103,15 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
         systemConfig = preloaded.systemConfig ?? DEFAULT_SYSTEM_CONFIG;
         users = preloaded.users ?? INITIAL_USERS;
       }
-    } else if (!bakeries || bakeries.length === 0) {
-      // First run default seed in memory (do not push default seed to cloud)
-      bakeries = INITIAL_BAKERIES.map(normalizeBakeryPerCapita);
-      debts = INITIAL_DEBTS;
-      villages = DEFAULT_VILLAGES_HIERARCHY;
-      issuingEntities = DEFAULT_ISSUING_ENTITIES;
-      violationTypes = DEFAULT_VIOLATION_TYPES;
-      activityStatuses = DEFAULT_ACTIVITY_STATUSES;
-      bakeryCategories = DEFAULT_BAKERY_CATEGORIES;
-      breadTypes = DEFAULT_BREAD_TYPES;
-      breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS;
-      lineTypes = DEFAULT_LINE_TYPES;
-      fuelTypes = DEFAULT_FUEL_TYPES;
-      paymentMethods = PAYMENT_METHODS;
-      dailyTasks = INITIAL_DAILY_TASKS;
-      inboxMessages = INITIAL_INBOX_MESSAGES;
-      columnTitles = DEFAULT_COLUMN_TITLES;
-      systemConfig = {
-        ...DEFAULT_SYSTEM_CONFIG,
-        ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
-        ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
-      };
-      users = users && users.length > 0 ? users : INITIAL_USERS;
-
-      try {
-        localStorage.setItem(scopedKeys.INITIALIZED, 'true');
-      } catch {}
     }
 
-    // 4. Fallback defaults if any section is empty
     const syncedInitial = synchronizeBakeryAndDebts(
-      (bakeries ?? INITIAL_BAKERIES).map(normalizeBakeryPerCapita),
-      debts ?? INITIAL_DEBTS
+      (bakeries ?? (isDefaultBranch ? INITIAL_BAKERIES : [])).map(normalizeBakeryPerCapita),
+      debts ?? (isDefaultBranch ? INITIAL_DEBTS : [])
     );
     bakeries = syncedInitial.bakeries;
     debts = syncedInitial.debts;
-    villages = villages ?? DEFAULT_VILLAGES_HIERARCHY;
+    villages = villages ?? (isDefaultBranch ? DEFAULT_VILLAGES_HIERARCHY : []);
     issuingEntities = issuingEntities ?? DEFAULT_ISSUING_ENTITIES;
     violationTypes = violationTypes ?? DEFAULT_VIOLATION_TYPES;
     activityStatuses = activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
@@ -1088,78 +1121,68 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     lineTypes = lineTypes ?? DEFAULT_LINE_TYPES;
     fuelTypes = fuelTypes ?? DEFAULT_FUEL_TYPES;
     paymentMethods = paymentMethods ?? PAYMENT_METHODS;
-    dailyTasks = dailyTasks ?? INITIAL_DAILY_TASKS;
-    inboxMessages = inboxMessages ?? INITIAL_INBOX_MESSAGES;
-    columnTitles = columnTitles ?? DEFAULT_COLUMN_TITLES;
-    systemConfig = systemConfig
-      ? {
-          ...DEFAULT_SYSTEM_CONFIG,
-          ...systemConfig,
-          ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
-          ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
-        }
-      : {
-          ...DEFAULT_SYSTEM_CONFIG,
-          ...(globalRoleConfig.rolePermissions ? { rolePermissions: globalRoleConfig.rolePermissions } : {}),
-          ...(globalRoleConfig.roleLabels ? { roleLabels: globalRoleConfig.roleLabels } : {}),
-        };
-    systemConfig.administrationTitle = activeBranchObj.name;
-    systemConfig.logoBase64 = DEFAULT_OFFICIAL_LOGO;
-    users = users && users.length > 0 ? users : INITIAL_USERS;
+    dailyTasks = dailyTasks ?? (isDefaultBranch ? INITIAL_DAILY_TASKS : []);
+    inboxMessages = inboxMessages ?? (isDefaultBranch ? INITIAL_INBOX_MESSAGES : []);
+    columnTitles = columnTitles
+      ? { ...DEFAULT_COLUMN_TITLES, ...columnTitles }
+      : { ...DEFAULT_COLUMN_TITLES };
 
-    if (columnTitles) {
-      columnTitles = {
-        ...DEFAULT_COLUMN_TITLES,
-        ...columnTitles,
-      };
-      if (columnTitles.insuranceQuota && columnTitles.insuranceQuota.includes('شوال')) {
-        columnTitles.insuranceQuota = columnTitles.insuranceQuota.replace(/شوال/g, 'شيكارة');
-      }
-      if (columnTitles.actualQuota && columnTitles.actualQuota.includes('شوال')) {
-        columnTitles.actualQuota = columnTitles.actualQuota.replace(/شوال/g, 'شيكارة');
-      }
-      if (
-        !columnTitles.bakeryCategory ||
-        columnTitles.bakeryCategory === 'تصنيف المخبز' ||
-        columnTitles.bakeryCategory === 'مخبز بلدي مدعم'
-      ) {
-        columnTitles.bakeryCategory = 'نوع المخابز';
-      }
-      if (!columnTitles.flourBagPrice) {
-        columnTitles.flourBagPrice = 'سعر الشيكارة';
-      }
-      if (
-        !columnTitles.perCapitaAverage ||
-        columnTitles.perCapitaAverage === 'متوسط الفرد للمخبز'
-      ) {
-        columnTitles.perCapitaAverage = 'متوسط نصيب الفرد للمخبز';
-      }
-      if (columnTitles.beneficiaries2023 === 'مستفيدي 2023') {
-        columnTitles.beneficiaries2023 = 'مستفيد عام 2023';
-      }
-      if (columnTitles.beneficiaries2024 === 'مستفيدي 2024') {
-        columnTitles.beneficiaries2024 = 'مستفيدين عام 2024';
-      }
-      if (columnTitles.beneficiaries2025 === 'مستفيدي 2025') {
-        columnTitles.beneficiaries2025 = 'مستفيدين عام 2025';
-      }
-      if (columnTitles.avg2023 === 'متوسط 2023') {
-        columnTitles.avg2023 = 'متوسط عام 2023';
-      }
-      if (columnTitles.avg2024 === 'متوسط 2024') {
-        columnTitles.avg2024 = 'متوسط عام 2024';
-      }
-      if (columnTitles.avg2025 === 'متوسط 2025') {
-        columnTitles.avg2025 = 'متوسط عام 2025';
-      }
+    if (columnTitles.insuranceQuota && columnTitles.insuranceQuota.includes('شوال')) {
+      columnTitles.insuranceQuota = columnTitles.insuranceQuota.replace(/شوال/g, 'شيكارة');
+    }
+    if (columnTitles.actualQuota && columnTitles.actualQuota.includes('شوال')) {
+      columnTitles.actualQuota = columnTitles.actualQuota.replace(/شوال/g, 'شيكارة');
+    }
+    if (
+      !columnTitles.bakeryCategory ||
+      columnTitles.bakeryCategory === 'تصنيف المخبز' ||
+      columnTitles.bakeryCategory === 'مخبز بلدي مدعم'
+    ) {
+      columnTitles.bakeryCategory = 'نوع المخابز';
+    }
+    if (!columnTitles.flourBagPrice) {
+      columnTitles.flourBagPrice = 'سعر الشيكارة';
+    }
+    if (
+      !columnTitles.perCapitaAverage ||
+      columnTitles.perCapitaAverage === 'متوسط الفرد للمخبز'
+    ) {
+      columnTitles.perCapitaAverage = 'متوسط نصيب الفرد للمخبز';
+    }
+    if (columnTitles.beneficiaries2023 === 'مستفيدي 2023') {
+      columnTitles.beneficiaries2023 = 'مستفيد عام 2023';
+    }
+    if (columnTitles.beneficiaries2024 === 'مستفيدي 2024') {
+      columnTitles.beneficiaries2024 = 'مستفيدين عام 2024';
+    }
+    if (columnTitles.beneficiaries2025 === 'مستفيدي 2025') {
+      columnTitles.beneficiaries2025 = 'مستفيدين عام 2025';
+    }
+    if (columnTitles.avg2023 === 'متوسط 2023') {
+      columnTitles.avg2023 = 'متوسط عام 2023';
+    }
+    if (columnTitles.avg2024 === 'متوسط 2024') {
+      columnTitles.avg2024 = 'متوسط عام 2024';
+    }
+    if (columnTitles.avg2025 === 'متوسط 2025') {
+      columnTitles.avg2025 = 'متوسط عام 2025';
     }
 
-    const activeUsers = users ?? INITIAL_USERS;
+    systemConfig = {
+      ...DEFAULT_SYSTEM_CONFIG,
+      ...(systemConfig || {}),
+      governorateTitle: activeBranchObj.governorateTitle || systemConfig?.governorateTitle || 'محافظة الغربية',
+      directorateTitle: activeBranchObj.directorateTitle || systemConfig?.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+      administrationTitle: activeBranchObj.name,
+      logoBase64: DEFAULT_OFFICIAL_LOGO,
+    };
+
+    const activeUsers = users && users.length > 0 ? users : INITIAL_USERS;
     const currentUser = resolveCurrentUser(activeUsers);
 
     const finalLocalState: AppState = {
       activeBranchId,
-      branches: branchesList,
+      branches: updatedBranchesList,
       bakeries,
       debts,
       villages,
@@ -1180,30 +1203,38 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       currentUser,
     };
 
-    // If this device has newer user-recorded data than the cloud, push it to the cloud immediately so all other devices sync!
-    if (isDefaultBranch) {
-      if (!isUntouchedDefault && bakeries && bakeries.length > 0) {
-        autoSyncToSupabase(
-          finalLocalState,
-          true,
-          localTimestamp || new Date().toISOString()
-        ).catch(() => {});
-      } else if (!cloudHasData && !isDefaultSeedState(bakeries, debts)) {
-        autoSyncToSupabase(
-          finalLocalState,
-          true,
-          localTimestamp || new Date().toISOString()
-        ).catch(() => {});
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(scopedKeys.INITIALIZED, 'true');
       }
+    } catch {}
+
+    // If this branch has explicit user saves locally, ensure multi-branch payload is synced to Supabase
+    const hasExplicitUserSave =
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem(
+        isDefaultBranch ? 'TAMWEEN_EXPLICIT_USER_SAVE' : `TAMWEEN_EXPLICIT_USER_SAVE__${activeBranchId}`
+      ) === 'true';
+
+    if (hasExplicitUserSave || (!cloudHasData && !isDefaultSeedState(bakeries, debts))) {
+      const ts = localPartition.updatedAt || new Date().toISOString();
+      const fullPayload = buildFullCloudMultiBranchPayload(finalLocalState, ts);
+      autoSyncToSupabase(fullPayload, true, ts).catch(() => {});
     }
 
     return finalLocalState;
   } catch (criticalErr) {
     console.error('Critical fallback in loadInitialState:', criticalErr);
+    const updatedBranchesList = getBranchesList();
+    const activeBranchObj =
+      updatedBranchesList.find((b) => b.id === activeBranchId) ||
+      updatedBranchesList[0] ||
+      DEFAULT_SUPPLY_BRANCHES[0];
+
     if (!isDefaultBranch) {
       return {
         activeBranchId,
-        branches: branchesList,
+        branches: updatedBranchesList,
         bakeries: [],
         debts: [],
         villages: [],
@@ -1236,7 +1267,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     );
     return {
       activeBranchId,
-      branches: branchesList,
+      branches: updatedBranchesList,
       bakeries: fallbackSync.bakeries,
       debts: fallbackSync.debts,
       villages: DEFAULT_VILLAGES_HIERARCHY,
@@ -1259,7 +1290,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
   }
 }
 
-// Persist both to IndexedDB and LocalStorage synchronously & asynchronously (strictly scoped to active branch)
+// Persist both to IndexedDB and LocalStorage synchronously & asynchronously (strictly scoped to active branch, with real-time Supabase sync across all branches)
 export async function persistFullState(
   state: Omit<AppState, 'currentUser'> & { currentUser?: AppUser | null },
   options?: { skipCloudSync?: boolean; customTimestamp?: string }
@@ -1306,22 +1337,13 @@ export async function persistFullState(
 
   const snapshotTimestamp = options?.customTimestamp || new Date().toISOString();
 
-  // LocalStorage (strictly scoped to targetBranchId, with unified users & role permissions)
+  // LocalStorage (100% isolated per branch, including branch-specific users & role permissions)
   try {
     localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
     if (!options?.skipCloudSync) {
       localStorage.setItem(
         isDefaultBranch ? 'TAMWEEN_EXPLICIT_USER_SAVE' : `TAMWEEN_EXPLICIT_USER_SAVE__${targetBranchId}`,
         'true'
-      );
-    }
-    if (lockedConfig.rolePermissions || lockedConfig.roleLabels) {
-      localStorage.setItem(
-        BRANCH_META_KEYS.GLOBAL_ROLE_CONFIG,
-        JSON.stringify({
-          rolePermissions: lockedConfig.rolePermissions,
-          roleLabels: lockedConfig.roleLabels,
-        })
       );
     }
     localStorage.setItem(scopedKeys.AUTOSAVE_TIMESTAMP, snapshotTimestamp);
@@ -1341,7 +1363,7 @@ export async function persistFullState(
     localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify(inboxMessages));
     localStorage.setItem(scopedKeys.COLUMNS, JSON.stringify(columnTitles));
     localStorage.setItem(scopedKeys.CONFIG, JSON.stringify(lockedConfig));
-    localStorage.setItem(BASE_KEYS.USERS, JSON.stringify(users));
+    localStorage.setItem(scopedKeys.USERS, JSON.stringify(users));
   } catch (err) {
     console.warn('LocalStorage quota limit reached, relying primarily on IndexedDB', err);
   }
@@ -1373,7 +1395,7 @@ export async function persistFullState(
     },
   };
 
-  // Single-transaction IndexedDB batch write (zero UI lag, scoped to branch, unified users)
+  // Single-transaction IndexedDB batch write (strictly scoped to branch)
   await idbSetBatch([
     [scopedKeys.BAKERIES, normalizedBakeries],
     [scopedKeys.DEBTS, normalizedDebts],
@@ -1391,7 +1413,7 @@ export async function persistFullState(
     [scopedKeys.INBOX_MESSAGES, inboxMessages],
     [scopedKeys.COLUMNS, columnTitles],
     [scopedKeys.CONFIG, lockedConfig],
-    [BASE_KEYS.USERS, users],
+    [scopedKeys.USERS, users],
     [scopedKeys.AUTOSAVE_BACKUP, backupSnapshot],
   ]);
 
@@ -1402,82 +1424,34 @@ export async function persistFullState(
       localStorage.setItem(scopedKeys.AUTOSAVE_BACKUP, serializedSnapshot);
 
       if (!options?.skipCloudSync) {
-        // Collect isolated branch partitions for non-default branches so each branch stays 100% isolated across devices
-        const branchPartitions: Record<string, { bakeries: Bakery[]; debts: DebtRecord[]; villages: VillageHierarchy[] }> = {};
-        branchesList.forEach((b) => {
-          if (b.id !== DEFAULT_BRANCH_ID) {
-            if (b.id === targetBranchId) {
-              branchPartitions[b.id] = {
-                bakeries: normalizedBakeries,
-                debts: normalizedDebts,
-                villages,
-              };
-            } else {
-              try {
-                const bKeys = getScopedKeysForBranch(b.id);
-                const rawB = localStorage.getItem(bKeys.BAKERIES);
-                const rawD = localStorage.getItem(bKeys.DEBTS);
-                const rawV = localStorage.getItem(bKeys.VILLAGES);
-                branchPartitions[b.id] = {
-                  bakeries: rawB ? JSON.parse(rawB) : [],
-                  debts: rawD ? JSON.parse(rawD) : [],
-                  villages: rawV ? JSON.parse(rawV) : [],
-                };
-              } catch {}
-            }
-          }
-        });
+        const cloudStatePayload = buildFullCloudMultiBranchPayload(
+          backupSnapshot.state,
+          backupSnapshot.timestamp
+        );
 
-        let defaultBranchBakeries = normalizedBakeries;
-        let defaultBranchDebts = normalizedDebts;
-        let defaultBranchVillages = villages;
-        if (!isDefaultBranch) {
-          try {
-            const rawDefB = localStorage.getItem(BASE_KEYS.BAKERIES);
-            const rawDefD = localStorage.getItem(BASE_KEYS.DEBTS);
-            const rawDefV = localStorage.getItem(BASE_KEYS.VILLAGES);
-            defaultBranchBakeries = rawDefB ? JSON.parse(rawDefB) : INITIAL_BAKERIES;
-            defaultBranchDebts = rawDefD ? JSON.parse(rawDefD) : INITIAL_DEBTS;
-            defaultBranchVillages = rawDefV ? JSON.parse(rawDefV) : DEFAULT_VILLAGES_HIERARCHY;
-          } catch {}
-        }
-
-        const cloudStatePayload = {
-          ...backupSnapshot.state,
-          activeBranchId: DEFAULT_BRANCH_ID,
-          branches: branchesList,
-          bakeries: defaultBranchBakeries,
-          debts: defaultBranchDebts,
-          villages: defaultBranchVillages,
-          users,
-          branchPartitions,
-        };
-
-        if (isDefaultBranch) {
-          const driveAutoSync =
-            lockedConfig.googleDriveAutoSync !== false &&
-            localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
-          if (driveAutoSync) {
-            const gmailKey = (
-              lockedConfig.gmailEmail ||
-              localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
-              'ELHOSINY2020@gmail.com'
-            )
-              .trim()
-              .toLowerCase();
-            const drivePayloadStr = JSON.stringify({
-              version: '3.0-google-drive-autosync',
-              timestamp: backupSnapshot.timestamp,
-              gmailEmail: gmailKey,
-              destinationType: 'GOOGLE_DRIVE',
-              targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
-              bakeriesCount: defaultBranchBakeries.length,
-              debtsCount: defaultBranchDebts.length,
-              data: cloudStatePayload,
-            });
-            localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
-            localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
-          }
+        const driveAutoSync =
+          lockedConfig.googleDriveAutoSync !== false &&
+          localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
+        if (driveAutoSync) {
+          const gmailKey = (
+            lockedConfig.gmailEmail ||
+            localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
+            'ELHOSINY2020@gmail.com'
+          )
+            .trim()
+            .toLowerCase();
+          const drivePayloadStr = JSON.stringify({
+            version: '3.0-google-drive-autosync',
+            timestamp: backupSnapshot.timestamp,
+            gmailEmail: gmailKey,
+            destinationType: 'GOOGLE_DRIVE',
+            targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
+            bakeriesCount: cloudStatePayload.bakeries.length,
+            debtsCount: cloudStatePayload.debts.length,
+            data: cloudStatePayload,
+          });
+          localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
+          localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
         }
 
         autoSyncToSupabase(
