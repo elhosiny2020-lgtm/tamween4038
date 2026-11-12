@@ -281,9 +281,19 @@ async function startServer() {
       }
     });
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    const distPath = path.resolve(__dirname, 'dist');
+    const distIndexHtml = path.resolve(distPath, 'index.html');
+    const rootIndexHtml = path.resolve(__dirname, 'index.html');
+
+    app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      if (fs.existsSync(distIndexHtml)) {
+        res.sendFile(distIndexHtml);
+      } else if (fs.existsSync(rootIndexHtml)) {
+        res.sendFile(rootIndexHtml);
+      } else {
+        res.status(404).send('Index HTML not found');
+      }
     });
   }
 
