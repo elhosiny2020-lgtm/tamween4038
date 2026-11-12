@@ -1625,32 +1625,32 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       ∑
                     </td>
                     <td className="py-3.5 px-3 text-right font-sans font-black border-l border-[#1E3A5F] text-amber-300 text-xs sm:text-sm">
-                      صف الإجماليات TOTAL SUMMARY ({filteredDebts.length} قيد / {filteredTotals.uniqueBakeriesCount} مخبز)
+                      صف الإجماليات TOTAL SUMMARY ({filteredDebts.length} / {filteredTotals.uniqueBakeriesCount})
                     </td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                      {filteredTotals.uniqueMachinesCount} ماكينة
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                      {filteredTotals.uniqueMachinesCount}
                     </td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                      {filteredTotals.uniqueVillagesCount} قرية
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                      {filteredTotals.uniqueVillagesCount}
                     </td>
-                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                      {filteredTotals.uniqueUnitsCount} وحدة
+                    <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                      {filteredTotals.uniqueUnitsCount}
                     </td>
                     {showViolationsCols && (
                       <>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.violDatesCount} تاريخ
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.violDatesCount}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.uniqueEntitiesCount} جهة
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.uniqueEntitiesCount}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.uniqueViolTypesCount} نوع
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.uniqueViolTypesCount}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white font-black">
                           {filteredTotals.sumViol.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white font-black">
                           {filteredTotals.sumOldViol.toLocaleString()}
                         </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
@@ -1660,14 +1660,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     )}
                     {showViolationPayCols && (
                       <>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.violPayDatesCount} سداد
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.violPayDatesCount}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.violReceiptsCount} إيصال
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.violReceiptsCount}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.violPayMethodsCount} طريقة
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.violPayMethodsCount}
                         </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
                           {filteredTotals.sumPaidViol.toLocaleString()}
@@ -1679,17 +1679,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     )}
                     {showAddedCols && (
                       <>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white font-black">
                           {filteredTotals.sumAdded.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.addedPayDatesCount} سداد
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.addedPayDatesCount}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.addedReceiptsCount} إيصال
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.addedReceiptsCount}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.addedPayMethodsCount} طريقة
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.addedPayMethodsCount}
                         </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
                           {filteredTotals.sumPaidAdded.toLocaleString()}
@@ -1701,28 +1701,28 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     )}
                     {showDisposalCols && (
                       <>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.dispDatesCount} تصرف
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.dispDatesCount}
                         </td>
-                        <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-white">
+                        <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-white font-black">
                           {filteredTotals.sumDispBags.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.sumDispBagPrice.toLocaleString()} ج.م
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.sumDispBagPrice.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-amber-200">
+                        <td className="py-2.5 px-1.5 border-l border-[#1E3A5F] text-amber-200 font-black">
                           {filteredTotals.sumDispMultiplier}
                         </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] bg-[#0F2342] text-amber-300 font-black">
                           {filteredTotals.sumDispVal.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white">
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white font-black">
                           {filteredTotals.sumDispVal.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
-                          {filteredTotals.dispPayDatesCount} سداد
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                          {filteredTotals.dispPayDatesCount}
                         </td>
-                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
                           {filteredTotals.dispReceiptsCount} إيصال
                         </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200">

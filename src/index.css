@@ -399,18 +399,21 @@ select:focus {
   }
 }
 
-/* Custom scrollbars */
+/* Custom scrollbars - Enlarged and Prominent */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 14px;
+  height: 14px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: #0f172a;
+  border-left: 1px solid #1e293b;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 4px;
+  background: #3b82f6;
+  border-radius: 7px;
+  border: 3px solid #0f172a;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #60a5fa;
 }
+

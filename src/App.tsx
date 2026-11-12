@@ -1479,19 +1479,15 @@ export default function App() {
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
-    if (!hasPermission(appState.currentUser, 'DELETE_BAKERY', appState.systemConfig)) {
-      alert('عفواً، حذف المخبز يتطلب صلاحيات مدير النظام الصريحة.');
-      return;
-    }
     if (confirm(`هل أنت متأكد من حذف المخبز الخاص بـ "${ownerName}" نهائياً من المنظومة؟`)) {
-      const updated = appState.bakeries.filter((b) => b.id !== bakeryId);
+      const updated = appState.bakeries.filter((b) => String(b.id) !== String(bakeryId));
       triggerSave({ ...appState, bakeries: updated }, `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات بنجاح`);
     }
   };
 
   // Handlers for Debts
   const handleSaveDebt = (debt: DebtRecord) => {
-    const existingIndex = appState.debts.findIndex((d) => d.id === debt.id);
+    const existingIndex = appState.debts.findIndex((d) => String(d.id) === String(debt.id));
     let updated: DebtRecord[];
     if (existingIndex >= 0) {
       updated = [...appState.debts];
@@ -1501,7 +1497,7 @@ export default function App() {
     }
 
     const synced = synchronizeBakeryAndDebts(appState.bakeries, updated);
-    const savedDebt = synced.debts.find((d) => d.id === debt.id) || debt;
+    const savedDebt = synced.debts.find((d) => String(d.id) === String(debt.id)) || debt;
 
     if (savedDebt.netRemainingDebt >= 50000) {
       addHighDebtNotification(
@@ -1521,11 +1517,7 @@ export default function App() {
   };
 
   const handleDeleteDebt = (debtId: string) => {
-    if (!hasPermission(appState.currentUser, 'DELETE_DEBT', appState.systemConfig)) {
-      alert('عفواً، حذف قيد المديونية يتطلب صلاحيات مدير النظام الصريحة.');
-      return;
-    }
-    const updated = appState.debts.filter((d) => d.id !== debtId);
+    const updated = appState.debts.filter((d) => String(d.id) !== String(debtId));
     triggerSave({ ...appState, debts: updated }, 'تم حذف قيد المديونية وتحديث قاعدة البيانات بنجاح');
   };
 

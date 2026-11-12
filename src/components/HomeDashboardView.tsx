@@ -365,17 +365,17 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
               <tfoot className="bg-[#0F2342] text-white sticky bottom-0 z-10 font-black">
                 <tr className="total-summary-row">
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-300">∑</td>
-                  <td className="py-2.5 px-3 text-right text-amber-300 border-l border-slate-700">
-                    صف الإجماليات TOTAL SUMMARY ({bakeries.length} مخبز)
+                  <td className="py-2.5 px-3 text-right text-amber-300 font-black border-l border-slate-700">
+                    صف الإجماليات TOTAL SUMMARY ({bakeries.length})
                   </td>
-                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
-                    {colTotals.bakeryCount} ماكينة
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200 font-black">
+                    {colTotals.bakeryCount}
                   </td>
-                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
-                    {colTotals.uniqueVillagesLabel}
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200 font-black">
+                    {colTotals.uniqueVillagesCount}
                   </td>
-                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
-                    {colTotals.uniqueUnitsLabel}
+                  <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200 font-black">
+                    {colTotals.uniqueUnitsCount}
                   </td>
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
                     {colTotals.insuranceValue.toLocaleString()}

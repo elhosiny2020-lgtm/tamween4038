@@ -415,7 +415,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
               {/* Group Sub-Items Menu Tree */}
               {isOpen && !isCollapsed && (
-                <div className="px-1 pb-2 space-y-0.5 border-t border-slate-800 bg-[#020617]">
+                <div className="p-1.5 space-y-1 border-t border-slate-800 bg-[#020617]">
                   {group.items.map((item) => {
                     const isItemActive = activeNavId === item.id;
                     return (
