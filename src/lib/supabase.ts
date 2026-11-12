@@ -986,4 +986,43 @@ export function subscribeToSupabaseRealtime(
   }
 }
 
+/**
+ * حذف قاعدة البيانات وتفريغ كافّة السجلات والنسخ الاحتياطية من Supabase
+ */
+export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      success: false,
+      message: 'لم يتم الاتصال بـ Supabase. يرجى التأكد من المفاتيح أولاً.',
+    };
+  }
+
+  try {
+    // 1. Delete all rows in backup_snapshots table
+    await client.from('backup_snapshots').delete().neq('id', 'non_existent_id');
+    // 2. Delete all rows in bakeries table
+    await client.from('bakeries').delete().neq('id', 'non_existent_id');
+    // 3. Delete all rows in debts table
+    await client.from('debts').delete().neq('id', 'non_existent_id');
+
+    // 4. Also try removing tamween_database_backup.json from storage
+    try {
+      await client.storage.from(SUPABASE_BUCKET_NAME).remove(['tamween_database_backup.json', 'index.html']);
+    } catch {}
+
+    localStorage.removeItem('TAMWEEN_LAST_SUPABASE_SYNC');
+
+    return {
+      success: true,
+      message: 'تم بنجاح مسح وحذف كافة البيانات والنسخ الاحتياطية المسجلة على Supabase نهائياً!',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `تعذر مسح بيانات Supabase: ${err.message || 'خطأ غير معروف'}`,
+    };
+  }
+}
+
 

@@ -40,6 +40,7 @@ import {
   uploadAppHtmlToSupabaseStorage,
   migrateDatabaseToSupabase,
   fetchDatabaseFromSupabase,
+  clearSupabaseDatabaseData,
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
 } from '../lib/supabase';
@@ -1096,6 +1097,105 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
+  // Cancel / Disable Supabase Cloud Storage
+  const handleCancelSupabaseCloud = () => {
+    setSupabaseUrlInput('');
+    setSupabaseKeyInput('');
+    saveSupabaseConfig('', '');
+    setSupabaseCfg(getSupabaseConfig());
+    setStatusMsg({
+      text: 'تم إيقاف وإلغاء التخزين والمزامنة السحابية لـ Supabase بنجاح 🚫',
+      type: 'info',
+    });
+  };
+
+  // Delete Supabase Cloud Database Data
+  const handleDeleteSupabaseCloudData = async () => {
+    if (!confirm('هل أنت متأكد من حذف ومسح كافّة السجلات وقاعدة البيانات المسجلة على Supabase نهائياً؟')) {
+      return;
+    }
+    setIsProcessing(true);
+    setStatusMsg({ text: 'جاري مسح وحذف كافة البيانات من قاعدة بيانات Supabase السحابية...', type: 'info' });
+    const res = await clearSupabaseDatabaseData();
+    setIsProcessing(false);
+    if (res.success) {
+      setLastSupabaseSyncTime(null);
+      setUploadedHtmlPublicUrl(null);
+      setStatusMsg({ text: res.message, type: 'success' });
+    } else {
+      setStatusMsg({ text: res.message, type: 'error' });
+    }
+  };
+
+  // Delete Published Release Data
+  const handleDeletePublishedReleaseData = () => {
+    if (!confirm('هل أنت متأكد من حذف قاعدة البيانات المنشورة وإغلاق الاستضافة السحابية نهائياً؟')) {
+      return;
+    }
+    localStorage.removeItem('TAMWEEN_LAST_PUBLISH_INFO');
+    setLastPublishedInfo(null);
+    handleCancelPublishFromBackup();
+    setStatusMsg({
+      text: 'تم حذف وحظر بيانات قاعدة البيانات المنشورة وتأكيد إغلاق الاستضافة السحابية بنجاح 🗑️!',
+      type: 'success',
+    });
+  };
+
+  // Cancel / Disable Google Drive Sync
+  const handleCancelGoogleDriveCloud = async () => {
+    setGoogleDriveAutoSync(false);
+    setCustomAutoSync(false);
+    localStorage.setItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC', 'false');
+    localStorage.setItem('TAMWEEN_CUSTOM_AUTOSYNC', 'false');
+    await handleDisconnectGoogleAccount();
+    setStatusMsg({
+      text: 'تم إلغاء وإيقاف التخزين والمزامنة السحابية لـ Google Drive وفصل الحساب 🚫',
+      type: 'info',
+    });
+  };
+
+  // Delete Google Drive Cloud Database & Clear Caches
+  const handleDeleteGoogleDriveCloudData = () => {
+    if (!confirm('هل أنت متأكد من مسح وحذف قاعدة البيانات والنسخ السحابية المسجلة على Google Drive والجيميل؟')) {
+      return;
+    }
+    const gmailKey = gmailEmail.trim().toLowerCase();
+    if (gmailKey) {
+      localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`);
+    }
+    localStorage.removeItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD');
+    localStorage.removeItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC');
+    setLastCloudDriveSyncTime(null);
+    setStatusMsg({
+      text: 'تم مسح وحذف كافة حزم وقواعد البيانات المخزنة سحابياً لـ Google Drive بنجاح 🗑️!',
+      type: 'success',
+    });
+  };
+
+  // Cancel / Disable GitHub Cloud Sync
+  const handleCancelGithubCloud = () => {
+    setGithubAutoSync(false);
+    setGithubToken('');
+    localStorage.setItem('TAMWEEN_GITHUB_AUTOSYNC', 'false');
+    localStorage.removeItem('TAMWEEN_GITHUB_TOKEN');
+    setStatusMsg({
+      text: 'تم إلغاء وإيقاف المزامنة السحابية عبر GitHub 🚫',
+      type: 'info',
+    });
+  };
+
+  // Delete GitHub Cloud Sync Payload Data
+  const handleDeleteGithubCloudData = () => {
+    if (!confirm('هل أنت متأكد من مسح وحذف حزمة قاعدة البيانات المخزنة لحساب GitHub؟')) {
+      return;
+    }
+    localStorage.removeItem('TAMWEEN_GITHUB_SYNC_PAYLOAD');
+    setStatusMsg({
+      text: 'تم مسح وحذف حزمة قاعدة البيانات المخزنة لحساب GitHub بنجاح 🗑️!',
+      type: 'success',
+    });
+  };
+
   const handleSaveBackupSettings = async () => {
     try {
       // 1. Save Gmail / Google Drive settings
@@ -1134,9 +1234,14 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       }
 
       setStatusMsg({
-        text: '✅ تم بنجاح حفظ كافة إعدادات الحفظ والاستيراد والنسخ الاحتياطي والمزامنة السحابية!',
+        text: '✅ تم بنجاح حفظ كافة إعدادات الحفظ والاستيراد والنسخ الاحتياطي والمزامنة السحابية وإغلاق الشاشة!',
         type: 'success',
       });
+
+      // Automatically close modal after saving
+      setTimeout(() => {
+        onClose();
+      }, 500);
     } catch (err: any) {
       setStatusMsg({
         text: `فشل حفظ الإعدادات: ${err.message || 'خطأ غير معروف'}`,
@@ -1431,6 +1536,16 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     <span>إلغاء الاستضافة 🚫</span>
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={handleDeletePublishedReleaseData}
+                  className="px-3.5 py-2 rounded-xl text-xs font-black bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-600/60 transition shadow cursor-pointer flex items-center gap-1.5"
+                  title="حذف قاعدة البيانات المنشورة ومسح بيانات الاستضافة نهائياً"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>حذف قاعدة البيانات المنشورة 🗑️</span>
+                </button>
               </div>
             </div>
 
@@ -1727,6 +1842,28 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Cancel Cloud & Delete Supabase Database Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-2.5 border-t border-emerald-500/30 relative z-10">
+                <button
+                  type="button"
+                  onClick={handleCancelSupabaseCloud}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                  title="إلغاء وإيقاف التخزين والمزامنة السحابية لـ Supabase"
+                >
+                  <span>إلغاء التخزين السحابي لـ Supabase 🚫</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDeleteSupabaseCloudData}
+                  className="px-3.5 py-2 bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-600/60 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                  title="مسح وحذف قاعدة البيانات وكافة السجلات السحابية المسجلة على Supabase نهائياً"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>حذف قاعدة البيانات من مكان الرفع والتخزين 🗑️</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1990,6 +2127,28 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 <span>
                   🔒 الشعار الرسمي المعتمد لوزارة التموين من GitHub مثبت ومحفوظ دائماً بقاعدة البيانات ولن يتغير أبداً.
                 </span>
+              </div>
+
+              {/* Cancel Cloud & Delete GitHub Database Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-purple-500/30">
+                <button
+                  type="button"
+                  onClick={handleCancelGithubCloud}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/40 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                  title="إلغاء وإيقاف المزامنة السحابية عبر GitHub"
+                >
+                  <span>إلغاء التخزين السحابي لـ GitHub 🚫</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDeleteGithubCloudData}
+                  className="px-3.5 py-2 bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-600/60 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                  title="مسح وحذف حزمة قاعدة البيانات السحابية المسجلة لحساب GitHub"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>حذف قاعدة البيانات المحفوظة على GitHub 🗑️</span>
+                </button>
               </div>
             </div>
           </div>
@@ -2449,6 +2608,28 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[11px] font-black cursor-pointer shadow-xs"
                 >
                   دمج من Google Drive فوراً 🔄
+                </button>
+              </div>
+
+              {/* Cancel Cloud & Delete Google Drive Database Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-cyan-500/30">
+                <button
+                  type="button"
+                  onClick={handleCancelGoogleDriveCloud}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-cyan-500/40 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                  title="إلغاء وإيقاف التخزين والمزامنة السحابية لـ Google Drive وفصل الحساب"
+                >
+                  <span>إلغاء التخزين السحابي لـ Drive 🚫</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDeleteGoogleDriveCloudData}
+                  className="px-3.5 py-2 bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-600/60 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                  title="مسح وحذف قاعدة البيانات وكافة الحزم المسجلة على Google Drive والجيميل"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>حذف قاعدة البيانات السحابية من Google Drive والجيميل 🗑️</span>
                 </button>
               </div>
             </div>
