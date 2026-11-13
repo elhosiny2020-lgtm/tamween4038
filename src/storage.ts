@@ -1566,22 +1566,45 @@ export async function persistFullState(
     [scopedKeys.AUTOSAVE_BACKUP, backupSnapshot],
   ]);
 
-  // Defer secondary snapshot serialization & cloud/disk sync off the main UI thread
+  // Dispatch Cloud Firebase Firestore & real-time multi-device sync immediately (non-blocking)
+  if (!options?.skipCloudSync) {
+    const cloudStatePayload = buildFullCloudMultiBranchPayload(
+      backupSnapshot.state,
+      backupSnapshot.timestamp
+    );
+
+    autoSyncToSupabase(
+      cloudStatePayload as unknown as AppState,
+      true,
+      backupSnapshot.timestamp
+    ).catch((syncErr) => {
+      console.warn('Background cloud multi-device sync warning:', syncErr);
+    });
+
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const bc = new BroadcastChannel('tamween_cross_device_sync');
+        bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp, branchId: targetBranchId });
+        bc.close();
+      } catch {}
+    }
+  }
+
+  // Defer secondary local Drive/snapshot JSON serialization off the main UI thread
   setTimeout(() => {
     try {
       const serializedSnapshot = JSON.stringify(backupSnapshot);
       localStorage.setItem(scopedKeys.AUTOSAVE_BACKUP, serializedSnapshot);
 
       if (!options?.skipCloudSync) {
-        const cloudStatePayload = buildFullCloudMultiBranchPayload(
-          backupSnapshot.state,
-          backupSnapshot.timestamp
-        );
-
         const driveAutoSync =
           lockedConfig.googleDriveAutoSync !== false &&
           localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
         if (driveAutoSync) {
+          const cloudStatePayload = buildFullCloudMultiBranchPayload(
+            backupSnapshot.state,
+            backupSnapshot.timestamp
+          );
           const gmailKey = (
             lockedConfig.gmailEmail ||
             localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
@@ -1601,28 +1624,6 @@ export async function persistFullState(
           });
           localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
           localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
-        }
-
-        Promise.all([
-          syncSharedStateToFirestore(
-            cloudStatePayload as unknown as Record<string, any>,
-            backupSnapshot.timestamp
-          ),
-          autoSyncToSupabase(
-            cloudStatePayload as unknown as AppState,
-            true,
-            backupSnapshot.timestamp
-          ),
-        ]).catch((syncErr) => {
-          console.warn('Background cloud multi-device sync warning:', syncErr);
-        });
-
-        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-          try {
-            const bc = new BroadcastChannel('tamween_cross_device_sync');
-            bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp, branchId: targetBranchId });
-            bc.close();
-          } catch {}
         }
       }
     } catch {

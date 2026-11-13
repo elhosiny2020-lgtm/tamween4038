@@ -11,6 +11,7 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   logoBase64: DEFAULT_OFFICIAL_LOGO,
   gmailEmail: 'ELHOSINY2020@gmail.com',
   googleDriveAutoSync: true,
+  debtAlertThreshold: 50000,
   dailyAlertConfig: {
     enabled: true,
     alertTime: '09:00',

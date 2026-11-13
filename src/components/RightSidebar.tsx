@@ -25,6 +25,7 @@ import {
   Calendar,
   CheckSquare,
   CalendarClock,
+  BarChart3,
 } from 'lucide-react';
 
 export type SidebarNavId = string;
@@ -154,6 +155,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       activeBorder: 'border-blue-500/60',
       items: [
         {
+          id: 'dashboard-charts',
+          label: 'لوحة التحكم والرسوم البيانية',
+          subtitle: 'رسوم تفاعلية للمديونيات والمخابز وحصص الدقيق',
+          icon: <BarChart3 className="w-4 h-4 shrink-0" />,
+          badge: 'لوحة',
+          badgeColor: 'amber',
+        },
+        {
           id: 'bakeries-all',
           label: 'إدارة المخابز',
           subtitle: 'السجل الرسمي الشامل لبيانات المخابز',
@@ -272,6 +281,13 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           badge: largeDebtsTotal > 0 ? largeDebtsTotal : undefined,
           badgeColor: 'amber',
         },
+        {
+          id: 'alerts-drawer-log',
+          label: 'سجل تنبيهات تجاوز الحد',
+          subtitle: 'لوحة جانبية لمتابعة المديونيات المتجاوزة للحد',
+          icon: <Bell className="w-4 h-4 shrink-0" />,
+          badgeColor: 'red',
+        },
       ],
     },
     {
@@ -345,7 +361,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
     <aside
       aria-label="القائمة الجانبية الرئيسية لمنظومة ERP"
       className={`bg-gradient-to-b from-[#061022] via-[#091730] to-[#050C1A] text-slate-100 border-l border-slate-800/90 flex flex-col shrink-0 transition-all duration-300 ease-in-out select-none no-print shadow-2xl ${
-        isCollapsed ? 'w-[74px]' : 'w-[295px]'
+        isCollapsed ? 'w-full lg:w-[74px]' : 'w-full lg:w-[295px]'
       }`}
     >
       {/* Top Sidebar Identity & Collapse Button */}

@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { AppState, buildFullCloudMultiBranchPayload } from '../storage';
 import { generateStandaloneHtml } from '../utils/htmlExporter';
 import {
+  testFirestoreConnection,
   syncSharedStateToFirestore,
   loadSharedStateFromFirestore,
   subscribeToSharedStateChanges,
@@ -449,35 +450,40 @@ export async function testSupabaseConnection(): Promise<{
     };
   }
 
-  setCloudConnectionStatus('syncing', 'جاري التحقق من الاتصال بالخادم السحابي و Supabase...');
+  setCloudConnectionStatus('syncing', 'جاري التحقق من الاتصال بقاعدة البيانات السحابية Cloud Firebase...');
   const client = getSupabaseClient();
   if (!client) {
+    try {
+      const firestoreOk = await testFirestoreConnection();
+      if (firestoreOk) {
+        setCloudConnectionStatus('connected', 'متصل بالسحابة (Cloud Firebase Firestore Realtime)');
+        return {
+          success: true,
+          message: 'تم تفعيل الاتصال المباشر بقاعدة بيانات Cloud Firebase Firestore والمزامنة اللحظية بنجاح عبر جميع الأجهزة!',
+          details: {
+            storageStatus: 'Cloud Firebase Firestore Realtime نشط ومتصل لجميع الفروع',
+          },
+        };
+      }
+    } catch {}
+
     if (typeof window !== 'undefined') {
       try {
         const resp = await fetch(getLiveDbApiUrl(), { method: 'GET' });
-        if (!resp.ok) {
-          setCloudConnectionStatus('error', `تعذر الوصول إلى خادم المزامنة (${resp.status})`);
+        if (resp.ok) {
+          setCloudConnectionStatus('connected', 'متصل بخادم المزامنة البديل');
           return {
-            success: false,
-            message: `فشل الاتصال بخادم المزامنة السحابي (رمز الحالة: ${resp.status}).`,
+            success: true,
+            message: 'تم الاتصال بخادم المزامنة البديل.',
           };
         }
-      } catch (err: any) {
-        setCloudConnectionStatus('error', `انقطع الاتصال بالخادم: ${err?.message || 'خطأ شبكة'}`);
-        return {
-          success: false,
-          message: `فشل الاتصال بالخادم السحابي: ${err?.message || 'خطأ شبكة'}`,
-        };
-      }
+      } catch {}
     }
 
-    setCloudConnectionStatus('connected', 'التزامن السحابي المباشر نشط ومتصل بالخادم');
+    setCloudConnectionStatus('error', 'تعذر الوصول إلى خادم Cloud Firebase Firestore السحابي');
     return {
-      success: true,
-      message: 'تم تفعيل الاتصال السحابي المدمج والمزامنة المباشرة بنجاح عبر جميع الأجهزة!',
-      details: {
-        storageStatus: 'التزامن السحابي المباشر نشط (Multi-Device Cloud SQL Sync)',
-      },
+      success: false,
+      message: 'فشل الاتصال بخادم Cloud Firebase Firestore السحابي.',
     };
   }
 
@@ -1198,28 +1204,11 @@ export async function fetchDatabaseFromSupabase(): Promise<{
   let serverReachable = false;
   let lastErrorMsg = '';
 
-  // 1. Fetch from built-in global Multi-Device Cloud DB & Server Live DB in parallel
-  const [cloudSnap, serverSnap] = await Promise.all([
-    loadSharedStateFromFirestore().catch((e) => {
-      lastErrorMsg = e?.message || 'خطأ Firestore';
-      return null;
-    }),
-    typeof window !== 'undefined'
-      ? fetch(getLiveDbApiUrl())
-          .then(async (r) => {
-            if (r.ok) {
-              serverReachable = true;
-              return await r.json();
-            }
-            lastErrorMsg = `خطأ خادم التزامن (${r.status})`;
-            return null;
-          })
-          .catch((e) => {
-            lastErrorMsg = e?.message || 'تعذر الوصول إلى خادم التزامن';
-            return null;
-          })
-      : Promise.resolve(null),
-  ]);
+  // 1. Primary Cloud Source of Truth: Cloud Firebase Firestore (multi-device realtime across all browsers & branches)
+  const cloudSnap = await loadSharedStateFromFirestore().catch((e) => {
+    lastErrorMsg = e?.message || 'خطأ في الاتصال بـ Cloud Firebase Firestore';
+    return null;
+  });
 
   if (
     cloudSnap &&
@@ -1233,27 +1222,46 @@ export async function fetchDatabaseFromSupabase(): Promise<{
     candidates.push({
       data: cloudSnap.data as AppState,
       timestamp: cloudSnap.updatedAt || new Date(0).toISOString(),
-      source: 'السحابة المشتركة (Realtime Cloud DB)',
+      source: 'Cloud Firebase Firestore Realtime',
     });
-  }
+  } else {
+    // Check Firestore health cleanly when document doesn't exist yet
+    const fsOk = await testFirestoreConnection().catch(() => false);
+    if (fsOk) {
+      serverReachable = true;
+    }
 
-  const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
-  const serverTimestamp =
-    serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
-  if (
-    serverSnap &&
-    serverSnap.success &&
-    serverData &&
-    (Array.isArray(serverData.bakeries) ||
-      Array.isArray(serverData.debts) ||
-      Array.isArray(serverData.branches) ||
-      (serverData as any).branchPartitions)
-  ) {
-    candidates.push({
-      data: serverData as AppState,
-      timestamp: serverTimestamp,
-      source: 'خادم التزامن المباشر (Live Sync Server)',
-    });
+    // Fallback to local live-db API ONLY when Firestore returned no records
+    if (typeof window !== 'undefined' && !client) {
+      const serverSnap = await fetch(getLiveDbApiUrl())
+        .then(async (r) => {
+          if (r.ok) {
+            serverReachable = true;
+            return await r.json();
+          }
+          return null;
+        })
+        .catch(() => null);
+
+      const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
+      const serverTimestamp =
+        serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
+      if (
+        serverSnap &&
+        serverSnap.success &&
+        serverData &&
+        (Array.isArray(serverData.bakeries) ||
+          Array.isArray(serverData.debts) ||
+          Array.isArray(serverData.branches) ||
+          (serverData as any).branchPartitions)
+      ) {
+        candidates.push({
+          data: serverData as AppState,
+          timestamp: serverTimestamp,
+          source: 'خادم المزامنة البديل',
+        });
+      }
+    }
   }
 
   // 2. If external Supabase client is configured, also query external Supabase
@@ -1410,7 +1418,7 @@ export async function autoSyncToSupabase(
         data: fullPayloadState,
       };
 
-      // 1. Always push to built-in Multi-Device Cloud DB & Server Live DB in parallel
+      // 1. Always push to Cloud Firebase Firestore immediately (+ optional secondary live-db mirror)
       const [cloudOk, serverOk] = await Promise.all([
         syncSharedStateToFirestore(fullPayloadState as unknown as Record<string, any>, nowIso),
         typeof window !== 'undefined'
@@ -1490,25 +1498,33 @@ export async function autoSyncToSupabase(
         }
       }
 
-      const overallSuccess = cloudOk || serverOk || externalSupabaseOk;
-      if (overallSuccess) {
+      // Authoritative cloud success requires Cloud Firebase Firestore (or external Supabase if configured)
+      const overallSuccess = client ? (cloudOk || externalSupabaseOk) : (cloudOk || serverOk);
+      if (cloudOk || externalSupabaseOk) {
         pendingSyncPayload = null;
         const nowAr = new Date().toLocaleString('ar-EG');
         safeSetItem('TAMWEEN_LAST_SUPABASE_SYNC', nowAr);
-        setCloudConnectionStatus('connected', 'تمت المزامنة التلقائية بنجاح', {
+        setCloudConnectionStatus('connected', 'متصل وتمت المزامنة اللحظية عبر Cloud Firebase بنجاح', {
           lastSyncAt: nowAr,
           hasPendingSync: false,
         });
+      } else if (overallSuccess) {
+        pendingSyncPayload = { state, timestamp: nowIso };
+        setCloudConnectionStatus(
+          'error',
+          'تعذر الرفع إلى Cloud Firebase Firestore (تم الحفظ محلياً مؤقتاً)',
+          { hasPendingSync: true }
+        );
       } else {
         pendingSyncPayload = { state, timestamp: nowIso };
         setCloudConnectionStatus(
           'error',
-          externalErrorMsg || 'تعذر إتمام المزامنة مع الخادم السحابي',
+          externalErrorMsg || 'تعذر إتمام المزامنة مع خادم Cloud Firebase Firestore',
           { hasPendingSync: true }
         );
       }
 
-      return overallSuccess;
+      return cloudOk || externalSupabaseOk;
     } catch (err: any) {
       pendingSyncPayload = { state, timestamp: nowIso };
       setCloudConnectionStatus(
@@ -1629,11 +1645,12 @@ export function subscribeToSupabaseRealtime(
 
   const unsubscribers: Array<() => void> = [];
 
-  // 1. Subscribe to built-in global Multi-Device Cloud Realtime Snapshot (< 100ms latency)
+  // 1. Subscribe to Cloud Firebase Firestore Realtime onSnapshot (< 100ms latency across all devices & branches)
   try {
     const unsubCloud = subscribeToSharedStateChanges(({ data, updatedAt }) => {
-      const eventKey = `firestore:${updatedAt}:${data?.bakeries?.length || 0}:${data?.debts?.length || 0}`;
-      if (!shouldProcessRealtimeEvent(eventKey)) return;
+      const partKeys = data?.branchPartitions ? Object.keys(data.branchPartitions).join(',') : '';
+      const eventKey = `firestore:${updatedAt}:${partKeys}:${data?.bakeries?.length || 0}:${data?.debts?.length || 0}`;
+      if (!shouldProcessRealtimeEvent(eventKey, Date.now(), 250)) return;
       if (
         data &&
         (Array.isArray(data.bakeries) ||
@@ -1642,7 +1659,7 @@ export function subscribeToSupabaseRealtime(
           data.branchPartitions)
       ) {
         if (!isBrowserOffline()) {
-          setCloudConnectionStatus('connected', 'تم استلام تحديث لحظي من السحابة');
+          setCloudConnectionStatus('connected', 'تم استلام تحديث لحظي من Cloud Firebase');
         }
         callbacks.onUpdate(data as AppState, updatedAt);
       }

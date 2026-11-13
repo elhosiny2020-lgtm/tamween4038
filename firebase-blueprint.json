@@ -128,9 +128,41 @@
         }
       },
       "required": ["id", "ownerId", "machineNumber", "bakeryOwnerName", "updatedAt"]
+    },
+    "SharedSyncRecord": {
+      "title": "SharedSyncRecord",
+      "description": "Real-time multi-device Cloud Firestore document storing directory, per-branch partition, or alerts log",
+      "type": "object",
+      "properties": {
+        "syncId": {
+          "type": "string",
+          "description": "Sync document identifier (tamween_directory, branch__<id>, alerts_log)",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update",
+          "maxLength": 64
+        },
+        "clientId": {
+          "type": "string",
+          "description": "Session client ID for echo filtering",
+          "maxLength": 128
+        },
+        "cleared": {
+          "type": "boolean",
+          "description": "Whether the shared state was reset"
+        }
+      },
+      "required": ["syncId", "updatedAt"]
     }
   },
   "firestore": {
+    "/shared_sync/{syncId}": {
+      "schema": { "$ref": "#/entities/SharedSyncRecord" },
+      "description": "Real-time cross-device shared database state (directory, per-branch partitions, and high-debt alerts log)"
+    },
     "/workspaces/{workspaceId}": {
       "schema": { "$ref": "#/entities/Workspace" },
       "description": "Stores the synchronized workspace state for an authenticated user"

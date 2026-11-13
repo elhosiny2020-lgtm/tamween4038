@@ -190,6 +190,7 @@ export interface SystemConfig {
   gmailEmail?: string;
   gmailPassword?: string;
   googleDriveAutoSync?: boolean;
+  debtAlertThreshold?: number;
 }
 
 export type UserRoleType = 'admin' | 'supervisor' | 'inspector' | 'auditor' | 'data_entry' | 'viewer' | string;
@@ -267,9 +268,12 @@ export interface HighDebtAlertNotification {
   machineNumber: string;
   village: string;
   debtAmount: number;
+  thresholdUsed?: number;
+  branchId?: string;
   editedBy: string;
   editorRole: string;
   timestamp: string;
+  createdAtIso?: string;
   actionType: 'ADD_DEBT' | 'EDIT_DEBT' | 'HIGH_DEBT_SURGE';
   isRead: boolean;
   notes?: string;

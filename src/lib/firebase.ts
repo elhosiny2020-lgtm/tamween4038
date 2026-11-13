@@ -258,39 +258,109 @@ export async function loadWorkspaceFromFirestore(): Promise<{
   }
 }
 
-// 5.1 Shared Multi-Device Real-Time Cloud Sync (/shared_sync/tamween_supabase_live & /shared_sync/tamween_latest)
+import {
+  FIRESTORE_DIRECTORY_DOC_ID,
+  FIRESTORE_ALERTS_DOC_ID,
+  FIRESTORE_MAX_DOC_BYTES,
+  buildFirestoreBranchDocId,
+  compactBranchPartitionForFirestore,
+  mergeHighDebtAlerts,
+} from './firebaseSyncHelpers';
+import type { HighDebtAlertNotification } from '../types';
+
+// 5.1 Shared Multi-Device Real-Time Cloud Sync via Cloud Firestore
+// Architecture:
+//   /shared_sync/tamween_directory -> branches catalog, timestamps, clientId
+//   /shared_sync/branch__<branchId> -> isolated per-branch partition (< 1MB ceiling per branch)
+//   /shared_sync/alerts_log -> real-time high-debt alert log & configurable threshold across all users
+//   /shared_sync/tamween_supabase_live -> compact mirror (<850KB) for legacy compatibility
 const SHARED_SYNC_DOC_ID = 'tamween_latest';
 const SUPABASE_LIVE_DOC_ID = 'tamween_supabase_live';
+export const SESSION_CLIENT_ID = `client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+// Test Firestore server reachability on boot per Firebase integration spec
+if (typeof window !== 'undefined') {
+  testFirestoreConnection().catch(() => {});
+}
 
 /**
- * حفظ ومزامنة أحدث بيانات المنظومة في قاعدة البيانات السحابية المشتركة لجميع الأجهزة تلقائياً
+ * حفظ ومزامنة أحدث بيانات المنظومة في Cloud Firebase Firestore لجميع الفروع والأجهزة لحظياً
  */
 export async function syncSharedStateToFirestore(
   state: Record<string, any>,
   customTimestamp?: string
 ): Promise<boolean> {
   try {
-    const bakeriesCount = Array.isArray(state.bakeries) ? state.bakeries.length : 0;
-    const debtsCount = Array.isArray(state.debts) ? state.debts.length : 0;
+    const updatedAt = customTimestamp || new Date().toISOString();
+    const branchesList = Array.isArray(state.branches) ? state.branches : [];
+    const activeBranchId = state.activeBranchId || 'branch-mahalla';
+    const rawPartitions =
+      state.branchPartitions && typeof state.branchPartitions === 'object'
+        ? (state.branchPartitions as Record<string, any>)
+        : { [activeBranchId]: state };
 
-    // Prune redundant logoBase64 inside branchPartitions to stay well under 1MB Firestore doc limit while preserving all branches & auth vaults
-    let compactPartitions: Record<string, any> | undefined = undefined;
-    if (state.branchPartitions && typeof state.branchPartitions === 'object') {
-      compactPartitions = {};
-      Object.entries(state.branchPartitions).forEach(([bId, part]: [string, any]) => {
-        if (!part) return;
-        compactPartitions![bId] = {
-          ...part,
-          systemConfig: part.systemConfig
-            ? { ...part.systemConfig, logoBase64: undefined }
-            : undefined,
-        };
-      });
+    const branchIds = Array.from(
+      new Set([
+        ...branchesList.map((b: any) => b?.id).filter(Boolean),
+        ...Object.keys(rawPartitions).filter(Boolean),
+      ])
+    );
+
+    const branchWrites: Array<Promise<void>> = [];
+    const compactPartitions: Record<string, any> = {};
+
+    for (const bId of branchIds) {
+      const part = rawPartitions[bId];
+      if (!part) continue;
+      const compacted = compactBranchPartitionForFirestore(part);
+      compactPartitions[bId] = compacted;
+
+      const partJson = JSON.stringify(compacted);
+      if (partJson.length <= FIRESTORE_MAX_DOC_BYTES + 80_000) {
+        const docId = buildFirestoreBranchDocId(bId);
+        branchWrites.push(
+          setDoc(doc(db, 'shared_sync', docId), {
+            syncId: docId,
+            branchId: bId,
+            updatedAt,
+            clientId: SESSION_CLIENT_ID,
+            bakeriesCount: Array.isArray(compacted.bakeries) ? compacted.bakeries.length : 0,
+            debtsCount: Array.isArray(compacted.debts) ? compacted.debts.length : 0,
+            payloadJson: partJson,
+            cleared: false,
+          })
+        );
+      }
     }
 
-    const cleanState = {
+    const totalBakeries = Object.values(compactPartitions).reduce(
+      (sum, p) => sum + (Array.isArray(p?.bakeries) ? p.bakeries.length : 0),
+      0
+    );
+    const totalDebts = Object.values(compactPartitions).reduce(
+      (sum, p) => sum + (Array.isArray(p?.debts) ? p.debts.length : 0),
+      0
+    );
+
+    // Always write lightweight directory doc (< 15KB) so every device discovers branches & latest revision instantaneously
+    const directoryWrite = setDoc(doc(db, 'shared_sync', FIRESTORE_DIRECTORY_DOC_ID), {
+      syncId: FIRESTORE_DIRECTORY_DOC_ID,
+      updatedAt,
+      clientId: SESSION_CLIENT_ID,
+      activeBranchId,
+      branchesJson: JSON.stringify(branchesList),
+      branchIds,
+      branchAuthVaultsJson: state.branchAuthVaults ? JSON.stringify(state.branchAuthVaults) : '',
+      debtAlertThreshold: state.systemConfig?.debtAlertThreshold ?? 50000,
+      bakeriesCount: totalBakeries || (Array.isArray(state.bakeries) ? state.bakeries.length : 0),
+      debtsCount: totalDebts || (Array.isArray(state.debts) ? state.debts.length : 0),
+      cleared: false,
+    });
+
+    // Optional compact combined mirror for legacy readers if under size cap
+    const cleanCombinedState = {
       activeBranchId: state.activeBranchId,
-      branches: state.branches,
+      branches: branchesList,
       bakeries: state.bakeries || [],
       debts: state.debts || [],
       villages: state.villages,
@@ -313,42 +383,49 @@ export async function syncSharedStateToFirestore(
       branchPartitions: compactPartitions,
       branchAuthVaults: state.branchAuthVaults,
     };
-
-    const payloadJson = JSON.stringify(cleanState);
-    if (payloadJson.length > 950_000) {
-      console.warn('State exceeds 950KB, skipping full sync string');
-      return false;
+    const combinedJson = JSON.stringify(cleanCombinedState);
+    const legacyWrites: Array<Promise<void>> = [];
+    if (combinedJson.length <= FIRESTORE_MAX_DOC_BYTES + 80_000) {
+      legacyWrites.push(
+        setDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID), {
+          syncId: SUPABASE_LIVE_DOC_ID,
+          updatedAt,
+          clientId: SESSION_CLIENT_ID,
+          bakeriesCount: Array.isArray(state.bakeries) ? state.bakeries.length : 0,
+          debtsCount: Array.isArray(state.debts) ? state.debts.length : 0,
+          payloadJson: combinedJson,
+          cleared: false,
+        }),
+        setDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID), {
+          syncId: SHARED_SYNC_DOC_ID,
+          updatedAt,
+          clientId: SESSION_CLIENT_ID,
+          bakeriesCount: Array.isArray(state.bakeries) ? state.bakeries.length : 0,
+          debtsCount: Array.isArray(state.debts) ? state.debts.length : 0,
+          payloadJson: combinedJson,
+          cleared: false,
+        })
+      );
     }
 
-    const updatedAt = customTimestamp || new Date().toISOString();
-
-    await Promise.all([
-      setDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID), {
-        syncId: SUPABASE_LIVE_DOC_ID,
-        updatedAt,
-        bakeriesCount,
-        debtsCount,
-        payloadJson,
-        cleared: false,
-      }),
-      setDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID), {
-        syncId: SHARED_SYNC_DOC_ID,
-        updatedAt,
-        bakeriesCount,
-        debtsCount,
-        payloadJson,
-        cleared: false,
-      }),
-    ]);
+    await Promise.all([directoryWrite, ...branchWrites, ...legacyWrites]);
     return true;
   } catch (err) {
-    console.warn('syncSharedStateToFirestore error (non-critical):', err);
+    console.warn('syncSharedStateToFirestore error:', err);
     return false;
   }
 }
 
+async function readFirestoreDocServerFirst(docId: string) {
+  try {
+    return await getDocFromServer(doc(db, 'shared_sync', docId));
+  } catch {
+    return await getDoc(doc(db, 'shared_sync', docId));
+  }
+}
+
 /**
- * جلب أحدث بيانات المنظومة من قاعدة البيانات السحابية المشتركة لجميع الأجهزة
+ * جلب أحدث بيانات المنظومة من Cloud Firebase Firestore لجميع الفروع والأجهزة
  */
 export async function loadSharedStateFromFirestore(): Promise<{
   data: Record<string, any>;
@@ -357,18 +434,84 @@ export async function loadSharedStateFromFirestore(): Promise<{
   debtsCount: number;
 } | null> {
   try {
-    let snap;
-    try {
-      snap = await getDocFromServer(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID));
-    } catch {
-      snap = await getDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID));
-    }
-    if (!snap.exists()) {
+    // 1. Try directory + per-branch isolated documents first (scalable, no 1MB bottleneck across branches)
+    const dirSnap = await readFirestoreDocServerFirst(FIRESTORE_DIRECTORY_DOC_ID);
+    if (dirSnap.exists()) {
+      const dir = dirSnap.data();
+      if (dir?.cleared === true) return null;
+
+      let branches: any[] = [];
       try {
-        snap = await getDocFromServer(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID));
-      } catch {
-        snap = await getDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID));
+        branches = dir.branchesJson ? JSON.parse(dir.branchesJson) : [];
+      } catch {}
+
+      let branchAuthVaults: Record<string, any> | undefined;
+      try {
+        branchAuthVaults = dir.branchAuthVaultsJson
+          ? JSON.parse(dir.branchAuthVaultsJson)
+          : undefined;
+      } catch {}
+
+      const branchIds: string[] = Array.isArray(dir.branchIds)
+        ? dir.branchIds
+        : branches.map((b: any) => b?.id).filter(Boolean);
+
+      const branchDocs = await Promise.all(
+        branchIds.map(async (bId) => {
+          try {
+            const snap = await readFirestoreDocServerFirst(buildFirestoreBranchDocId(bId));
+            if (!snap.exists()) return null;
+            const item = snap.data();
+            if (item?.cleared === true || !item?.payloadJson) return null;
+            return { bId, item, parsed: JSON.parse(item.payloadJson) };
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      const branchPartitions: Record<string, any> = {};
+      let newestTs = dir.updatedAt || '';
+      let totalB = 0;
+      let totalD = 0;
+
+      for (const entry of branchDocs) {
+        if (!entry) continue;
+        branchPartitions[entry.bId] = entry.parsed;
+        totalB += Array.isArray(entry.parsed?.bakeries) ? entry.parsed.bakeries.length : 0;
+        totalD += Array.isArray(entry.parsed?.debts) ? entry.parsed.debts.length : 0;
+        if (
+          entry.item?.updatedAt &&
+          (!newestTs || Date.parse(entry.item.updatedAt) > Date.parse(newestTs))
+        ) {
+          newestTs = entry.item.updatedAt;
+        }
       }
+
+      if (Object.keys(branchPartitions).length > 0) {
+        const defaultPart =
+          branchPartitions['branch-mahalla'] ||
+          branchPartitions[dir.activeBranchId] ||
+          Object.values(branchPartitions)[0] ||
+          {};
+        return {
+          data: {
+            ...defaultPart,
+            branches: branches.length > 0 ? branches : defaultPart.branches,
+            branchPartitions,
+            branchAuthVaults,
+          },
+          updatedAt: newestTs || new Date().toISOString(),
+          bakeriesCount: totalB || dir.bakeriesCount || 0,
+          debtsCount: totalD || dir.debtsCount || 0,
+        };
+      }
+    }
+
+    // 2. Fallback to legacy single-document snapshots for backward compatibility
+    let snap = await readFirestoreDocServerFirst(SUPABASE_LIVE_DOC_ID);
+    if (!snap.exists()) {
+      snap = await readFirestoreDocServerFirst(SHARED_SYNC_DOC_ID);
     }
     if (!snap.exists()) return null;
     const item = snap.data();
@@ -387,12 +530,38 @@ export async function loadSharedStateFromFirestore(): Promise<{
 }
 
 /**
- * مسح وتفريغ قاعدة البيانات السحابية المشتركة
+ * مسح وتفريغ قاعدة البيانات السحابية المشتركة في Cloud Firestore
  */
 export async function clearSharedStateInFirestore(): Promise<boolean> {
   try {
     const nowIso = new Date().toISOString();
+    let branchIds: string[] = ['branch-mahalla', 'branch-samanoud'];
+    try {
+      const dirSnap = await getDoc(doc(db, 'shared_sync', FIRESTORE_DIRECTORY_DOC_ID));
+      if (dirSnap.exists() && Array.isArray(dirSnap.data()?.branchIds)) {
+        branchIds = Array.from(new Set([...branchIds, ...dirSnap.data()!.branchIds]));
+      }
+    } catch {}
+
     await Promise.all([
+      setDoc(doc(db, 'shared_sync', FIRESTORE_DIRECTORY_DOC_ID), {
+        syncId: FIRESTORE_DIRECTORY_DOC_ID,
+        updatedAt: nowIso,
+        clientId: SESSION_CLIENT_ID,
+        branchesJson: '[]',
+        branchIds: [],
+        bakeriesCount: 0,
+        debtsCount: 0,
+        cleared: true,
+      }),
+      setDoc(doc(db, 'shared_sync', FIRESTORE_ALERTS_DOC_ID), {
+        syncId: FIRESTORE_ALERTS_DOC_ID,
+        updatedAt: nowIso,
+        clientId: SESSION_CLIENT_ID,
+        alertsJson: '[]',
+        debtAlertThreshold: 50000,
+        cleared: true,
+      }),
       setDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID), {
         syncId: SUPABASE_LIVE_DOC_ID,
         updatedAt: nowIso,
@@ -409,6 +578,17 @@ export async function clearSharedStateInFirestore(): Promise<boolean> {
         payloadJson: '',
         cleared: true,
       }),
+      ...branchIds.map((bId) =>
+        setDoc(doc(db, 'shared_sync', buildFirestoreBranchDocId(bId)), {
+          syncId: buildFirestoreBranchDocId(bId),
+          branchId: bId,
+          updatedAt: nowIso,
+          bakeriesCount: 0,
+          debtsCount: 0,
+          payloadJson: '',
+          cleared: true,
+        })
+      ),
     ]);
     return true;
   } catch (err) {
@@ -418,30 +598,234 @@ export async function clearSharedStateInFirestore(): Promise<boolean> {
 }
 
 /**
- * الاشتراك في تحديثات السحابة الحية (Realtime Snapshot) بحيث يظهر أي تعديل على الأجهزة الأخرى فوراً
+ * الاشتراك الحي الفوري (onSnapshot) في Cloud Firebase Firestore لجميع الفروع والتعديلات لحظياً
  */
 export function subscribeToSharedStateChanges(
-  onUpdate: (payload: { data: Record<string, any>; updatedAt: string; bakeriesCount: number; debtsCount: number }) => void
+  onUpdate: (payload: {
+    data: Record<string, any>;
+    updatedAt: string;
+    bakeriesCount: number;
+    debtsCount: number;
+  }) => void
+): () => void {
+  const unsubscribers: Array<() => void> = [];
+  const branchDocUnsubs = new Map<string, () => void>();
+  let isDisposed = false;
+
+  const refreshFromDirectory = async (expectedUpdatedAt?: string) => {
+    if (isDisposed) return;
+    try {
+      const full = await loadSharedStateFromFirestore();
+      if (full && !isDisposed) {
+        onUpdate({
+          ...full,
+          updatedAt: full.updatedAt || expectedUpdatedAt || new Date().toISOString(),
+        });
+      }
+    } catch {}
+  };
+
+  const ensureBranchListeners = (branchIds: string[]) => {
+    for (const bId of branchIds) {
+      if (!bId || branchDocUnsubs.has(bId)) continue;
+      try {
+        const docId = buildFirestoreBranchDocId(bId);
+        const unsub = onSnapshot(
+          doc(db, 'shared_sync', docId),
+          (snap) => {
+            if (!snap.exists() || snap.metadata.hasPendingWrites) return;
+            const item = snap.data();
+            if (item?.cleared === true || !item?.payloadJson) return;
+            if (item?.clientId === SESSION_CLIENT_ID) return;
+            try {
+              const parsed = JSON.parse(item.payloadJson);
+              onUpdate({
+                data: {
+                  ...parsed,
+                  branchPartitions: { [bId]: parsed },
+                },
+                updatedAt: item.updatedAt || new Date().toISOString(),
+                bakeriesCount: item.bakeriesCount ?? parsed.bakeries?.length ?? 0,
+                debtsCount: item.debtsCount ?? parsed.debts?.length ?? 0,
+              });
+            } catch {}
+          },
+          (error) => {
+            console.warn(`Branch listener (${bId}) error:`, error);
+          }
+        );
+        branchDocUnsubs.set(bId, unsub);
+      } catch {}
+    }
+  };
+
+  try {
+    // 1. Directory listener: watches branch additions/removals/switches and triggers full merge
+    unsubscribers.push(
+      onSnapshot(
+        doc(db, 'shared_sync', FIRESTORE_DIRECTORY_DOC_ID),
+        (snap) => {
+          if (!snap.exists()) return;
+          const item = snap.data();
+          if (item?.cleared === true) return;
+          const bIds: string[] = Array.isArray(item.branchIds) ? item.branchIds : [];
+          ensureBranchListeners(bIds);
+          if (snap.metadata.hasPendingWrites || item?.clientId === SESSION_CLIENT_ID) return;
+          refreshFromDirectory(item.updatedAt);
+        },
+        (error) => {
+          console.warn('Firestore directory snapshot error:', error);
+        }
+      )
+    );
+
+    // Always listen to default branches out of the box
+    ensureBranchListeners(['branch-mahalla', 'branch-samanoud']);
+
+    // 2. Legacy combined doc listener for backward compatibility
+    unsubscribers.push(
+      onSnapshot(
+        doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID),
+        (snap) => {
+          if (!snap.exists() || snap.metadata.hasPendingWrites) return;
+          const item = snap.data();
+          if (item?.cleared === true || !item?.payloadJson) return;
+          if (item?.clientId === SESSION_CLIENT_ID) return;
+          try {
+            const parsed = JSON.parse(item.payloadJson);
+            onUpdate({
+              data: parsed,
+              updatedAt: item.updatedAt || new Date().toISOString(),
+              bakeriesCount: item.bakeriesCount ?? parsed.bakeries?.length ?? 0,
+              debtsCount: item.debtsCount ?? parsed.debts?.length ?? 0,
+            });
+          } catch {}
+        },
+        (error) => {
+          console.warn('subscribeToSharedStateChanges snapshot error:', error);
+        }
+      )
+    );
+  } catch {}
+
+  return () => {
+    isDisposed = true;
+    unsubscribers.forEach((u) => {
+      try {
+        u();
+      } catch {}
+    });
+    branchDocUnsubs.forEach((u) => {
+      try {
+        u();
+      } catch {}
+    });
+    branchDocUnsubs.clear();
+  };
+}
+
+// 5.2 Real-Time High-Debt Alerts Sync (/shared_sync/alerts_log)
+export async function syncHighDebtAlertsToFirestore(
+  alerts: HighDebtAlertNotification[],
+  debtAlertThreshold?: number
+): Promise<boolean> {
+  try {
+    const existingRemote = await loadHighDebtAlertsFromFirestore().catch(() => null);
+    const merged = existingRemote
+      ? mergeHighDebtAlerts(alerts, existingRemote.alerts)
+      : alerts;
+    await setDoc(doc(db, 'shared_sync', FIRESTORE_ALERTS_DOC_ID), {
+      syncId: FIRESTORE_ALERTS_DOC_ID,
+      updatedAt: new Date().toISOString(),
+      clientId: SESSION_CLIENT_ID,
+      debtAlertThreshold:
+        debtAlertThreshold ?? existingRemote?.debtAlertThreshold ?? 50000,
+      alertsJson: JSON.stringify(merged.slice(0, 150)),
+      cleared: false,
+    });
+    return true;
+  } catch (err) {
+    console.warn('syncHighDebtAlertsToFirestore error:', err);
+    return false;
+  }
+}
+
+export async function clearHighDebtAlertsInFirestore(
+  debtAlertThreshold: number = 50000
+): Promise<boolean> {
+  try {
+    await setDoc(doc(db, 'shared_sync', FIRESTORE_ALERTS_DOC_ID), {
+      syncId: FIRESTORE_ALERTS_DOC_ID,
+      updatedAt: new Date().toISOString(),
+      clientId: SESSION_CLIENT_ID,
+      debtAlertThreshold,
+      alertsJson: '[]',
+      cleared: true,
+    });
+    return true;
+  } catch (err) {
+    console.warn('clearHighDebtAlertsInFirestore error:', err);
+    return false;
+  }
+}
+
+export async function loadHighDebtAlertsFromFirestore(): Promise<{
+  alerts: HighDebtAlertNotification[];
+  debtAlertThreshold: number;
+  updatedAt: string;
+} | null> {
+  try {
+    const snap = await readFirestoreDocServerFirst(FIRESTORE_ALERTS_DOC_ID);
+    if (!snap.exists()) return null;
+    const item = snap.data();
+    const alerts =
+      item?.cleared === true || !item?.alertsJson ? [] : JSON.parse(item.alertsJson);
+    return {
+      alerts: Array.isArray(alerts) ? alerts : [],
+      debtAlertThreshold:
+        typeof item?.debtAlertThreshold === 'number' && item.debtAlertThreshold > 0
+          ? item.debtAlertThreshold
+          : 50000,
+      updatedAt: item?.updatedAt || new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function subscribeToHighDebtAlerts(
+  onUpdate: (payload: {
+    alerts: HighDebtAlertNotification[];
+    debtAlertThreshold: number;
+    updatedAt: string;
+    fromRemoteClient: boolean;
+  }) => void
 ): () => void {
   try {
     return onSnapshot(
-      doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID),
+      doc(db, 'shared_sync', FIRESTORE_ALERTS_DOC_ID),
       (snap) => {
-        if (!snap.exists()) return;
+        if (!snap.exists() || snap.metadata.hasPendingWrites) return;
         const item = snap.data();
-        if (item?.cleared === true || !item?.payloadJson) return;
+        const fromRemoteClient = item?.clientId !== SESSION_CLIENT_ID;
         try {
-          const parsed = JSON.parse(item.payloadJson);
+          const alerts =
+            item?.cleared === true || !item?.alertsJson
+              ? []
+              : JSON.parse(item.alertsJson);
           onUpdate({
-            data: parsed,
-            updatedAt: item.updatedAt || new Date().toISOString(),
-            bakeriesCount: item.bakeriesCount ?? parsed.bakeries?.length ?? 0,
-            debtsCount: item.debtsCount ?? parsed.debts?.length ?? 0,
+            alerts: Array.isArray(alerts) ? alerts : [],
+            debtAlertThreshold:
+              typeof item?.debtAlertThreshold === 'number' && item.debtAlertThreshold > 0
+                ? item.debtAlertThreshold
+                : 50000,
+            updatedAt: item?.updatedAt || new Date().toISOString(),
+            fromRemoteClient,
           });
         } catch {}
       },
       (error) => {
-        console.warn('subscribeToSharedStateChanges snapshot error:', error);
+        console.warn('subscribeToHighDebtAlerts error:', error);
       }
     );
   } catch {

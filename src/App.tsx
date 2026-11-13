@@ -72,7 +72,17 @@ import {
   loadSharedStateFromFirestore,
   syncSharedStateToFirestore,
   subscribeToSharedStateChanges,
+  syncHighDebtAlertsToFirestore,
+  clearHighDebtAlertsInFirestore,
+  loadHighDebtAlertsFromFirestore,
+  subscribeToHighDebtAlerts,
 } from './lib/firebase';
+import {
+  computeFullBranchDigest,
+  shouldTriggerDebtAlert,
+  mergeHighDebtAlerts,
+  DEFAULT_DEBT_ALERT_THRESHOLD,
+} from './lib/firebaseSyncHelpers';
 import {
   subscribeToSupabaseRealtime,
   fetchDatabaseFromSupabase,
@@ -117,6 +127,7 @@ import { HomeDashboardView } from './components/HomeDashboardView';
 import { BakeryDetailsModal } from './components/BakeryDetailsModal';
 import { GoogleWorkspaceModal } from './components/GoogleWorkspaceModal';
 import { BranchesManagerModal } from './components/BranchesManagerModal';
+import { InteractiveDashboardPage } from './components/InteractiveDashboardPage';
 import { HighDebtAlertNotification } from './types';
 import {
   downloadUpdatedAppHtml,
@@ -375,7 +386,7 @@ export default function App() {
     }
   });
 
-  // Helper to append a high debt notification for managers
+  // Helper to append a high debt notification for managers & sync across devices on Cloud Firestore
   const addHighDebtNotification = useCallback(
     (
       bakeryId: string,
@@ -383,15 +394,23 @@ export default function App() {
       machineNumber: string,
       village: string,
       debtAmount: number,
-      actionType: 'ADD_DEBT' | 'EDIT_DEBT' | 'HIGH_DEBT_SURGE'
+      actionType: 'ADD_DEBT' | 'EDIT_DEBT' | 'HIGH_DEBT_SURGE',
+      thresholdUsed?: number
     ) => {
+      const effectiveThreshold =
+        thresholdUsed ??
+        appState?.systemConfig?.debtAlertThreshold ??
+        DEFAULT_DEBT_ALERT_THRESHOLD;
       const newNotif: HighDebtAlertNotification = {
-        id: `notif-${Date.now()}`,
+        id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         bakeryId,
         bakeryOwnerName,
         machineNumber,
         village,
         debtAmount,
+        thresholdUsed: effectiveThreshold,
+        branchId: appState?.activeBranchId || DEFAULT_BRANCH_ID,
+        createdAtIso: new Date().toISOString(),
         editedBy: appState?.currentUser?.fullName || 'مستخدم منظومة',
         editorRole: getRoleNameArabic(appState?.currentUser?.role || 'inspector'),
         timestamp: new Date().toLocaleTimeString('ar-EG', {
@@ -404,17 +423,87 @@ export default function App() {
         isRead: false,
       };
       setHighDebtNotifications((prev) => {
-        const updated = [newNotif, ...prev];
+        const updated = [newNotif, ...prev].slice(0, 150);
         try {
           localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
         } catch {
           // fallback
         }
+        syncHighDebtAlertsToFirestore(updated, effectiveThreshold).catch(() => {});
         return updated;
       });
     },
-    [appState?.currentUser]
+    [appState?.currentUser, appState?.systemConfig?.debtAlertThreshold, appState?.activeBranchId]
   );
+
+  // Sync High-Debt Alerts & Threshold live across all devices on Cloud Firebase Firestore
+  useEffect(() => {
+    let disposed = false;
+
+    loadHighDebtAlertsFromFirestore()
+      .then((res) => {
+        if (disposed || !res) return;
+        if (res.alerts.length > 0) {
+          setHighDebtNotifications((prev) => {
+            const merged = mergeHighDebtAlerts(prev, res.alerts);
+            try {
+              localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+        }
+        if (res.debtAlertThreshold > 0) {
+          setAppState((prev) =>
+            prev && prev.systemConfig.debtAlertThreshold !== res.debtAlertThreshold
+              ? {
+                  ...prev,
+                  systemConfig: {
+                    ...prev.systemConfig,
+                    debtAlertThreshold: res.debtAlertThreshold,
+                  },
+                }
+              : prev
+          );
+        }
+      })
+      .catch(() => {});
+
+    const unsubAlerts = subscribeToHighDebtAlerts(({ alerts, debtAlertThreshold, fromRemoteClient }) => {
+      if (disposed) return;
+      if (alerts.length === 0 && fromRemoteClient) {
+        setHighDebtNotifications([]);
+        try {
+          localStorage.removeItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS');
+        } catch {}
+      } else if (alerts.length > 0) {
+        setHighDebtNotifications((prev) => {
+          const merged = mergeHighDebtAlerts(prev, alerts);
+          try {
+            localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(merged));
+          } catch {}
+          return merged;
+        });
+      }
+      if (debtAlertThreshold > 0) {
+        setAppState((prev) =>
+          prev && prev.systemConfig.debtAlertThreshold !== debtAlertThreshold
+            ? {
+                ...prev,
+                systemConfig: {
+                  ...prev.systemConfig,
+                  debtAlertThreshold,
+                },
+              }
+            : prev
+        );
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubAlerts();
+    };
+  }, []);
 
   // Format current Arabic clock timestamp
   const getArabicTimestamp = () => {
@@ -526,30 +615,6 @@ export default function App() {
 
   // Exclusive Real-Time Synchronization via Supabase & Cloud DB across all devices & all branches:
   useEffect(() => {
-    const computeBranchSignature = (
-      bakeries: Bakery[],
-      debts: DebtRecord[],
-      users: AppUser[],
-      config: SystemConfig,
-      branches: SupplyBranch[]
-    ): string => {
-      const bSig = bakeries
-        .map(
-          (b) =>
-            `${b.id}:${b.bakeryOwnerName}:${b.machineNumber}:${b.village}:${b.localUnit}:${b.insuranceValue}:${b.actualQuota}:${b.insuranceQuota}:${b.loavesCount}:${b.activityStatus}:${b.bakeryLicenseDate}`
-        )
-        .join('|');
-      const dSig = debts
-        .map(
-          (d) =>
-            `${d.id}:${d.netRemainingDebt}:${d.paidViolationAmount}:${d.paidAddedAmount}:${d.paidDisposalAmount}:${d.isScheduled ? 1 : 0}`
-        )
-        .join('|');
-      const uSig = users.map((u) => `${u.id}:${u.username}:${u.role}:${u.password || ''}`).join('|');
-      const brSig = branches.map((br) => `${br.id}:${br.name}`).join('|');
-      return `${bakeries.length}#${debts.length}#${users.length}#${config.administrationTitle}#${config.directorateTitle}#${brSig}#${uSig}#${bSig}#${dSig}`;
-    };
-
     const applyIncomingCloudState = (incomingData: AppState, remoteTimestamp?: string) => {
       if (!incomingData) return;
 
@@ -577,6 +642,9 @@ export default function App() {
           Array.isArray(syncedPartition.users) && syncedPartition.users.length > 0
             ? syncedPartition.users
             : current.users;
+        const nextVillages = syncedPartition.villages || current.villages;
+        const nextTasks = syncedPartition.dailyTasks || current.dailyTasks;
+        const nextMessages = syncedPartition.inboxMessages || current.inboxMessages;
         const nextConfig: SystemConfig = {
           ...current.systemConfig,
           ...(syncedPartition.systemConfig || {}),
@@ -592,21 +660,27 @@ export default function App() {
             ) || current.currentUser
           : null;
 
-        // Avoid redundant re-renders via fast structural signature comparison
-        const currentSig = computeBranchSignature(
-          current.bakeries,
-          current.debts,
-          current.users,
-          current.systemConfig,
-          current.branches || []
-        );
-        const nextSig = computeBranchSignature(
-          nextBakeries,
-          nextDebts,
-          nextUsers,
-          nextConfig,
-          mergedBranches
-        );
+        // Complete structural digest check across ALL fields so no remote edit is ever skipped
+        const currentSig = computeFullBranchDigest({
+          bakeries: current.bakeries,
+          debts: current.debts,
+          users: current.users,
+          villages: current.villages,
+          dailyTasks: current.dailyTasks,
+          inboxMessages: current.inboxMessages,
+          systemConfig: current.systemConfig,
+          branches: current.branches || [],
+        });
+        const nextSig = computeFullBranchDigest({
+          bakeries: nextBakeries,
+          debts: nextDebts,
+          users: nextUsers,
+          villages: nextVillages,
+          dailyTasks: nextTasks,
+          inboxMessages: nextMessages,
+          systemConfig: nextConfig,
+          branches: mergedBranches,
+        });
         if (currentSig === nextSig) {
           return current;
         }
@@ -618,7 +692,9 @@ export default function App() {
           branches: mergedBranches,
           bakeries: nextBakeries,
           debts: nextDebts,
-          villages: syncedPartition.villages || current.villages,
+          villages: nextVillages,
+          dailyTasks: nextTasks,
+          inboxMessages: nextMessages,
           users: nextUsers,
           systemConfig: nextConfig,
           currentUser: resolvedCurrentUser,
@@ -1808,21 +1884,31 @@ export default function App() {
 
     const synced = synchronizeBakeryAndDebts(appState.bakeries, updated);
     const savedDebt = synced.debts.find((d) => String(d.id) === String(debt.id)) || debt;
+    const alertThreshold =
+      appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD;
+    const exceedsAlertThreshold = shouldTriggerDebtAlert(savedDebt.netRemainingDebt, alertThreshold);
 
-    if (savedDebt.netRemainingDebt >= 50000) {
+    if (exceedsAlertThreshold) {
       addHighDebtNotification(
         savedDebt.bakeryId,
         savedDebt.bakeryOwnerName,
         savedDebt.machineNumber,
         savedDebt.village,
         savedDebt.netRemainingDebt,
-        existingIndex >= 0 ? 'EDIT_DEBT' : 'ADD_DEBT'
+        existingIndex >= 0 ? 'EDIT_DEBT' : 'ADD_DEBT',
+        alertThreshold
       );
     }
 
+    const alertSuffix = exceedsAlertThreshold
+      ? ` — ⚠️ تنبيه: تجاوزت المديونية (${savedDebt.netRemainingDebt.toLocaleString('en-US')} ج.م) حد التنبيه (${alertThreshold.toLocaleString('en-US')} ج.م) وتم إضافته لسجل التنبيهات!`
+      : '';
+
     triggerSave(
       { ...appState, bakeries: synced.bakeries, debts: synced.debts },
-      existingIndex >= 0 ? 'تم تعديل وحفظ قيد المديونية وإعادة احتساب الأرصدة بنجاح' : 'تم إضافة وتسجيل قيد المديونية وإعادة احتساب الأرصدة بنجاح'
+      (existingIndex >= 0
+        ? 'تم تعديل وحفظ قيد المديونية وإعادة احتساب الأرصدة بنجاح'
+        : 'تم إضافة وتسجيل قيد المديونية وإعادة احتساب الأرصدة بنجاح') + alertSuffix
     );
   };
 
@@ -2092,7 +2178,13 @@ export default function App() {
         setIsGoogleWorkspaceModalOpen(true);
         break;
 
-      // Additional legacy routes
+      // Additional & Dashboard routes
+      case 'dashboard-charts':
+        setActiveTab('charts');
+        break;
+      case 'alerts-drawer-log':
+        setIsAdminDrawerOpen(true);
+        break;
       case 'dashboard-home':
       case 'dashboard-kpis':
       case 'dashboard-updates':
@@ -2258,7 +2350,31 @@ export default function App() {
               )}
             </div>
 
-            {/* Notifications Button */}
+            {/* High-Debt Alerts Log Drawer Button in Header */}
+            <button
+              type="button"
+              data-testid="header-alerts-drawer-btn"
+              onClick={() => setIsAdminDrawerOpen(true)}
+              className={`relative px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                highDebtNotifications.filter((n) => !n.isRead).length > 0
+                  ? 'bg-red-50 hover:bg-red-100 text-red-800 border-red-300'
+                  : 'bg-slate-100 hover:bg-slate-200/80 text-slate-800 border-slate-200'
+              }`}
+              title="فتح سجل تنبيهات المديونيات المتجاوزة للحد وضبط قيمة التنبيه"
+            >
+              <AlertTriangle className="w-4 h-4 text-red-600" />
+              <span>سجل التنبيهات</span>
+              {highDebtNotifications.filter((n) => !n.isRead).length > 0 && (
+                <span
+                  data-testid="alerts-unread-badge"
+                  className="px-1.5 py-0.2 bg-red-600 text-white rounded-full text-[10px] font-mono font-bold tabular-nums"
+                >
+                  {highDebtNotifications.filter((n) => !n.isRead).length}
+                </span>
+              )}
+            </button>
+
+            {/* Daily Briefing Notifications Button */}
             <button
               type="button"
               onClick={() => setIsDailyBriefingModalOpen(true)}
@@ -2503,7 +2619,26 @@ export default function App() {
             </nav>
 
             {/* Primary View Mode Segmented Switcher */}
-            <div className="flex items-center gap-1 bg-[#E2E8F0] p-1 rounded-lg border border-slate-300">
+            <div className="flex items-center flex-wrap gap-1 bg-[#E2E8F0] p-1 rounded-lg border border-slate-300">
+              <button
+                type="button"
+                data-testid="nav-dashboard-charts-tab"
+                onClick={() =>
+                  handleSelectSidebarNav(
+                    'dashboard-charts',
+                    'لوحة التحكم',
+                    'لوحة التحكم والرسوم البيانية'
+                  )
+                }
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'charts'
+                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
+                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>لوحة التحكم والرسوم</span>
+              </button>
               <button
                 type="button"
                 onClick={() => handleSelectSidebarNav('dashboard-home', 'لوحة التحكم', 'الصفحة الرئيسية')}
@@ -2558,6 +2693,40 @@ export default function App() {
           {/* 3.2 Unified Command Toolbar (شريط الأدوات الموحد للأوامر الرئيسية - البند 7) */}
           <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2 no-print">
             <div className="flex items-center flex-wrap gap-1.5">
+              {/* 0. Direct Dashboard & Alerts Drawer Shortcuts in Toolbar */}
+              <button
+                type="button"
+                data-testid="toolbar-dashboard-btn"
+                onClick={() =>
+                  handleSelectSidebarNav(
+                    'dashboard-charts',
+                    'لوحة التحكم',
+                    'لوحة التحكم والرسوم البيانية'
+                  )
+                }
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                  activeTab === 'charts'
+                    ? 'bg-[#0F2342] text-amber-300 border-[#0F2342] shadow-2xs'
+                    : 'bg-[#EFF6FF] hover:bg-[#1E40AF] text-[#1E3A8A] hover:text-white border-blue-200'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>لوحة التحكم</span>
+              </button>
+              <button
+                type="button"
+                data-testid="toolbar-alerts-drawer-btn"
+                onClick={() => setIsAdminDrawerOpen(true)}
+                className="px-2.5 py-1.5 bg-red-50 hover:bg-red-600 text-red-800 hover:text-white border border-red-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span>سجل التنبيهات</span>
+                {highDebtNotifications.filter((n) => !n.isRead).length > 0 && (
+                  <span className="px-1.5 py-0.2 bg-red-600 text-white rounded-full text-[10px] font-mono tabular-nums font-black">
+                    {highDebtNotifications.filter((n) => !n.isRead).length}
+                  </span>
+                )}
+              </button>
               {/* 1. Add Bakery */}
               {appState.currentUser?.role !== 'viewer' && (
                 <button
@@ -2772,65 +2941,31 @@ export default function App() {
               onOpenLocalUnitsModal={() => setIsLocalUnitsModalOpen(true)}
             />
           ) : activeTab === 'charts' ? (
-            /* CHARTS & ANALYTICS VIEW */
-            <div className="space-y-5">
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-[#EFF6FF] border border-blue-200 rounded-xl">
-                    <BarChart3 className="w-6 h-6 text-[#1E3A8A]" />
-                  </div>
-                  <div>
-                    <h2 className="text-base font-extrabold text-[#0F2342]">
-                      لوحة الرسوم البيانية والمقارنات الإحصائية للمنظومة
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      تحليل شامل لمديونيات المخابز وحصص الدقيق وتوزيع المخابز والإنتاج على مستوى المركز
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsLocalUnitsModalOpen(true)}
-                    className="px-4 py-2 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 shadow-2xs"
-                  >
-                    <Table className="w-4 h-4" />
-                    <span>ملخص الوحدات المحلية</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('bakeries')}
-                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
-                  >
-                    <span>← جدول المخابز</span>
-                  </button>
-                </div>
-              </div>
-
-              <BakeryDebtsPieChart
-                bakeries={appState.bakeries}
-                debts={appState.debts}
-                onSelectBakeryFilter={(bakeryId) => {
-                  setActiveTab('debts');
-                  setDebtFilterBakeryId(bakeryId);
-                }}
-              />
-
-              <BakeryAnalyticsCharts
-                bakeries={appState.bakeries}
-                debts={appState.debts}
-                villages={appState.villages}
-                onSelectTierFilter={(_min, _max, tierLabel) => {
-                  setActiveTab('bakeries');
-                  setSelectedDebtFilter('HAS_DEBT');
-                  setSaveToast({
-                    id: Date.now(),
-                    message: `تم تصفية القائمة لعرض المخابز ضمن شريحة (${tierLabel})`,
-                    timestamp: new Date().toLocaleTimeString('ar-EG'),
-                  });
-                }}
-              />
-            </div>
+            /* NEW INTERACTIVE RECHARTS DASHBOARD VIEW */
+            <InteractiveDashboardPage
+              bakeries={appState.bakeries}
+              debts={appState.debts}
+              villages={appState.villages}
+              debtAlertThreshold={
+                appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD
+              }
+              unreadAlertsCount={highDebtNotifications.filter((n) => !n.isRead).length}
+              administrationTitle={appState.systemConfig.administrationTitle}
+              onNavigateToBakeries={(opts) => {
+                setActiveTab('bakeries');
+                if (opts?.village) setSelectedVillage(opts.village);
+                if (opts?.activityStatus) setSelectedActivity(opts.activityStatus);
+                setBreadcrumbGroup('إدارة المخابز');
+                setBreadcrumbItem('قاعدة بيانات المخابز');
+              }}
+              onNavigateToDebts={(bakeryId) => {
+                setDebtFilterBakeryId(bakeryId);
+                setActiveTab('debts');
+                setBreadcrumbGroup('إدارة المخابز');
+                setBreadcrumbItem('سجل مديونيات المخابز');
+              }}
+              onOpenAlertsDrawer={() => setIsAdminDrawerOpen(true)}
+            />
           ) : activeTab === 'reports' ? (
             /* REPORTS CENTER VIEW */
             <ReportsCenterView
@@ -4985,23 +5120,55 @@ export default function App() {
         isOpen={isAdminDrawerOpen}
         onClose={() => setIsAdminDrawerOpen(false)}
         notifications={highDebtNotifications}
+        debtAlertThreshold={
+          appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD
+        }
+        onUpdateThreshold={(newThreshold) => {
+          const updatedState: AppState = {
+            ...appState,
+            systemConfig: {
+              ...appState.systemConfig,
+              debtAlertThreshold: newThreshold,
+            },
+          };
+          syncHighDebtAlertsToFirestore(highDebtNotifications, newThreshold).catch(() => {});
+          triggerSave(
+            updatedState,
+            `تم تحديث حد التنبيه التلقائي للمديونية إلى (${newThreshold.toLocaleString('en-US')} ج.م) ومزامنته على السحابة`
+          );
+        }}
         onMarkAsRead={(id) => {
+          const threshold =
+            appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD;
           setHighDebtNotifications((prev) => {
             const updated = prev.map((n) => (n.id === id ? { ...n, isRead: true } : n));
-            localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
+            try {
+              localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
+            } catch {}
+            syncHighDebtAlertsToFirestore(updated, threshold).catch(() => {});
             return updated;
           });
         }}
         onMarkAllAsRead={() => {
+          const threshold =
+            appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD;
           setHighDebtNotifications((prev) => {
             const updated = prev.map((n) => ({ ...n, isRead: true }));
-            localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
+            try {
+              localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
+            } catch {}
+            syncHighDebtAlertsToFirestore(updated, threshold).catch(() => {});
             return updated;
           });
         }}
         onClearAll={() => {
+          const threshold =
+            appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD;
           setHighDebtNotifications([]);
-          localStorage.removeItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS');
+          try {
+            localStorage.removeItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS');
+          } catch {}
+          clearHighDebtAlertsInFirestore(threshold).catch(() => {});
         }}
         onSelectBakeryDebt={(bakeryId) => {
           setDebtFilterBakeryId(bakeryId);
