@@ -127,6 +127,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [detailDebtRecord, setDetailDebtRecord] = useState<DebtRecord | null>(null);
   const [isAlertsKeyVisible, setIsAlertsKeyVisible] = useState<boolean>(showAlertsKeyModal);
+  const [listModalError, setListModalError] = useState<string>('');
+  const [pendingDebtConfirm, setPendingDebtConfirm] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  const showListError = (msg: string) => {
+    setListModalError(msg);
+    setTimeout(() => setListModalError(''), 3500);
+  };
 
   useEffect(() => {
     if (showAlertsKeyModal) {
@@ -1759,9 +1770,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (confirm(`هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`)) {
-                                      onDeleteDebt(d.id);
-                                    }
+                                    setPendingDebtConfirm({
+                                      title: 'تأكيد حذف قيد المديونية',
+                                      message: `هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`,
+                                      onConfirm: () => onDeleteDebt(d.id),
+                                    });
                                   }}
                                   className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg transition cursor-pointer"
                                   title="حذف القيد"
@@ -2132,6 +2145,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               </button>
             </div>
 
+            {listModalError && (
+              <div className="mb-3 p-2.5 bg-red-50 border border-red-300 text-red-800 rounded-xl text-xs font-black flex items-center justify-between gap-2 shrink-0">
+                <span>{listModalError}</span>
+                <button type="button" onClick={() => setListModalError('')} className="cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {/* Add New Entity Form */}
             <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3 mb-3.5 shrink-0">
               <label className="block text-[11px] font-black text-amber-950 mb-1.5">
@@ -2148,11 +2170,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       const name = newEntityName.trim();
                       if (!name) return;
                       if (issuingEntities.includes(name)) {
-                        alert('هذه الجهة مسجلة بالفعل في القائمة');
+                        showListError('هذه الجهة مسجلة بالفعل في القائمة');
                         return;
                       }
                       onUpdateEntities([...issuingEntities, name]);
                       setNewEntityName('');
+                      setListModalError('');
                     }
                   }}
                   placeholder="اكتب اسم الجهة (مثال: جهاز حماية المستهلك، مباحث التموين...)"
@@ -2164,11 +2187,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     const name = newEntityName.trim();
                     if (!name) return;
                     if (issuingEntities.includes(name)) {
-                      alert('هذه الجهة مسجلة بالفعل في القائمة');
+                      showListError('هذه الجهة مسجلة بالفعل في القائمة');
                       return;
                     }
                     onUpdateEntities([...issuingEntities, name]);
                     setNewEntityName('');
+                    setListModalError('');
                   }}
                   className="px-4 py-2 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-white rounded-lg text-xs font-black shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
                 >
@@ -2234,7 +2258,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                 const clean = editingEntityNewName.trim();
                                 if (!clean) return;
                                 if (clean !== ent && issuingEntities.includes(clean)) {
-                                  alert('اسم الجهة موجود بالفعل في القائمة');
+                                  showListError('اسم الجهة موجود بالفعل في القائمة');
                                   return;
                                 }
                                 if (clean !== ent) {
@@ -2261,11 +2285,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                             onClick={() => {
                               const clean = editingEntityNewName.trim();
                               if (!clean) {
-                                alert('يرجى إدخال اسم صحيح');
+                                showListError('يرجى إدخال اسم صحيح');
                                 return;
                               }
                               if (clean !== ent && issuingEntities.includes(clean)) {
-                                alert('اسم الجهة موجود بالفعل في القائمة');
+                                showListError('اسم الجهة موجود بالفعل في القائمة');
                                 return;
                               }
                               if (clean !== ent) {
@@ -2335,10 +2359,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                 type="button"
                                 onClick={() => {
                                   if (usageCount > 0) {
-                                    const confirmDel = window.confirm(
-                                      `تنبيه: الجهة "${ent}" مسجلة حالياً في (${usageCount}) محضر مديونية. هل أنت متأكد من رغبتك في حذفها من القائمة المعتمدة؟`
-                                    );
-                                    if (!confirmDel) return;
+                                    setPendingDebtConfirm({
+                                      title: 'تأكيد حذف الجهة المحررة',
+                                      message: `تنبيه: الجهة "${ent}" مسجلة حالياً في (${usageCount}) محضر مديونية. هل أنت متأكد من رغبتك في حذفها من القائمة المعتمدة؟`,
+                                      onConfirm: () =>
+                                        onUpdateEntities(issuingEntities.filter((e) => e !== ent)),
+                                    });
+                                    return;
                                   }
                                   onUpdateEntities(issuingEntities.filter((e) => e !== ent));
                                 }}
@@ -2445,11 +2472,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       const name = newViolationName.trim();
                       if (!name) return;
                       if (violationTypes.includes(name)) {
-                        alert('نوع المخالفة مسجل مسبقاً في القائمة');
+                        showListError('نوع المخالفة مسجل مسبقاً في القائمة');
                         return;
                       }
                       onUpdateViolations([...violationTypes, name]);
                       setNewViolationName('');
+                      setListModalError('');
                     }
                   }}
                   placeholder="اكتب نوع المخالفة (مثال: عدم نظافة المعجن، بيع بأزيد من السعر...)"
@@ -2461,11 +2489,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     const name = newViolationName.trim();
                     if (!name) return;
                     if (violationTypes.includes(name)) {
-                      alert('نوع المخالفة مسجل مسبقاً في القائمة');
+                      showListError('نوع المخالفة مسجل مسبقاً في القائمة');
                       return;
                     }
                     onUpdateViolations([...violationTypes, name]);
                     setNewViolationName('');
+                    setListModalError('');
                   }}
                   className="px-4 py-2 bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white rounded-lg text-xs font-black shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
                 >
@@ -2531,7 +2560,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                 const clean = editingViolationNewName.trim();
                                 if (!clean) return;
                                 if (clean !== v && violationTypes.includes(clean)) {
-                                  alert('نوع المخالفة موجود بالفعل في القائمة');
+                                  showListError('نوع المخالفة موجود بالفعل في القائمة');
                                   return;
                                 }
                                 if (clean !== v) {
@@ -2558,11 +2587,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                             onClick={() => {
                               const clean = editingViolationNewName.trim();
                               if (!clean) {
-                                alert('يرجى إدخال اسم صحيح');
+                                showListError('يرجى إدخال اسم صحيح');
                                 return;
                               }
                               if (clean !== v && violationTypes.includes(clean)) {
-                                alert('نوع المخالفة موجود بالفعل في القائمة');
+                                showListError('نوع المخالفة موجود بالفعل في القائمة');
                                 return;
                               }
                               if (clean !== v) {
@@ -2632,10 +2661,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                 type="button"
                                 onClick={() => {
                                   if (usageCount > 0) {
-                                    const confirmDel = window.confirm(
-                                      `تنبيه: نوع المخالفة "${v}" مسجل حالياً في (${usageCount}) محضر مديونية. هل أنت متأكد من رغبتك في حذفه من القائمة المعتمدة؟`
-                                    );
-                                    if (!confirmDel) return;
+                                    setPendingDebtConfirm({
+                                      title: 'تأكيد حذف نوع المخالفة',
+                                      message: `تنبيه: نوع المخالفة "${v}" مسجل حالياً في (${usageCount}) محضر مديونية. هل أنت متأكد من رغبتك في حذفه من القائمة المعتمدة؟`,
+                                      onConfirm: () =>
+                                        onUpdateViolations(violationTypes.filter((vt) => vt !== v)),
+                                    });
+                                    return;
                                   }
                                   onUpdateViolations(violationTypes.filter((vt) => vt !== v));
                                 }}
@@ -2744,6 +2776,39 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             setIsDebtModalOpen(true);
           }}
         />
+      )}
+
+      {pendingDebtConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[80] bg-slate-950/75 flex items-center justify-center p-4"
+        >
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <h4 className="text-sm font-black text-slate-900">{pendingDebtConfirm.title}</h4>
+            <p className="text-xs font-bold text-slate-600 leading-relaxed">{pendingDebtConfirm.message}</p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPendingDebtConfirm(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const fn = pendingDebtConfirm.onConfirm;
+                  setPendingDebtConfirm(null);
+                  fn();
+                }}
+                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-black cursor-pointer"
+              >
+                تأكيد الحذف
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -2889,6 +2954,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   const [notes, setNotes] = useState(debtToEdit?.notes || '');
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [lastAutoSaveTime, setLastAutoSaveTime] = useState<string>('');
+  const [formError, setFormError] = useState<string>('');
 
   // Mini Fine Calculator inside Debt Modal ("مفتاح حساب الغرامة")
   const [showFineCalc, setShowFineCalc] = useState(false);
@@ -3007,9 +3073,10 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentBakery) {
-      alert('يرجى اختيار مخبز مسجل أولاً');
+      setFormError('يرجى اختيار مخبز مسجل أولاً');
       return;
     }
+    setFormError('');
 
     const record: DebtRecord = {
       id: debtToEdit ? debtToEdit.id : `d-${Date.now()}`,
@@ -3121,6 +3188,15 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
             </button>
           </div>
         </div>
+
+        {formError && (
+          <div className="mx-4 mt-3 p-2.5 bg-red-50 border border-red-300 text-red-800 rounded-xl text-xs font-black flex items-center justify-between gap-2 shrink-0">
+            <span>{formError}</span>
+            <button type="button" onClick={() => setFormError('')} className="cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="overflow-y-auto p-5 space-y-4 flex-1">

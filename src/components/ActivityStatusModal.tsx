@@ -22,6 +22,8 @@ export const ActivityStatusModal: React.FC<ActivityStatusModalProps> = ({
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [msg, setMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<{ val: string; confirmText: string } | null>(null);
 
   // Escape key closing is intentionally disabled per user preference
 
@@ -50,30 +52,38 @@ export const ActivityStatusModal: React.FC<ActivityStatusModalProps> = ({
     return 'bg-blue-100 text-blue-900 border-blue-300';
   };
 
+  const showError = (text: string) => {
+    setMsg('');
+    setErrorMsg(text);
+    setTimeout(() => setErrorMsg(''), 3000);
+  };
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     const val = newStatus.trim();
     if (!val) return;
     if (list.includes(val)) {
-      alert('هذا النشاط موجود بالفعل في القائمة');
+      showError('هذا النشاط موجود بالفعل في القائمة');
       return;
     }
     const updated = [...list, val];
     setList(updated);
     setNewStatus('');
     onSaveStatuses(updated);
+    setErrorMsg('');
     setMsg(`تمت إضافة نشاط "${val}" بنجاح`);
     setTimeout(() => setMsg(''), 2500);
   };
 
   const handleAddPreset = (preset: string) => {
     if (list.includes(preset)) {
-      alert(`النشاط "${preset}" موجود بالفعل بالقائمة`);
+      showError(`النشاط "${preset}" موجود بالفعل بالقائمة`);
       return;
     }
     const updated = [...list, preset];
     setList(updated);
     onSaveStatuses(updated);
+    setErrorMsg('');
     setMsg(`تمت إضافة "${preset}" من القوالب الجاهزة`);
     setTimeout(() => setMsg(''), 2500);
   };
@@ -92,13 +102,14 @@ export const ActivityStatusModal: React.FC<ActivityStatusModalProps> = ({
     setEditingIndex(null);
     setEditingValue('');
     onSaveStatuses(updated);
+    setErrorMsg('');
     setMsg('تم تحديث وتثبيت حالة النشاط بنجاح');
     setTimeout(() => setMsg(''), 2500);
   };
 
   const handleDelete = (val: string) => {
     if (list.length <= 1) {
-      alert('يجب أن تحتوي القائمة على حالة نشاط واحدة على الأقل');
+      showError('يجب أن تحتوي القائمة على حالة نشاط واحدة على الأقل');
       return;
     }
     const count = getBakeryCount(val);
@@ -106,13 +117,19 @@ export const ActivityStatusModal: React.FC<ActivityStatusModalProps> = ({
       ? `تنبيه: يوجد (${count}) مخبز مسجل بهذا النشاط حالياً! هل أنت متأكد من حذف نشاط "${val}" من القائمة؟`
       : `هل أنت متأكد من حذف نشاط "${val}" من القائمة؟`;
 
-    if (confirm(confirmText)) {
-      const updated = list.filter((s) => s !== val);
-      setList(updated);
-      onSaveStatuses(updated);
-      setMsg(`تم حذف نشاط "${val}"`);
-      setTimeout(() => setMsg(''), 2500);
-    }
+    setPendingDelete({ val, confirmText });
+  };
+
+  const confirmDeleteStatus = () => {
+    if (!pendingDelete) return;
+    const val = pendingDelete.val;
+    setPendingDelete(null);
+    const updated = list.filter((s) => s !== val);
+    setList(updated);
+    onSaveStatuses(updated);
+    setErrorMsg('');
+    setMsg(`تم حذف نشاط "${val}"`);
+    setTimeout(() => setMsg(''), 2500);
   };
 
   return (
@@ -154,6 +171,14 @@ export const ActivityStatusModal: React.FC<ActivityStatusModalProps> = ({
 
         {/* Content */}
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          {errorMsg && (
+            <div className="p-2.5 bg-red-50 border border-red-300 text-red-800 rounded-lg text-xs font-black flex items-center justify-between gap-2">
+              <span>{errorMsg}</span>
+              <button type="button" onClick={() => setErrorMsg('')} className="cursor-pointer">
+                <X className="w-4 h-4 shrink-0" />
+              </button>
+            </div>
+          )}
           {msg && (
             <div className="p-2.5 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-black flex items-center gap-2">
               <Check className="w-4 h-4 shrink-0" />
@@ -310,6 +335,36 @@ export const ActivityStatusModal: React.FC<ActivityStatusModalProps> = ({
           </button>
         </div>
       </div>
+
+      {pendingDelete && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-[60] bg-slate-950/70 flex items-center justify-center p-4"
+        >
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <h4 className="text-sm font-black text-slate-900">تأكيد حذف حالة النشاط</h4>
+            <p className="text-xs font-bold text-slate-600">{pendingDelete.confirmText}</p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteStatus}
+                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-black cursor-pointer"
+              >
+                حذف النشاط
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

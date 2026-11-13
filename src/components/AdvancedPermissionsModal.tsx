@@ -176,6 +176,11 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
 
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Escape key closing is intentionally disabled per user preference
 
@@ -713,10 +718,14 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
                                           setErrorNotice('لا يمكن حذف المستخدم الوحيد في المنظومة');
                                           return;
                                         }
-                                        if (confirm(`هل أنت متأكد من حذف المستخدم "${u.fullName}" (${u.username}) نهائياً؟`)) {
-                                          onDeleteUser(u.id);
-                                          showNotice(`تم حذف المستخدم (${u.fullName}) بنجاح!`);
-                                        }
+                                        setPendingConfirm({
+                                          title: 'تأكيد حذف المستخدم',
+                                          message: `هل أنت متأكد من حذف المستخدم "${u.fullName}" (${u.username}) نهائياً؟`,
+                                          onConfirm: () => {
+                                            onDeleteUser(u.id);
+                                            showNotice(`تم حذف المستخدم (${u.fullName}) بنجاح!`);
+                                          },
+                                        });
                                       }}
                                       className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[11px] font-black flex items-center gap-1 cursor-pointer shadow-2xs"
                                       title="حذف المستخدم"
@@ -836,9 +845,11 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm(`هل أنت متأكد من حذف الدور الوظيفي "${tab.shortTitle}"؟`)) {
-                              handleDeleteRole(tab.role, tab.shortTitle);
-                            }
+                            setPendingConfirm({
+                              title: 'تأكيد حذف الدور الوظيفي',
+                              message: `هل أنت متأكد من حذف الدور الوظيفي "${tab.shortTitle}"؟`,
+                              onConfirm: () => handleDeleteRole(tab.role, tab.shortTitle),
+                            });
                           }}
                           className={`p-1.5 rounded-lg transition-colors cursor-pointer shrink-0 ${
                             isSelected
@@ -1014,6 +1025,40 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
           </div>
         </div>
       </div>
+
+      {pendingConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-[70] bg-slate-950/70 flex items-center justify-center p-4"
+        >
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <h4 className="text-sm font-black text-slate-900">{pendingConfirm.title}</h4>
+            <p className="text-xs font-bold text-slate-600">{pendingConfirm.message}</p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingConfirm(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const fn = pendingConfirm.onConfirm;
+                  setPendingConfirm(null);
+                  fn();
+                }}
+                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-black cursor-pointer"
+              >
+                تأكيد الحذف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -39,6 +39,7 @@ export const SupplyFinesCalculatorModal: React.FC<SupplyFinesCalculatorModalProp
   const [stoppageDays, setStoppageDays] = useState<number>(2);
   const [dailyQuotaBags, setDailyQuotaBags] = useState<number>(10);
   const [copiedStatus, setCopiedStatus] = useState<boolean>(false);
+  const [validationError, setValidationError] = useState<string>('');
 
   // Auto select bakery details
   const selectedBakery = useMemo(() => {
@@ -182,9 +183,10 @@ export const SupplyFinesCalculatorModal: React.FC<SupplyFinesCalculatorModalProp
 
   const handleApplyFine = () => {
     if (!selectedBakery) {
-      alert('يرجى اختيار المخبز أولاً لربط الغرامة بملف المخبز');
+      setValidationError('يرجى اختيار المخبز أولاً لربط الغرامة بملف المخبز');
       return;
     }
+    setValidationError('');
 
     onApplyFineToDebt({
       bakeryId: selectedBakery.id,
@@ -246,6 +248,18 @@ export const SupplyFinesCalculatorModal: React.FC<SupplyFinesCalculatorModalProp
             <X className="w-6 h-6" />
           </button>
         </div>
+
+        {validationError && (
+          <div className="p-3 bg-red-950/90 border border-red-500 text-red-200 rounded-xl text-xs font-black flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              {validationError}
+            </span>
+            <button type="button" onClick={() => setValidationError('')} className="text-red-300 hover:text-white cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Form Body Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

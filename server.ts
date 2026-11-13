@@ -76,12 +76,29 @@ async function startServer() {
     }
   };
 
-  // Clean up any accidentally autofilled invalid config files on startup
+  const isServiceRoleJwt = (token: string): boolean => {
+    if (!token || typeof token !== 'string') return false;
+    const trimmed = token.trim();
+    if (trimmed.toLowerCase().includes('service_role')) return true;
+    const parts = trimmed.split('.');
+    if (parts.length !== 3) return false;
+    try {
+      const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = b64.padEnd(Math.ceil(b64.length / 4) * 4, '=');
+      const decoded = Buffer.from(padded, 'base64').toString('utf-8');
+      const payload = JSON.parse(decoded);
+      return payload?.role === 'service_role';
+    } catch {
+      return false;
+    }
+  };
+
+  // Clean up any accidentally autofilled invalid config files or service_role keys on startup
   for (const cfgFile of [SUPABASE_CONFIG_PATH, SUPABASE_CONFIG_TMP]) {
     if (fs.existsSync(cfgFile)) {
       try {
         const parsed = JSON.parse(fs.readFileSync(cfgFile, 'utf-8'));
-        if (!isValidSupabaseUrl(parsed?.url)) {
+        if (!isValidSupabaseUrl(parsed?.url) || isServiceRoleJwt(parsed?.anonKey)) {
           fs.unlinkSync(cfgFile);
         }
       } catch {
@@ -92,9 +109,10 @@ async function startServer() {
 
   app.get('/api/supabase/config', (_req, res) => {
     try {
+      const envKey = process.env.VITE_SUPABASE_ANON_KEY || '';
       let cfg = {
         url: isValidSupabaseUrl(process.env.VITE_SUPABASE_URL || '') ? (process.env.VITE_SUPABASE_URL || '') : '',
-        anonKey: process.env.VITE_SUPABASE_ANON_KEY || '',
+        anonKey: !isServiceRoleJwt(envKey) ? envKey : '',
       };
       let foundPath = null;
       if (fs.existsSync(SUPABASE_CONFIG_PATH)) foundPath = SUPABASE_CONFIG_PATH;
@@ -103,7 +121,7 @@ async function startServer() {
       if (foundPath) {
         const raw = fs.readFileSync(foundPath, 'utf-8');
         const parsed = JSON.parse(raw);
-        if (isValidSupabaseUrl(parsed.url) && parsed.anonKey) {
+        if (isValidSupabaseUrl(parsed.url) && parsed.anonKey && !isServiceRoleJwt(parsed.anonKey)) {
           cfg.url = parsed.url;
           cfg.anonKey = parsed.anonKey;
         }
@@ -119,6 +137,13 @@ async function startServer() {
       const { url, anonKey } = req.body || {};
       const cleanUrl = String(url || '').trim();
       const cleanKey = String(anonKey || '').trim();
+      if (isServiceRoleJwt(cleanKey)) {
+        res.status(400).json({
+          success: false,
+          error: 'يُحظر استخدام مفتاح service_role السري في المتصفح. يرجى استخدام مفتاح anon العام فقط.',
+        });
+        return;
+      }
       if (isValidSupabaseUrl(cleanUrl) && cleanKey) {
         const data = JSON.stringify({ url: cleanUrl, anonKey: cleanKey });
         try { fs.writeFileSync(SUPABASE_CONFIG_PATH, data, 'utf-8'); } catch {}

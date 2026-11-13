@@ -46,6 +46,7 @@ import {
   fetchDatabaseFromSupabase,
   clearSupabaseDatabaseData,
   setSupabaseCloudDisabled,
+  validateSupabaseCredentials,
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
 } from '../lib/supabase';
@@ -134,6 +135,14 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [resetStep, setResetStep] = useState<0 | 1 | 2 | 3>(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [pendingActionConfirm, setPendingActionConfirm] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    variant?: 'danger' | 'primary';
+    onConfirm: () => void;
+  } | null>(null);
+  const [factoryResetModalStep, setFactoryResetModalStep] = useState<0 | 1 | 2 | 3>(0);
 
   // Dedicated Publish Engine State
   const [publishState, setPublishState] = useState<PublishProgressState>({
@@ -307,36 +316,40 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   const handleDeleteDriveAccount = (accToDelete: GoogleDriveAccountEntry) => {
-    if (!confirm(`هل أنت متأكد من مسح وحذف الإيميل (${accToDelete.email}) نهائياً من قائمة Google Drive؟`)) {
-      return;
-    }
+    setPendingActionConfirm({
+      title: 'تأكيد حذف حساب Google Drive',
+      message: `هل أنت متأكد من مسح وحذف الإيميل (${accToDelete.email}) نهائياً من قائمة Google Drive؟`,
+      confirmLabel: 'حذف الإيميل نهائياً',
+      variant: 'danger',
+      onConfirm: () => {
+        const updated = driveAccounts.filter(
+          (a) => a.id !== accToDelete.id && a.email.toLowerCase() !== accToDelete.email.toLowerCase()
+        );
+        setDriveAccounts(updated);
+        localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(updated));
+        localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${accToDelete.email.toLowerCase()}`);
+        localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${accToDelete.email.toLowerCase()}`);
 
-    const updated = driveAccounts.filter(
-      (a) => a.id !== accToDelete.id && a.email.toLowerCase() !== accToDelete.email.toLowerCase()
-    );
-    setDriveAccounts(updated);
-    localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(updated));
-    localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${accToDelete.email.toLowerCase()}`);
-    localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${accToDelete.email.toLowerCase()}`);
+        if (gmailEmail.toLowerCase() === accToDelete.email.toLowerCase()) {
+          const nextEmail = updated.length > 0 ? updated[0].email : '';
+          setGmailEmail(nextEmail);
+          localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', nextEmail);
+          if (currentState.systemConfig?.gmailEmail !== nextEmail) {
+            onRestoreState({
+              ...currentState,
+              systemConfig: {
+                ...currentState.systemConfig,
+                gmailEmail: nextEmail,
+              },
+            });
+          }
+        }
 
-    if (gmailEmail.toLowerCase() === accToDelete.email.toLowerCase()) {
-      const nextEmail = updated.length > 0 ? updated[0].email : '';
-      setGmailEmail(nextEmail);
-      localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', nextEmail);
-      if (currentState.systemConfig?.gmailEmail !== nextEmail) {
-        onRestoreState({
-          ...currentState,
-          systemConfig: {
-            ...currentState.systemConfig,
-            gmailEmail: nextEmail,
-          },
+        setStatusMsg({
+          text: `تم مسح وحذف الإيميل (${accToDelete.email}) بالكامل ولن يظهر مجدداً!`,
+          type: 'success',
         });
-      }
-    }
-
-    setStatusMsg({
-      text: `تم مسح وحذف الإيميل (${accToDelete.email}) بالكامل ولن يظهر مجدداً!`,
-      type: 'success',
+      },
     });
   };
 
@@ -345,24 +358,29 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       setStatusMsg({ text: 'لا يوجد إيميل نشط حالياً للمسح.', type: 'info' });
       return;
     }
-    if (!confirm(`هل أنت متأكد من مسح وتفريغ الإيميل النشط حالياً (${gmailEmail}) من إعدادات Google Drive؟`)) {
-      return;
-    }
-    const current = gmailEmail;
-    setGmailEmail('');
-    localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', '');
-    if (currentState.systemConfig?.gmailEmail !== '') {
-      onRestoreState({
-        ...currentState,
-        systemConfig: {
-          ...currentState.systemConfig,
-          gmailEmail: '',
-        },
-      });
-    }
-    setStatusMsg({
-      text: `تم مسح الإيميل النشط (${current}) وتفريغ حقل Google Drive بنجاح. يمكنك الآن اختيار أو إضافة أي إيميل آخر.`,
-      type: 'success',
+    setPendingActionConfirm({
+      title: 'تأكيد تفريغ الإيميل النشط',
+      message: `هل أنت متأكد من مسح وتفريغ الإيميل النشط حالياً (${gmailEmail}) من إعدادات Google Drive؟`,
+      confirmLabel: 'مسح وتفريغ',
+      variant: 'danger',
+      onConfirm: () => {
+        const current = gmailEmail;
+        setGmailEmail('');
+        localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', '');
+        if (currentState.systemConfig?.gmailEmail !== '') {
+          onRestoreState({
+            ...currentState,
+            systemConfig: {
+              ...currentState.systemConfig,
+              gmailEmail: '',
+            },
+          });
+        }
+        setStatusMsg({
+          text: `تم مسح الإيميل النشط (${current}) وتفريغ حقل Google Drive بنجاح. يمكنك الآن اختيار أو إضافة أي إيميل آخر.`,
+          type: 'success',
+        });
+      },
     });
   };
 
@@ -899,19 +917,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   // 10-ج. Real Google OAuth + Direct Google Drive Upload + Firestore Cloud Sync (مزامنة البيانات)
-  const handleDirectGoogleDriveOAuthUpload = async () => {
-    if (!gmailEmail.trim() || !gmailEmail.includes('@')) {
-      setStatusMsg({
-        text: 'يرجى إدخال بريد الجيميل أولاً (مثال: user@gmail.com) للربط والرفع المباشر على Google Drive.',
-        type: 'error',
-      });
-      return;
-    }
-
-    if (!confirm(`هل توافق على ربط حساب الجيميل (${gmailEmail.trim()}) ورفع وتحديث ملف النسخة الاحتياطية على Google Drive وقاعدة البيانات السحابية؟`)) {
-      return;
-    }
-
+  const executeDirectGoogleDriveOAuthUpload = async () => {
     setIsProcessing(true);
     setStatusMsg({
       text: 'جاري فتح نافذة مصادقة Google الآمنة (OAuth 2.0) والتحقق من صلاحية الكتابة على Google Drive...',
@@ -990,17 +996,28 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
-  // 11. Send Backup Directly to Gmail via Gmail API
-  const handleSendBackupToGmailDirect = async () => {
-    const targetEmail = gmailEmail.trim();
-    if (!targetEmail || !targetEmail.includes('@')) {
-      setStatusMsg({ text: 'يرجى إدخال بريد الجيميل المراد إرسال النسخة الاحتياطية إليه.', type: 'error' });
-      return;
-    }
-    if (!confirm(`هل أنت متأكد من إرسال ملف النسخة الاحتياطية مباشرة إلى البريد الإلكتروني (${targetEmail}) عبر Gmail API؟`)) {
+  const handleDirectGoogleDriveOAuthUpload = async () => {
+    if (!gmailEmail.trim() || !gmailEmail.includes('@')) {
+      setStatusMsg({
+        text: 'يرجى إدخال بريد الجيميل أولاً (مثال: user@gmail.com) للربط والرفع المباشر على Google Drive.',
+        type: 'error',
+      });
       return;
     }
 
+    setPendingActionConfirm({
+      title: 'تأكيد الربط والرفع على Google Drive',
+      message: `هل توافق على ربط حساب الجيميل (${gmailEmail.trim()}) ورفع وتحديث ملف النسخة الاحتياطية على Google Drive وقاعدة البيانات السحابية؟`,
+      confirmLabel: 'ربط ورفع النسخة',
+      variant: 'primary',
+      onConfirm: () => {
+        void executeDirectGoogleDriveOAuthUpload();
+      },
+    });
+  };
+
+  // 11. Send Backup Directly to Gmail via Gmail API
+  const executeSendBackupToGmailDirect = async (targetEmail: string) => {
     setIsProcessing(true);
     setStatusMsg({ text: `جاري إرسال النسخة الاحتياطية مباشرة إلى (${targetEmail})...`, type: 'info' });
     try {
@@ -1025,8 +1042,33 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
+  const handleSendBackupToGmailDirect = async () => {
+    const targetEmail = gmailEmail.trim();
+    if (!targetEmail || !targetEmail.includes('@')) {
+      setStatusMsg({ text: 'يرجى إدخال بريد الجيميل المراد إرسال النسخة الاحتياطية إليه.', type: 'error' });
+      return;
+    }
+    setPendingActionConfirm({
+      title: 'تأكيد الإرسال عبر Gmail API',
+      message: `هل أنت متأكد من إرسال ملف النسخة الاحتياطية مباشرة إلى البريد الإلكتروني (${targetEmail}) عبر Gmail API؟`,
+      confirmLabel: 'إرسال الآن',
+      variant: 'primary',
+      onConfirm: () => {
+        void executeSendBackupToGmailDirect(targetEmail);
+      },
+    });
+  };
+
   // Supabase Actions
   const handleSaveAndTestSupabaseConfig = async () => {
+    const validation = validateSupabaseCredentials(supabaseUrlInput, supabaseKeyInput);
+    if ((supabaseUrlInput.trim() || supabaseKeyInput.trim()) && !validation.valid) {
+      setStatusMsg({
+        text: validation.error || 'يرجى التحقق من صحة رابط ومفتاح Supabase (Anon Public Key).',
+        type: 'error',
+      });
+      return;
+    }
     setIsProcessing(true);
     setStatusMsg({ text: 'جاري حفظ إعدادات Supabase والتحقق من الاتصال...', type: 'info' });
     setSupabaseCloudDisabled(false);
@@ -1132,33 +1174,43 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   // Delete Supabase Cloud Database Data
   const handleDeleteSupabaseCloudData = async () => {
-    if (!confirm('هل أنت متأكد من حذف ومسح كافّة السجلات وقاعدة البيانات المسجلة على Supabase نهائياً؟')) {
-      return;
-    }
-    setIsProcessing(true);
-    setStatusMsg({ text: 'جاري مسح وحذف كافة البيانات من قاعدة بيانات Supabase السحابية...', type: 'info' });
-    const res = await clearSupabaseDatabaseData();
-    setIsProcessing(false);
-    if (res.success) {
-      setLastSupabaseSyncTime(null);
-      setUploadedHtmlPublicUrl(null);
-      setStatusMsg({ text: res.message, type: 'success' });
-    } else {
-      setStatusMsg({ text: res.message, type: 'error' });
-    }
+    setPendingActionConfirm({
+      title: 'تأكيد حذف بيانات Supabase نهائياً',
+      message: 'هل أنت متأكد من حذف ومسح كافّة السجلات وقاعدة البيانات المسجلة على Supabase نهائياً؟',
+      confirmLabel: 'حذف من Supabase',
+      variant: 'danger',
+      onConfirm: async () => {
+        setIsProcessing(true);
+        setStatusMsg({ text: 'جاري مسح وحذف كافة البيانات من قاعدة بيانات Supabase السحابية...', type: 'info' });
+        const res = await clearSupabaseDatabaseData();
+        setIsProcessing(false);
+        if (res.success) {
+          setLastSupabaseSyncTime(null);
+          setUploadedHtmlPublicUrl(null);
+          setStatusMsg({ text: res.message, type: 'success' });
+        } else {
+          setStatusMsg({ text: res.message, type: 'error' });
+        }
+      },
+    });
   };
 
   // Delete Published Release Data
   const handleDeletePublishedReleaseData = () => {
-    if (!confirm('هل أنت متأكد من حذف قاعدة البيانات المنشورة وإغلاق الاستضافة السحابية نهائياً؟')) {
-      return;
-    }
-    localStorage.removeItem('TAMWEEN_LAST_PUBLISH_INFO');
-    setLastPublishedInfo(null);
-    handleCancelPublishFromBackup();
-    setStatusMsg({
-      text: 'تم حذف وحظر بيانات قاعدة البيانات المنشورة وتأكيد إغلاق الاستضافة السحابية بنجاح 🗑️!',
-      type: 'success',
+    setPendingActionConfirm({
+      title: 'تأكيد حذف قاعدة البيانات المنشورة',
+      message: 'هل أنت متأكد من حذف قاعدة البيانات المنشورة وإغلاق الاستضافة السحابية نهائياً؟',
+      confirmLabel: 'حذف وإغلاق الاستضافة',
+      variant: 'danger',
+      onConfirm: () => {
+        localStorage.removeItem('TAMWEEN_LAST_PUBLISH_INFO');
+        setLastPublishedInfo(null);
+        handleCancelPublishFromBackup();
+        setStatusMsg({
+          text: 'تم حذف وحظر بيانات قاعدة البيانات المنشورة وتأكيد إغلاق الاستضافة السحابية بنجاح 🗑️!',
+          type: 'success',
+        });
+      },
     });
   };
 
@@ -1177,19 +1229,24 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   // Delete Google Drive Cloud Database & Clear Caches
   const handleDeleteGoogleDriveCloudData = () => {
-    if (!confirm('هل أنت متأكد من مسح وحذف قاعدة البيانات والنسخ السحابية المسجلة على Google Drive والجيميل؟')) {
-      return;
-    }
-    const gmailKey = gmailEmail.trim().toLowerCase();
-    if (gmailKey) {
-      localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`);
-    }
-    localStorage.removeItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD');
-    localStorage.removeItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC');
-    setLastCloudDriveSyncTime(null);
-    setStatusMsg({
-      text: 'تم مسح وحذف كافة حزم وقواعد البيانات المخزنة سحابياً لـ Google Drive بنجاح 🗑️!',
-      type: 'success',
+    setPendingActionConfirm({
+      title: 'تأكيد حذف نسخ Google Drive السحابية',
+      message: 'هل أنت متأكد من مسح وحذف قاعدة البيانات والنسخ السحابية المسجلة على Google Drive والجيميل؟',
+      confirmLabel: 'حذف نسخ Drive',
+      variant: 'danger',
+      onConfirm: () => {
+        const gmailKey = gmailEmail.trim().toLowerCase();
+        if (gmailKey) {
+          localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`);
+        }
+        localStorage.removeItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD');
+        localStorage.removeItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC');
+        setLastCloudDriveSyncTime(null);
+        setStatusMsg({
+          text: 'تم مسح وحذف كافة حزم وقواعد البيانات المخزنة سحابياً لـ Google Drive بنجاح 🗑️!',
+          type: 'success',
+        });
+      },
     });
   };
 
@@ -1207,13 +1264,18 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   // Delete GitHub Cloud Sync Payload Data
   const handleDeleteGithubCloudData = () => {
-    if (!confirm('هل أنت متأكد من مسح وحذف حزمة قاعدة البيانات المخزنة لحساب GitHub؟')) {
-      return;
-    }
-    localStorage.removeItem('TAMWEEN_GITHUB_SYNC_PAYLOAD');
-    setStatusMsg({
-      text: 'تم مسح وحذف حزمة قاعدة البيانات المخزنة لحساب GitHub بنجاح 🗑️!',
-      type: 'success',
+    setPendingActionConfirm({
+      title: 'تأكيد حذف حزمة GitHub',
+      message: 'هل أنت متأكد من مسح وحذف حزمة قاعدة البيانات المخزنة لحساب GitHub؟',
+      confirmLabel: 'حذف الحزمة',
+      variant: 'danger',
+      onConfirm: () => {
+        localStorage.removeItem('TAMWEEN_GITHUB_SYNC_PAYLOAD');
+        setStatusMsg({
+          text: 'تم مسح وحذف حزمة قاعدة البيانات المخزنة لحساب GitHub بنجاح 🗑️!',
+          type: 'success',
+        });
+      },
     });
   };
 
@@ -1237,8 +1299,16 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       localStorage.setItem('TAMWEEN_GITHUB_AUTOSYNC', String(githubAutoSync));
       if (githubToken.trim()) localStorage.setItem('TAMWEEN_GITHUB_TOKEN', githubToken.trim());
 
-      // 3. Save Supabase config
+      // 3. Save Supabase config (with strict credential validation)
       if (supabaseUrlInput.trim() && supabaseKeyInput.trim()) {
+        const validation = validateSupabaseCredentials(supabaseUrlInput.trim(), supabaseKeyInput.trim());
+        if (!validation.valid) {
+          setStatusMsg({
+            text: validation.error || 'بيانات Supabase غير صالحة.',
+            type: 'error',
+          });
+          return;
+        }
         saveSupabaseConfig(supabaseUrlInput.trim(), supabaseKeyInput.trim());
       }
 
@@ -1271,34 +1341,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
-  const handleReset = async () => {
-    // Prompt 1 warning
-    const confirm1 = window.confirm(
-      '⚠️ تحذير رقم (1 من 3): هل أنت متأكد تماماً من رغبتك في مسح كافة البيانات المدخلة وإعادة ضبط المصنع؟ سيتم تصفير المخابز والمديونيات والرسائل نهائياً!'
-    );
-    if (!confirm1) {
-      setResetStep(0);
-      return;
-    }
-
-    // Prompt 2 warning
-    const confirm2 = window.confirm(
-      '🚨 تحذير صارم رقم (2 من 3): تأكيد ثانٍ للحماية! هذا الإجراء سيقوم بحذف وإزالة جميع بيانات المخابز والمديونيات والرسائل المدخلة من هذا الجهاز ومن السحابة نهائياً ولا يمكن استرجاعها! هل تريد الاستمرار بحذف كافة البيانات؟'
-    );
-    if (!confirm2) {
-      setResetStep(0);
-      return;
-    }
-
-    // Prompt 3 warning
-    const confirm3 = window.confirm(
-      '🔥 التحذير الأخير والنهائي رقم (3 من 3): القرار النهائي الحتمي! هل تؤكد وتأذن بالنقر النهائي ومسح كافة البيانات المدخلة وتصفير المنظومة بالكامل والبدء من جديد؟'
-    );
-    if (!confirm3) {
-      setResetStep(0);
-      return;
-    }
-
+  const executeConfirmedFactoryReset = async () => {
+    setFactoryResetModalStep(0);
     setIsProcessing(true);
     setStatusMsg({
       text: 'جاري مسح كافة البيانات المدخلة وتصفير المنظومة وقواعد البيانات وإعادة ضبط المصنع...',
@@ -1324,6 +1368,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleReset = () => {
+    setFactoryResetModalStep(1);
   };
 
   return (
@@ -2985,6 +3033,95 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Generic Non-Blocking Action Confirmation Dialog */}
+      {pendingActionConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-[70] bg-slate-950/75 flex items-center justify-center p-4"
+        >
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <h4 className="text-sm font-black text-slate-900">{pendingActionConfirm.title}</h4>
+            <p className="text-xs font-bold text-slate-600 leading-relaxed">{pendingActionConfirm.message}</p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPendingActionConfirm(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const fn = pendingActionConfirm.onConfirm;
+                  setPendingActionConfirm(null);
+                  fn();
+                }}
+                className={`px-4 py-1.5 rounded-lg text-white text-xs font-black cursor-pointer ${
+                  pendingActionConfirm.variant === 'danger'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-[#1E3A8A] hover:bg-[#0F2342]'
+                }`}
+              >
+                {pendingActionConfirm.confirmLabel || 'تأكيد'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3-Step Protected Factory Reset Dialog */}
+      {factoryResetModalStep > 0 && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-[80] bg-slate-950/80 flex items-center justify-center p-4"
+        >
+          <div className="bg-white border-2 border-red-500 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2 text-red-700 font-black text-sm">
+              <ShieldAlert className="w-5 h-5 shrink-0" />
+              <span>تحذير إعادة ضبط المصنع ({factoryResetModalStep} من 3)</span>
+            </div>
+            <p className="text-xs font-bold text-slate-700 leading-relaxed">
+              {factoryResetModalStep === 1 &&
+                'تحذير رقم (1 من 3): هل أنت متأكد تماماً من رغبتك في مسح كافة البيانات المدخلة وإعادة ضبط المصنع؟ سيتم تصفير المخابز والمديونيات والرسائل نهائياً!'}
+              {factoryResetModalStep === 2 &&
+                'تحذير صارم رقم (2 من 3): تأكيد ثانٍ للحماية! هذا الإجراء سيقوم بحذف وإزالة جميع بيانات المخابز والمديونيات والرسائل المدخلة من هذا الجهاز ومن السحابة نهائياً ولا يمكن استرجاعها! هل تريد الاستمرار؟'}
+              {factoryResetModalStep === 3 &&
+                'التحذير الأخير والنهائي رقم (3 من 3): القرار النهائي الحتمي! هل تؤكد وتأذن بالنقر النهائي ومسح كافة البيانات المدخلة وتصفير المنظومة بالكامل والبدء من جديد؟'}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setFactoryResetModalStep(0);
+                  setResetStep(0);
+                }}
+                className="px-4 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء والتراجع
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (factoryResetModalStep < 3) {
+                    setFactoryResetModalStep((factoryResetModalStep + 1) as 1 | 2 | 3);
+                  } else {
+                    void executeConfirmedFactoryReset();
+                  }
+                }}
+                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-black cursor-pointer"
+              >
+                {factoryResetModalStep < 3 ? `متابعة (${factoryResetModalStep}/3)` : 'تنفيذ المسح الشامل نهائياً'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

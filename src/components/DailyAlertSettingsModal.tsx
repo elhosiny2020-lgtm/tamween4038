@@ -142,7 +142,8 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin) {
-      alert('تعديل وقت التنبيه اليومي وإعداداته مخصص لمديري النظام فقط');
+      setToastMsg('تعديل وقت التنبيه اليومي وإعداداته مخصص لمديري النظام فقط');
+      setTimeout(() => setToastMsg(''), 3500);
       return;
     }
 

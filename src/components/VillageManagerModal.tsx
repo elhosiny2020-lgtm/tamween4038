@@ -19,10 +19,18 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
   const [newVillageName, setNewVillageName] = useState('');
   const [newUnitNames, setNewUnitNames] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [pendingDeleteVillage, setPendingDeleteVillage] = useState<string | null>(null);
 
   // Escape key closing is intentionally disabled per user preference
 
   if (!isOpen) return null;
+
+  const showError = (text: string) => {
+    setMsg('');
+    setErrorMsg(text);
+    setTimeout(() => setErrorMsg(''), 3000);
+  };
 
   const handleAddVillage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,7 +38,7 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
     if (!name) return;
 
     if (list.some((v) => v.village === name)) {
-      alert('هذه القرية موجودة بالفعل');
+      showError('هذه القرية موجودة بالفعل');
       return;
     }
 
@@ -38,15 +46,23 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
     setList(updated);
     setNewVillageName('');
     onSaveVillages(updated);
+    setErrorMsg('');
     setMsg(`تمت إضافة قرية ${name} بنجاح`);
     setTimeout(() => setMsg(''), 2000);
   };
 
   const handleDeleteVillage = (villageName: string) => {
-    if (!confirm(`هل أنت متأكد من حذف قرية "${villageName}" وكافة وحداتها التابعة؟`)) return;
+    setPendingDeleteVillage(villageName);
+  };
+
+  const confirmDeleteVillage = () => {
+    if (!pendingDeleteVillage) return;
+    const villageName = pendingDeleteVillage;
+    setPendingDeleteVillage(null);
     const updated = list.filter((v) => v.village !== villageName);
     setList(updated);
     onSaveVillages(updated);
+    setErrorMsg('');
     setMsg(`تم حذف قرية ${villageName}`);
     setTimeout(() => setMsg(''), 2000);
   };
@@ -55,16 +71,22 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
     const unitName = (newUnitNames[villageName] || '').trim();
     if (!unitName) return;
 
+    let duplicateFound = false;
     const updated = list.map((v) => {
       if (v.village === villageName) {
         if (v.localUnits.includes(unitName)) {
-          alert('هذه الوحدة مضافة بالفعل لهذه القرية');
+          duplicateFound = true;
           return v;
         }
         return { ...v, localUnits: [...v.localUnits, unitName] };
       }
       return v;
     });
+
+    if (duplicateFound) {
+      showError('هذه الوحدة مضافة بالفعل لهذه القرية');
+      return;
+    }
 
     setList(updated);
     setNewUnitNames((prev) => ({ ...prev, [villageName]: '' }));
@@ -137,6 +159,15 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
             </button>
           </form>
         </div>
+
+        {errorMsg && (
+          <div className="mx-4 mt-3 p-2.5 bg-red-50 border border-red-300 text-red-800 rounded-lg text-xs font-black flex items-center justify-between gap-2">
+            <span>{errorMsg}</span>
+            <button type="button" onClick={() => setErrorMsg('')} className="text-red-700 hover:text-red-900 cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {msg && (
           <div className="mx-4 mt-3 p-2 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-black flex items-center gap-2">
@@ -232,6 +263,38 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
           </button>
         </div>
       </div>
+
+      {pendingDeleteVillage && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-[60] bg-slate-950/70 flex items-center justify-center p-4"
+        >
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <h4 className="text-sm font-black text-slate-900">تأكيد حذف القرية</h4>
+            <p className="text-xs font-bold text-slate-600">
+              هل أنت متأكد من حذف قرية &quot;{pendingDeleteVillage}&quot; وكافة وحداتها التابعة؟
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteVillage(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteVillage}
+                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-black cursor-pointer"
+              >
+                حذف نهائياً
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

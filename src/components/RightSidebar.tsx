@@ -67,6 +67,8 @@ export interface RightSidebarProps {
   over20kBakeriesCount?: number;
   uncompletedTasksCount?: number;
   customLogoBase64?: string;
+  connectionStatus?: 'connected' | 'syncing' | 'error' | 'offline';
+  connectionLabel?: string;
 }
 
 const SIDEBAR_STORAGE_KEY = 'tamween_sidebar_erp_groups_v4';
@@ -85,6 +87,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   expiredLicensesCount,
   over20kBakeriesCount,
   customLogoBase64,
+  connectionStatus = 'connected',
+  connectionLabel,
 }) => {
   const bakeriesTotal = bakeriesCount ?? totalBakeriesCount ?? 0;
   const debtsTotal = debtsCount ?? totalDebtsCount ?? 0;
@@ -575,11 +579,32 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
       {/* Bottom Sidebar Footer */}
       {!isCollapsed && (
-        <div className="px-4 py-3 border-t border-slate-800/90 bg-[#040B18] text-[11px] text-slate-400 font-bold flex items-center justify-between">
-          <span>منظومة إدارة التموين والمخابز</span>
-          <span className="inline-flex items-center gap-1.5 text-emerald-400 text-[10px] font-black">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            متصل
+        <div className="px-4 py-3 border-t border-slate-800/90 bg-[#040B18] text-[11px] text-slate-400 font-bold flex items-center justify-between gap-2">
+          <span className="truncate">منظومة إدارة التموين والمخابز</span>
+          <span
+            className={`inline-flex items-center gap-1.5 text-[10px] font-black shrink-0 ${
+              connectionStatus === 'connected'
+                ? 'text-emerald-400'
+                : connectionStatus === 'syncing'
+                ? 'text-amber-400'
+                : 'text-red-400'
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                connectionStatus === 'connected'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : connectionStatus === 'syncing'
+                  ? 'bg-amber-400 animate-ping'
+                  : 'bg-red-500'
+              }`}
+            />
+            {connectionLabel ||
+              (connectionStatus === 'connected'
+                ? 'متصل'
+                : connectionStatus === 'syncing'
+                ? 'مزامنة'
+                : 'غير متصل')}
           </span>
         </div>
       )}

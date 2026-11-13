@@ -76,6 +76,13 @@ import {
 import {
   subscribeToSupabaseRealtime,
   fetchDatabaseFromSupabase,
+  subscribeToConnectionStatus,
+  getCloudConnectionSnapshot,
+  retrySupabaseConnection,
+  CloudConnectionSnapshot,
+  applyRealtimeRowMutation,
+  mapSqlRowToBakery,
+  mapSqlRowToDebt,
 } from './lib/supabase';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
@@ -275,6 +282,17 @@ export default function App() {
   }
   const [saveToast, setSaveToast] = useState<SaveToastInfo | null>(null);
   const [logoutReason, setLogoutReason] = useState<string | null>(null);
+  const [connectionSnapshot, setConnectionSnapshot] = useState<CloudConnectionSnapshot>(() =>
+    getCloudConnectionSnapshot()
+  );
+  const [isRetryingConnection, setIsRetryingConnection] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    variant?: 'danger' | 'primary';
+    onConfirm: () => void;
+  } | null>(null);
 
   // Search & Filter state for main Bakery table
   const [searchTerm, setSearchTerm] = useState('');
@@ -496,13 +514,50 @@ export default function App() {
     testFirestoreConnection().catch(() => {});
   }, []);
 
+  // Subscribe to smart cloud connection state transitions (connected / syncing / error / offline)
+  useEffect(() => {
+    return subscribeToConnectionStatus(setConnectionSnapshot);
+  }, []);
+
+  const lastAppliedCloudTimestampRef = React.useRef<string>('');
+  const applyIncomingCloudStateRef = React.useRef<
+    ((incomingData: AppState, remoteTimestamp?: string) => void) | null
+  >(null);
+
   // Exclusive Real-Time Synchronization via Supabase & Cloud DB across all devices & all branches:
   useEffect(() => {
+    const computeBranchSignature = (
+      bakeries: Bakery[],
+      debts: DebtRecord[],
+      users: AppUser[],
+      config: SystemConfig,
+      branches: SupplyBranch[]
+    ): string => {
+      const bSig = bakeries
+        .map(
+          (b) =>
+            `${b.id}:${b.bakeryOwnerName}:${b.machineNumber}:${b.village}:${b.localUnit}:${b.insuranceValue}:${b.actualQuota}:${b.insuranceQuota}:${b.loavesCount}:${b.activityStatus}:${b.bakeryLicenseDate}`
+        )
+        .join('|');
+      const dSig = debts
+        .map(
+          (d) =>
+            `${d.id}:${d.netRemainingDebt}:${d.paidViolationAmount}:${d.paidAddedAmount}:${d.paidDisposalAmount}:${d.isScheduled ? 1 : 0}`
+        )
+        .join('|');
+      const uSig = users.map((u) => `${u.id}:${u.username}:${u.role}:${u.password || ''}`).join('|');
+      const brSig = branches.map((br) => `${br.id}:${br.name}`).join('|');
+      return `${bakeries.length}#${debts.length}#${users.length}#${config.administrationTitle}#${config.directorateTitle}#${brSig}#${uSig}#${bSig}#${dSig}`;
+    };
+
     const applyIncomingCloudState = (incomingData: AppState, remoteTimestamp?: string) => {
       if (!incomingData) return;
 
       // 1. Write all branch partitions from cloud payload into their respective isolated local storage keys
       syncAllBranchesFromCloudPayload(incomingData, remoteTimestamp);
+      if (remoteTimestamp) {
+        lastAppliedCloudTimestampRef.current = remoteTimestamp;
+      }
 
       setAppState((current) => {
         if (!current) return current;
@@ -518,9 +573,10 @@ export default function App() {
         const nextDebts = Array.isArray(syncedPartition.debts)
           ? syncedPartition.debts
           : current.debts;
-        const nextUsers = Array.isArray(syncedPartition.users) && syncedPartition.users.length > 0
-          ? syncedPartition.users
-          : current.users;
+        const nextUsers =
+          Array.isArray(syncedPartition.users) && syncedPartition.users.length > 0
+            ? syncedPartition.users
+            : current.users;
         const nextConfig: SystemConfig = {
           ...current.systemConfig,
           ...(syncedPartition.systemConfig || {}),
@@ -528,7 +584,6 @@ export default function App() {
           logoBase64: DEFAULT_OFFICIAL_LOGO,
         };
 
-        // Resolve currentUser against the branch's updated users list so branch-specific permissions apply immediately
         const resolvedCurrentUser = current.currentUser
           ? nextUsers.find(
               (u) =>
@@ -537,16 +592,22 @@ export default function App() {
             ) || current.currentUser
           : null;
 
-        // Avoid redundant re-renders if nothing changed for the active branch
-        if (
-          current.bakeries.length === nextBakeries.length &&
-          current.debts.length === nextDebts.length &&
-          JSON.stringify(current.bakeries) === JSON.stringify(nextBakeries) &&
-          JSON.stringify(current.debts) === JSON.stringify(nextDebts) &&
-          JSON.stringify(current.users) === JSON.stringify(nextUsers) &&
-          JSON.stringify(current.systemConfig) === JSON.stringify(nextConfig) &&
-          JSON.stringify(current.branches) === JSON.stringify(mergedBranches)
-        ) {
+        // Avoid redundant re-renders via fast structural signature comparison
+        const currentSig = computeBranchSignature(
+          current.bakeries,
+          current.debts,
+          current.users,
+          current.systemConfig,
+          current.branches || []
+        );
+        const nextSig = computeBranchSignature(
+          nextBakeries,
+          nextDebts,
+          nextUsers,
+          nextConfig,
+          mergedBranches
+        );
+        if (currentSig === nextSig) {
           return current;
         }
 
@@ -565,18 +626,73 @@ export default function App() {
       });
     };
 
-    // 1. Initial boot verification from Cloud / Supabase
-    fetchDatabaseFromSupabase()
-      .then((supaRes) => {
-        if (supaRes && supaRes.success && supaRes.data) {
-          applyIncomingCloudState(supaRes.data, supaRes.timestamp);
-        }
-      })
-      .catch(() => {});
+    applyIncomingCloudStateRef.current = applyIncomingCloudState;
 
-    // 2. Real-time Listener: Adopt live database updates across devices immediately (<100ms)
-    const unsubscribeSupabase = subscribeToSupabaseRealtime((supaData, remoteTimestamp) => {
-      applyIncomingCloudState(supaData, remoteTimestamp);
+    // 1. Deferred initial external Supabase pull (avoids duplicating loadInitialState boot read)
+    const bootSupaTimer = setTimeout(() => {
+      fetchDatabaseFromSupabase()
+        .then((supaRes) => {
+          if (
+            supaRes &&
+            supaRes.success &&
+            supaRes.data &&
+            (!supaRes.timestamp || supaRes.timestamp !== lastAppliedCloudTimestampRef.current)
+          ) {
+            applyIncomingCloudState(supaRes.data, supaRes.timestamp);
+          }
+        })
+        .catch(() => {});
+    }, 1500);
+
+    // 2. Real-time Listener: Adopt live database & row-level updates across devices immediately
+    const unsubscribeSupabase = subscribeToSupabaseRealtime({
+      onUpdate: (supaData, remoteTimestamp) => {
+        applyIncomingCloudState(supaData, remoteTimestamp);
+      },
+      onRowChange: (change) => {
+        setAppState((current) => {
+          if (!current) return current;
+          const activeBranch = current.activeBranchId || DEFAULT_BRANCH_ID;
+          const rowBranch = change.newRow?.branch_id || change.oldRow?.branch_id;
+          if (rowBranch && rowBranch !== activeBranch) {
+            return current;
+          }
+
+          if (change.table === 'bakeries') {
+            const nextBakeries = applyRealtimeRowMutation(
+              current.bakeries,
+              change.eventType,
+              change.newRow,
+              change.oldRow,
+              mapSqlRowToBakery
+            );
+            const synced = synchronizeBakeryAndDebts(nextBakeries, current.debts);
+            return { ...current, bakeries: synced.bakeries, debts: synced.debts };
+          }
+          if (change.table === 'debts') {
+            const nextDebts = applyRealtimeRowMutation(
+              current.debts,
+              change.eventType,
+              change.newRow,
+              change.oldRow,
+              mapSqlRowToDebt
+            );
+            const synced = synchronizeBakeryAndDebts(current.bakeries, nextDebts);
+            return { ...current, bakeries: synced.bakeries, debts: synced.debts };
+          }
+          if (change.table === 'system_config' && change.newRow?.payload) {
+            return {
+              ...current,
+              systemConfig: {
+                ...current.systemConfig,
+                ...(change.newRow.payload as Partial<SystemConfig>),
+                logoBase64: DEFAULT_OFFICIAL_LOGO,
+              },
+            };
+          }
+          return current;
+        });
+      },
     });
 
     // 3. Cross-tab BroadcastChannel listener on same device
@@ -600,9 +716,15 @@ export default function App() {
 
     // 4. Background heartbeat auto-sync interval (every 10s) to guarantee automatic background sync on all devices
     const autoPollInterval = setInterval(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       fetchDatabaseFromSupabase()
         .then((res) => {
-          if (res && res.success && res.data) {
+          if (
+            res &&
+            res.success &&
+            res.data &&
+            (!res.timestamp || res.timestamp !== lastAppliedCloudTimestampRef.current)
+          ) {
             applyIncomingCloudState(res.data, res.timestamp);
           }
         })
@@ -610,6 +732,7 @@ export default function App() {
     }, 10000);
 
     return () => {
+      clearTimeout(bootSupaTimer);
       clearInterval(autoPollInterval);
       unsubscribeSupabase();
       if (bc) {
@@ -1416,6 +1539,29 @@ export default function App() {
     }
   }, []);
 
+  const handleRetryConnection = useCallback(async () => {
+    setIsRetryingConnection(true);
+    try {
+      const res = await retrySupabaseConnection(appStateRef.current);
+      if (res.success && res.pulledData) {
+        applyIncomingCloudStateRef.current?.(res.pulledData, res.pulledTimestamp);
+      }
+      setSaveToast({
+        id: Date.now(),
+        message: res.message,
+        timestamp: getArabicTimestamp(),
+      });
+    } catch (err: any) {
+      setSaveToast({
+        id: Date.now(),
+        message: err?.message || 'تعذر إعادة الاتصال بالخادم السحابي',
+        timestamp: getArabicTimestamp(),
+      });
+    } finally {
+      setIsRetryingConnection(false);
+    }
+  }, []);
+
   // Global Escape key modal closing is intentionally disabled per user preference so windows only close via explicit close buttons.
 
   // Auto-logout when user leaves the computer / idle for 10 minutes (with automatic full pre-logout save)
@@ -1637,10 +1783,16 @@ export default function App() {
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
-    if (confirm(`هل أنت متأكد من حذف المخبز الخاص بـ "${ownerName}" نهائياً من المنظومة؟`)) {
-      const updated = appState.bakeries.filter((b) => String(b.id) !== String(bakeryId));
-      triggerSave({ ...appState, bakeries: updated }, `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات بنجاح`);
-    }
+    setPendingConfirm({
+      title: 'تأكيد حذف المخبز نهائياً',
+      message: `هل أنت متأكد من حذف المخبز الخاص بـ "${ownerName}" نهائياً من المنظومة؟`,
+      confirmLabel: 'حذف المخبز نهائياً',
+      variant: 'danger',
+      onConfirm: () => {
+        const updated = appState.bakeries.filter((b) => String(b.id) !== String(bakeryId));
+        triggerSave({ ...appState, bakeries: updated }, `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات بنجاح`);
+      },
+    });
   };
 
   // Handlers for Debts
@@ -1700,7 +1852,11 @@ export default function App() {
       },
     };
     const res = await saveBackupToPartition(payload);
-    alert(res.message);
+    setSaveToast({
+      id: Date.now(),
+      message: res.message,
+      timestamp: getArabicTimestamp(),
+    });
   };
 
   // Main Bakery table CSV export
@@ -2034,10 +2190,53 @@ export default function App() {
               />
             </button>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#1E3A8A]">
+              <div className="flex items-center gap-2 text-xs font-bold text-[#1E3A8A] flex-wrap">
                 <span>{appState.systemConfig.directorateTitle}</span>
                 <span aria-hidden="true">·</span>
                 <span>{appState.systemConfig.administrationTitle}</span>
+                {/* Smart Connection Status Indicator & Retry Button */}
+                <div className="inline-flex items-center gap-1.5 flex-wrap">
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    data-testid="cloud-connection-indicator"
+                    data-connection-status={connectionSnapshot.status}
+                    title={connectionSnapshot.detail}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border text-[11px] font-black transition-colors ${
+                      connectionSnapshot.status === 'connected'
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                        : connectionSnapshot.status === 'syncing'
+                        ? 'bg-amber-50 text-amber-800 border-amber-300'
+                        : 'bg-red-50 text-red-800 border-red-300'
+                    }`}
+                  >
+                    {connectionSnapshot.status === 'syncing' ? (
+                      <RotateCw className="w-3 h-3 text-amber-600 animate-spin" />
+                    ) : (
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          connectionSnapshot.status === 'connected'
+                            ? 'bg-emerald-500 animate-pulse'
+                            : 'bg-red-600'
+                        }`}
+                      />
+                    )}
+                    <span>{connectionSnapshot.label}</span>
+                  </span>
+                  {(connectionSnapshot.status === 'error' || connectionSnapshot.status === 'offline') && (
+                    <button
+                      type="button"
+                      data-testid="retry-connection-btn"
+                      onClick={handleRetryConnection}
+                      disabled={isRetryingConnection}
+                      title={connectionSnapshot.detail || 'إعادة محاولة الاتصال بخادم Supabase'}
+                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-[11px] font-black shadow-2xs transition cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isRetryingConnection ? 'animate-spin' : ''}`} />
+                      <span>{isRetryingConnection ? 'جاري المحاولة...' : 'إعادة محاولة الاتصال'}</span>
+                    </button>
+                  )}
+                </div>
               </div>
               <h1 className="text-sm sm:text-base font-extrabold text-[#0F2342] truncate">
                 منظومة إدارة بيانات المخابز والتموين والمديونيات
@@ -2279,6 +2478,8 @@ export default function App() {
           logoBase64={appState.systemConfig.logoBase64}
           administrationTitle={appState.systemConfig.administrationTitle}
           directorateTitle={appState.systemConfig.directorateTitle}
+          connectionStatus={connectionSnapshot.status}
+          connectionLabel={connectionSnapshot.label}
         />
 
         {/* Main Workspace Canvas (Matte Off-White) */}
@@ -2428,9 +2629,13 @@ export default function App() {
                 type="button"
                 onClick={() =>
                   runGuardedAction(() => {
-                    if (confirm('هل ترغب في إعادة احتساب وتدقيق جميع المعادلات الحسابية لكافة المخابز والمديونيات الآن؟')) {
-                      handleRecalculateAllDatabaseEquations();
-                    }
+                    setPendingConfirm({
+                      title: 'إعادة احتساب نتائج المعادلات',
+                      message: 'هل ترغب في إعادة احتساب وتدقيق جميع المعادلات الحسابية لكافة المخابز والمديونيات الآن؟',
+                      confirmLabel: 'تنفيذ إعادة الاحتساب',
+                      variant: 'primary',
+                      onConfirm: () => handleRecalculateAllDatabaseEquations(),
+                    });
                   })
                 }
                 className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-[#0F2342] border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
@@ -4848,6 +5053,62 @@ export default function App() {
           }
         }}
       />
+
+      {/* In-App Accessible Confirmation Modal (Replaces window.confirm) */}
+      {pendingConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="app-confirm-title"
+          className="fixed inset-0 z-[10000] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div
+                className={`p-2.5 rounded-xl shrink-0 ${
+                  pendingConfirm.variant === 'danger'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-blue-100 text-[#1E3A8A]'
+                }`}
+              >
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 id="app-confirm-title" className="text-sm font-black text-[#0F2342]">
+                  {pendingConfirm.title}
+                </h3>
+                <p className="text-xs font-semibold text-slate-600 mt-1.5 leading-relaxed">
+                  {pendingConfirm.message}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPendingConfirm(null)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer transition"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const fn = pendingConfirm.onConfirm;
+                  setPendingConfirm(null);
+                  fn();
+                }}
+                className={`px-4 py-2 rounded-xl text-white text-xs font-black cursor-pointer transition shadow-xs ${
+                  pendingConfirm.variant === 'danger'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-[#1E3A8A] hover:bg-[#0F2342]'
+                }`}
+              >
+                {pendingConfirm.confirmLabel || 'تأكيد'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
