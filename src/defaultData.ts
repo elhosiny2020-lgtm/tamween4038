@@ -137,6 +137,11 @@ export const DEFAULT_LEASE_CONTRACT_TYPES: string[] = [
   'تمليك'
 ];
 
+export const DEFAULT_RESPONSIBLE_MANAGER_OPTIONS: string[] = [
+  'نفسه',
+  'نفسها'
+];
+
 export const DEFAULT_COLUMN_TITLES: ColumnTitles = {
   index: 'م',
   bakeryOwnerName: 'اسم صاحب المخبز',

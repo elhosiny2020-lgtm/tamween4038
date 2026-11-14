@@ -149,14 +149,20 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
       existing.totalInsuranceQuota += Number(b.insuranceQuota) || 0;
       existing.totalActualQuota += Number(b.actualQuota) || 0;
       existing.totalLoaves += Number(b.loavesCount) || 0;
-      existing.totalPopulation += Number(b.villagePopulation) || 0;
-      existing.totalBen2023 += Number(b.beneficiaries2023) || 0;
-      existing.totalBen2024 += Number(b.beneficiaries2024) || 0;
-      existing.totalBen2025 += Number(b.beneficiaries2025) || 0;
+
+      // Demographics are shared per local unit and counted once per unit
+      const pop = Number(b.villagePopulation) || 0;
+      const ben23 = Number(b.beneficiaries2023) || 0;
+      const ben24 = Number(b.beneficiaries2024) || 0;
+      const ben25 = Number(b.beneficiaries2025) || 0;
+      if (existing.totalPopulation === 0 && pop > 0) existing.totalPopulation = pop;
+      if (existing.totalBen2023 === 0 && ben23 > 0) existing.totalBen2023 = ben23;
+      if (existing.totalBen2024 === 0 && ben24 > 0) existing.totalBen2024 = ben24;
+      if (existing.totalBen2025 === 0 && ben25 > 0) existing.totalBen2025 = ben25;
+
       existing.sumAvg2023 += parseFloat(String(b.avg2023 || '0')) || 0;
       existing.sumAvg2024 += parseFloat(String(b.avg2024 || '0')) || 0;
       existing.sumAvg2025 += parseFloat(String(b.avg2025 || '0')) || 0;
-      existing.sumAvgDiff += parseFloat(String(b.avgDiff || '0')) || 0;
 
       // Debt calculation
       const bDebt = debtsMap[b.id] || 0;
@@ -167,17 +173,22 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
 
     const totalBakeriesCount = bakeries.length || 1;
 
-    // Convert map to array with summed averages
+    // Convert map to array with summed averages and cumulative subtraction avg2023 - avg2024 - avg2025
     const rows: LocalUnitSummaryRow[] = Array.from(unitsMap.values()).map((item) => {
       const avgDebt = item.bakeryCount > 0 ? item.totalDebts / item.bakeryCount : 0;
       const pct = (item.bakeryCount / totalBakeriesCount) * 100;
+      const a23 = Number(item.sumAvg2023.toFixed(2));
+      const a24 = Number(item.sumAvg2024.toFixed(2));
+      const a25 = Number(item.sumAvg2025.toFixed(2));
+      const diff = Number((a23 - a24 - a25).toFixed(2));
 
       return {
         ...item,
-        avg2023: item.sumAvg2023.toFixed(2),
-        avg2024: item.sumAvg2024.toFixed(2),
-        avg2025: item.sumAvg2025.toFixed(2),
-        avgDiff: item.sumAvgDiff.toFixed(2),
+        sumAvgDiff: diff,
+        avg2023: a23.toFixed(2),
+        avg2024: a24.toFixed(2),
+        avg2025: a25.toFixed(2),
+        avgDiff: diff.toFixed(2),
         avgDebtPerBakery: Math.round(avgDebt),
         percentageOfBakeries: Number(pct.toFixed(1)),
       };
@@ -257,13 +268,16 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
       }
     );
 
+    const totalA23 = Number(res.avg2023Sum.toFixed(2));
+    const totalA24 = Number(res.avg2024Sum.toFixed(2));
+    const totalA25 = Number(res.avg2025Sum.toFixed(2));
     return {
       ...res,
       uniqueVillages: villagesSet.size,
-      avg2023: res.avg2023Sum.toFixed(2),
-      avg2024: res.avg2024Sum.toFixed(2),
-      avg2025: res.avg2025Sum.toFixed(2),
-      avgDiff: res.avgDiffSum.toFixed(2),
+      avg2023: totalA23.toFixed(2),
+      avg2024: totalA24.toFixed(2),
+      avg2025: totalA25.toFixed(2),
+      avgDiff: (totalA23 - totalA24 - totalA25).toFixed(2),
     };
   }, [filteredAndSortedRows]);
 

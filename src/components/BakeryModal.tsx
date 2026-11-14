@@ -12,6 +12,7 @@ import {
   calculateCumulativeDifference,
   extractBreadLoafMultiplier,
   normalizeBakeryCalculations,
+  findLocalUnitDemographics,
 } from '../utils/auditHelper';
 import {
   X,
@@ -44,6 +45,7 @@ interface BakeryModalProps {
   lineTypes?: string[];
   fuelTypes?: string[];
   leaseContractTypes?: string[];
+  responsibleManagerOptions?: string[];
   currentUser?: AppUser | null;
   onSave: (bakery: Bakery) => void;
   onAddActivityStatus?: (status: string) => void;
@@ -56,7 +58,8 @@ interface BakeryModalProps {
       | 'breadTypeCounts'
       | 'lineTypes'
       | 'fuelTypes'
-      | 'leaseContractTypes',
+      | 'leaseContractTypes'
+      | 'responsibleManagerOptions',
     updatedList: string[]
   ) => void;
   onUpdateVillages?: (updatedVillages: VillageHierarchy[]) => void;
@@ -76,6 +79,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   lineTypes = ['نصف آلي', 'آلي كامل', 'يدوي', 'ميكانيكي كامل'],
   fuelTypes = ['غاز طبيعي', 'سولار', 'مازوت', 'كهرباء'],
   leaseContractTypes = ['إيجار', 'تمليك'],
+  responsibleManagerOptions = ['نفسه', 'نفسها'],
   currentUser,
   onSave,
   onAddActivityStatus,
@@ -88,6 +92,8 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   // Inline quick adds & full inline edit/delete manager for any dropdown
   const [showAddUnitInput, setShowAddUnitInput] = useState(false);
   const [newUnitInput, setNewUnitInput] = useState('');
+  const [showAddVillageInput, setShowAddVillageInput] = useState(false);
+  const [newVillageInput, setNewVillageInput] = useState('');
   const [showAddStatusInput, setShowAddStatusInput] = useState(false);
   const [newStatusInput, setNewStatusInput] = useState('');
 
@@ -103,6 +109,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     | 'lineTypes'
     | 'fuelTypes'
     | 'leaseContractTypes'
+    | 'responsibleManagerOptions'
   >(null);
   const [dropdownNewItemText, setDropdownNewItemText] = useState('');
   const [dropdownEditingItem, setDropdownEditingItem] = useState<{ oldVal: string; newVal: string } | null>(null);
@@ -112,7 +119,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [machineNumber, setMachineNumber] = useState('');
   const [selectedVillage, setSelectedVillage] = useState(villages[0]?.village || 'بشبيش');
   const [selectedUnit, setSelectedUnit] = useState(villages[0]?.localUnits[0] || 'بشبيش الرئيسية');
-  const [responsibleManager, setResponsibleManager] = useState('');
+  const [responsibleManager, setResponsibleManager] = useState(responsibleManagerOptions[0] || 'نفسه');
 
   // Quotas & Calculations
   const [insuranceQuota, setInsuranceQuota] = useState<number>(20);
@@ -131,6 +138,8 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [beneficiaries2025, setBeneficiaries2025] = useState<number>(29800);
   const [avg2025, setAvg2025] = useState<string>('0.906');
   const [avgDiff, setAvgDiff] = useState<string>('-0.094');
+  const [isDemographicsPinned, setIsDemographicsPinned] = useState<boolean>(false);
+  const [unitSiblingCount, setUnitSiblingCount] = useState<number>(0);
 
   // Classification & Operations
   const [activityStatus, setActivityStatus] = useState('شغال');
@@ -168,8 +177,33 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [lastAutoSaveTime, setLastAutoSaveTime] = useState<string>('');
 
+  // Merge official hierarchy villages with any active villages/localUnits in existingBakeries
+  const mergedVillages: VillageHierarchy[] = React.useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    (villages || []).forEach((v) => {
+      const vName = (v.village || '').trim();
+      if (!vName) return;
+      if (!map.has(vName)) map.set(vName, new Set());
+      (v.localUnits || []).forEach((u) => {
+        const uName = (u || '').trim();
+        if (uName) map.get(vName)!.add(uName);
+      });
+    });
+    (existingBakeries || []).forEach((b) => {
+      const vName = (b.village || '').trim();
+      const uName = (b.localUnit || '').trim();
+      if (!vName) return;
+      if (!map.has(vName)) map.set(vName, new Set());
+      if (uName) map.get(vName)!.add(uName);
+    });
+    return Array.from(map.entries()).map(([village, unitsSet]) => ({
+      village,
+      localUnits: Array.from(unitsSet),
+    }));
+  }, [villages, existingBakeries]);
+
   // Sync available local units when village changes
-  const currentVillageUnits = villages.find((v) => v.village === selectedVillage)?.localUnits || [];
+  const currentVillageUnits = mergedVillages.find((v) => v.village === selectedVillage)?.localUnits || [];
 
   // Effect to automatically persist draft on any field change
   useEffect(() => {
@@ -271,12 +305,13 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   ]);
 
   useEffect(() => {
+    if (!isOpen) return;
     if (bakeryToEdit) {
       setOwnerName(bakeryToEdit.bakeryOwnerName);
       setMachineNumber(bakeryToEdit.machineNumber);
       setSelectedVillage(bakeryToEdit.village);
       setSelectedUnit(bakeryToEdit.localUnit);
-      setResponsibleManager(bakeryToEdit.responsibleManager || '');
+      setResponsibleManager(bakeryToEdit.responsibleManager || responsibleManagerOptions[0] || 'نفسه');
 
       setInsuranceQuota(bakeryToEdit.insuranceQuota);
       setActualQuota(bakeryToEdit.actualQuota);
@@ -284,16 +319,65 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setInsuranceCheckNumber(bakeryToEdit.insuranceCheckNumber || '');
       setLoavesCount(bakeryToEdit.loavesCount);
 
-      setVillagePopulation(bakeryToEdit.villagePopulation);
-      const parsedPerCapita = parseFloat(String(bakeryToEdit.perCapitaAverage || '0'));
-      setPerCapitaAverage(!isNaN(parsedPerCapita) ? parsedPerCapita.toFixed(2) : '0.00');
-      setBeneficiaries2023(bakeryToEdit.beneficiaries2023);
-      setAvg2023(bakeryToEdit.avg2023);
-      setBeneficiaries2024(bakeryToEdit.beneficiaries2024);
-      setAvg2024(bakeryToEdit.avg2024);
-      setBeneficiaries2025(bakeryToEdit.beneficiaries2025);
-      setAvg2025(bakeryToEdit.avg2025);
-      setAvgDiff(bakeryToEdit.avgDiff);
+      const siblingDemo = findLocalUnitDemographics(
+        existingBakeries,
+        bakeryToEdit.village,
+        bakeryToEdit.localUnit,
+        bakeryToEdit.id
+      );
+
+      if (siblingDemo) {
+        setUnitSiblingCount(siblingDemo.siblingCount);
+        setIsDemographicsPinned(true);
+        const finalPop =
+          (Number(bakeryToEdit.villagePopulation) || 0) > 0
+            ? bakeryToEdit.villagePopulation
+            : siblingDemo.villagePopulation;
+        const finalB23 =
+          (Number(bakeryToEdit.beneficiaries2023) || 0) > 0
+            ? bakeryToEdit.beneficiaries2023
+            : siblingDemo.beneficiaries2023;
+        const finalB24 =
+          (Number(bakeryToEdit.beneficiaries2024) || 0) > 0
+            ? bakeryToEdit.beneficiaries2024
+            : siblingDemo.beneficiaries2024;
+        const finalB25 =
+          (Number(bakeryToEdit.beneficiaries2025) || 0) > 0
+            ? bakeryToEdit.beneficiaries2025
+            : siblingDemo.beneficiaries2025;
+
+        setVillagePopulation(finalPop);
+        setBeneficiaries2023(finalB23);
+        setBeneficiaries2024(finalB24);
+        setBeneficiaries2025(finalB25);
+
+        const loaves = Number(bakeryToEdit.loavesCount) || 0;
+        const rawA23 = finalB23 > 0 ? loaves / finalB23 : 0;
+        const rawA24 = finalB24 > 0 ? loaves / finalB24 : 0;
+        const rawA25 = finalB25 > 0 ? loaves / finalB25 : 0;
+        setAvg2023(finalB23 > 0 ? rawA23.toFixed(2) : '0.00');
+        setAvg2024(finalB24 > 0 ? rawA24.toFixed(2) : '0.00');
+        setAvg2025(finalB25 > 0 ? rawA25.toFixed(2) : '0.00');
+        setPerCapitaAverage(finalB25 > 0 ? rawA25.toFixed(2) : '0.00');
+        setAvgDiff(
+          finalB23 > 0 || finalB24 > 0 || finalB25 > 0
+            ? (rawA23 - rawA24 - rawA25).toFixed(2)
+            : '0.00'
+        );
+      } else {
+        setUnitSiblingCount(0);
+        setIsDemographicsPinned(false);
+        setVillagePopulation(bakeryToEdit.villagePopulation);
+        const parsedPerCapita = parseFloat(String(bakeryToEdit.perCapitaAverage || '0'));
+        setPerCapitaAverage(!isNaN(parsedPerCapita) ? parsedPerCapita.toFixed(2) : '0.00');
+        setBeneficiaries2023(bakeryToEdit.beneficiaries2023);
+        setAvg2023(bakeryToEdit.avg2023);
+        setBeneficiaries2024(bakeryToEdit.beneficiaries2024);
+        setAvg2024(bakeryToEdit.avg2024);
+        setBeneficiaries2025(bakeryToEdit.beneficiaries2025);
+        setAvg2025(bakeryToEdit.avg2025);
+        setAvgDiff(bakeryToEdit.avgDiff);
+      }
 
       setActivityStatus(bakeryToEdit.activityStatus || 'شغال');
       setBakeryCategory(bakeryToEdit.bakeryCategory || 'مخبز بلدي مدعم');
@@ -320,11 +404,12 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       // Reset for new bakery
       setOwnerName('');
       setMachineNumber('');
-      const defaultV = villages[0]?.village || 'بشبيش';
+      const defaultV = mergedVillages[0]?.village || existingBakeries[0]?.village || 'بشبيش';
       setSelectedVillage(defaultV);
-      const units = villages.find((v) => v.village === defaultV)?.localUnits || [];
-      setSelectedUnit(units[0] || 'بشبيش الرئيسية');
-      setResponsibleManager('');
+      const units = mergedVillages.find((v) => v.village === defaultV)?.localUnits || [];
+      const defaultU = units[0] || existingBakeries[0]?.localUnit || 'بشبيش الرئيسية';
+      setSelectedUnit(defaultU);
+      setResponsibleManager(responsibleManagerOptions[0] || 'نفسه');
 
       setInsuranceQuota(20);
       setActualQuota(20);
@@ -332,16 +417,33 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setInsuranceCheckNumber('');
       const loaves = 20 * 660; // 13200
       setLoavesCount(loaves);
-      setVillagePopulation(30000);
-      setBeneficiaries2023(27000);
-      setAvg2023((loaves / 27000).toFixed(2));
-      setBeneficiaries2024(28500);
-      setAvg2024((loaves / 28500).toFixed(2));
-      setBeneficiaries2025(29800);
-      const a25 = (loaves / 29800).toFixed(2);
+
+      const unitMatch = findLocalUnitDemographics(existingBakeries, defaultV, defaultU);
+      const initPop = unitMatch ? unitMatch.villagePopulation : 30000;
+      const initB23 = unitMatch ? unitMatch.beneficiaries2023 : 27000;
+      const initB24 = unitMatch ? unitMatch.beneficiaries2024 : 28500;
+      const initB25 = unitMatch ? unitMatch.beneficiaries2025 : 29800;
+
+      setUnitSiblingCount(unitMatch ? unitMatch.siblingCount : 0);
+      setIsDemographicsPinned(Boolean(unitMatch));
+
+      setVillagePopulation(initPop);
+      setBeneficiaries2023(initB23);
+      const rawA23 = initB23 > 0 ? loaves / initB23 : 0;
+      setAvg2023(initB23 > 0 ? rawA23.toFixed(2) : '0.00');
+      setBeneficiaries2024(initB24);
+      const rawA24 = initB24 > 0 ? loaves / initB24 : 0;
+      setAvg2024(initB24 > 0 ? rawA24.toFixed(2) : '0.00');
+      setBeneficiaries2025(initB25);
+      const rawA25 = initB25 > 0 ? loaves / initB25 : 0;
+      const a25 = initB25 > 0 ? rawA25.toFixed(2) : '0.00';
       setAvg2025(a25);
       setPerCapitaAverage(a25);
-      setAvgDiff((loaves / 27000 - loaves / 28500 - loaves / 29800).toFixed(2));
+      setAvgDiff(
+        initB23 > 0 || initB24 > 0 || initB25 > 0
+          ? (rawA23 - rawA24 - rawA25).toFixed(2)
+          : '0.00'
+      );
 
       setActivityStatus('شغال');
       setBakeryCategory('مخبز بلدي مدعم');
@@ -367,14 +469,46 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setNotes('');
     }
     setErrors({});
-  }, [bakeryToEdit, isOpen, villages]);
+  }, [bakeryToEdit, isOpen]);
 
   const [calcFeedback, setCalcFeedback] = useState<string | null>(null);
 
+  const applyLocalUnitDemographics = (targetVillage: string, targetUnit: string) => {
+    const unitMatch = findLocalUnitDemographics(
+      existingBakeries,
+      targetVillage,
+      targetUnit,
+      bakeryToEdit?.id
+    );
+    if (unitMatch) {
+      setUnitSiblingCount(unitMatch.siblingCount);
+      setIsDemographicsPinned(true);
+      setVillagePopulation(unitMatch.villagePopulation);
+      setBeneficiaries2023(unitMatch.beneficiaries2023);
+      setBeneficiaries2024(unitMatch.beneficiaries2024);
+      setBeneficiaries2025(unitMatch.beneficiaries2025);
+      calculateAllAverages(
+        insuranceQuota,
+        unitMatch.villagePopulation,
+        unitMatch.beneficiaries2023,
+        unitMatch.beneficiaries2024,
+        unitMatch.beneficiaries2025,
+        insuranceValue,
+        actualQuota,
+        breadTypeCount
+      );
+    } else {
+      setUnitSiblingCount(0);
+      setIsDemographicsPinned(false);
+    }
+  };
+
   const handleVillageChange = (vName: string) => {
     setSelectedVillage(vName);
-    const units = villages.find((v) => v.village === vName)?.localUnits || [];
-    setSelectedUnit(units[0] || '');
+    const units = mergedVillages.find((v) => v.village === vName)?.localUnits || [];
+    const nextUnit = units[0] || '';
+    setSelectedUnit(nextUnit);
+    applyLocalUnitDemographics(vName, nextUnit);
   };
 
   // Dedicated Auto-Calculation Engine:
@@ -569,7 +703,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       machineNumber: machineNumber.trim(),
       village: selectedVillage,
       localUnit: selectedUnit,
-      responsibleManager: responsibleManager.trim(),
+      responsibleManager: responsibleManager.trim() || responsibleManagerOptions[0] || 'نفسه',
       insuranceQuota: Number(insuranceQuota) || 0,
       actualQuota: Number(actualQuota) || 0,
       insuranceValue: Number(insuranceValue) || 0,
@@ -621,7 +755,8 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       | 'breadTypeCounts'
       | 'lineTypes'
       | 'fuelTypes'
-      | 'leaseContractTypes';
+      | 'leaseContractTypes'
+      | 'responsibleManagerOptions';
     title: string;
     items: string[];
     currentVal: string;
@@ -683,6 +818,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
           items: leaseContractTypes,
           currentVal: leaseContractType,
           setVal: setLeaseContractType,
+        };
+      case 'responsibleManagerOptions':
+        return {
+          key: 'responsibleManagerOptions',
+          title: 'المدير المسئول (نفسه / نفسها / إضافة اسم)',
+          items: responsibleManagerOptions,
+          currentVal: responsibleManager,
+          setVal: setResponsibleManager,
         };
       default:
         return null;
@@ -843,17 +986,62 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">القرية</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">القرية</label>
+                  <button
+                    type="button"
+                    data-testid="toggle-add-village-btn"
+                    onClick={() => setShowAddVillageInput(!showAddVillageInput)}
+                    className="text-[10px] text-amber-700 hover:text-amber-900 font-black bg-amber-50 px-2 py-0.5 rounded border border-amber-200 cursor-pointer"
+                  >
+                    {showAddVillageInput ? 'إلغاء' : '+ قرية جديدة'}
+                  </button>
+                </div>
+                {showAddVillageInput && (
+                  <div className="flex items-center gap-1.5 mb-2 animate-in fade-in">
+                    <input
+                      type="text"
+                      data-testid="new-village-input"
+                      value={newVillageInput}
+                      onChange={(e) => setNewVillageInput(e.target.value)}
+                      placeholder="اسم القرية الجديدة"
+                      className="flex-1 px-2.5 py-1 bg-white border border-amber-400 rounded-lg text-xs font-bold"
+                    />
+                    <button
+                      type="button"
+                      data-testid="save-new-village-btn"
+                      onClick={() => {
+                        const val = newVillageInput.trim();
+                        if (!val) return;
+                        if (onAddLocalUnit) {
+                          onAddLocalUnit(val, `${val} الرئيسية`);
+                        }
+                        setSelectedVillage(val);
+                        setSelectedUnit(`${val} الرئيسية`);
+                        applyLocalUnitDemographics(val, `${val} الرئيسية`);
+                        setNewVillageInput('');
+                        setShowAddVillageInput(false);
+                      }}
+                      className="px-2.5 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-black cursor-pointer"
+                    >
+                      حفظ
+                    </button>
+                  </div>
+                )}
                 <select
+                  data-testid="bakery-village-select"
                   value={selectedVillage}
                   onChange={(e) => handleVillageChange(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
                 >
-                  {villages.map((v) => (
+                  {mergedVillages.map((v) => (
                     <option key={v.village} value={v.village}>
                       {v.village}
                     </option>
                   ))}
+                  {selectedVillage && !mergedVillages.some((v) => v.village === selectedVillage) && (
+                    <option value={selectedVillage}>{selectedVillage}</option>
+                  )}
                 </select>
               </div>
 
@@ -889,6 +1077,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                           onAddLocalUnit(selectedVillage, val);
                         }
                         setSelectedUnit(val);
+                        applyLocalUnitDemographics(selectedVillage, val);
                         setNewUnitInput('');
                         setShowAddUnitInput(false);
                       }}
@@ -900,8 +1089,13 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 )}
 
                 <select
+                  data-testid="bakery-local-unit-select"
                   value={selectedUnit}
-                  onChange={(e) => setSelectedUnit(e.target.value)}
+                  onChange={(e) => {
+                    const nextU = e.target.value;
+                    setSelectedUnit(nextU);
+                    applyLocalUnitDemographics(selectedVillage, nextU);
+                  }}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
                 >
                   {currentVillageUnits.map((u) => (
@@ -916,19 +1110,191 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-xs font-black text-slate-700 mb-1">
-                  المدير المسئول
-                </label>
-                <input
-                  type="text"
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">
+                    المدير المسئول
+                  </label>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      data-testid="responsible-manager-editor-toggle"
+                      onClick={() => {
+                        setOpenDropdownEditor(
+                          openDropdownEditor === 'responsibleManagerOptions'
+                            ? null
+                            : 'responsibleManagerOptions'
+                        );
+                        setDropdownEditingItem(null);
+                        setDropdownNewItemText('');
+                      }}
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-black bg-amber-100 px-2 py-0.5 rounded border border-amber-300 cursor-pointer"
+                      title="إضافة اسم أو تعديل أو حذف في قائمة المدير المسئول"
+                    >
+                      {openDropdownEditor === 'responsibleManagerOptions'
+                        ? 'إغلاق القائمة'
+                        : '✏️ إضافة اسم / تعديل / حذف'}
+                    </button>
+                  )}
+                </div>
+                <select
                   data-testid="bakery-responsible-manager-input"
                   value={responsibleManager}
                   onChange={(e) => setResponsibleManager(e.target.value)}
-                  placeholder="اسم المدير المسئول عن المخبز"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 text-right"
-                />
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                >
+                  {responsibleManagerOptions.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                  {responsibleManager && !responsibleManagerOptions.includes(responsibleManager) && (
+                    <option value={responsibleManager}>{responsibleManager}</option>
+                  )}
+                </select>
               </div>
             </div>
+
+            {/* Inline Editor Drawer for المدير المسئول (إضافة اسم / تعديل / حذف) */}
+            {activeInlineList && activeInlineList.key === 'responsibleManagerOptions' && !isReadOnly && (
+              <div className="mt-3 p-3.5 bg-white border-2 border-amber-400 rounded-xl shadow-md space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <span className="text-xs font-black text-amber-950">
+                    ⚙️ إدارة وتعديل وحذف عناصر القائمة المنسدلة: ({activeInlineList.title})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setOpenDropdownEditor(null)}
+                    className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-[11px] font-black cursor-pointer"
+                  >
+                    إغلاق القائمة ✕
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    data-testid="responsible-manager-new-item-input"
+                    value={dropdownNewItemText}
+                    onChange={(e) => setDropdownNewItemText(e.target.value)}
+                    placeholder="إضافة اسم مدير مسئول جديد..."
+                    className="flex-1 px-3 py-1.5 bg-slate-50 border border-amber-400 rounded-lg text-xs font-black text-slate-900"
+                  />
+                  <button
+                    type="button"
+                    data-testid="responsible-manager-add-item-btn"
+                    onClick={() => {
+                      const clean = dropdownNewItemText.trim();
+                      if (!clean) return;
+                      if (!activeInlineList.items.includes(clean)) {
+                        const updated = [...activeInlineList.items, clean];
+                        if (onUpdateDropdownList) {
+                          onUpdateDropdownList(activeInlineList.key, updated);
+                        }
+                      }
+                      activeInlineList.setVal(clean);
+                      setDropdownNewItemText('');
+                    }}
+                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black cursor-pointer"
+                  >
+                    + إضافة اسم واختيار
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-44 overflow-y-auto">
+                  {activeInlineList.items.map((item) => {
+                    const isEditing = dropdownEditingItem?.oldVal === item;
+                    return (
+                      <div
+                        key={item}
+                        className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                      >
+                        {isEditing ? (
+                          <div className="flex items-center gap-1 flex-1">
+                            <input
+                              type="text"
+                              value={dropdownEditingItem.newVal}
+                              onChange={(e) =>
+                                setDropdownEditingItem({
+                                  ...dropdownEditingItem,
+                                  newVal: e.target.value,
+                                })
+                              }
+                              className="flex-1 px-2 py-0.5 bg-white border border-amber-500 rounded text-xs font-black"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const clean = dropdownEditingItem.newVal.trim();
+                                if (clean && clean !== item) {
+                                  const updated = activeInlineList.items.map((x) =>
+                                    x === item ? clean : x
+                                  );
+                                  if (onUpdateDropdownList) {
+                                    onUpdateDropdownList(activeInlineList.key, updated);
+                                  }
+                                  if (activeInlineList.currentVal === item) {
+                                    activeInlineList.setVal(clean);
+                                  }
+                                }
+                                setDropdownEditingItem(null);
+                              }}
+                              className="px-2 py-0.5 bg-emerald-600 text-white rounded text-[10px] font-black cursor-pointer"
+                            >
+                              حفظ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDropdownEditingItem(null)}
+                              className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[10px] font-black cursor-pointer"
+                            >
+                              إلغاء
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span
+                              onClick={() => activeInlineList.setVal(item)}
+                              className="font-black text-slate-900 cursor-pointer hover:text-amber-700 flex-1 truncate"
+                              title="اضغط لاختيار هذا العنصر"
+                            >
+                              {item}
+                            </span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDropdownEditingItem({ oldVal: item, newVal: item })
+                                }
+                                className="px-1.5 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded text-[10px] font-black cursor-pointer"
+                              >
+                                تعديل
+                              </button>
+                              <button
+                                type="button"
+                                disabled={activeInlineList.items.length <= 1}
+                                onClick={() => {
+                                  if (activeInlineList.items.length <= 1) return;
+                                  const updated = activeInlineList.items.filter((x) => x !== item);
+                                  if (onUpdateDropdownList) {
+                                    onUpdateDropdownList(activeInlineList.key, updated);
+                                  }
+                                  if (activeInlineList.currentVal === item && updated.length > 0) {
+                                    activeInlineList.setVal(updated[0]);
+                                  }
+                                }}
+                                className="px-1.5 py-0.5 bg-red-100 hover:bg-red-200 disabled:opacity-40 text-red-800 rounded text-[10px] font-black cursor-pointer"
+                              >
+                                حذف
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section 2: Classification and Operations (مع مفتاح تعديل وحذف لكل قائمة منسدلة) */}
@@ -1226,7 +1592,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             </div>
 
             {/* Inline Dropdown List Editor Drawer (يظهر داخل المفتاح للتعديل والحذف والإضافة فوراً) */}
-            {activeInlineList && activeInlineList.key !== 'leaseContractTypes' && !isReadOnly && (
+            {activeInlineList && activeInlineList.key !== 'leaseContractTypes' && activeInlineList.key !== 'responsibleManagerOptions' && !isReadOnly && (
               <div className="mt-3 p-3.5 bg-white border-2 border-amber-400 rounded-xl shadow-md space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                   <span className="text-xs font-black text-amber-950">
@@ -1647,20 +2013,58 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
           {/* Section 5: Demographics & Yearly Averages (الترتيب المعتمد: سكان القرية -> مستفيد عام 2023 -> مستفيدين عام 2024 -> مستفيدين عام 2025 -> متوسط عام 2023 -> متوسط عام 2024 -> متوسط عام 2025 -> الفرق التراكمي) */}
           <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
-            <h4 className="text-xs font-black text-slate-800 pb-2 mb-3 border-b border-slate-200 flex items-center gap-1.5">
-              <Calculator className="w-4 h-4 text-amber-600" />
-              5. إحصائيات السكان والمستفيدين والمتوسطات (2023 - 2025)
-            </h4>
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-3 border-b border-slate-200">
+              <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                <Calculator className="w-4 h-4 text-amber-600" />
+                5. إحصائيات السكان والمستفيدين والمتوسطات (2023 - 2025)
+              </h4>
+              {unitSiblingCount > 0 && !isReadOnly && (
+                <button
+                  type="button"
+                  data-testid="toggle-demographics-pin-btn"
+                  onClick={() => setIsDemographicsPinned((prev) => !prev)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition cursor-pointer ${
+                    isDemographicsPinned
+                      ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-400'
+                      : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-950 border-emerald-400'
+                  }`}
+                >
+                  {isDemographicsPinned
+                    ? '🔓 فك التثبيت لتعديل قيم الوحدة'
+                    : '📌 إعادة تثبيت القيم الموحدة'}
+                </button>
+              )}
+            </div>
+
+            {unitSiblingCount > 0 && (
+              <div
+                data-testid="demographics-pinned-banner"
+                className="mb-3 p-2.5 bg-amber-50 border border-amber-400 rounded-lg text-[11px] font-black text-amber-950 flex items-center justify-between gap-2"
+              >
+                <span>
+                  {isDemographicsPinned
+                    ? `📌 قيمة موحدة ومثبتة للوحدة المحلية (${selectedUnit}) — يوجد (${unitSiblingCount}) مخبز آخر مسجل بنفس الوحدة، وهذه القيم واحدة لجميع أصحاب المخابز داخل الوحدة.`
+                    : `✏️ تم فك التثبيت مؤقتاً للوحدة المحلية (${selectedUnit}) — أي تعديل عند الحفظ سيتم تطبيقه وتوحيده تلقائياً على كافة (${unitSiblingCount + 1}) مخابز الوحدة.`}
+                </span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
               {/* 1. سكان القرية */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">
-                  سكان القرية
+                <label className="block text-xs font-black text-slate-700 mb-1 flex items-center justify-between">
+                  <span>سكان القرية</span>
+                  {isDemographicsPinned && (
+                    <span className="text-[10px] text-amber-700 font-black">مثبت للوحدة</span>
+                  )}
                 </label>
                 <input
                   type="number"
+                  data-testid="bakery-village-population-input"
+                  readOnly={isDemographicsPinned || isReadOnly}
                   value={villagePopulation}
                   onChange={(e) => {
+                    if (isDemographicsPinned || isReadOnly) return;
                     const pop = parseInt(e.target.value) || 0;
                     setVillagePopulation(pop);
                     calculateAllAverages(
@@ -1674,17 +2078,29 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                       breadTypeCount
                     );
                   }}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  className={`w-full px-3 py-2 border rounded-lg text-xs font-black focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
+                    isDemographicsPinned
+                      ? 'bg-amber-50/80 border-amber-400 text-amber-950 cursor-not-allowed'
+                      : 'bg-white border-slate-300 text-slate-900'
+                  }`}
                 />
               </div>
 
               {/* 2. مستفيد عام 2023 */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">مستفيد عام 2023</label>
+                <label className="block text-xs font-black text-slate-700 mb-1 flex items-center justify-between">
+                  <span>مستفيد عام 2023</span>
+                  {isDemographicsPinned && (
+                    <span className="text-[10px] text-amber-700 font-black">مثبت للوحدة</span>
+                  )}
+                </label>
                 <input
                   type="number"
+                  data-testid="bakery-ben-2023-input"
+                  readOnly={isDemographicsPinned || isReadOnly}
                   value={beneficiaries2023}
                   onChange={(e) => {
+                    if (isDemographicsPinned || isReadOnly) return;
                     const b = parseInt(e.target.value) || 0;
                     setBeneficiaries2023(b);
                     calculateAllAverages(
@@ -1698,17 +2114,29 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                       breadTypeCount
                     );
                   }}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  className={`w-full px-3 py-2 border rounded-lg text-xs font-black focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
+                    isDemographicsPinned
+                      ? 'bg-amber-50/80 border-amber-400 text-amber-950 cursor-not-allowed'
+                      : 'bg-white border-slate-300 text-slate-900'
+                  }`}
                 />
               </div>
 
               {/* 3. مستفيدين عام 2024 */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">مستفيدين عام 2024</label>
+                <label className="block text-xs font-black text-slate-700 mb-1 flex items-center justify-between">
+                  <span>مستفيدين عام 2024</span>
+                  {isDemographicsPinned && (
+                    <span className="text-[10px] text-amber-700 font-black">مثبت للوحدة</span>
+                  )}
+                </label>
                 <input
                   type="number"
+                  data-testid="bakery-ben-2024-input"
+                  readOnly={isDemographicsPinned || isReadOnly}
                   value={beneficiaries2024}
                   onChange={(e) => {
+                    if (isDemographicsPinned || isReadOnly) return;
                     const b = parseInt(e.target.value) || 0;
                     setBeneficiaries2024(b);
                     calculateAllAverages(
@@ -1722,17 +2150,29 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                       breadTypeCount
                     );
                   }}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  className={`w-full px-3 py-2 border rounded-lg text-xs font-black focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
+                    isDemographicsPinned
+                      ? 'bg-amber-50/80 border-amber-400 text-amber-950 cursor-not-allowed'
+                      : 'bg-white border-slate-300 text-slate-900'
+                  }`}
                 />
               </div>
 
               {/* 4. مستفيدين عام 2025 */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">مستفيدين عام 2025</label>
+                <label className="block text-xs font-black text-slate-700 mb-1 flex items-center justify-between">
+                  <span>مستفيدين عام 2025</span>
+                  {isDemographicsPinned && (
+                    <span className="text-[10px] text-amber-700 font-black">مثبت للوحدة</span>
+                  )}
+                </label>
                 <input
                   type="number"
+                  data-testid="bakery-ben-2025-input"
+                  readOnly={isDemographicsPinned || isReadOnly}
                   value={beneficiaries2025}
                   onChange={(e) => {
+                    if (isDemographicsPinned || isReadOnly) return;
                     const b = parseInt(e.target.value) || 0;
                     setBeneficiaries2025(b);
                     calculateAllAverages(
@@ -1746,7 +2186,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                       breadTypeCount
                     );
                   }}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center"
+                  className={`w-full px-3 py-2 border rounded-lg text-xs font-black focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
+                    isDemographicsPinned
+                      ? 'bg-amber-50/80 border-amber-400 text-amber-950 cursor-not-allowed'
+                      : 'bg-white border-slate-300 text-slate-900'
+                  }`}
                 />
               </div>
 

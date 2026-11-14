@@ -8,6 +8,7 @@ import {
   DEFAULT_LINE_TYPES,
   DEFAULT_FUEL_TYPES,
   DEFAULT_LEASE_CONTRACT_TYPES,
+  DEFAULT_RESPONSIBLE_MANAGER_OPTIONS,
   PAYMENT_METHODS
 } from '../defaultData';
 import {
@@ -41,6 +42,7 @@ export type DropdownCategoryKey =
   | 'lineTypes'
   | 'fuelTypes'
   | 'leaseContractTypes'
+  | 'responsibleManagerOptions'
   | 'breadTypes'
   | 'breadTypeCounts'
   | 'activityStatuses'
@@ -153,6 +155,14 @@ const DROPDOWN_LISTS_META: DropdownListMeta[] = [
     badgeColor: 'bg-sky-100 text-sky-900 border-sky-300',
     icon: <FileText className="w-4 h-4 text-sky-700" />,
   },
+  {
+    key: 'responsibleManagerOptions',
+    title: 'المدير المسئول',
+    subtitle: 'القائمة المنسدلة للمدير المسئول (نفسه، نفسها، أو أسماء مديرين مضافة...)',
+    placeholder: 'أدخل اسم المدير المسئول الجديد...',
+    badgeColor: 'bg-amber-100 text-amber-900 border-amber-300',
+    icon: <Users className="w-4 h-4 text-amber-700" />,
+  },
 ];
 
 export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = ({
@@ -208,6 +218,8 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
         return appState.fuelTypes || DEFAULT_FUEL_TYPES;
       case 'leaseContractTypes':
         return appState.leaseContractTypes || DEFAULT_LEASE_CONTRACT_TYPES;
+      case 'responsibleManagerOptions':
+        return appState.responsibleManagerOptions || DEFAULT_RESPONSIBLE_MANAGER_OPTIONS;
       case 'breadTypes':
         return appState.breadTypes || DEFAULT_BREAD_TYPES;
       case 'breadTypeCounts':
@@ -270,6 +282,8 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
       updatedBakeries = updatedBakeries.map((b) => (b.fuelType === oldVal ? { ...b, fuelType: clean } : b));
     } else if (key === 'leaseContractTypes') {
       updatedBakeries = updatedBakeries.map((b) => (b.leaseContractType === oldVal ? { ...b, leaseContractType: clean } : b));
+    } else if (key === 'responsibleManagerOptions') {
+      updatedBakeries = updatedBakeries.map((b) => (b.responsibleManager === oldVal ? { ...b, responsibleManager: clean } : b));
     } else if (key === 'breadTypes') {
       updatedBakeries = updatedBakeries.map((b) => (b.breadType === oldVal ? { ...b, breadType: clean } : b));
     } else if (key === 'breadTypeCounts') {
@@ -593,7 +607,7 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
                   : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
               }`}
             >
-              جميع القوائم المنسدلة (11)
+              جميع القوائم المنسدلة (12)
             </button>
             <button
               type="button"
@@ -715,6 +729,17 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
               }`}
             >
               عقد الإيجار ({(appState.leaseContractTypes || DEFAULT_LEASE_CONTRACT_TYPES).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveCategory('responsibleManagerOptions')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black whitespace-nowrap cursor-pointer ${
+                activeCategory === 'responsibleManagerOptions'
+                  ? 'bg-amber-700 text-white shadow-xs'
+                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              المدير المسئول ({(appState.responsibleManagerOptions || DEFAULT_RESPONSIBLE_MANAGER_OPTIONS).length})
             </button>
           </div>
         </div>

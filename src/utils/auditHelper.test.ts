@@ -21,6 +21,8 @@ import {
   calculateCumulativeDifference,
   calculateYearlyAverage,
   calculatePerBakeryAverage,
+  findLocalUnitDemographics,
+  syncLocalUnitDemographicsAcrossBakeries,
 } from './auditHelper';
 import { DailyBakeryTask, SupplyBranch } from '../types';
 
@@ -685,5 +687,203 @@ test('sanitizeAndDeduplicateBranches eliminates duplicate branches by ID and nor
   assert.equal(cleaned.filter((b) => b.name === 'إدارة تموين مركز المحلة الكبرى').length, 1);
   assert.equal(cleaned.filter((b) => b.name === 'إدارة تموين زفتى').length, 1);
 });
+
+test('findLocalUnitDemographics and syncLocalUnitDemographicsAcrossBakeries share and synchronize census values per local unit', () => {
+  const b1 = {
+    ...INITIAL_BAKERIES[0],
+    id: 'u-b1',
+    village: 'بشبيش',
+    localUnit: 'بشبيش الرئيسية',
+    villagePopulation: 38500,
+    beneficiaries2023: 34200,
+    beneficiaries2024: 35800,
+    beneficiaries2025: 37400,
+  };
+  const b2 = {
+    ...INITIAL_BAKERIES[0],
+    id: 'u-b2',
+    machineNumber: '99900011',
+    village: 'بشبيش',
+    localUnit: 'بشبيش الرئيسية',
+    actualQuota: 10,
+    insuranceValue: 7050,
+    insuranceQuota: 10,
+  };
+  const bOtherUnit = {
+    ...INITIAL_BAKERIES[1],
+    id: 'u-b3',
+    village: 'محلة حسن',
+    localUnit: 'محلة حسن الرئيسية',
+  };
+
+  // Adding a new bakery in an occupied local unit finds the pinned census
+  const found = findLocalUnitDemographics([b1, bOtherUnit], 'بشبيش', 'بشبيش الرئيسية');
+  assert.ok(found);
+  assert.equal(found.siblingCount, 1);
+  assert.equal(found.villagePopulation, 38500);
+  assert.equal(found.beneficiaries2023, 34200);
+  assert.equal(found.beneficiaries2024, 35800);
+  assert.equal(found.beneficiaries2025, 37400);
+
+  // Exclude self when editing existing bakery
+  const editSibling = findLocalUnitDemographics([b1, b2, bOtherUnit], 'بشبيش', 'بشبيش الرئيسية', 'u-b2');
+  assert.ok(editSibling);
+  assert.equal(editSibling.siblingCount, 1);
+
+  // Empty local unit returns null
+  assert.equal(findLocalUnitDemographics([b1, bOtherUnit], 'بشبيش', 'لومانة'), null);
+
+  // Synchronizing updated unit census propagates to all bakeries in that unit & recalculates averages, leaving other units intact
+  const synced = syncLocalUnitDemographicsAcrossBakeries([b1, b2, bOtherUnit], 'بشبيش', 'بشبيش الرئيسية', {
+    villagePopulation: 40000,
+    beneficiaries2023: 36000,
+    beneficiaries2024: 37000,
+    beneficiaries2025: 38000,
+  });
+
+  const syncedB1 = synced.find((x) => x.id === 'u-b1')!;
+  const syncedB2 = synced.find((x) => x.id === 'u-b2')!;
+  const syncedOther = synced.find((x) => x.id === 'u-b3')!;
+
+  assert.equal(syncedB1.villagePopulation, 40000);
+  assert.equal(syncedB2.villagePopulation, 40000);
+  assert.equal(syncedB2.beneficiaries2025, 38000);
+  // b2 loavesCount = 10 * 660 = 6600 -> avg2023 = (6600/36000).toFixed(2) = '0.18'
+  assert.equal(syncedB2.avg2023, (6600 / 36000).toFixed(2));
+  assert.equal(syncedB2.avg2024, (6600 / 37000).toFixed(2));
+  assert.equal(syncedB2.avg2025, (6600 / 38000).toFixed(2));
+  assert.equal(syncedOther.villagePopulation, bOtherUnit.villagePopulation);
+});
+
+test('calculateBakeriesColumnTotals counts local-unit demographics once per unit, sums operational/average columns, computes avgDiff = sumAvg2023 - sumAvg2024 - sumAvg2025, and cascades into village & grand totals', () => {
+  // Unit 1 (بشبيش / بشبيش الرئيسية) has TWO bakeries sharing the exact same unit demographics
+  const u1b1 = {
+    ...INITIAL_BAKERIES[0],
+    id: 't-u1-b1',
+    village: 'بشبيش',
+    localUnit: 'بشبيش الرئيسية',
+    insuranceValue: 16920, // 24 bags
+    insuranceQuota: 24,
+    actualQuota: 24,
+    breadTypeCount: '660', // 15840 loaves
+    villagePopulation: 38500,
+    beneficiaries2023: 34200,
+    beneficiaries2024: 35800,
+    beneficiaries2025: 37400,
+  };
+  const u1b2 = {
+    ...INITIAL_BAKERIES[0],
+    id: 't-u1-b2',
+    machineNumber: '88888802',
+    village: 'بشبيش',
+    localUnit: 'بشبيش الرئيسية',
+    insuranceValue: 7050, // 10 bags
+    insuranceQuota: 10,
+    actualQuota: 10,
+    breadTypeCount: '660', // 6600 loaves
+    villagePopulation: 38500,
+    beneficiaries2023: 34200,
+    beneficiaries2024: 35800,
+    beneficiaries2025: 37400,
+  };
+
+  // Unit 2 (بشبيش / لومانة) has ONE bakery
+  const u2b1 = {
+    ...INITIAL_BAKERIES[0],
+    id: 't-u2-b1',
+    machineNumber: '88888803',
+    village: 'بشبيش',
+    localUnit: 'لومانة',
+    insuranceValue: 14100, // 20 bags
+    insuranceQuota: 20,
+    actualQuota: 20,
+    breadTypeCount: '660', // 13200 loaves
+    villagePopulation: 20000,
+    beneficiaries2023: 18000,
+    beneficiaries2024: 19000,
+    beneficiaries2025: 20000,
+  };
+
+  // Other Mother Village (محلة حسن / محلة حسن الرئيسية) has ONE bakery
+  const v2b1 = {
+    ...INITIAL_BAKERIES[1],
+    id: 't-v2-b1',
+  };
+
+  // 1. Local unit subtotal for بشبيش الرئيسية (2 bakeries in same unit)
+  const unit1Totals = calculateBakeriesColumnTotals([u1b1, u1b2], { 't-u1-b1': 1000, 't-u1-b2': 500 });
+  assert.equal(unit1Totals.bakeryCount, 2);
+  // Demographics counted ONCE (NOT doubled!)
+  assert.equal(unit1Totals.villagePopulation, 38500);
+  assert.equal(unit1Totals.beneficiaries2023, 34200);
+  assert.equal(unit1Totals.beneficiaries2024, 35800);
+  assert.equal(unit1Totals.beneficiaries2025, 37400);
+  // Operational columns summed across bakeries
+  assert.equal(unit1Totals.insuranceValue, 16920 + 7050);
+  assert.equal(unit1Totals.insuranceQuota, 24 + 10);
+  assert.equal(unit1Totals.actualQuota, 24 + 10);
+  assert.equal(unit1Totals.loavesCount, 15840 + 6600);
+  assert.equal(unit1Totals.remainingDebt, 1500);
+
+  const expectedU1Avg23 = Number((15840 / 34200).toFixed(2)) + Number((6600 / 34200).toFixed(2));
+  const expectedU1Avg24 = Number((15840 / 35800).toFixed(2)) + Number((6600 / 35800).toFixed(2));
+  const expectedU1Avg25 = Number((15840 / 37400).toFixed(2)) + Number((6600 / 37400).toFixed(2));
+  assert.equal(unit1Totals.avg2023, expectedU1Avg23.toFixed(2));
+  assert.equal(unit1Totals.avg2024, expectedU1Avg24.toFixed(2));
+  assert.equal(unit1Totals.avg2025, expectedU1Avg25.toFixed(2));
+  assert.equal(unit1Totals.perCapitaAverage, expectedU1Avg25.toFixed(2));
+  // Strict cumulative difference: sumAvg2023 - sumAvg2024 - sumAvg2025
+  assert.equal(
+    unit1Totals.avgDiff,
+    (Number(unit1Totals.avg2023) - Number(unit1Totals.avg2024) - Number(unit1Totals.avg2025)).toFixed(2)
+  );
+
+  // 2. Mother village subtotal for بشبيش (sums Unit 1 subtotal + Unit 2 subtotal)
+  const unit2Totals = calculateBakeriesColumnTotals([u2b1], {});
+  const villageTotals = calculateBakeriesColumnTotals([u1b1, u1b2, u2b1], { 't-u1-b1': 1000, 't-u1-b2': 500 });
+
+  assert.equal(villageTotals.villagePopulation, unit1Totals.villagePopulation + unit2Totals.villagePopulation);
+  assert.equal(villageTotals.beneficiaries2023, unit1Totals.beneficiaries2023 + unit2Totals.beneficiaries2023);
+  assert.equal(villageTotals.beneficiaries2024, unit1Totals.beneficiaries2024 + unit2Totals.beneficiaries2024);
+  assert.equal(villageTotals.beneficiaries2025, unit1Totals.beneficiaries2025 + unit2Totals.beneficiaries2025);
+  assert.equal(villageTotals.insuranceValue, unit1Totals.insuranceValue + unit2Totals.insuranceValue);
+  assert.equal(villageTotals.insuranceQuota, unit1Totals.insuranceQuota + unit2Totals.insuranceQuota);
+  assert.equal(villageTotals.actualQuota, unit1Totals.actualQuota + unit2Totals.actualQuota);
+  assert.equal(villageTotals.loavesCount, unit1Totals.loavesCount + unit2Totals.loavesCount);
+  assert.equal(
+    villageTotals.avg2023,
+    (Number(unit1Totals.avg2023) + Number(unit2Totals.avg2023)).toFixed(2)
+  );
+  assert.equal(
+    villageTotals.avg2024,
+    (Number(unit1Totals.avg2024) + Number(unit2Totals.avg2024)).toFixed(2)
+  );
+  assert.equal(
+    villageTotals.avg2025,
+    (Number(unit1Totals.avg2025) + Number(unit2Totals.avg2025)).toFixed(2)
+  );
+  assert.equal(
+    villageTotals.avgDiff,
+    (Number(villageTotals.avg2023) - Number(villageTotals.avg2024) - Number(villageTotals.avg2025)).toFixed(2)
+  );
+
+  // 3. Grand total across all villages sums all village/unit totals
+  const v2Totals = calculateBakeriesColumnTotals([v2b1], {});
+  const grandTotals = calculateBakeriesColumnTotals([u1b1, u1b2, u2b1, v2b1], { 't-u1-b1': 1000, 't-u1-b2': 500 });
+  assert.equal(grandTotals.villagePopulation, villageTotals.villagePopulation + v2Totals.villagePopulation);
+  assert.equal(grandTotals.beneficiaries2023, villageTotals.beneficiaries2023 + v2Totals.beneficiaries2023);
+  assert.equal(grandTotals.beneficiaries2024, villageTotals.beneficiaries2024 + v2Totals.beneficiaries2024);
+  assert.equal(grandTotals.beneficiaries2025, villageTotals.beneficiaries2025 + v2Totals.beneficiaries2025);
+  assert.equal(grandTotals.loavesCount, villageTotals.loavesCount + v2Totals.loavesCount);
+  assert.equal(
+    grandTotals.avg2023,
+    (Number(villageTotals.avg2023) + Number(v2Totals.avg2023)).toFixed(2)
+  );
+  assert.equal(
+    grandTotals.avgDiff,
+    (Number(grandTotals.avg2023) - Number(grandTotals.avg2024) - Number(grandTotals.avg2025)).toFixed(2)
+  );
+});
+
 
 

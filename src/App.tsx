@@ -50,6 +50,7 @@ import {
   DEFAULT_LINE_TYPES,
   DEFAULT_FUEL_TYPES,
   DEFAULT_LEASE_CONTRACT_TYPES,
+  DEFAULT_RESPONSIBLE_MANAGER_OPTIONS,
   PAYMENT_METHODS,
   DEFAULT_COLUMN_TITLES,
   INITIAL_BAKERIES,
@@ -67,6 +68,7 @@ import {
   calculateBakeriesColumnTotals,
   matchesVillageOrUnitFilter,
   normalizeArabicText,
+  syncLocalUnitDemographicsAcrossBakeries,
 } from './utils/auditHelper';
 import {
   testFirestoreConnection,
@@ -550,6 +552,7 @@ export default function App() {
           lineTypes: preloaded?.lineTypes ?? DEFAULT_LINE_TYPES,
           fuelTypes: preloaded?.fuelTypes ?? DEFAULT_FUEL_TYPES,
           leaseContractTypes: preloaded?.leaseContractTypes ?? DEFAULT_LEASE_CONTRACT_TYPES,
+          responsibleManagerOptions: preloaded?.responsibleManagerOptions ?? DEFAULT_RESPONSIBLE_MANAGER_OPTIONS,
           paymentMethods: preloaded?.paymentMethods ?? PAYMENT_METHODS,
           dailyTasks: preloaded?.dailyTasks ?? INITIAL_DAILY_TASKS,
           columnTitles: preloaded?.columnTitles ?? DEFAULT_COLUMN_TITLES,
@@ -591,6 +594,7 @@ export default function App() {
             lineTypes: DEFAULT_LINE_TYPES,
             fuelTypes: DEFAULT_FUEL_TYPES,
             leaseContractTypes: DEFAULT_LEASE_CONTRACT_TYPES,
+            responsibleManagerOptions: DEFAULT_RESPONSIBLE_MANAGER_OPTIONS,
             paymentMethods: PAYMENT_METHODS,
             dailyTasks: INITIAL_DAILY_TASKS,
             inboxMessages: INITIAL_INBOX_MESSAGES,
@@ -1836,12 +1840,23 @@ export default function App() {
     } else {
       updated = [bakery, ...appState.bakeries];
     }
-    const synced = synchronizeBakeryAndDebts(updated, appState.debts);
+    const unifiedUpdated = syncLocalUnitDemographicsAcrossBakeries(
+      updated,
+      bakery.village,
+      bakery.localUnit,
+      {
+        villagePopulation: bakery.villagePopulation,
+        beneficiaries2023: bakery.beneficiaries2023,
+        beneficiaries2024: bakery.beneficiaries2024,
+        beneficiaries2025: bakery.beneficiaries2025,
+      }
+    );
+    const synced = synchronizeBakeryAndDebts(unifiedUpdated, appState.debts);
     triggerSave(
       { ...appState, bakeries: synced.bakeries, debts: synced.debts },
       existingIndex >= 0
-        ? `تم حفظ وتعديل بيانات مخبز (${bakery.bakeryOwnerName}) وإعادة احتساب المعادلات ومزامنة السجلات بنجاح`
-        : `تم إضافة وحفظ بيانات مخبز (${bakery.bakeryOwnerName}) وإعادة احتساب المعادلات بنجاح`
+        ? `تم حفظ وتعديل بيانات مخبز (${bakery.bakeryOwnerName}) وتوحيد إحصائيات الوحدة المحلية ومزامنة السجلات بنجاح`
+        : `تم إضافة وحفظ بيانات مخبز (${bakery.bakeryOwnerName}) وتوحيد إحصائيات الوحدة المحلية بنجاح`
     );
   };
 
@@ -4469,6 +4484,7 @@ export default function App() {
           lineTypes={appState.lineTypes}
           fuelTypes={appState.fuelTypes}
           leaseContractTypes={appState.leaseContractTypes}
+          responsibleManagerOptions={appState.responsibleManagerOptions}
           currentUser={appState.currentUser}
           onAddActivityStatus={(newStatus) => {
             if (!appState.activityStatuses.includes(newStatus)) {
@@ -4479,12 +4495,18 @@ export default function App() {
             }
           }}
           onAddLocalUnit={(villageName, newUnit) => {
-            const updatedVillages = appState.villages.map((v) => {
-              if (v.village === villageName && !v.localUnits.includes(newUnit)) {
-                return { ...v, localUnits: [...v.localUnits, newUnit] };
-              }
-              return v;
-            });
+            const exists = appState.villages.some((v) => v.village === villageName);
+            const updatedVillages = exists
+              ? appState.villages.map((v) => {
+                  if (v.village === villageName && newUnit && !v.localUnits.includes(newUnit)) {
+                    return { ...v, localUnits: [...v.localUnits, newUnit] };
+                  }
+                  return v;
+                })
+              : [
+                  ...appState.villages,
+                  { village: villageName, localUnits: newUnit ? [newUnit] : [] },
+                ];
             triggerSave({ ...appState, villages: updatedVillages });
           }}
           onUpdateDropdownList={(listKey, updatedList) => {

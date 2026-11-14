@@ -373,6 +373,7 @@ export async function syncSharedStateToFirestore(
       lineTypes: state.lineTypes,
       fuelTypes: state.fuelTypes,
       leaseContractTypes: state.leaseContractTypes,
+      responsibleManagerOptions: state.responsibleManagerOptions,
       paymentMethods: state.paymentMethods,
       dailyTasks: state.dailyTasks,
       inboxMessages: state.inboxMessages,

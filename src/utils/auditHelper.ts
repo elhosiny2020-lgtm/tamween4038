@@ -1215,9 +1215,95 @@ export function matchesVillageOrUnitFilter(
   return true;
 }
 
+export interface LocalUnitDemographicsMatch {
+  found: true;
+  siblingCount: number;
+  villagePopulation: number;
+  beneficiaries2023: number;
+  beneficiaries2024: number;
+  beneficiaries2025: number;
+}
+
+/**
+ * 15-ب. مفتاح فريد موحد للوحدة المحلية التابعة للقرية لمنع تكرار جمع إحصائيات السكان والمستفيدين
+ */
+export function getLocalUnitKey(village?: string, localUnit?: string): string {
+  const vNorm = normalizeArabicText((village || 'غير محدد').trim()) || 'غير محدد';
+  const uNorm = normalizeArabicText((localUnit || 'غير محدد').trim()) || 'غير محدد';
+  return `${vNorm}__${uNorm}`;
+}
+
+/**
+ * 15-ج. استرجاع قيم السكان والمستفيدين الموحدة والمثبتة للوحدة المحلية التابعة للقرية عند وجود مخبز مسجل بالفعل بها
+ */
+export function findLocalUnitDemographics(
+  bakeries: Bakery[],
+  village: string,
+  localUnit: string,
+  excludeBakeryId?: string
+): LocalUnitDemographicsMatch | null {
+  const targetKey = getLocalUnitKey(village, localUnit);
+  const matches = (bakeries || []).filter((b) => {
+    if (excludeBakeryId && String(b.id) === String(excludeBakeryId)) return false;
+    return getLocalUnitKey(b.village, b.localUnit) === targetKey;
+  });
+
+  if (matches.length === 0) return null;
+
+  const firstPop = matches.find((b) => (Number(b.villagePopulation) || 0) > 0)?.villagePopulation;
+  const first23 = matches.find((b) => (Number(b.beneficiaries2023) || 0) > 0)?.beneficiaries2023;
+  const first24 = matches.find((b) => (Number(b.beneficiaries2024) || 0) > 0)?.beneficiaries2024;
+  const first25 = matches.find((b) => (Number(b.beneficiaries2025) || 0) > 0)?.beneficiaries2025;
+
+  return {
+    found: true,
+    siblingCount: matches.length,
+    villagePopulation: Number(firstPop ?? matches[0].villagePopulation) || 0,
+    beneficiaries2023: Number(first23 ?? matches[0].beneficiaries2023) || 0,
+    beneficiaries2024: Number(first24 ?? matches[0].beneficiaries2024) || 0,
+    beneficiaries2025: Number(first25 ?? matches[0].beneficiaries2025) || 0,
+  };
+}
+
+/**
+ * 15-د. توحيد ومزامنة قيم السكان والمستفيدين (2023 - 2024 - 2025) على كافة أصحاب المخابز داخل نفس الوحدة المحلية التابعة للقرية
+ * مع إعادة احتساب المتوسطات التلقائية لكل مخبز داخل الوحدة
+ */
+export function syncLocalUnitDemographicsAcrossBakeries(
+  bakeries: Bakery[],
+  village: string,
+  localUnit: string,
+  demographics: {
+    villagePopulation: number;
+    beneficiaries2023: number;
+    beneficiaries2024: number;
+    beneficiaries2025: number;
+  }
+): Bakery[] {
+  const targetKey = getLocalUnitKey(village, localUnit);
+  const pop = Number(demographics.villagePopulation) || 0;
+  const b23 = Number(demographics.beneficiaries2023) || 0;
+  const b24 = Number(demographics.beneficiaries2024) || 0;
+  const b25 = Number(demographics.beneficiaries2025) || 0;
+
+  return (bakeries || []).map((b) => {
+    if (getLocalUnitKey(b.village, b.localUnit) !== targetKey) {
+      return b;
+    }
+    return normalizeBakeryCalculations({
+      ...b,
+      villagePopulation: pop,
+      beneficiaries2023: b23,
+      beneficiaries2024: b24,
+      beneficiaries2025: b25,
+    });
+  });
+}
+
 /**
  * 16. دالة تجميع شاملة وموحدة لكافة أعمدة جدول المخابز (صف الإجماليات TOTAL SUMMARY وإجماليات القرى والوحدات المحلية)
- * تقوم بجمع كافة أعداد المستفيدين وجمع كافة متوسطات المستفيدين وجميع خانات الأعمدة في صف الإجماليات بدقة 100%
+ * - المرحلة الأولى (مستوى الوحدة المحلية): احتساب السكان والمستفيدين مرة واحدة فقط لكل وحدة محلية، وجمع القيم المالية والحصص والأرغفة والمتوسطات، واحتساب الفرق التراكمي = مجموع متوسط 2023 - مجموع متوسط 2024 - مجموع متوسط 2025.
+ * - المرحلة الثانية (مستوى القرية وصف الإجماليات العام): جمع كافة أعمدة صفوف إجمالي الوحدات المحلية التابعة بدقة 100%.
  */
 export interface BakeriesColumnTotals {
   bakeryCount: number;
@@ -1264,6 +1350,34 @@ export function calculateBakeriesColumnTotals(
   bakeries: Bakery[],
   debtsMap: Record<string, number> = {}
 ): BakeriesColumnTotals {
+  const villagesSet = new Set<string>();
+  const unitsSet = new Set<string>();
+  const categoriesSet = new Set<string>();
+  const breadTypesSet = new Set<string>();
+  const lineTypesSet = new Set<string>();
+  const fuelTypesSet = new Set<string>();
+
+  // Stage 1: Group normalized bakeries by local unit (village + localUnit)
+  const unitGroups = new Map<string, Bakery[]>();
+  (bakeries || []).forEach((b) => {
+    const normB = normalizeBakeryCalculations(b);
+    if (normB.village) villagesSet.add(normB.village.trim());
+    if (normB.localUnit) unitsSet.add(normB.localUnit.trim());
+    if (normB.bakeryCategory) categoriesSet.add(normB.bakeryCategory.trim());
+    if (normB.breadType) breadTypesSet.add(normB.breadType.trim());
+    if (normB.lineType) lineTypesSet.add(normB.lineType.trim());
+    if (normB.fuelType) fuelTypesSet.add(normB.fuelType.trim());
+
+    const unitKey = getLocalUnitKey(normB.village, normB.localUnit);
+    const list = unitGroups.get(unitKey);
+    if (list) {
+      list.push(normB);
+    } else {
+      unitGroups.set(unitKey, [normB]);
+    }
+  });
+
+  // Stage 2: Compute each local unit's subtotal row, then sum all local unit rows
   let remainingDebt = 0;
   let insuranceValue = 0;
   let insuranceQuota = 0;
@@ -1277,7 +1391,6 @@ export function calculateBakeriesColumnTotals(
   let sumAvg2023 = 0;
   let sumAvg2024 = 0;
   let sumAvg2025 = 0;
-  let sumAvgDiff = 0;
   let activeCount = 0;
   let flourBagPriceSum = 0;
   let breadTypeCountSum = 0;
@@ -1288,49 +1401,78 @@ export function calculateBakeriesColumnTotals(
   let validLeaseCount = 0;
   let validTaxCardCount = 0;
 
-  const villagesSet = new Set<string>();
-  const unitsSet = new Set<string>();
-  const categoriesSet = new Set<string>();
-  const breadTypesSet = new Set<string>();
-  const lineTypesSet = new Set<string>();
-  const fuelTypesSet = new Set<string>();
+  unitGroups.forEach((unitBakeries) => {
+    // Shared unit demographics counted ONCE per local unit
+    const unitPop =
+      unitBakeries.find((b) => (Number(b.villagePopulation) || 0) > 0)?.villagePopulation ?? 0;
+    const unitBen23 =
+      unitBakeries.find((b) => (Number(b.beneficiaries2023) || 0) > 0)?.beneficiaries2023 ?? 0;
+    const unitBen24 =
+      unitBakeries.find((b) => (Number(b.beneficiaries2024) || 0) > 0)?.beneficiaries2024 ?? 0;
+    const unitBen25 =
+      unitBakeries.find((b) => (Number(b.beneficiaries2025) || 0) > 0)?.beneficiaries2025 ?? 0;
 
-  (bakeries || []).forEach((b) => {
-    const normB = normalizeBakeryCalculations(b);
-    if (normB.village) villagesSet.add(normB.village.trim());
-    if (normB.localUnit) unitsSet.add(normB.localUnit.trim());
-    if (normB.bakeryCategory) categoriesSet.add(normB.bakeryCategory.trim());
-    if (normB.breadType) breadTypesSet.add(normB.breadType.trim());
-    if (normB.lineType) lineTypesSet.add(normB.lineType.trim());
-    if (normB.fuelType) fuelTypesSet.add(normB.fuelType.trim());
+    villagePopulation += Number(unitPop) || 0;
+    beneficiaries2023 += Number(unitBen23) || 0;
+    beneficiaries2024 += Number(unitBen24) || 0;
+    beneficiaries2025 += Number(unitBen25) || 0;
 
-    remainingDebt += Number(debtsMap[normB.id]) || 0;
-    insuranceValue += Number(normB.insuranceValue) || 0;
-    insuranceQuota += Number(normB.insuranceQuota) || 0;
-    actualQuota += Number(normB.actualQuota) || 0;
-    loavesCount += Number(normB.loavesCount) || 0;
-    villagePopulation += Number(normB.villagePopulation) || 0;
-    beneficiaries2023 += Number(normB.beneficiaries2023) || 0;
-    beneficiaries2024 += Number(normB.beneficiaries2024) || 0;
-    beneficiaries2025 += Number(normB.beneficiaries2025) || 0;
+    let uDebt = 0;
+    let uInsValue = 0;
+    let uInsQuota = 0;
+    let uActQuota = 0;
+    let uLoaves = 0;
+    let uPerCapita = 0;
+    let uAvg23 = 0;
+    let uAvg24 = 0;
+    let uAvg25 = 0;
+    let uFlourSum = 0;
+    let uBreadCountSum = 0;
 
-    sumPerCapita += parseFloat(String(normB.perCapitaAverage || normB.avg2025 || '0')) || 0;
-    sumAvg2023 += parseFloat(String(normB.avg2023 || '0')) || 0;
-    sumAvg2024 += parseFloat(String(normB.avg2024 || '0')) || 0;
-    sumAvg2025 += parseFloat(String(normB.avg2025 || '0')) || 0;
-    sumAvgDiff += parseFloat(String(normB.avgDiff || '0')) || 0;
+    unitBakeries.forEach((normB) => {
+      uDebt += Number(debtsMap[normB.id]) || 0;
+      uInsValue += Number(normB.insuranceValue) || 0;
+      uInsQuota += Number(normB.insuranceQuota) || 0;
+      uActQuota += Number(normB.actualQuota) || 0;
+      uLoaves += Number(normB.loavesCount) || 0;
 
-    if (normB.activityStatus === 'شغال') activeCount++;
-    flourBagPriceSum += Number(normB.flourBagPrice ?? 950) || 0;
-    breadTypeCountSum += extractBreadLoafMultiplier(normB.breadTypeCount);
+      uPerCapita += parseFloat(String(normB.perCapitaAverage || normB.avg2025 || '0')) || 0;
+      uAvg23 += parseFloat(String(normB.avg2023 || '0')) || 0;
+      uAvg24 += parseFloat(String(normB.avg2024 || '0')) || 0;
+      uAvg25 += parseFloat(String(normB.avg2025 || '0')) || 0;
 
-    if (normB.phone && normB.phone.trim()) validPhonesCount++;
-    if (normB.nationalId && normB.nationalId.trim()) validNatIdsCount++;
-    if (normB.commercialRegDate && normB.commercialRegDate.trim()) validCommRegCount++;
-    if (normB.bakeryLicenseDate && normB.bakeryLicenseDate.trim()) validLicenseCount++;
-    if (normB.leaseAgreementDate && normB.leaseAgreementDate.trim()) validLeaseCount++;
-    if (normB.taxCardDate && normB.taxCardDate.trim()) validTaxCardCount++;
+      if (normB.activityStatus === 'شغال') activeCount++;
+      uFlourSum += Number(normB.flourBagPrice ?? 950) || 0;
+      uBreadCountSum += extractBreadLoafMultiplier(normB.breadTypeCount);
+
+      if (normB.phone && normB.phone.trim()) validPhonesCount++;
+      if (normB.nationalId && normB.nationalId.trim()) validNatIdsCount++;
+      if (normB.commercialRegDate && normB.commercialRegDate.trim()) validCommRegCount++;
+      if (normB.bakeryLicenseDate && normB.bakeryLicenseDate.trim()) validLicenseCount++;
+      if (normB.leaseAgreementDate && normB.leaseAgreementDate.trim()) validLeaseCount++;
+      if (normB.taxCardDate && normB.taxCardDate.trim()) validTaxCardCount++;
+    });
+
+    remainingDebt += uDebt;
+    insuranceValue += uInsValue;
+    insuranceQuota += Number(uInsQuota.toFixed(2));
+    actualQuota += Number(uActQuota.toFixed(2));
+    loavesCount += Math.round(uLoaves);
+    flourBagPriceSum += Math.round(uFlourSum);
+    breadTypeCountSum += Math.round(uBreadCountSum);
+
+    sumPerCapita += Number(uPerCapita.toFixed(2));
+    sumAvg2023 += Number(uAvg23.toFixed(2));
+    sumAvg2024 += Number(uAvg24.toFixed(2));
+    sumAvg2025 += Number(uAvg25.toFixed(2));
   });
+
+  const finalPerCapita = Number(sumPerCapita.toFixed(2));
+  const finalAvg2023 = Number(sumAvg2023.toFixed(2));
+  const finalAvg2024 = Number(sumAvg2024.toFixed(2));
+  const finalAvg2025 = Number(sumAvg2025.toFixed(2));
+  // الفرق التراكمي = مجموع متوسطات 2023 - مجموع متوسطات 2024 - مجموع متوسطات 2025
+  const finalAvgDiff = Number((finalAvg2023 - finalAvg2024 - finalAvg2025).toFixed(2));
 
   const bakeryCount = (bakeries || []).length;
   const stoppedCount = Math.max(0, bakeryCount - activeCount);
@@ -1362,11 +1504,11 @@ export function calculateBakeriesColumnTotals(
     beneficiaries2023: Math.round(beneficiaries2023),
     beneficiaries2024: Math.round(beneficiaries2024),
     beneficiaries2025: Math.round(beneficiaries2025),
-    perCapitaAverage: sumPerCapita.toFixed(2),
-    avg2023: sumAvg2023.toFixed(2),
-    avg2024: sumAvg2024.toFixed(2),
-    avg2025: sumAvg2025.toFixed(2),
-    avgDiff: sumAvgDiff.toFixed(2),
+    perCapitaAverage: finalPerCapita.toFixed(2),
+    avg2023: finalAvg2023.toFixed(2),
+    avg2024: finalAvg2024.toFixed(2),
+    avg2025: finalAvg2025.toFixed(2),
+    avgDiff: finalAvgDiff.toFixed(2),
     activeCount,
     stoppedCount,
     activitySummaryLabel:
@@ -1389,4 +1531,5 @@ export function calculateBakeriesColumnTotals(
     validTaxCardCount,
   };
 }
+
 
