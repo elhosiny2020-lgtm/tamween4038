@@ -2535,64 +2535,40 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                           </td>
                         )}
                         {activeColumns.bakeryCategory && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.bakeryCategorySummaryLabel}
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.breadType && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.breadTypeSummaryLabel}
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.flourBagPrice && (
-                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
-                            {colTotals.flourBagPriceSum.toLocaleString()} ج.م
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.breadTypeCount && (
-                          <td className="border border-black py-1 px-0.5 num-enlarged font-black">
-                            {colTotals.breadTypeCountSum.toLocaleString()}
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.lineType && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.lineTypeSummaryLabel}
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.fuelType && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.fuelTypeSummaryLabel}
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.phone && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.validPhonesCount} رقم
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.nationalId && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.validNatIdsCount} رقم قومي
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.commercialRegDate && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.validCommRegCount} سجل
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.bakeryLicenseDate && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.validLicenseCount} رخصة
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.leaseAgreementDate && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.validLeaseCount} عقد
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                         {activeColumns.taxCardDate && (
-                          <td className="border border-black py-1 px-0.5 font-mono">
-                            {colTotals.validTaxCardCount} بطاقة
-                          </td>
+                          <td className="border border-black py-1 px-0.5 blackout-summary-cell bg-black" />
                         )}
                       </tr>
                     </tfoot>

@@ -105,6 +105,20 @@ tr.village-total-row:hover td {
   color: #0f2342 !important;
 }
 
+/* Solid black redacted cells from نوع المخابز to end of row in Local Unit & Total Summary rows */
+tr.village-total-row td.blackout-summary-cell,
+tr.village-total-row:hover td.blackout-summary-cell,
+tr.total-summary-row td.blackout-summary-cell,
+tfoot tr.total-summary-row td.blackout-summary-cell,
+tr.total-summary-row:hover td.blackout-summary-cell,
+tfoot tr.total-summary-row:hover td.blackout-summary-cell,
+.report-table-compact td.blackout-summary-cell {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border-color: #111827 !important;
+  color: transparent !important;
+}
+
 /* Professional Navy/Royal-Blue row highlight for selected and hovered rows (Never White) */
 tr.row-selected {
   background-color: #bfdbfe !important;

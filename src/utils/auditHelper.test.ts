@@ -838,10 +838,13 @@ test('calculateBakeriesColumnTotals counts local-unit demographics once per unit
     (Number(unit1Totals.avg2023) - Number(unit1Totals.avg2024) - Number(unit1Totals.avg2025)).toFixed(2)
   );
 
-  // 2. Mother village subtotal for بشبيش (sums Unit 1 subtotal + Unit 2 subtotal)
+  // 2. Single village total across multiple local units (بشبيش = Unit 1 + Unit 2)
   const unit2Totals = calculateBakeriesColumnTotals([u2b1], {});
   const villageTotals = calculateBakeriesColumnTotals([u1b1, u1b2, u2b1], { 't-u1-b1': 1000, 't-u1-b2': 500 });
 
+  assert.equal(villageTotals.bakeryCount, unit1Totals.bakeryCount + unit2Totals.bakeryCount);
+  assert.equal(villageTotals.uniqueUnitsCount, 2);
+  assert.equal(villageTotals.remainingDebt, unit1Totals.remainingDebt + unit2Totals.remainingDebt);
   assert.equal(villageTotals.villagePopulation, unit1Totals.villagePopulation + unit2Totals.villagePopulation);
   assert.equal(villageTotals.beneficiaries2023, unit1Totals.beneficiaries2023 + unit2Totals.beneficiaries2023);
   assert.equal(villageTotals.beneficiaries2024, unit1Totals.beneficiaries2024 + unit2Totals.beneficiaries2024);
@@ -850,6 +853,12 @@ test('calculateBakeriesColumnTotals counts local-unit demographics once per unit
   assert.equal(villageTotals.insuranceQuota, unit1Totals.insuranceQuota + unit2Totals.insuranceQuota);
   assert.equal(villageTotals.actualQuota, unit1Totals.actualQuota + unit2Totals.actualQuota);
   assert.equal(villageTotals.loavesCount, unit1Totals.loavesCount + unit2Totals.loavesCount);
+  assert.equal(villageTotals.flourBagPriceSum, unit1Totals.flourBagPriceSum + unit2Totals.flourBagPriceSum);
+  assert.equal(villageTotals.breadTypeCountSum, unit1Totals.breadTypeCountSum + unit2Totals.breadTypeCountSum);
+  assert.equal(
+    villageTotals.perCapitaAverage,
+    (Number(unit1Totals.perCapitaAverage) + Number(unit2Totals.perCapitaAverage)).toFixed(2)
+  );
   assert.equal(
     villageTotals.avg2023,
     (Number(unit1Totals.avg2023) + Number(unit2Totals.avg2023)).toFixed(2)
@@ -864,20 +873,48 @@ test('calculateBakeriesColumnTotals counts local-unit demographics once per unit
   );
   assert.equal(
     villageTotals.avgDiff,
+    (Number(unit1Totals.avgDiff) + Number(unit2Totals.avgDiff)).toFixed(2)
+  );
+  assert.equal(
+    villageTotals.avgDiff,
     (Number(villageTotals.avg2023) - Number(villageTotals.avg2024) - Number(villageTotals.avg2025)).toFixed(2)
   );
 
-  // 3. Grand total across all villages sums all village/unit totals
-  const v2Totals = calculateBakeriesColumnTotals([v2b1], {});
+  // 3. Grand total ("صف الإجماليات") sums ALL local unit subtotal rows directly (Unit 1 + Unit 2 + Unit 3)
+  const unit3Totals = calculateBakeriesColumnTotals([v2b1], {});
+  const allUnitRows = [unit1Totals, unit2Totals, unit3Totals];
   const grandTotals = calculateBakeriesColumnTotals([u1b1, u1b2, u2b1, v2b1], { 't-u1-b1': 1000, 't-u1-b2': 500 });
-  assert.equal(grandTotals.villagePopulation, villageTotals.villagePopulation + v2Totals.villagePopulation);
-  assert.equal(grandTotals.beneficiaries2023, villageTotals.beneficiaries2023 + v2Totals.beneficiaries2023);
-  assert.equal(grandTotals.beneficiaries2024, villageTotals.beneficiaries2024 + v2Totals.beneficiaries2024);
-  assert.equal(grandTotals.beneficiaries2025, villageTotals.beneficiaries2025 + v2Totals.beneficiaries2025);
-  assert.equal(grandTotals.loavesCount, villageTotals.loavesCount + v2Totals.loavesCount);
+
+  assert.equal(grandTotals.bakeryCount, allUnitRows.reduce((s, r) => s + r.bakeryCount, 0));
+  assert.equal(grandTotals.uniqueUnitsCount, allUnitRows.length);
+  assert.equal(grandTotals.remainingDebt, allUnitRows.reduce((s, r) => s + r.remainingDebt, 0));
+  assert.equal(grandTotals.insuranceValue, allUnitRows.reduce((s, r) => s + r.insuranceValue, 0));
+  assert.equal(grandTotals.insuranceQuota, Number(allUnitRows.reduce((s, r) => s + r.insuranceQuota, 0).toFixed(2)));
+  assert.equal(grandTotals.actualQuota, Number(allUnitRows.reduce((s, r) => s + r.actualQuota, 0).toFixed(2)));
+  assert.equal(grandTotals.loavesCount, allUnitRows.reduce((s, r) => s + r.loavesCount, 0));
+  assert.equal(grandTotals.villagePopulation, allUnitRows.reduce((s, r) => s + r.villagePopulation, 0));
+  assert.equal(grandTotals.beneficiaries2023, allUnitRows.reduce((s, r) => s + r.beneficiaries2023, 0));
+  assert.equal(grandTotals.beneficiaries2024, allUnitRows.reduce((s, r) => s + r.beneficiaries2024, 0));
+  assert.equal(grandTotals.beneficiaries2025, allUnitRows.reduce((s, r) => s + r.beneficiaries2025, 0));
+  assert.equal(
+    grandTotals.perCapitaAverage,
+    allUnitRows.reduce((s, r) => s + Number(r.perCapitaAverage), 0).toFixed(2)
+  );
   assert.equal(
     grandTotals.avg2023,
-    (Number(villageTotals.avg2023) + Number(v2Totals.avg2023)).toFixed(2)
+    allUnitRows.reduce((s, r) => s + Number(r.avg2023), 0).toFixed(2)
+  );
+  assert.equal(
+    grandTotals.avg2024,
+    allUnitRows.reduce((s, r) => s + Number(r.avg2024), 0).toFixed(2)
+  );
+  assert.equal(
+    grandTotals.avg2025,
+    allUnitRows.reduce((s, r) => s + Number(r.avg2025), 0).toFixed(2)
+  );
+  assert.equal(
+    grandTotals.avgDiff,
+    allUnitRows.reduce((s, r) => s + Number(r.avgDiff), 0).toFixed(2)
   );
   assert.equal(
     grandTotals.avgDiff,
