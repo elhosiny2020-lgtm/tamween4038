@@ -7,6 +7,7 @@ import {
   DEFAULT_BREAD_TYPE_COUNTS,
   DEFAULT_LINE_TYPES,
   DEFAULT_FUEL_TYPES,
+  DEFAULT_LEASE_CONTRACT_TYPES,
   PAYMENT_METHODS
 } from '../defaultData';
 import {
@@ -39,6 +40,7 @@ export type DropdownCategoryKey =
   | 'ALL'
   | 'lineTypes'
   | 'fuelTypes'
+  | 'leaseContractTypes'
   | 'breadTypes'
   | 'breadTypeCounts'
   | 'activityStatuses'
@@ -143,6 +145,14 @@ const DROPDOWN_LISTS_META: DropdownListMeta[] = [
     badgeColor: 'bg-teal-100 text-teal-900 border-teal-300',
     icon: <CreditCard className="w-4 h-4 text-teal-600" />,
   },
+  {
+    key: 'leaseContractTypes',
+    title: 'عقد الإيجار (إيجار / تمليك)',
+    subtitle: 'القائمة المنسدلة لنوع عقد المخبز (إيجار، تمليك...)',
+    placeholder: 'أدخل نوع عقد جديد...',
+    badgeColor: 'bg-sky-100 text-sky-900 border-sky-300',
+    icon: <FileText className="w-4 h-4 text-sky-700" />,
+  },
 ];
 
 export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = ({
@@ -196,6 +206,8 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
         return appState.lineTypes || DEFAULT_LINE_TYPES;
       case 'fuelTypes':
         return appState.fuelTypes || DEFAULT_FUEL_TYPES;
+      case 'leaseContractTypes':
+        return appState.leaseContractTypes || DEFAULT_LEASE_CONTRACT_TYPES;
       case 'breadTypes':
         return appState.breadTypes || DEFAULT_BREAD_TYPES;
       case 'breadTypeCounts':
@@ -256,6 +268,8 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
       updatedBakeries = updatedBakeries.map((b) => (b.lineType === oldVal ? { ...b, lineType: clean } : b));
     } else if (key === 'fuelTypes') {
       updatedBakeries = updatedBakeries.map((b) => (b.fuelType === oldVal ? { ...b, fuelType: clean } : b));
+    } else if (key === 'leaseContractTypes') {
+      updatedBakeries = updatedBakeries.map((b) => (b.leaseContractType === oldVal ? { ...b, leaseContractType: clean } : b));
     } else if (key === 'breadTypes') {
       updatedBakeries = updatedBakeries.map((b) => (b.breadType === oldVal ? { ...b, breadType: clean } : b));
     } else if (key === 'breadTypeCounts') {
@@ -579,7 +593,7 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
                   : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
               }`}
             >
-              جميع القوائم المنسدلة (10)
+              جميع القوائم المنسدلة (11)
             </button>
             <button
               type="button"
@@ -690,6 +704,17 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
               }`}
             >
               طرق السداد ({(appState.paymentMethods || PAYMENT_METHODS).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveCategory('leaseContractTypes')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black whitespace-nowrap cursor-pointer ${
+                activeCategory === 'leaseContractTypes'
+                  ? 'bg-sky-700 text-white shadow-xs'
+                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              عقد الإيجار ({(appState.leaseContractTypes || DEFAULT_LEASE_CONTRACT_TYPES).length})
             </button>
           </div>
         </div>

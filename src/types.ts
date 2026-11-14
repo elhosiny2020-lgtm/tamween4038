@@ -15,11 +15,13 @@ export interface Bakery {
   machineNumber: string; // رقم الماكينة
   village: string; // القرية
   localUnit: string; // الوحدة المحلية التابعة
+  responsibleManager?: string; // المدير المسئول
 
   // الحصص والبيانات التموينية
   insuranceQuota: number; // الحصة التأمينية (بالشيكارة)
   actualQuota: number; // الحصة الفعلية (بالشيكارة)
   insuranceValue: number; // القيمة التأمينية (بالجنيه)
+  insuranceCheckNumber?: string; // رقم شيك سداد التأمين (بقائمة التعديل فقط)
   loavesCount: number; // عدد الأرغفة اليومية = الحصة التأمينية × 1350
 
   // إحصائيات السكان والمستفيدين
@@ -47,10 +49,14 @@ export interface Bakery {
   nationalId: string; // الرقم القومي (14 رقم صارم)
 
   // التراخيص والعقود وتواريخ السريان
-  taxCardDate: string; // تاريخ البطاقة الضريبية
+  commercialRegNumber?: string; // رقم السجل التجاري
   commercialRegDate: string; // تاريخ السجل التجاري
+  bakeryLicenseNumber?: string; // رقم الرخصة
   bakeryLicenseDate: string; // تاريخ رخصة المخبز
+  leaseContractType?: string; // عقد الإيجار (إيجار / تمليك)
   leaseAgreementDate: string; // تاريخ عقد الإيجار
+  taxCardNumber?: string; // رقم البطاقة الضريبية
+  taxCardDate: string; // تاريخ البطاقة الضريبية
 
   notes?: string;
 
@@ -130,6 +136,7 @@ export interface ColumnTitles {
   machineNumber: string;
   village: string;
   localUnit: string;
+  responsibleManager: string;
   remainingDebt: string;
   insuranceQuota: string;
   actualQuota: string;
@@ -153,9 +160,13 @@ export interface ColumnTitles {
   fuelType: string;
   phone: string;
   nationalId: string;
+  commercialRegNumber: string;
   commercialRegDate: string;
+  bakeryLicenseNumber: string;
   bakeryLicenseDate: string;
+  leaseContractType: string;
   leaseAgreementDate: string;
+  taxCardNumber: string;
   taxCardDate: string;
   actions: string;
 }

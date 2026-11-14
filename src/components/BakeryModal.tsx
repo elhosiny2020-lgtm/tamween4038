@@ -43,12 +43,20 @@ interface BakeryModalProps {
   breadTypeCounts?: string[];
   lineTypes?: string[];
   fuelTypes?: string[];
+  leaseContractTypes?: string[];
   currentUser?: AppUser | null;
   onSave: (bakery: Bakery) => void;
   onAddActivityStatus?: (status: string) => void;
   onAddLocalUnit?: (village: string, unit: string) => void;
   onUpdateDropdownList?: (
-    listKey: 'activityStatuses' | 'bakeryCategories' | 'breadTypes' | 'breadTypeCounts' | 'lineTypes' | 'fuelTypes',
+    listKey:
+      | 'activityStatuses'
+      | 'bakeryCategories'
+      | 'breadTypes'
+      | 'breadTypeCounts'
+      | 'lineTypes'
+      | 'fuelTypes'
+      | 'leaseContractTypes',
     updatedList: string[]
   ) => void;
   onUpdateVillages?: (updatedVillages: VillageHierarchy[]) => void;
@@ -67,6 +75,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   breadTypeCounts = ['1', '2', '3', '4', '5'],
   lineTypes = ['نصف آلي', 'آلي كامل', 'يدوي', 'ميكانيكي كامل'],
   fuelTypes = ['غاز طبيعي', 'سولار', 'مازوت', 'كهرباء'],
+  leaseContractTypes = ['إيجار', 'تمليك'],
   currentUser,
   onSave,
   onAddActivityStatus,
@@ -93,6 +102,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     | 'breadTypeCounts'
     | 'lineTypes'
     | 'fuelTypes'
+    | 'leaseContractTypes'
   >(null);
   const [dropdownNewItemText, setDropdownNewItemText] = useState('');
   const [dropdownEditingItem, setDropdownEditingItem] = useState<{ oldVal: string; newVal: string } | null>(null);
@@ -102,11 +112,13 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [machineNumber, setMachineNumber] = useState('');
   const [selectedVillage, setSelectedVillage] = useState(villages[0]?.village || 'بشبيش');
   const [selectedUnit, setSelectedUnit] = useState(villages[0]?.localUnits[0] || 'بشبيش الرئيسية');
+  const [responsibleManager, setResponsibleManager] = useState('');
 
   // Quotas & Calculations
   const [insuranceQuota, setInsuranceQuota] = useState<number>(20);
   const [actualQuota, setActualQuota] = useState<number>(20);
   const [insuranceValue, setInsuranceValue] = useState<number>(15000);
+  const [insuranceCheckNumber, setInsuranceCheckNumber] = useState('');
   const [loavesCount, setLoavesCount] = useState<number>(20 * 1350);
 
   // Demographics & Averages (متوسط نصيب الفرد بعلامة عشرية ورقمين فقط 0.00)
@@ -133,11 +145,15 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [phone, setPhone] = useState('');
   const [nationalId, setNationalId] = useState('');
 
-  // Licenses Dates
-  const [taxCardDate, setTaxCardDate] = useState('');
+  // Licenses Numbers, Contract Type & Dates
+  const [commercialRegNumber, setCommercialRegNumber] = useState('');
   const [commercialRegDate, setCommercialRegDate] = useState('');
+  const [bakeryLicenseNumber, setBakeryLicenseNumber] = useState('');
   const [bakeryLicenseDate, setBakeryLicenseDate] = useState('');
+  const [leaseContractType, setLeaseContractType] = useState(leaseContractTypes[0] || 'إيجار');
   const [leaseAgreementDate, setLeaseAgreementDate] = useState('');
+  const [taxCardNumber, setTaxCardNumber] = useState('');
+  const [taxCardDate, setTaxCardDate] = useState('');
 
   const [notes, setNotes] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -164,9 +180,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       machineNumber,
       selectedVillage,
       selectedUnit,
+      responsibleManager,
       insuranceQuota,
       actualQuota,
       insuranceValue,
+      insuranceCheckNumber,
       loavesCount,
       villagePopulation,
       perCapitaAverage,
@@ -186,10 +204,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       fuelType,
       phone,
       nationalId,
-      taxCardDate,
+      commercialRegNumber,
       commercialRegDate,
+      bakeryLicenseNumber,
       bakeryLicenseDate,
+      leaseContractType,
       leaseAgreementDate,
+      taxCardNumber,
+      taxCardDate,
       notes,
       updatedAt: Date.now(),
     };
@@ -213,9 +235,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     machineNumber,
     selectedVillage,
     selectedUnit,
+    responsibleManager,
     insuranceQuota,
     actualQuota,
     insuranceValue,
+    insuranceCheckNumber,
     loavesCount,
     villagePopulation,
     perCapitaAverage,
@@ -235,10 +259,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     fuelType,
     phone,
     nationalId,
-    taxCardDate,
+    commercialRegNumber,
     commercialRegDate,
+    bakeryLicenseNumber,
     bakeryLicenseDate,
+    leaseContractType,
     leaseAgreementDate,
+    taxCardNumber,
+    taxCardDate,
     notes,
   ]);
 
@@ -248,10 +276,12 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setMachineNumber(bakeryToEdit.machineNumber);
       setSelectedVillage(bakeryToEdit.village);
       setSelectedUnit(bakeryToEdit.localUnit);
+      setResponsibleManager(bakeryToEdit.responsibleManager || '');
 
       setInsuranceQuota(bakeryToEdit.insuranceQuota);
       setActualQuota(bakeryToEdit.actualQuota);
       setInsuranceValue(bakeryToEdit.insuranceValue);
+      setInsuranceCheckNumber(bakeryToEdit.insuranceCheckNumber || '');
       setLoavesCount(bakeryToEdit.loavesCount);
 
       setVillagePopulation(bakeryToEdit.villagePopulation);
@@ -276,10 +306,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setPhone(bakeryToEdit.phone);
       setNationalId(bakeryToEdit.nationalId);
 
-      setTaxCardDate(bakeryToEdit.taxCardDate || '');
+      setCommercialRegNumber(bakeryToEdit.commercialRegNumber || '');
       setCommercialRegDate(bakeryToEdit.commercialRegDate || '');
+      setBakeryLicenseNumber(bakeryToEdit.bakeryLicenseNumber || '');
       setBakeryLicenseDate(bakeryToEdit.bakeryLicenseDate || '');
+      setLeaseContractType(bakeryToEdit.leaseContractType || leaseContractTypes[0] || 'إيجار');
       setLeaseAgreementDate(bakeryToEdit.leaseAgreementDate || '');
+      setTaxCardNumber(bakeryToEdit.taxCardNumber || '');
+      setTaxCardDate(bakeryToEdit.taxCardDate || '');
 
       setNotes(bakeryToEdit.notes || '');
     } else {
@@ -290,10 +324,12 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setSelectedVillage(defaultV);
       const units = villages.find((v) => v.village === defaultV)?.localUnits || [];
       setSelectedUnit(units[0] || 'بشبيش الرئيسية');
+      setResponsibleManager('');
 
       setInsuranceQuota(20);
       setActualQuota(20);
       setInsuranceValue(14100);
+      setInsuranceCheckNumber('');
       const loaves = 20 * 660; // 13200
       setLoavesCount(loaves);
       setVillagePopulation(30000);
@@ -320,10 +356,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       const nextYear = new Date();
       nextYear.setFullYear(nextYear.getFullYear() + 1);
       const defaultDate = nextYear.toISOString().split('T')[0];
-      setTaxCardDate(defaultDate);
+      setCommercialRegNumber('');
       setCommercialRegDate(defaultDate);
+      setBakeryLicenseNumber('');
       setBakeryLicenseDate(defaultDate);
+      setLeaseContractType(leaseContractTypes[0] || 'إيجار');
       setLeaseAgreementDate(defaultDate);
+      setTaxCardNumber('');
+      setTaxCardDate(defaultDate);
       setNotes('');
     }
     setErrors({});
@@ -529,9 +569,11 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       machineNumber: machineNumber.trim(),
       village: selectedVillage,
       localUnit: selectedUnit,
+      responsibleManager: responsibleManager.trim(),
       insuranceQuota: Number(insuranceQuota) || 0,
       actualQuota: Number(actualQuota) || 0,
       insuranceValue: Number(insuranceValue) || 0,
+      ...(bakeryToEdit ? { insuranceCheckNumber: insuranceCheckNumber.trim() } : {}),
       loavesCount: Number(loavesCount) || 0,
       villagePopulation: Number(villagePopulation) || 0,
       perCapitaAverage: !isNaN(parseFloat(perCapitaAverage))
@@ -553,10 +595,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       fuelType,
       phone: phone.trim(),
       nationalId: nationalId.trim(),
-      taxCardDate,
+      commercialRegNumber: commercialRegNumber.trim(),
       commercialRegDate,
+      bakeryLicenseNumber: bakeryLicenseNumber.trim(),
       bakeryLicenseDate,
+      leaseContractType: leaseContractType.trim() || leaseContractTypes[0] || 'إيجار',
       leaseAgreementDate,
+      taxCardNumber: taxCardNumber.trim(),
+      taxCardDate,
       notes: notes.trim(),
       activityLog: updatedLogs,
     };
@@ -568,7 +614,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
   // Helper for inline dropdown list management inside BakeryModal
   const getActiveInlineList = (): {
-    key: 'activityStatuses' | 'bakeryCategories' | 'breadTypes' | 'breadTypeCounts' | 'lineTypes' | 'fuelTypes';
+    key:
+      | 'activityStatuses'
+      | 'bakeryCategories'
+      | 'breadTypes'
+      | 'breadTypeCounts'
+      | 'lineTypes'
+      | 'fuelTypes'
+      | 'leaseContractTypes';
     title: string;
     items: string[];
     currentVal: string;
@@ -622,6 +675,14 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
           items: fuelTypes,
           currentVal: fuelType,
           setVal: setFuelType,
+        };
+      case 'leaseContractTypes':
+        return {
+          key: 'leaseContractTypes',
+          title: 'عقد الإيجار (إيجار / تمليك)',
+          items: leaseContractTypes,
+          currentVal: leaseContractType,
+          setVal: setLeaseContractType,
         };
       default:
         return null;
@@ -852,6 +913,20 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                     <option value={selectedUnit}>{selectedUnit}</option>
                   )}
                 </select>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  المدير المسئول
+                </label>
+                <input
+                  type="text"
+                  data-testid="bakery-responsible-manager-input"
+                  value={responsibleManager}
+                  onChange={(e) => setResponsibleManager(e.target.value)}
+                  placeholder="اسم المدير المسئول عن المخبز"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 text-right"
+                />
               </div>
             </div>
           </div>
@@ -1151,7 +1226,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
             </div>
 
             {/* Inline Dropdown List Editor Drawer (يظهر داخل المفتاح للتعديل والحذف والإضافة فوراً) */}
-            {activeInlineList && !isReadOnly && (
+            {activeInlineList && activeInlineList.key !== 'leaseContractTypes' && !isReadOnly && (
               <div className="mt-3 p-3.5 bg-white border-2 border-amber-400 rounded-xl shadow-md space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                   <span className="text-xs font-black text-amber-950">
@@ -1549,6 +1624,25 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 />
               </div>
             </div>
+
+            {/* Edit-only field: رقم شيك سداد التأمين (يظهر في قائمة التعديل فقط ولا ينشئ عموداً في الجدول) */}
+            {bakeryToEdit && (
+              <div className="mt-3.5 pt-3 border-t border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                <div>
+                  <label className="block text-xs font-black text-amber-900 mb-1">
+                    رقم شيك سداد التأمين
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="bakery-insurance-check-input"
+                    value={insuranceCheckNumber}
+                    onChange={(e) => setInsuranceCheckNumber(e.target.value)}
+                    placeholder="أدخل رقم شيك سداد التأمين"
+                    className="w-full px-3 py-2 bg-amber-50/70 border border-amber-400 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-right"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section 5: Demographics & Yearly Averages (الترتيب المعتمد: سكان القرية -> مستفيد عام 2023 -> مستفيدين عام 2024 -> مستفيدين عام 2025 -> متوسط عام 2023 -> متوسط عام 2024 -> متوسط عام 2025 -> الفرق التراكمي) */}
@@ -1711,11 +1805,239 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
           </div>
 
           {/* Section 6: Licenses, Contracts, Expiration Dates */}
-          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
-            <h4 className="text-xs font-black text-slate-800 pb-2 mb-3 border-b border-slate-200 flex items-center gap-1.5">
+          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3.5">
+            <h4 className="text-xs font-black text-slate-800 pb-2 border-b border-slate-200 flex items-center gap-1.5">
               <Calendar className="w-4 h-4 text-amber-600" />
               6. التراخيص والعقود وتواريخ السريان (تنسيق التواريخ يوم / شهر / سنة DD/MM/YYYY)
             </h4>
+
+            {/* أرقام التراخيص وعقد الإيجار (إيجار / تمليك) */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  رقم السجل التجاري
+                </label>
+                <input
+                  type="text"
+                  data-testid="bakery-commercial-reg-num-input"
+                  value={commercialRegNumber}
+                  onChange={(e) => setCommercialRegNumber(e.target.value)}
+                  placeholder="أدخل رقم السجل التجاري"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-right"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  رقم الرخصة
+                </label>
+                <input
+                  type="text"
+                  data-testid="bakery-license-num-input"
+                  value={bakeryLicenseNumber}
+                  onChange={(e) => setBakeryLicenseNumber(e.target.value)}
+                  placeholder="أدخل رقم رخصة المخبز"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-right"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-black text-slate-700">
+                    عقد الإيجار (إيجار / تمليك)
+                  </label>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      data-testid="lease-contract-editor-toggle"
+                      onClick={() => {
+                        setOpenDropdownEditor(
+                          openDropdownEditor === 'leaseContractTypes' ? null : 'leaseContractTypes'
+                        );
+                        setDropdownEditingItem(null);
+                        setDropdownNewItemText('');
+                      }}
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-black bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 cursor-pointer"
+                      title="إضافة وحذف وتعديل خيارات عقد الإيجار"
+                    >
+                      {openDropdownEditor === 'leaseContractTypes' ? 'إغلاق القائمة' : '✏️ تعديل/حذف'}
+                    </button>
+                  )}
+                </div>
+                <select
+                  data-testid="bakery-lease-type-select"
+                  value={leaseContractType}
+                  onChange={(e) => setLeaseContractType(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                >
+                  {leaseContractTypes.map((lt) => (
+                    <option key={lt} value={lt}>
+                      {lt}
+                    </option>
+                  ))}
+                  {leaseContractType && !leaseContractTypes.includes(leaseContractType) && (
+                    <option value={leaseContractType}>{leaseContractType}</option>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  رقم البطاقة الضريبية
+                </label>
+                <input
+                  type="text"
+                  data-testid="bakery-tax-card-num-input"
+                  value={taxCardNumber}
+                  onChange={(e) => setTaxCardNumber(e.target.value)}
+                  placeholder="أدخل رقم البطاقة الضريبية"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-right"
+                />
+              </div>
+            </div>
+
+            {/* Inline Editor Drawer for عقد الإيجار (إضافة / تعديل / حذف) */}
+            {activeInlineList && activeInlineList.key === 'leaseContractTypes' && !isReadOnly && (
+              <div className="p-3.5 bg-white border-2 border-amber-400 rounded-xl shadow-md space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <span className="text-xs font-black text-amber-950">
+                    ⚙️ إدارة وتعديل وحذف عناصر القائمة المنسدلة: ({activeInlineList.title})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setOpenDropdownEditor(null)}
+                    className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-[11px] font-black cursor-pointer"
+                  >
+                    إغلاق القائمة ✕
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    data-testid="lease-contract-new-item-input"
+                    value={dropdownNewItemText}
+                    onChange={(e) => setDropdownNewItemText(e.target.value)}
+                    placeholder={`إضافة خيار جديد في (${activeInlineList.title})...`}
+                    className="flex-1 px-3 py-1.5 bg-slate-50 border border-amber-400 rounded-lg text-xs font-black text-slate-900"
+                  />
+                  <button
+                    type="button"
+                    data-testid="lease-contract-add-item-btn"
+                    onClick={() => {
+                      const clean = dropdownNewItemText.trim();
+                      if (!clean) return;
+                      if (!activeInlineList.items.includes(clean)) {
+                        const updated = [...activeInlineList.items, clean];
+                        if (onUpdateDropdownList) {
+                          onUpdateDropdownList(activeInlineList.key, updated);
+                        }
+                      }
+                      activeInlineList.setVal(clean);
+                      setDropdownNewItemText('');
+                    }}
+                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black cursor-pointer"
+                  >
+                    + إضافة واختيار
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-44 overflow-y-auto">
+                  {activeInlineList.items.map((item) => {
+                    const isEditing = dropdownEditingItem?.oldVal === item;
+                    return (
+                      <div
+                        key={item}
+                        className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                      >
+                        {isEditing ? (
+                          <div className="flex items-center gap-1 flex-1">
+                            <input
+                              type="text"
+                              value={dropdownEditingItem.newVal}
+                              onChange={(e) =>
+                                setDropdownEditingItem({
+                                  ...dropdownEditingItem,
+                                  newVal: e.target.value,
+                                })
+                              }
+                              className="flex-1 px-2 py-0.5 bg-white border border-amber-500 rounded text-xs font-black"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const clean = dropdownEditingItem.newVal.trim();
+                                if (clean && clean !== item) {
+                                  const updated = activeInlineList.items.map((x) =>
+                                    x === item ? clean : x
+                                  );
+                                  if (onUpdateDropdownList) {
+                                    onUpdateDropdownList(activeInlineList.key, updated);
+                                  }
+                                  if (activeInlineList.currentVal === item) {
+                                    activeInlineList.setVal(clean);
+                                  }
+                                }
+                                setDropdownEditingItem(null);
+                              }}
+                              className="px-2 py-0.5 bg-emerald-600 text-white rounded text-[10px] font-black cursor-pointer"
+                            >
+                              حفظ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDropdownEditingItem(null)}
+                              className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[10px] font-black cursor-pointer"
+                            >
+                              إلغاء
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span
+                              onClick={() => activeInlineList.setVal(item)}
+                              className="font-black text-slate-900 cursor-pointer hover:text-amber-700 flex-1 truncate"
+                              title="اضغط لاختيار هذا العنصر"
+                            >
+                              {item}
+                            </span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDropdownEditingItem({ oldVal: item, newVal: item })
+                                }
+                                className="px-1.5 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded text-[10px] font-black cursor-pointer"
+                              >
+                                تعديل
+                              </button>
+                              <button
+                                type="button"
+                                disabled={activeInlineList.items.length <= 1}
+                                onClick={() => {
+                                  if (activeInlineList.items.length <= 1) return;
+                                  const updated = activeInlineList.items.filter((x) => x !== item);
+                                  if (onUpdateDropdownList) {
+                                    onUpdateDropdownList(activeInlineList.key, updated);
+                                  }
+                                  if (activeInlineList.currentVal === item && updated.length > 0) {
+                                    activeInlineList.setVal(updated[0]);
+                                  }
+                                }}
+                                className="px-1.5 py-0.5 bg-red-100 hover:bg-red-200 disabled:opacity-40 text-red-800 rounded text-[10px] font-black cursor-pointer"
+                              >
+                                حذف
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1">

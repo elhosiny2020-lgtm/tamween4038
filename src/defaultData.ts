@@ -132,12 +132,18 @@ export const DEFAULT_FUEL_TYPES: string[] = [
   'كهرباء'
 ];
 
+export const DEFAULT_LEASE_CONTRACT_TYPES: string[] = [
+  'إيجار',
+  'تمليك'
+];
+
 export const DEFAULT_COLUMN_TITLES: ColumnTitles = {
   index: 'م',
   bakeryOwnerName: 'اسم صاحب المخبز',
   machineNumber: 'رقم الماكينة',
   village: 'القرية',
   localUnit: 'الوحدة التابعة',
+  responsibleManager: 'المدير المسئول',
   remainingDebt: 'المتبقي على المخبز',
   insuranceValue: 'القيمة التأمينية (ج.م)',
   insuranceQuota: 'الحصة التأمينية (شيكارة)',
@@ -161,9 +167,13 @@ export const DEFAULT_COLUMN_TITLES: ColumnTitles = {
   fuelType: 'نوع الوقود',
   phone: 'رقم التليفون',
   nationalId: 'الرقم القومي',
+  commercialRegNumber: 'رقم السجل التجاري',
   commercialRegDate: 'السجل التجاري',
+  bakeryLicenseNumber: 'رقم الرخصة',
   bakeryLicenseDate: 'رخصة المخبز',
-  leaseAgreementDate: 'عقد الإيجار',
+  leaseContractType: 'عقد الإيجار (إيجار/تمليك)',
+  leaseAgreementDate: 'تاريخ عقد الإيجار',
+  taxCardNumber: 'رقم البطاقة الضريبية',
   taxCardDate: 'البطاقة الضريبية',
   actions: 'العمليات والإجراءات'
 };

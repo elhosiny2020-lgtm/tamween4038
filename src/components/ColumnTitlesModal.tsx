@@ -42,6 +42,7 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
     { key: 'machineNumber', label: 'رقم الماكينة', group: 'البيانات الأساسية' },
     { key: 'village', label: 'القرية', group: 'البيانات الأساسية' },
     { key: 'localUnit', label: 'الوحدة التابعة', group: 'البيانات الأساسية' },
+    { key: 'responsibleManager', label: 'المدير المسئول', group: 'البيانات الأساسية' },
     { key: 'remainingDebt', label: 'المتبقي على المخبز', group: 'البيانات الأساسية' },
 
     // الحصص والبيانات التموينية
@@ -73,9 +74,13 @@ export const ColumnTitlesModal: React.FC<ColumnTitlesModalProps> = ({
     { key: 'phone', label: 'رقم التليفون', group: 'الاتصال والهوية' },
     { key: 'nationalId', label: 'الرقم القومي', group: 'الاتصال والهوية' },
 
+    { key: 'commercialRegNumber', label: 'رقم السجل التجاري', group: 'التراخيص والعقود' },
     { key: 'commercialRegDate', label: 'السجل التجاري', group: 'التراخيص والعقود' },
+    { key: 'bakeryLicenseNumber', label: 'رقم الرخصة', group: 'التراخيص والعقود' },
     { key: 'bakeryLicenseDate', label: 'رخصة المخبز', group: 'التراخيص والعقود' },
-    { key: 'leaseAgreementDate', label: 'عقد الإيجار', group: 'التراخيص والعقود' },
+    { key: 'leaseContractType', label: 'عقد الإيجار (إيجار/تمليك)', group: 'التراخيص والعقود' },
+    { key: 'leaseAgreementDate', label: 'تاريخ عقد الإيجار', group: 'التراخيص والعقود' },
+    { key: 'taxCardNumber', label: 'رقم البطاقة الضريبية', group: 'التراخيص والعقود' },
     { key: 'taxCardDate', label: 'البطاقة الضريبية', group: 'التراخيص والعقود' },
     { key: 'actions', label: 'العمليات والإجراءات', group: 'العمليات والإجراءات' },
   ];

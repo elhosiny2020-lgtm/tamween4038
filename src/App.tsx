@@ -49,6 +49,7 @@ import {
   DEFAULT_BREAD_TYPE_COUNTS,
   DEFAULT_LINE_TYPES,
   DEFAULT_FUEL_TYPES,
+  DEFAULT_LEASE_CONTRACT_TYPES,
   PAYMENT_METHODS,
   DEFAULT_COLUMN_TITLES,
   INITIAL_BAKERIES,
@@ -204,6 +205,7 @@ const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
   machineNumber: 'رقم ماكينة صرف الخبز الذكية المسجلة بوزارة التموين',
   village: 'القرية الرئيسية المقام بها المخبز التابعة لمركز المحلة الكبرى',
   localUnit: 'الوحدة المحلية الإدارية المشرفة على نطاق المخبز',
+  responsibleManager: 'المدير المسئول عن إدارة وتشغيل المخبز',
   remainingDebt: 'إجمالي المديونيات والغرامات والفرق المالي المتبقي على المخبز بالجنيه المصري',
   insuranceQuota: 'الحصة التأمينية المقررة للمخبز من الدقيق بالشكائر يومياً',
   actualQuota: 'الحصة الفعلية المنصرفة للمخبز بناءً على متوسطات المبيعات',
@@ -227,9 +229,13 @@ const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
   fuelType: 'نوع الوقود المستخدم في الأفران (سولار، غاز طبيعي، مازوت)',
   phone: 'رقم هاتف صاحب المخبز أو المدير المسؤول للتواصل الفوري',
   nationalId: 'الرقم القومي (14 رقم) لصاحب المخبز المسجل بالبطاقة الشخصية',
+  commercialRegNumber: 'رقم السجل التجاري المسجل للمخبز',
   commercialRegDate: 'تاريخ انتهاء السجل التجاري المنظم لنشاط المخبز',
+  bakeryLicenseNumber: 'رقم رخصة تشغيل المخبز',
   bakeryLicenseDate: 'تاريخ انتهاء رخصة المخبز الصادرة من مجلس المدينة/المركز',
+  leaseContractType: 'نوع حيازة المقر (إيجار أو تمليك)',
   leaseAgreementDate: 'تاريخ انتهاء عقد الإيجار أو الملكية لمقر المخبز',
+  taxCardNumber: 'رقم البطاقة الضريبية المسجل للمخبز',
   taxCardDate: 'تاريخ انتهاء البطاقة الضريبية ومتابعة الموقف الضريبي',
 };
 
@@ -543,6 +549,7 @@ export default function App() {
           breadTypeCounts: preloaded?.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS,
           lineTypes: preloaded?.lineTypes ?? DEFAULT_LINE_TYPES,
           fuelTypes: preloaded?.fuelTypes ?? DEFAULT_FUEL_TYPES,
+          leaseContractTypes: preloaded?.leaseContractTypes ?? DEFAULT_LEASE_CONTRACT_TYPES,
           paymentMethods: preloaded?.paymentMethods ?? PAYMENT_METHODS,
           dailyTasks: preloaded?.dailyTasks ?? INITIAL_DAILY_TASKS,
           columnTitles: preloaded?.columnTitles ?? DEFAULT_COLUMN_TITLES,
@@ -583,6 +590,7 @@ export default function App() {
             breadTypeCounts: DEFAULT_BREAD_TYPE_COUNTS,
             lineTypes: DEFAULT_LINE_TYPES,
             fuelTypes: DEFAULT_FUEL_TYPES,
+            leaseContractTypes: DEFAULT_LEASE_CONTRACT_TYPES,
             paymentMethods: PAYMENT_METHODS,
             dailyTasks: INITIAL_DAILY_TASKS,
             inboxMessages: INITIAL_INBOX_MESSAGES,
@@ -1206,6 +1214,11 @@ export default function App() {
             b.machineNumber.includes(q) ||
             b.village.toLowerCase().includes(q) ||
             b.localUnit.toLowerCase().includes(q) ||
+            (b.responsibleManager || '').toLowerCase().includes(q) ||
+            (b.commercialRegNumber || '').toLowerCase().includes(q) ||
+            (b.bakeryLicenseNumber || '').toLowerCase().includes(q) ||
+            (b.taxCardNumber || '').toLowerCase().includes(q) ||
+            (b.leaseContractType || '').toLowerCase().includes(q) ||
             b.phone.includes(q) ||
             b.nationalId.includes(q);
           if (!match) return false;
@@ -1954,6 +1967,7 @@ export default function App() {
       ct.machineNumber,
       ct.village,
       ct.localUnit,
+      ct.responsibleManager || 'المدير المسئول',
       ct.remainingDebt,
       ct.insuranceValue,
       ct.insuranceQuota,
@@ -1977,9 +1991,13 @@ export default function App() {
       ct.fuelType,
       ct.phone,
       ct.nationalId,
+      ct.commercialRegNumber || 'رقم السجل التجاري',
       ct.commercialRegDate,
+      ct.bakeryLicenseNumber || 'رقم الرخصة',
       ct.bakeryLicenseDate,
+      ct.leaseContractType || 'عقد الإيجار (إيجار/تمليك)',
       ct.leaseAgreementDate,
+      ct.taxCardNumber || 'رقم البطاقة الضريبية',
       ct.taxCardDate,
     ];
 
@@ -1989,6 +2007,7 @@ export default function App() {
       `"${b.machineNumber}"`,
       `"${b.village}"`,
       `"${b.localUnit}"`,
+      `"${(b.responsibleManager || '').replace(/"/g, '""')}"`,
       bakeryRemainingDebtsMap[b.id] || 0,
       b.insuranceValue,
       b.insuranceQuota,
@@ -2012,9 +2031,13 @@ export default function App() {
       `"${b.fuelType}"`,
       `"${b.phone}"`,
       `"${b.nationalId}"`,
+      `"${(b.commercialRegNumber || '').replace(/"/g, '""')}"`,
       `"${b.commercialRegDate}"`,
+      `"${(b.bakeryLicenseNumber || '').replace(/"/g, '""')}"`,
       `"${b.bakeryLicenseDate}"`,
+      `"${(b.leaseContractType || 'إيجار').replace(/"/g, '""')}"`,
       `"${b.leaseAgreementDate}"`,
+      `"${(b.taxCardNumber || '').replace(/"/g, '""')}"`,
       `"${b.taxCardDate}"`,
     ]);
 
@@ -3371,7 +3394,7 @@ export default function App() {
                         </th>
 
                         {showBasicCols && (
-                          <th colSpan={4} className="py-2 px-2 bg-[#0F2342] border-l border-[#1E3A5F] text-sky-200">
+                          <th colSpan={5} className="py-2 px-2 bg-[#0F2342] border-l border-[#1E3A5F] text-sky-200">
                             البيانات الأساسية وموقع المخبز (مدخل يدوي)
                           </th>
                         )}
@@ -3410,7 +3433,7 @@ export default function App() {
                             <th colSpan={2} className="py-2 px-2 bg-[#0F2342] border-l border-[#1E3A5F] text-slate-200">
                               الاتصال والهوية
                             </th>
-                            <th colSpan={4} className="py-2 px-2 bg-[#152E54] border-l border-[#1E3A5F] text-slate-200">
+                            <th colSpan={8} className="py-2 px-2 bg-[#152E54] border-l border-[#1E3A5F] text-slate-200">
                               التراخيص والعقود
                             </th>
                           </>
@@ -3455,6 +3478,13 @@ export default function App() {
                             >
                               <ThHeaderTooltip label={ct.localUnit} tooltipKey="localUnit" />
                               {renderSortIcon('localUnit')}
+                            </th>
+                            <th
+                              onClick={() => handleSort('responsibleManager')}
+                              className="py-2 px-2 border-l border-[#1E3A5F] min-w-[125px] cursor-pointer hover:bg-[#1E40AF]"
+                            >
+                              <ThHeaderTooltip label={ct.responsibleManager || 'المدير المسئول'} tooltipKey="responsibleManager" />
+                              {renderSortIcon('responsibleManager')}
                             </th>
                           </>
                         )}
@@ -3601,14 +3631,26 @@ export default function App() {
                             <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[120px]">
                               <ThHeaderTooltip label={ct.nationalId} tooltipKey="nationalId" />
                             </th>
+                            <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[95px]">
+                              <ThHeaderTooltip label={ct.commercialRegNumber || 'رقم السجل التجاري'} tooltipKey="commercialRegNumber" />
+                            </th>
                             <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[85px]">
                               <ThHeaderTooltip label={ct.commercialRegDate} tooltipKey="commercialRegDate" />
+                            </th>
+                            <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[95px]">
+                              <ThHeaderTooltip label={ct.bakeryLicenseNumber || 'رقم الرخصة'} tooltipKey="bakeryLicenseNumber" />
                             </th>
                             <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[85px]">
                               <ThHeaderTooltip label={ct.bakeryLicenseDate} tooltipKey="bakeryLicenseDate" />
                             </th>
+                            <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[90px]">
+                              <ThHeaderTooltip label={ct.leaseContractType || 'عقد الإيجار (إيجار/تمليك)'} tooltipKey="leaseContractType" />
+                            </th>
                             <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[85px]">
                               <ThHeaderTooltip label={ct.leaseAgreementDate} tooltipKey="leaseAgreementDate" />
+                            </th>
+                            <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[95px]">
+                              <ThHeaderTooltip label={ct.taxCardNumber || 'رقم البطاقة الضريبية'} tooltipKey="taxCardNumber" />
                             </th>
                             <th className="py-2 px-2 border-l border-[#1E3A5F] min-w-[85px]">
                               <ThHeaderTooltip label={ct.taxCardDate} tooltipKey="taxCardDate" />
@@ -3622,7 +3664,7 @@ export default function App() {
                     <tbody className="divide-y divide-slate-200 font-semibold text-slate-800">
                       {sortedBakeries.length === 0 ? (
                         <tr>
-                          <td colSpan={33} className="py-12 text-center text-slate-500 font-bold bg-white">
+                          <td colSpan={38} className="py-12 text-center text-slate-500 font-bold bg-white">
                             لا توجد أي مخابز مطابقة لمعايير البحث أو التصفية الحالية
                           </td>
                         </tr>
@@ -3679,6 +3721,9 @@ export default function App() {
                                     </td>
                                     <td className="py-2.5 px-2 border-l border-slate-200 text-slate-700">{b.village}</td>
                                     <td className="py-2.5 px-2 border-l border-slate-200 text-slate-600">{b.localUnit}</td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 text-slate-800 font-bold">
+                                      {b.responsibleManager || '-'}
+                                    </td>
                                   </>
                                 )}
 
@@ -3838,6 +3883,9 @@ export default function App() {
                                     >
                                       {isMissingNatId ? 'بيانات ناقصة' : b.nationalId}
                                     </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                                      {b.commercialRegNumber || '-'}
+                                    </td>
                                     <td
                                       className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
                                         !b.commercialRegDate
@@ -3848,6 +3896,9 @@ export default function App() {
                                       }`}
                                     >
                                       {formatDateDDMMYYYY(b.commercialRegDate) || 'ناقص'}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                                      {b.bakeryLicenseNumber || '-'}
                                     </td>
                                     <td
                                       className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
@@ -3860,6 +3911,9 @@ export default function App() {
                                     >
                                       {formatDateDDMMYYYY(b.bakeryLicenseDate) || 'ناقص'}
                                     </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 font-bold text-slate-800">
+                                      {b.leaseContractType || 'إيجار'}
+                                    </td>
                                     <td
                                       className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
                                         !b.leaseAgreementDate
@@ -3870,6 +3924,9 @@ export default function App() {
                                       }`}
                                     >
                                       {formatDateDDMMYYYY(b.leaseAgreementDate) || 'ناقص'}
+                                    </td>
+                                    <td className="py-2.5 px-2 border-l border-slate-200 font-mono text-slate-700">
+                                      {b.taxCardNumber || '-'}
                                     </td>
                                     <td
                                       className={`py-2.5 px-2 border-l border-slate-200 num-enlarged ${
@@ -3949,6 +4006,7 @@ export default function App() {
                                   </td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 font-bold">{vGroup.village}</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 font-bold">{vGroup.localUnit}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 font-bold">-</td>
                                 </>
                               )}
                               {showDebtCol && (
@@ -3998,9 +4056,13 @@ export default function App() {
                                 <>
                                   <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validPhonesCount} رقم</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validNatIdsCount} هوية</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">-</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validCommRegCount} سجل</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">-</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validLicenseCount} رخصة</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">-</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validLeaseCount} عقد</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">-</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 text-[11px] font-mono">{vGroup.validTaxCardCount} بطاقة</td>
                                 </>
                               )}
@@ -4029,6 +4091,7 @@ export default function App() {
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] text-amber-200">
                                     {uGroup.villages.length} وحدة تابعة
                                   </td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-amber-200">-</td>
                                 </>
                               )}
                               {showDebtCol && (
@@ -4078,9 +4141,13 @@ export default function App() {
                                 <>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validPhonesCount} رقم</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validNatIdsCount} هوية</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">-</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validCommRegCount} سجل</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">-</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validLicenseCount} رخصة</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">-</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validLeaseCount} عقد</td>
+                                  <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">-</td>
                                   <td className="py-3 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">{uGroup.validTaxCardCount} بطاقة</td>
                                 </>
                               )}
@@ -4134,6 +4201,9 @@ export default function App() {
                                   </td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
                                     {grandTotals.uniqueUnitsLabel}
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">
+                                    -
                                   </td>
                                 </>
                               )}
@@ -4225,13 +4295,25 @@ export default function App() {
                                     {grandTotals.validNatIdsCount} رقم قومي
                                   </td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    -
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
                                     {grandTotals.validCommRegCount} سجل مسجل
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    -
                                   </td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
                                     {grandTotals.validLicenseCount} رخصة مسجلة
                                   </td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    -
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
                                     {grandTotals.validLeaseCount} عقد مسجل
+                                  </td>
+                                  <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
+                                    -
                                   </td>
                                   <td className="py-3.5 px-2 border-l border-[#1E3A5F] text-[11px] font-mono">
                                     {grandTotals.validTaxCardCount} بطاقة مسجلة
@@ -4386,6 +4468,7 @@ export default function App() {
           breadTypeCounts={appState.breadTypeCounts}
           lineTypes={appState.lineTypes}
           fuelTypes={appState.fuelTypes}
+          leaseContractTypes={appState.leaseContractTypes}
           currentUser={appState.currentUser}
           onAddActivityStatus={(newStatus) => {
             if (!appState.activityStatuses.includes(newStatus)) {

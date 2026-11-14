@@ -121,6 +121,12 @@ export const BakeryDetailsModal: React.FC<BakeryDetailsModalProps> = ({
                 </span>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/80">
+                <span className="text-slate-500 block text-[11px]">{ct.responsibleManager || 'المدير المسئول'}</span>
+                <span className="font-bold text-slate-800 mt-0.5 block">
+                  {bakery.responsibleManager || 'غير مسجل'}
+                </span>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/80">
                 <span className="text-slate-500 block text-[11px]">{ct.activityStatus}</span>
                 <span
                   className={`font-bold mt-0.5 inline-block ${
@@ -309,9 +315,21 @@ export const BakeryDetailsModal: React.FC<BakeryDetailsModalProps> = ({
                   <span className="font-mono font-bold text-slate-800">{bakery.nationalId || 'غير مسجل'}</span>
                 </div>
                 <div>
+                  <span className="text-slate-500 block text-[11px]">{ct.commercialRegNumber || 'رقم السجل التجاري'}:</span>
+                  <span className="font-mono font-bold text-slate-800">
+                    {bakery.commercialRegNumber || '-'}
+                  </span>
+                </div>
+                <div>
                   <span className="text-slate-500 block text-[11px]">{ct.commercialRegDate}:</span>
                   <span className="font-mono font-bold text-slate-800">
                     {formatDateDDMMYYYY(bakery.commercialRegDate) || '-'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block text-[11px]">{ct.bakeryLicenseNumber || 'رقم الرخصة'}:</span>
+                  <span className="font-mono font-bold text-slate-800">
+                    {bakery.bakeryLicenseNumber || '-'}
                   </span>
                 </div>
                 <div>
@@ -321,9 +339,21 @@ export const BakeryDetailsModal: React.FC<BakeryDetailsModalProps> = ({
                   </span>
                 </div>
                 <div>
+                  <span className="text-slate-500 block text-[11px]">{ct.leaseContractType || 'عقد الإيجار'}:</span>
+                  <span className="font-bold text-slate-800">
+                    {bakery.leaseContractType || '-'}
+                  </span>
+                </div>
+                <div>
                   <span className="text-slate-500 block text-[11px]">{ct.leaseAgreementDate}:</span>
                   <span className="font-mono font-bold text-slate-800">
                     {formatDateDDMMYYYY(bakery.leaseAgreementDate) || '-'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block text-[11px]">{ct.taxCardNumber || 'رقم البطاقة الضريبية'}:</span>
+                  <span className="font-mono font-bold text-slate-800">
+                    {bakery.taxCardNumber || '-'}
                   </span>
                 </div>
                 <div>

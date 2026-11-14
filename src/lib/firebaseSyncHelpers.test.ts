@@ -97,9 +97,32 @@ test('computeFullBranchDigest detects edits on all fields including phone, notes
     systemConfig: { ...baseConfig, debtAlertThreshold: 25000 },
   });
 
+  const dManagerChanged = computeFullBranchDigest({
+    bakeries: [{ ...baseBakery, responsibleManager: 'أحمد حسن' }],
+    debts: [baseDebt],
+    systemConfig: baseConfig,
+  });
+
+  const dLicenseChanged = computeFullBranchDigest({
+    bakeries: [
+      {
+        ...baseBakery,
+        commercialRegNumber: 'CR-99',
+        bakeryLicenseNumber: 'BL-55',
+        taxCardNumber: 'TX-77',
+        leaseContractType: 'تمليك',
+        insuranceCheckNumber: 'CHK-1001',
+      },
+    ],
+    debts: [baseDebt],
+    systemConfig: baseConfig,
+  });
+
   assert.notStrictEqual(d0, dPhoneChanged);
   assert.notStrictEqual(d0, dNotesChanged);
   assert.notStrictEqual(d0, dThresholdChanged);
+  assert.notStrictEqual(d0, dManagerChanged);
+  assert.notStrictEqual(d0, dLicenseChanged);
 });
 
 test('shouldTriggerDebtAlert evaluates against configurable threshold and falls back to 50000', () => {

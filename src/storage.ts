@@ -21,6 +21,7 @@ import {
   DEFAULT_BREAD_TYPE_COUNTS,
   DEFAULT_LINE_TYPES,
   DEFAULT_FUEL_TYPES,
+  DEFAULT_LEASE_CONTRACT_TYPES,
   PAYMENT_METHODS,
   DEFAULT_COLUMN_TITLES,
   INITIAL_BAKERIES,
@@ -72,6 +73,7 @@ export interface AppState {
   breadTypeCounts?: string[];
   lineTypes?: string[];
   fuelTypes?: string[];
+  leaseContractTypes?: string[];
   paymentMethods?: string[];
   dailyTasks?: DailyBakeryTask[];
   inboxMessages?: InboxChatMessage[];
@@ -129,6 +131,7 @@ const BASE_KEYS = {
   BREAD_TYPE_COUNTS: 'TAMWEEN_BREAD_TYPE_COUNTS_V3',
   LINE_TYPES: 'TAMWEEN_LINE_TYPES_V3',
   FUEL_TYPES: 'TAMWEEN_FUEL_TYPES_V3',
+  LEASE_CONTRACT_TYPES: 'TAMWEEN_LEASE_CONTRACT_TYPES_V3',
   PAYMENT_METHODS: 'TAMWEEN_PAYMENT_METHODS_V3',
   DAILY_TASKS: 'TAMWEEN_DAILY_TASKS_V3',
   INBOX_MESSAGES: 'TAMWEEN_INBOX_MESSAGES_V3',
@@ -162,6 +165,7 @@ export function getScopedKeysForBranch(branchId?: string): typeof BASE_KEYS {
     BREAD_TYPE_COUNTS: `${BASE_KEYS.BREAD_TYPE_COUNTS}${suffix}`,
     LINE_TYPES: `${BASE_KEYS.LINE_TYPES}${suffix}`,
     FUEL_TYPES: `${BASE_KEYS.FUEL_TYPES}${suffix}`,
+    LEASE_CONTRACT_TYPES: `${BASE_KEYS.LEASE_CONTRACT_TYPES}${suffix}`,
     PAYMENT_METHODS: `${BASE_KEYS.PAYMENT_METHODS}${suffix}`,
     DAILY_TASKS: `${BASE_KEYS.DAILY_TASKS}${suffix}`,
     INBOX_MESSAGES: `${BASE_KEYS.INBOX_MESSAGES}${suffix}`,
@@ -724,6 +728,7 @@ export function mergeStates(base: AppState, incoming: Partial<AppState>): AppSta
     breadTypeCounts: Array.from(new Set([...(base.breadTypeCounts || DEFAULT_BREAD_TYPE_COUNTS), ...(incoming.breadTypeCounts || [])])),
     lineTypes: Array.from(new Set([...(base.lineTypes || DEFAULT_LINE_TYPES), ...(incoming.lineTypes || [])])),
     fuelTypes: Array.from(new Set([...(base.fuelTypes || DEFAULT_FUEL_TYPES), ...(incoming.fuelTypes || [])])),
+    leaseContractTypes: Array.from(new Set([...(base.leaseContractTypes || DEFAULT_LEASE_CONTRACT_TYPES), ...(incoming.leaseContractTypes || [])])),
     paymentMethods: Array.from(new Set([...(base.paymentMethods || PAYMENT_METHODS), ...(incoming.paymentMethods || [])])),
     dailyTasks: Array.from(taskMap.values()),
     inboxMessages: Array.from(msgMap.values()),
@@ -850,6 +855,7 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
     breadTypeCounts: safeParse<string[]>(localStorage.getItem(bKeys.BREAD_TYPE_COUNTS), DEFAULT_BREAD_TYPE_COUNTS),
     lineTypes: safeParse<string[]>(localStorage.getItem(bKeys.LINE_TYPES), DEFAULT_LINE_TYPES),
     fuelTypes: safeParse<string[]>(localStorage.getItem(bKeys.FUEL_TYPES), DEFAULT_FUEL_TYPES),
+    leaseContractTypes: safeParse<string[]>(localStorage.getItem(bKeys.LEASE_CONTRACT_TYPES), DEFAULT_LEASE_CONTRACT_TYPES),
     paymentMethods: safeParse<string[]>(localStorage.getItem(bKeys.PAYMENT_METHODS), PAYMENT_METHODS),
     dailyTasks: safeParse<DailyBakeryTask[]>(
       localStorage.getItem(bKeys.DAILY_TASKS),
@@ -960,6 +966,9 @@ export function writeBranchPartitionToLocal(
       }
       if (Array.isArray(part.fuelTypes)) {
         localStorage.setItem(bKeys.FUEL_TYPES, JSON.stringify(part.fuelTypes));
+      }
+      if (Array.isArray(part.leaseContractTypes)) {
+        localStorage.setItem(bKeys.LEASE_CONTRACT_TYPES, JSON.stringify(part.leaseContractTypes));
       }
       if (Array.isArray(part.paymentMethods)) {
         localStorage.setItem(bKeys.PAYMENT_METHODS, JSON.stringify(part.paymentMethods));
@@ -1217,6 +1226,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     let breadTypeCounts = localPartition.breadTypeCounts;
     let lineTypes = localPartition.lineTypes;
     let fuelTypes = localPartition.fuelTypes;
+    let leaseContractTypes = localPartition.leaseContractTypes;
     let paymentMethods = localPartition.paymentMethods;
     let dailyTasks = localPartition.dailyTasks;
     let inboxMessages = localPartition.inboxMessages;
@@ -1239,6 +1249,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
         breadTypeCounts = preloaded.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
         lineTypes = preloaded.lineTypes ?? DEFAULT_LINE_TYPES;
         fuelTypes = preloaded.fuelTypes ?? DEFAULT_FUEL_TYPES;
+        leaseContractTypes = preloaded.leaseContractTypes ?? DEFAULT_LEASE_CONTRACT_TYPES;
         paymentMethods = preloaded.paymentMethods ?? PAYMENT_METHODS;
         dailyTasks = preloaded.dailyTasks ?? INITIAL_DAILY_TASKS;
         inboxMessages = preloaded.inboxMessages ?? INITIAL_INBOX_MESSAGES;
@@ -1263,6 +1274,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     breadTypeCounts = breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
     lineTypes = lineTypes ?? DEFAULT_LINE_TYPES;
     fuelTypes = fuelTypes ?? DEFAULT_FUEL_TYPES;
+    leaseContractTypes = leaseContractTypes ?? DEFAULT_LEASE_CONTRACT_TYPES;
     paymentMethods = paymentMethods ?? PAYMENT_METHODS;
     dailyTasks = dailyTasks ?? (isDefaultBranch ? INITIAL_DAILY_TASKS : []);
     inboxMessages = inboxMessages ?? (isDefaultBranch ? INITIAL_INBOX_MESSAGES : []);
@@ -1337,6 +1349,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       breadTypeCounts,
       lineTypes,
       fuelTypes,
+      leaseContractTypes,
       paymentMethods,
       dailyTasks,
       inboxMessages,
@@ -1383,6 +1396,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
         breadTypeCounts: DEFAULT_BREAD_TYPE_COUNTS,
         lineTypes: DEFAULT_LINE_TYPES,
         fuelTypes: DEFAULT_FUEL_TYPES,
+        leaseContractTypes: DEFAULT_LEASE_CONTRACT_TYPES,
         paymentMethods: PAYMENT_METHODS,
         dailyTasks: [],
         inboxMessages: [],
@@ -1416,6 +1430,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       breadTypeCounts: DEFAULT_BREAD_TYPE_COUNTS,
       lineTypes: DEFAULT_LINE_TYPES,
       fuelTypes: DEFAULT_FUEL_TYPES,
+      leaseContractTypes: DEFAULT_LEASE_CONTRACT_TYPES,
       paymentMethods: PAYMENT_METHODS,
       dailyTasks: INITIAL_DAILY_TASKS,
       inboxMessages: INITIAL_INBOX_MESSAGES,
@@ -1450,6 +1465,7 @@ export async function persistFullState(
     breadTypeCounts = DEFAULT_BREAD_TYPE_COUNTS,
     lineTypes = DEFAULT_LINE_TYPES,
     fuelTypes = DEFAULT_FUEL_TYPES,
+    leaseContractTypes = DEFAULT_LEASE_CONTRACT_TYPES,
     paymentMethods = PAYMENT_METHODS,
     dailyTasks = isDefaultBranch ? INITIAL_DAILY_TASKS : [],
     inboxMessages = isDefaultBranch ? INITIAL_INBOX_MESSAGES : [],
@@ -1507,6 +1523,7 @@ export async function persistFullState(
     localStorage.setItem(scopedKeys.BREAD_TYPE_COUNTS, JSON.stringify(breadTypeCounts));
     localStorage.setItem(scopedKeys.LINE_TYPES, JSON.stringify(lineTypes));
     localStorage.setItem(scopedKeys.FUEL_TYPES, JSON.stringify(fuelTypes));
+    localStorage.setItem(scopedKeys.LEASE_CONTRACT_TYPES, JSON.stringify(leaseContractTypes));
     localStorage.setItem(scopedKeys.PAYMENT_METHODS, JSON.stringify(paymentMethods));
     localStorage.setItem(scopedKeys.DAILY_TASKS, JSON.stringify(dailyTasks));
     localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify(inboxMessages));
@@ -1535,6 +1552,7 @@ export async function persistFullState(
       breadTypeCounts,
       lineTypes,
       fuelTypes,
+      leaseContractTypes,
       paymentMethods,
       dailyTasks,
       inboxMessages,
@@ -1557,6 +1575,7 @@ export async function persistFullState(
     [scopedKeys.BREAD_TYPE_COUNTS, breadTypeCounts],
     [scopedKeys.LINE_TYPES, lineTypes],
     [scopedKeys.FUEL_TYPES, fuelTypes],
+    [scopedKeys.LEASE_CONTRACT_TYPES, leaseContractTypes],
     [scopedKeys.PAYMENT_METHODS, paymentMethods],
     [scopedKeys.DAILY_TASKS, dailyTasks],
     [scopedKeys.INBOX_MESSAGES, inboxMessages],
