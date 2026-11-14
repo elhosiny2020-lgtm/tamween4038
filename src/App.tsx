@@ -71,22 +71,14 @@ import {
   syncLocalUnitDemographicsAcrossBakeries,
 } from './utils/auditHelper';
 import {
-  testFirestoreConnection,
-  loadSharedStateFromFirestore,
-  syncSharedStateToFirestore,
-  subscribeToSharedStateChanges,
-  syncHighDebtAlertsToFirestore,
-  clearHighDebtAlertsInFirestore,
-  loadHighDebtAlertsFromFirestore,
-  subscribeToHighDebtAlerts,
-} from './lib/firebase';
-import {
   computeFullBranchDigest,
   shouldTriggerDebtAlert,
   mergeHighDebtAlerts,
   DEFAULT_DEBT_ALERT_THRESHOLD,
 } from './lib/firebaseSyncHelpers';
 import {
+  isSelfRealtimeEvent,
+  getSupabaseConfig,
   subscribeToSupabaseRealtime,
   fetchDatabaseFromSupabase,
   subscribeToConnectionStatus,
@@ -96,6 +88,14 @@ import {
   applyRealtimeRowMutation,
   mapSqlRowToBakery,
   mapSqlRowToDebt,
+  mapSqlRowToVillage,
+  mapSqlRowToTask,
+  mapSqlRowToBranch,
+  mapSqlRowToUser,
+  fetchHighDebtAlertsFromSupabase,
+  syncHighDebtAlertsToSupabase,
+  clearHighDebtAlertsInSupabase,
+  subscribeToSupabaseHighDebtAlerts,
 } from './lib/supabase';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
@@ -293,13 +293,16 @@ export default function App() {
     })
   );
 
-  // Success Toast Notification on every data edit/save
+  // Success / Warning / Error Toast Notification after confirmed save
   interface SaveToastInfo {
     id: number;
     message: string;
     timestamp: string;
+    variant?: 'success' | 'warning' | 'error';
   }
   const [saveToast, setSaveToast] = useState<SaveToastInfo | null>(null);
+  const latestAppStateRef = React.useRef<AppState | null>(null);
+  latestAppStateRef.current = appState;
   const [logoutReason, setLogoutReason] = useState<string | null>(null);
   const [connectionSnapshot, setConnectionSnapshot] = useState<CloudConnectionSnapshot>(() =>
     getCloudConnectionSnapshot()
@@ -313,8 +316,17 @@ export default function App() {
     onConfirm: () => void;
   } | null>(null);
 
-  // Search & Filter state for main Bakery table
+  // Search & Filter state for main Bakery table (with 180ms debouncing for rapid typing)
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setDebouncedSearchTerm('');
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedSearchTerm(searchTerm), 180);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
   const [selectedVillage, setSelectedVillage] = useState('ALL');
   const [selectedUnit, setSelectedUnit] = useState('ALL');
   const [selectedActivity, setSelectedActivity] = useState('ALL');
@@ -394,7 +406,7 @@ export default function App() {
     }
   });
 
-  // Helper to append a high debt notification for managers & sync across devices on Cloud Firestore
+  // Helper to append a high debt notification for managers & sync across devices in real time via Supabase
   const addHighDebtNotification = useCallback(
     (
       bakeryId: string,
@@ -437,18 +449,18 @@ export default function App() {
         } catch {
           // fallback
         }
-        syncHighDebtAlertsToFirestore(updated, effectiveThreshold).catch(() => {});
+        syncHighDebtAlertsToSupabase(updated, effectiveThreshold).catch(() => {});
         return updated;
       });
     },
     [appState?.currentUser, appState?.systemConfig?.debtAlertThreshold, appState?.activeBranchId]
   );
 
-  // Sync High-Debt Alerts & Threshold live across all devices on Cloud Firebase Firestore
+  // Sync High-Debt Alerts & Threshold live across all devices on Supabase Realtime
   useEffect(() => {
     let disposed = false;
 
-    loadHighDebtAlertsFromFirestore()
+    fetchHighDebtAlertsFromSupabase()
       .then((res) => {
         if (disposed || !res) return;
         if (res.alerts.length > 0) {
@@ -476,36 +488,38 @@ export default function App() {
       })
       .catch(() => {});
 
-    const unsubAlerts = subscribeToHighDebtAlerts(({ alerts, debtAlertThreshold, fromRemoteClient }) => {
-      if (disposed) return;
-      if (alerts.length === 0 && fromRemoteClient) {
-        setHighDebtNotifications([]);
-        try {
-          localStorage.removeItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS');
-        } catch {}
-      } else if (alerts.length > 0) {
-        setHighDebtNotifications((prev) => {
-          const merged = mergeHighDebtAlerts(prev, alerts);
+    const unsubAlerts = subscribeToSupabaseHighDebtAlerts(
+      ({ alerts, debtAlertThreshold, fromRemoteClient, cleared }) => {
+        if (disposed) return;
+        if ((cleared || alerts.length === 0) && fromRemoteClient) {
+          setHighDebtNotifications([]);
           try {
-            localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(merged));
+            localStorage.removeItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS');
           } catch {}
-          return merged;
-        });
+        } else if (alerts.length > 0) {
+          setHighDebtNotifications((prev) => {
+            const merged = mergeHighDebtAlerts(prev, alerts);
+            try {
+              localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+        }
+        if (debtAlertThreshold > 0) {
+          setAppState((prev) =>
+            prev && prev.systemConfig.debtAlertThreshold !== debtAlertThreshold
+              ? {
+                  ...prev,
+                  systemConfig: {
+                    ...prev.systemConfig,
+                    debtAlertThreshold,
+                  },
+                }
+              : prev
+          );
+        }
       }
-      if (debtAlertThreshold > 0) {
-        setAppState((prev) =>
-          prev && prev.systemConfig.debtAlertThreshold !== debtAlertThreshold
-            ? {
-                ...prev,
-                systemConfig: {
-                  ...prev.systemConfig,
-                  debtAlertThreshold,
-                },
-              }
-            : prev
-        );
-      }
-    });
+    );
 
     return () => {
       disposed = true;
@@ -608,11 +622,6 @@ export default function App() {
       });
 
     return () => clearTimeout(failsafe);
-  }, []);
-
-  // Verify Firestore connection on boot per Firebase integration guidelines
-  useEffect(() => {
-    testFirestoreConnection().catch(() => {});
   }, []);
 
   // Subscribe to smart cloud connection state transitions (connected / syncing / error / offline)
@@ -746,6 +755,8 @@ export default function App() {
             return current;
           }
 
+          let nextState: AppState | null = null;
+
           if (change.table === 'bakeries') {
             const nextBakeries = applyRealtimeRowMutation(
               current.bakeries,
@@ -755,9 +766,8 @@ export default function App() {
               mapSqlRowToBakery
             );
             const synced = synchronizeBakeryAndDebts(nextBakeries, current.debts);
-            return { ...current, bakeries: synced.bakeries, debts: synced.debts };
-          }
-          if (change.table === 'debts') {
+            nextState = { ...current, bakeries: synced.bakeries, debts: synced.debts };
+          } else if (change.table === 'debts') {
             const nextDebts = applyRealtimeRowMutation(
               current.debts,
               change.eventType,
@@ -766,10 +776,52 @@ export default function App() {
               mapSqlRowToDebt
             );
             const synced = synchronizeBakeryAndDebts(current.bakeries, nextDebts);
-            return { ...current, bakeries: synced.bakeries, debts: synced.debts };
-          }
-          if (change.table === 'system_config' && change.newRow?.payload) {
-            return {
+            nextState = { ...current, bakeries: synced.bakeries, debts: synced.debts };
+          } else if (change.table === 'villages') {
+            const existing = [...(current.villages || [])];
+            let nextVillages = existing;
+            if (change.eventType === 'DELETE') {
+              const delName = change.oldRow?.village_name || change.oldRow?.data_json?.village || change.oldRow?.data_json?.name;
+              if (delName) nextVillages = existing.filter((v) => v.village !== delName);
+            } else {
+              const mapped = mapSqlRowToVillage(change.newRow);
+              if (mapped) {
+                const idx = existing.findIndex((v) => v.village === mapped.village);
+                if (idx >= 0) existing[idx] = mapped;
+                else existing.push(mapped);
+                nextVillages = existing;
+              }
+            }
+            nextState = { ...current, villages: nextVillages };
+          } else if (change.table === 'daily_tasks') {
+            const nextTasks = applyRealtimeRowMutation(
+              current.dailyTasks || [],
+              change.eventType,
+              change.newRow,
+              change.oldRow,
+              mapSqlRowToTask
+            );
+            nextState = { ...current, dailyTasks: nextTasks };
+          } else if (change.table === 'branches') {
+            const nextBranches = applyRealtimeRowMutation(
+              current.branches || [],
+              change.eventType,
+              change.newRow,
+              change.oldRow,
+              mapSqlRowToBranch
+            );
+            nextState = { ...current, branches: nextBranches };
+          } else if (change.table === 'app_users') {
+            const nextUsers = applyRealtimeRowMutation(
+              current.users || [],
+              change.eventType,
+              change.newRow,
+              change.oldRow,
+              mapSqlRowToUser
+            );
+            nextState = { ...current, users: nextUsers };
+          } else if (change.table === 'system_config' && change.newRow?.payload) {
+            nextState = {
               ...current,
               systemConfig: {
                 ...current.systemConfig,
@@ -778,18 +830,25 @@ export default function App() {
               },
             };
           }
-          return current;
+
+          if (!nextState) return current;
+          const persistedCopy = nextState;
+          queueMicrotask(() => {
+            persistFullState(persistedCopy, { skipCloudSync: true }).catch(() => {});
+          });
+          return nextState;
         });
       },
     });
 
-    // 3. Cross-tab BroadcastChannel listener on same device
+    // 3. Cross-tab BroadcastChannel listener on same device (skip self-echoes)
     let bc: BroadcastChannel | null = null;
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         bc = new BroadcastChannel('tamween_cross_device_sync');
         bc.onmessage = (ev) => {
           if (ev.data?.type === 'STATE_UPDATED') {
+            if (isSelfRealtimeEvent(ev.data?.clientId)) return;
             fetchDatabaseFromSupabase()
               .then((res) => {
                 if (res.success && res.data) {
@@ -802,26 +861,8 @@ export default function App() {
       } catch {}
     }
 
-    // 4. Background heartbeat auto-sync interval (every 10s) to guarantee automatic background sync on all devices
-    const autoPollInterval = setInterval(() => {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-      fetchDatabaseFromSupabase()
-        .then((res) => {
-          if (
-            res &&
-            res.success &&
-            res.data &&
-            (!res.timestamp || res.timestamp !== lastAppliedCloudTimestampRef.current)
-          ) {
-            applyIncomingCloudState(res.data, res.timestamp);
-          }
-        })
-        .catch(() => {});
-    }, 10000);
-
     return () => {
       clearTimeout(bootSupaTimer);
-      clearInterval(autoPollInterval);
       unsubscribeSupabase();
       if (bc) {
         try {
@@ -844,19 +885,58 @@ export default function App() {
     }
   }, [appState?.currentUser, hasShownDailyBriefingSession]);
 
-  // Save helper that updates storage, timestamp, visual pulse, and displays success toast
+  // Async Optimistic Save with Supabase confirmation before showing success toast & automatic rollback on server failure
+  const saveLockRef = React.useRef<Promise<void>>(Promise.resolve());
   const triggerSave = useCallback((newState: AppState, toastMessage?: string) => {
+    const previousState = latestAppStateRef.current;
+    latestAppStateRef.current = newState;
     setAppState(newState);
     setIsSavingPulse(true);
     const ts = getArabicTimestamp();
-    setSaveTimestamp(ts);
     const diskInfo = getActiveDiskBackupInfo();
     const diskSuffix = diskInfo.hasHandle ? ` (وتحديث النسخة الاحتياطية على القرص: ${diskInfo.fileName})` : '';
-    const msg = (toastMessage || 'تم حفظ وتأمين كافة البيانات بنجاح') + diskSuffix;
-    setSaveToast({ id: Date.now(), message: msg, timestamp: ts });
-    persistFullState(newState).then(() => {
-      setTimeout(() => setIsSavingPulse(false), 900);
-    });
+    const baseMsg = (toastMessage || 'تم الحفظ والمزامنة مع Supabase بنجاح') + diskSuffix;
+
+    saveLockRef.current = saveLockRef.current
+      .catch(() => {})
+      .then(async () => {
+        const res = await persistFullState(newState);
+        const cloudEnabled = getSupabaseConfig().isConfigured;
+
+        if (res.cloudSynced || !cloudEnabled) {
+          setSaveTimestamp(res.syncedAt || ts);
+          setSaveToast({
+            id: Date.now(),
+            message: baseMsg,
+            timestamp: res.syncedAt || ts,
+            variant: 'success',
+          });
+        } else if (res.queuedOffline) {
+          setSaveTimestamp(ts);
+          setSaveToast({
+            id: Date.now(),
+            message: 'انقطع الاتصال بالإنترنت — تم حفظ التعديل بأمان في قائمة الانتظار وسيُرسل تلقائياً عند عودة الشبكة.',
+            timestamp: ts,
+            variant: 'warning',
+          });
+        } else {
+          // Roll back optimistic state if the cloud server explicitly rejected the save while online
+          if (previousState) {
+            latestAppStateRef.current = previousState;
+            setAppState(previousState);
+            await persistFullState(previousState, { skipCloudSync: true }).catch(() => {});
+          }
+          setSaveToast({
+            id: Date.now(),
+            message: res.error || 'تعذر حفظ التعديلات على قاعدة بيانات Supabase — تم التراجع عن التعديل محلياً.',
+            timestamp: ts,
+            variant: 'error',
+          });
+        }
+      })
+      .finally(() => {
+        setTimeout(() => setIsSavingPulse(false), 600);
+      });
   }, []);
 
   // Auto-dismiss save toast after 3.8 seconds
@@ -1206,8 +1286,8 @@ export default function App() {
         return false;
       }
 
-      if (searchTerm.trim()) {
-        const q = searchTerm.toLowerCase();
+      if (debouncedSearchTerm.trim()) {
+        const q = debouncedSearchTerm.toLowerCase();
         if (searchFocusMode === 'NAME') {
           if (!b.bakeryOwnerName.toLowerCase().includes(q)) return false;
         } else if (searchFocusMode === 'MACHINE') {
@@ -1240,7 +1320,7 @@ export default function App() {
     selectedLicenseExpiryFilter,
     selectedBreadTypeFilter,
     selectedFuelTypeFilter,
-    searchTerm,
+    debouncedSearchTerm,
     searchFocusMode,
     bakeryRemainingDebtsMap,
   ]);
@@ -1555,16 +1635,6 @@ export default function App() {
       const supaRes = await fetchDatabaseFromSupabase();
       let cloudData: Partial<AppState> | undefined = supaRes.success ? supaRes.data : undefined;
       let savedAt: string | undefined = supaRes.timestamp;
-
-      if (!cloudData) {
-        try {
-          const firestoreSnap = await loadSharedStateFromFirestore();
-          if (firestoreSnap && firestoreSnap.data) {
-            cloudData = firestoreSnap.data;
-            savedAt = firestoreSnap.updatedAt;
-          }
-        } catch {}
-      }
 
       if (!cloudData) {
         const serverSnap = await fetchLatestServerState();
@@ -2352,6 +2422,19 @@ export default function App() {
                       />
                     )}
                     <span>{connectionSnapshot.label}</span>
+                    {connectionSnapshot.pendingQueueCount > 0 && (
+                      <span
+                        title="عمليات محفوظة في قائمة الانتظار للمزامنة فور عودة الاتصال"
+                        className="px-1.5 py-0.2 bg-amber-600 text-white rounded text-[10px] font-black"
+                      >
+                        قائمة الانتظار: {connectionSnapshot.pendingQueueCount}
+                      </span>
+                    )}
+                    {connectionSnapshot.lastSyncAt && connectionSnapshot.status === 'connected' && (
+                      <span className="hidden xl:inline text-[10px] text-emerald-700 font-semibold">
+                        ({connectionSnapshot.lastSyncAt})
+                      </span>
+                    )}
                   </span>
                   {(connectionSnapshot.status === 'error' || connectionSnapshot.status === 'offline') && (
                     <button
@@ -5194,16 +5277,50 @@ export default function App() {
         </div>
       )}
 
-      {/* Real-time Floating Save Success Toast Notification */}
+      {/* Real-time Floating Save / Queue / Error Toast Notification */}
       {saveToast && (
         <div className="fixed bottom-6 right-6 z-[9999] max-w-md animate-in slide-in-from-bottom-5 duration-200">
-          <div className="bg-gradient-to-r from-slate-950 via-emerald-950 to-slate-900 text-white border-2 border-emerald-400 rounded-2xl p-4 shadow-2xl flex items-center gap-3 backdrop-blur-md ring-4 ring-emerald-500/20">
-            <div className="p-2 bg-emerald-500/20 rounded-xl border border-emerald-400/50 text-emerald-300 shrink-0">
-              <CheckCircle2 className="w-6 h-6 animate-pulse" />
+          <div
+            className={`text-white border-2 rounded-2xl p-4 shadow-2xl flex items-center gap-3 backdrop-blur-md ring-4 ${
+              saveToast.variant === 'error'
+                ? 'bg-gradient-to-r from-slate-950 via-red-950 to-slate-900 border-red-400 ring-red-500/20'
+                : saveToast.variant === 'warning'
+                ? 'bg-gradient-to-r from-slate-950 via-amber-950 to-slate-900 border-amber-400 ring-amber-500/20'
+                : 'bg-gradient-to-r from-slate-950 via-emerald-950 to-slate-900 border-emerald-400 ring-emerald-500/20'
+            }`}
+          >
+            <div
+              className={`p-2 rounded-xl border shrink-0 ${
+                saveToast.variant === 'error'
+                  ? 'bg-red-500/20 border-red-400/50 text-red-300'
+                  : saveToast.variant === 'warning'
+                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                  : 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+              }`}
+            >
+              {saveToast.variant === 'error' || saveToast.variant === 'warning' ? (
+                <AlertTriangle className="w-6 h-6 animate-pulse" />
+              ) : (
+                <CheckCircle2 className="w-6 h-6 animate-pulse" />
+              )}
             </div>
             <div className="flex-1">
               <div className="flex items-center justify-between gap-2">
-                <h4 className="text-xs font-black text-emerald-300">تم الحفظ بنجاح وتأمين البيانات</h4>
+                <h4
+                  className={`text-xs font-black ${
+                    saveToast.variant === 'error'
+                      ? 'text-red-300'
+                      : saveToast.variant === 'warning'
+                      ? 'text-amber-300'
+                      : 'text-emerald-300'
+                  }`}
+                >
+                  {saveToast.variant === 'error'
+                    ? 'تعذر الحفظ — تم التراجع محلياً'
+                    : saveToast.variant === 'warning'
+                    ? 'محفوظ في قائمة انتظار المزامنة (غير متصل)'
+                    : 'تم الحفظ والمزامنة مع Supabase بنجاح'}
+                </h4>
                 <span className="text-[10px] text-slate-400 font-mono">{saveToast.timestamp}</span>
               </div>
               <p className="text-xs font-bold text-slate-100 mt-0.5 leading-snug">
@@ -5236,10 +5353,10 @@ export default function App() {
               debtAlertThreshold: newThreshold,
             },
           };
-          syncHighDebtAlertsToFirestore(highDebtNotifications, newThreshold).catch(() => {});
+          syncHighDebtAlertsToSupabase(highDebtNotifications, newThreshold).catch(() => {});
           triggerSave(
             updatedState,
-            `تم تحديث حد التنبيه التلقائي للمديونية إلى (${newThreshold.toLocaleString('en-US')} ج.م) ومزامنته على السحابة`
+            `تم تحديث حد التنبيه التلقائي للمديونية إلى (${newThreshold.toLocaleString('en-US')} ج.م) ومزامنته على Supabase`
           );
         }}
         onMarkAsRead={(id) => {
@@ -5250,7 +5367,7 @@ export default function App() {
             try {
               localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
             } catch {}
-            syncHighDebtAlertsToFirestore(updated, threshold).catch(() => {});
+            syncHighDebtAlertsToSupabase(updated, threshold).catch(() => {});
             return updated;
           });
         }}
@@ -5262,7 +5379,7 @@ export default function App() {
             try {
               localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
             } catch {}
-            syncHighDebtAlertsToFirestore(updated, threshold).catch(() => {});
+            syncHighDebtAlertsToSupabase(updated, threshold).catch(() => {});
             return updated;
           });
         }}
@@ -5273,7 +5390,7 @@ export default function App() {
           try {
             localStorage.removeItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS');
           } catch {}
-          clearHighDebtAlertsInFirestore(threshold).catch(() => {});
+          clearHighDebtAlertsInSupabase(threshold).catch(() => {});
         }}
         onSelectBakeryDebt={(bakeryId) => {
           setDebtFilterBakeryId(bakeryId);

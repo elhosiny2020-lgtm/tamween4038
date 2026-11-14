@@ -1,4 +1,6 @@
 import express from 'express';
+import http from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import fs from 'fs';
 import path from 'path';
@@ -11,7 +13,22 @@ const SNAPSHOT_TMP_PATH = '/tmp/tamween_latest_backup.json';
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   const PORT = Number(process.env.PORT) || 3000;
+
+  // WebSocket Server attached to port 3000 for genuine sub-50ms cross-device real-time sync
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws/supabase-realtime' });
+
+  const broadcastWs = (payload: Record<string, any>) => {
+    const encoded = JSON.stringify(payload);
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(encoded);
+        } catch {}
+      }
+    });
+  };
 
   // CORS middleware allowing cross-device syncing across any hosting domain (Vercel, Cloudflare, local)
   app.use((req, res, next) => {
@@ -31,13 +48,14 @@ async function startServer() {
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      database: 'Firebase Firestore Cloud + Local Persistent Sync',
+      database: 'Supabase Realtime + WebSocket Server Sync',
+      wsClients: wss.clients.size,
       timestamp: new Date().toISOString(),
     });
   });
 
   // Server-side backup snapshot endpoint (Legacy JSON backups disabled per user requirement - Supabase exclusive sync)
-  app.post('/api/backup/snapshot', (req, res) => {
+  app.post('/api/backup/snapshot', (_req, res) => {
     try {
       if (fs.existsSync(SNAPSHOT_PRIMARY_PATH)) { try { fs.unlinkSync(SNAPSHOT_PRIMARY_PATH); } catch {} }
       if (fs.existsSync(SNAPSHOT_TMP_PATH)) { try { fs.unlinkSync(SNAPSHOT_TMP_PATH); } catch {} }
@@ -56,10 +74,82 @@ async function startServer() {
     res.json({ success: true, exists: false, snapshot: null });
   });
 
-  // Dedicated Supabase config storage for seamless cross-device synchronization
+  // Dedicated Supabase config & live-db storage for seamless cross-device synchronization
   const SUPABASE_CONFIG_PATH = path.resolve(__dirname, 'supabase_config.json');
   const SUPABASE_CONFIG_TMP = '/tmp/supabase_config.json';
   const SUPABASE_LIVE_DB_TMP = '/tmp/tamween_supabase_live_db.json';
+  const SUPABASE_ALERTS_TMP = '/tmp/tamween_supabase_alerts.json';
+
+  let cachedLiveSnapshot: any = null;
+  let cachedAlertsState: {
+    alerts: any[];
+    debtAlertThreshold: number;
+    updatedAt: string;
+    revision: number;
+    clientId?: string;
+  } = {
+    alerts: [],
+    debtAlertThreshold: 50000,
+    updatedAt: '',
+    revision: 0,
+  };
+  let liveRevision = 0;
+
+  // Hydrate cached snapshots from disk on server startup
+  try {
+    if (fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
+      cachedLiveSnapshot = JSON.parse(fs.readFileSync(SUPABASE_LIVE_DB_TMP, 'utf-8'));
+      liveRevision = Number(cachedLiveSnapshot?.revision || 1);
+    }
+  } catch {
+    cachedLiveSnapshot = null;
+  }
+
+  try {
+    if (fs.existsSync(SUPABASE_ALERTS_TMP)) {
+      const parsedAlerts = JSON.parse(fs.readFileSync(SUPABASE_ALERTS_TMP, 'utf-8'));
+      if (parsedAlerts && typeof parsedAlerts === 'object') {
+        cachedAlertsState = {
+          alerts: Array.isArray(parsedAlerts.alerts) ? parsedAlerts.alerts : [],
+          debtAlertThreshold: Number(parsedAlerts.debtAlertThreshold) || 50000,
+          updatedAt: parsedAlerts.updatedAt || '',
+          revision: Number(parsedAlerts.revision) || 0,
+        };
+      }
+    }
+  } catch {}
+
+  wss.on('connection', (socket) => {
+    // Send authoritative state immediately upon WebSocket connect/reconnect
+    try {
+      socket.send(
+        JSON.stringify({
+          type: 'init',
+          timestamp: new Date().toISOString(),
+          snapshot: cachedLiveSnapshot,
+          alertsState: cachedAlertsState,
+        })
+      );
+    } catch {}
+
+    socket.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(String(raw || '{}'));
+        if (msg?.type === 'ping') {
+          socket.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+        } else if (msg?.type === 'request_init') {
+          socket.send(
+            JSON.stringify({
+              type: 'init',
+              timestamp: new Date().toISOString(),
+              snapshot: cachedLiveSnapshot,
+              alertsState: cachedAlertsState,
+            })
+          );
+        }
+      } catch {}
+    });
+  });
 
   const isValidSupabaseUrl = (u: string): boolean => {
     if (!u || typeof u !== 'string') return false;
@@ -148,9 +238,11 @@ async function startServer() {
         const data = JSON.stringify({ url: cleanUrl, anonKey: cleanKey });
         try { fs.writeFileSync(SUPABASE_CONFIG_PATH, data, 'utf-8'); } catch {}
         try { fs.writeFileSync(SUPABASE_CONFIG_TMP, data, 'utf-8'); } catch {}
+        broadcastWs({ type: 'config_updated', url: cleanUrl, anonKey: cleanKey, timestamp: new Date().toISOString() });
       } else if (!cleanUrl && !cleanKey) {
         if (fs.existsSync(SUPABASE_CONFIG_PATH)) { try { fs.unlinkSync(SUPABASE_CONFIG_PATH); } catch {} }
         if (fs.existsSync(SUPABASE_CONFIG_TMP)) { try { fs.unlinkSync(SUPABASE_CONFIG_TMP); } catch {} }
+        broadcastWs({ type: 'config_updated', url: '', anonKey: '', timestamp: new Date().toISOString() });
       }
       res.json({ success: true });
     } catch (err: any) {
@@ -158,16 +250,17 @@ async function startServer() {
     }
   });
 
-  // Live Supabase SQL/Cloud State synchronization endpoint for instant multi-device sync
+  // Live Supabase SQL/Cloud State synchronization endpoint + immediate WebSocket fanout
   app.get('/api/supabase/live-db', (_req, res) => {
     try {
-      if (!fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
+      if (!cachedLiveSnapshot && fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
+        cachedLiveSnapshot = JSON.parse(fs.readFileSync(SUPABASE_LIVE_DB_TMP, 'utf-8'));
+      }
+      if (!cachedLiveSnapshot) {
         res.json({ success: true, exists: false, snapshot: null });
         return;
       }
-      const raw = fs.readFileSync(SUPABASE_LIVE_DB_TMP, 'utf-8');
-      const snapshot = JSON.parse(raw);
-      res.json({ success: true, exists: true, snapshot });
+      res.json({ success: true, exists: true, snapshot: cachedLiveSnapshot });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
     }
@@ -178,26 +271,112 @@ async function startServer() {
       const body = req.body || {};
       const stateData = body.data || body;
       const timestamp = body.timestamp || new Date().toISOString();
+      const clientId = body.clientId || '';
+      liveRevision += 1;
       const snapshot = {
-        version: '4.0-supabase-live-sql',
+        version: '5.0-supabase-realtime',
         timestamp,
+        revision: liveRevision,
+        clientId,
         bakeriesCount: Array.isArray(stateData?.bakeries) ? stateData.bakeries.length : 0,
         debtsCount: Array.isArray(stateData?.debts) ? stateData.debts.length : 0,
         data: stateData,
       };
+      cachedLiveSnapshot = snapshot;
       fs.writeFileSync(SUPABASE_LIVE_DB_TMP, JSON.stringify(snapshot), 'utf-8');
-      res.json({ success: true, timestamp });
+      broadcastWs({
+        type: 'state_update',
+        clientId,
+        timestamp,
+        revision: liveRevision,
+        snapshot,
+      });
+      res.json({ success: true, timestamp, revision: liveRevision });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
     }
   });
 
-  app.delete('/api/supabase/live-db', (_req, res) => {
+  app.delete('/api/supabase/live-db', (req, res) => {
     try {
+      const clientId = String(req.query?.clientId || '');
+      cachedLiveSnapshot = null;
       if (fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
         fs.unlinkSync(SUPABASE_LIVE_DB_TMP);
       }
+      broadcastWs({
+        type: 'state_cleared',
+        clientId,
+        timestamp: new Date().toISOString(),
+      });
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  // High-Debt Alerts Supabase Realtime Sync endpoints
+  app.get('/api/supabase/alerts', (_req, res) => {
+    res.json({
+      success: true,
+      ...cachedAlertsState,
+    });
+  });
+
+  app.post('/api/supabase/alerts', (req, res) => {
+    try {
+      const body = req.body || {};
+      const alerts = Array.isArray(body.alerts) ? body.alerts : cachedAlertsState.alerts;
+      const debtAlertThreshold =
+        typeof body.debtAlertThreshold === 'number' && body.debtAlertThreshold > 0
+          ? body.debtAlertThreshold
+          : cachedAlertsState.debtAlertThreshold;
+      const timestamp = body.timestamp || new Date().toISOString();
+      const clientId = body.clientId || '';
+      cachedAlertsState = {
+        alerts,
+        debtAlertThreshold,
+        updatedAt: timestamp,
+        revision: (cachedAlertsState.revision || 0) + 1,
+        clientId,
+      };
+      fs.writeFileSync(SUPABASE_ALERTS_TMP, JSON.stringify(cachedAlertsState), 'utf-8');
+      broadcastWs({
+        type: 'alerts_update',
+        clientId,
+        timestamp,
+        alerts,
+        debtAlertThreshold,
+        cleared: false,
+      });
+      res.json({ success: true, timestamp, revision: cachedAlertsState.revision });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.delete('/api/supabase/alerts', (req, res) => {
+    try {
+      const clientId = String(req.query?.clientId || '');
+      const threshold = Number(req.query?.threshold) || cachedAlertsState.debtAlertThreshold || 50000;
+      const timestamp = new Date().toISOString();
+      cachedAlertsState = {
+        alerts: [],
+        debtAlertThreshold: threshold,
+        updatedAt: timestamp,
+        revision: (cachedAlertsState.revision || 0) + 1,
+        clientId,
+      };
+      fs.writeFileSync(SUPABASE_ALERTS_TMP, JSON.stringify(cachedAlertsState), 'utf-8');
+      broadcastWs({
+        type: 'alerts_update',
+        clientId,
+        timestamp,
+        alerts: [],
+        debtAlertThreshold: threshold,
+        cleared: true,
+      });
+      res.json({ success: true, timestamp });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
     }
@@ -322,8 +501,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Tamween Server running on http://localhost:${PORT}`);
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`Tamween Supabase Realtime Server running on http://localhost:${PORT}`);
   });
 }
 

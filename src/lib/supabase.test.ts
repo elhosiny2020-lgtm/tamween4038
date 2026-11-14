@@ -18,23 +18,48 @@ import {
   mapDebtToSqlRow,
   mapSqlRowToDebt,
   retrySupabaseConnection,
+  SESSION_CLIENT_ID,
+  isSelfRealtimeEvent,
+  computeDeletedIds,
+  mapAlertToSqlRow,
+  mapSqlRowToAlert,
+  resolveConcurrentRecords,
+  enqueueOfflineSync,
+  getPendingOfflineQueueCount,
+  clearOfflineSyncQueue,
+  autoSyncToSupabaseDetailed,
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
 } from './supabase';
 
-test('Supabase schema contains all required tables, branch_id columns, indexes, RLS policies, and Realtime publication', () => {
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('-- 1. جدول المخابز الرئيسي (Bakeries)'));
-  assert.ok(!SUPABASE_TABLES_SQL_SCHEMA.includes('// 1. جدول المخابز الرئيسي'));
+test('Supabase schema contains all 9 normalized tables, foreign keys, indexes, RLS policies, and Realtime publication', () => {
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS branches'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS villages'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('REFERENCES branches(id) ON DELETE CASCADE'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS bakeries'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS debts'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS app_users'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS daily_tasks'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS backup_snapshots'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS system_config'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS high_debt_alerts'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("branch_id TEXT DEFAULT 'branch-mahalla'"));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_villages_branch_id'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_bakeries_branch_id'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_debts_branch_id'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_app_users_branch_id'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_daily_tasks_branch_id'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_high_debt_alerts_branch_id'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ENABLE ROW LEVEL SECURITY'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("auth.role() IN ('anon', 'authenticated')"));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE branches REPLICA IDENTITY FULL'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE villages REPLICA IDENTITY FULL'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE bakeries REPLICA IDENTITY FULL'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE high_debt_alerts REPLICA IDENTITY FULL'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER PUBLICATION supabase_realtime ADD TABLE branches'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER PUBLICATION supabase_realtime ADD TABLE villages'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER PUBLICATION supabase_realtime ADD TABLE bakeries'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER PUBLICATION supabase_realtime ADD TABLE high_debt_alerts'));
   assert.strictEqual(SUPABASE_BUCKET_NAME, 'tamween-backups');
 });
 
@@ -187,23 +212,87 @@ test('Realtime event deduplication and row mutation helpers process INSERT, UPDA
   assert.strictEqual(mapSqlRowToDebt(dRow).netRemainingDebt, 1500);
 });
 
-test('retrySupabaseConnection transitions to offline when browser navigator.onLine is false', async () => {
+test('Self-echo filter, row deletion diffing, conflict resolution, and high-debt alert SQL mapping work deterministically', () => {
+  assert.strictEqual(isSelfRealtimeEvent(SESSION_CLIENT_ID), true);
+  assert.strictEqual(isSelfRealtimeEvent('other-device-client'), false);
+  assert.strictEqual(isSelfRealtimeEvent(undefined), false);
+
+  const deletedIds = computeDeletedIds(['id-1', 'id-2', 'id-3'], [{ id: 'id-1' }, { id: 'id-3' }]);
+  assert.deepStrictEqual(deletedIds, ['id-2']);
+
+  // Concurrent multi-user conflict resolution preserves distinct records and picks newer updatedAt on collision
+  const conflictRes = resolveConcurrentRecords(
+    [
+      { id: 'r1', name: 'local-older', updatedAt: '2026-11-14T10:00:00Z' },
+      { id: 'r2', name: 'local-only', updatedAt: '2026-11-14T10:05:00Z' },
+    ],
+    [
+      { id: 'r1', name: 'remote-newer', updatedAt: '2026-11-14T10:10:00Z' },
+      { id: 'r3', name: 'remote-only', updatedAt: '2026-11-14T10:01:00Z' },
+    ]
+  );
+  assert.strictEqual(conflictRes.merged.length, 3);
+  assert.strictEqual(conflictRes.merged.find((r) => r.id === 'r1')?.name, 'remote-newer');
+  assert.strictEqual(conflictRes.conflictsResolved, 1);
+
+  const alert = {
+    id: 'notif-1',
+    bakeryId: 'b-1',
+    bakeryOwnerName: 'مخبز الفتح',
+    machineNumber: '2040',
+    village: 'دمرو',
+    debtAmount: 75000,
+    thresholdUsed: 50000,
+    branchId: 'branch-mahalla',
+    createdAtIso: '2026-11-14T10:00:00.000Z',
+    editedBy: 'مدير الرقابة',
+    editorRole: 'مدير التموين',
+    timestamp: '12:00:00 م',
+    actionType: 'ADD_DEBT' as const,
+    isRead: false,
+  };
+  const sqlAlert = mapAlertToSqlRow(alert, 'branch-mahalla');
+  assert.strictEqual(sqlAlert.id, 'notif-1');
+  assert.strictEqual(sqlAlert.debt_amount, 75000);
+  assert.strictEqual(sqlAlert.is_read, false);
+
+  const restored = mapSqlRowToAlert({ ...sqlAlert, is_read: true });
+  assert.ok(restored);
+  assert.strictEqual(restored?.bakeryOwnerName, 'مخبز الفتح');
+  assert.strictEqual(restored?.isRead, true);
+});
+
+test('Offline sync queue safely stores mutations when offline and tracks pending queue count', async () => {
+  clearOfflineSyncQueue();
+  assert.strictEqual(getPendingOfflineQueueCount(), 0);
+
   const origNavDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   Object.defineProperty(globalThis, 'navigator', {
     configurable: true,
     value: { onLine: false },
   });
   try {
+    const syncRes = await autoSyncToSupabaseDetailed({ activeBranchId: 'branch-mahalla', bakeries: [], debts: [] } as any, true);
+    assert.strictEqual(syncRes.success, false);
+    assert.strictEqual(syncRes.queuedOffline, true);
+    assert.strictEqual(getPendingOfflineQueueCount(), 1);
+    assert.strictEqual(getCloudConnectionSnapshot().pendingQueueCount, 1);
+    assert.strictEqual(getCloudConnectionSnapshot().status, 'offline');
+
+    enqueueOfflineSync({ activeBranchId: 'branch-mahalla', bakeries: [], debts: [] } as any);
+    assert.strictEqual(getPendingOfflineQueueCount(), 2);
+
     const res = await retrySupabaseConnection(null);
     assert.strictEqual(res.success, false);
     assert.strictEqual(getCloudConnectionSnapshot().status, 'offline');
     assert.strictEqual(getCloudConnectionSnapshot().label, 'غير متصل');
   } finally {
+    clearOfflineSyncQueue();
     if (origNavDesc) {
       Object.defineProperty(globalThis, 'navigator', origNavDesc);
     } else {
       delete (globalThis as any).navigator;
     }
-    setCloudConnectionStatus('connected', 'متصل بالخادم السحابي بنجاح');
+    setCloudConnectionStatus('connected', 'متصل بالخادم السحابي بنجاح', { pendingQueueCount: 0, hasPendingSync: false });
   }
 });

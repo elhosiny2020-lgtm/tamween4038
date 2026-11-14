@@ -1,13 +1,18 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { AppState, buildFullCloudMultiBranchPayload } from '../storage';
 import { generateStandaloneHtml } from '../utils/htmlExporter';
+import type { HighDebtAlertNotification } from '../types';
 import {
-  testFirestoreConnection,
-  syncSharedStateToFirestore,
-  loadSharedStateFromFirestore,
-  subscribeToSharedStateChanges,
-  clearSharedStateInFirestore,
-} from './firebase';
+  DEFAULT_DEBT_ALERT_THRESHOLD,
+  mergeHighDebtAlerts,
+} from './firebaseSyncHelpers';
+
+// Unique per-tab client ID to prevent infinite self-echo sync loops
+export const SESSION_CLIENT_ID = `supa-client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+export function isSelfRealtimeEvent(senderClientId?: string | null): boolean {
+  return Boolean(senderClientId && senderClientId === SESSION_CLIENT_ID);
+}
 
 // Default Supabase Configuration keys in LocalStorage
 export const SUPABASE_URL_KEY = 'TAMWEEN_SUPABASE_URL';
@@ -66,6 +71,7 @@ export interface CloudConnectionSnapshot {
   lastSyncAt?: string;
   lastErrorAt?: string;
   hasPendingSync: boolean;
+  pendingQueueCount: number;
 }
 
 export const STATUS_LABELS: Record<CloudConnectionStatus, string> = {
@@ -74,6 +80,80 @@ export const STATUS_LABELS: Record<CloudConnectionStatus, string> = {
   error: 'غير متصل',
   offline: 'غير متصل',
 };
+
+const OFFLINE_QUEUE_KEY = 'TAMWEEN_SUPABASE_OFFLINE_QUEUE';
+
+export interface OfflineSyncEntry {
+  id: string;
+  timestamp: string;
+  branchId: string;
+  state: AppState;
+  attempts: number;
+}
+
+let inMemoryOfflineQueue: OfflineSyncEntry[] = [];
+
+function stripHeavyLogo(state: AppState): AppState {
+  if (!state) return state;
+  return {
+    ...state,
+    systemConfig: state.systemConfig
+      ? { ...state.systemConfig, logoBase64: '' }
+      : state.systemConfig,
+  };
+}
+
+function loadOfflineQueueFromStorage(): OfflineSyncEntry[] {
+  if (inMemoryOfflineQueue.length > 0) return inMemoryOfflineQueue;
+  try {
+    const raw = safeGetItem(OFFLINE_QUEUE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        inMemoryOfflineQueue = parsed;
+        return inMemoryOfflineQueue;
+      }
+    }
+  } catch {}
+  return [];
+}
+
+function persistOfflineQueue(queue: OfflineSyncEntry[]): void {
+  inMemoryOfflineQueue = queue.slice(-20);
+  try {
+    if (inMemoryOfflineQueue.length === 0) {
+      safeRemoveItem(OFFLINE_QUEUE_KEY);
+    } else {
+      safeSetItem(OFFLINE_QUEUE_KEY, JSON.stringify(inMemoryOfflineQueue));
+    }
+  } catch {
+    // Keep in-memory queue intact even if localStorage quota is tight
+  }
+}
+
+export function getPendingOfflineQueueCount(): number {
+  return loadOfflineQueueFromStorage().length;
+}
+
+export function enqueueOfflineSync(state: AppState, timestamp: string = new Date().toISOString()): number {
+  const queue = [...loadOfflineQueueFromStorage()];
+  const branchId = state?.activeBranchId || 'branch-mahalla';
+  const entry: OfflineSyncEntry = {
+    id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp,
+    branchId,
+    state: stripHeavyLogo(state),
+    attempts: 0,
+  };
+  queue.push(entry);
+  persistOfflineQueue(queue);
+  return getPendingOfflineQueueCount();
+}
+
+export function clearOfflineSyncQueue(): void {
+  inMemoryOfflineQueue = [];
+  safeRemoveItem(OFFLINE_QUEUE_KEY);
+}
 
 let connectionSnapshot: CloudConnectionSnapshot = {
   status: typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'connected',
@@ -85,7 +165,9 @@ let connectionSnapshot: CloudConnectionSnapshot = {
     typeof navigator !== 'undefined' && navigator.onLine === false
       ? 'لا يوجد اتصال بالإنترنت حالياً'
       : 'المزامنة السحابية جاهزة ونشطة',
-  hasPendingSync: false,
+  lastSyncAt: safeGetItem('TAMWEEN_LAST_SUPABASE_SYNC') || undefined,
+  hasPendingSync: getPendingOfflineQueueCount() > 0,
+  pendingQueueCount: getPendingOfflineQueueCount(),
 };
 
 let pendingSyncPayload: { state: AppState; timestamp: string } | null = null;
@@ -106,11 +188,12 @@ export function getCloudConnectionSnapshot(): CloudConnectionSnapshot {
 export function setCloudConnectionStatus(
   status: CloudConnectionStatus,
   detail?: string,
-  extra?: { lastSyncAt?: string; hasPendingSync?: boolean }
+  extra?: { lastSyncAt?: string; hasPendingSync?: boolean; pendingQueueCount?: number }
 ): CloudConnectionSnapshot {
   const effectiveStatus: CloudConnectionStatus =
     status !== 'offline' && isBrowserOffline() ? 'offline' : status;
   const nowStr = new Date().toLocaleTimeString('ar-EG');
+  const qCount = extra?.pendingQueueCount ?? getPendingOfflineQueueCount();
   connectionSnapshot = {
     status: effectiveStatus,
     label: STATUS_LABELS[effectiveStatus],
@@ -125,7 +208,8 @@ export function setCloudConnectionStatus(
       effectiveStatus === 'error' || effectiveStatus === 'offline'
         ? nowStr
         : connectionSnapshot.lastErrorAt,
-    hasPendingSync: extra?.hasPendingSync ?? Boolean(pendingSyncPayload),
+    hasPendingSync: extra?.hasPendingSync ?? (Boolean(pendingSyncPayload) || qCount > 0),
+    pendingQueueCount: qCount,
   };
   notifyConnectionListeners();
   return getCloudConnectionSnapshot();
@@ -136,8 +220,9 @@ function ensureBrowserNetworkListeners(): void {
   if (browserNetworkListenersAttached || typeof window === 'undefined') return;
   browserNetworkListenersAttached = true;
   window.addEventListener('offline', () => {
-    setCloudConnectionStatus('offline', 'انقطع الاتصال بالإنترنت', {
-      hasPendingSync: Boolean(pendingSyncPayload),
+    setCloudConnectionStatus('offline', 'انقطع الاتصال بالإنترنت — التعديلات تُحفظ في قائمة الانتظار بأمان', {
+      hasPendingSync: true,
+      pendingQueueCount: getPendingOfflineQueueCount(),
     });
   });
   window.addEventListener('online', () => {
@@ -234,15 +319,40 @@ export function setSupabaseCloudDisabled(disabled: boolean): void {
   }
 }
 
+function isLocalOrCloudOrigin(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.location.hostname.includes('run.app') ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  );
+}
+
 function getLiveDbApiUrl(): string {
   if (typeof window !== 'undefined') {
-    const isCloudHost =
-      window.location.hostname.includes('run.app') || window.location.hostname === 'localhost';
-    return isCloudHost
+    return isLocalOrCloudOrigin()
       ? '/api/supabase/live-db'
       : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/live-db';
   }
   return '/api/supabase/live-db';
+}
+
+function getAlertsApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    return isLocalOrCloudOrigin()
+      ? '/api/supabase/alerts'
+      : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/alerts';
+  }
+  return '/api/supabase/alerts';
+}
+
+function getWebSocketSyncUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  if (isLocalOrCloudOrigin()) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}/ws/supabase-realtime`;
+  }
+  return 'wss://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/ws/supabase-realtime';
 }
 
 /**
@@ -339,9 +449,7 @@ export function saveSupabaseConfig(url: string, anonKey: string): SupabaseConfig
   // Synchronize credentials to server endpoint so other devices receive them automatically
   if (typeof window !== 'undefined') {
     try {
-      const isCloudHost =
-        window.location.hostname.includes('run.app') || window.location.hostname === 'localhost';
-      const targetUrl = isCloudHost
+      const targetUrl = isLocalOrCloudOrigin()
         ? '/api/supabase/config'
         : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/config';
 
@@ -371,9 +479,7 @@ export async function syncSupabaseConfigFromRemote(): Promise<SupabaseConfig> {
   if (typeof window === 'undefined' || isBrowserOffline()) return localCfg;
 
   try {
-    const isCloudHost =
-      window.location.hostname.includes('run.app') || window.location.hostname === 'localhost';
-    const targetUrl = isCloudHost
+    const targetUrl = isLocalOrCloudOrigin()
       ? '/api/supabase/config'
       : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/config';
 
@@ -450,40 +556,34 @@ export async function testSupabaseConnection(): Promise<{
     };
   }
 
-  setCloudConnectionStatus('syncing', 'جاري التحقق من الاتصال بقاعدة البيانات السحابية Cloud Firebase...');
-  const client = getSupabaseClient();
+  setCloudConnectionStatus('syncing', 'جاري التحقق من الاتصال بخادم المزامنة اللحظية Supabase Realtime...');
+  let client = getSupabaseClient();
   if (!client) {
-    try {
-      const firestoreOk = await testFirestoreConnection();
-      if (firestoreOk) {
-        setCloudConnectionStatus('connected', 'متصل بالسحابة (Cloud Firebase Firestore Realtime)');
-        return {
-          success: true,
-          message: 'تم تفعيل الاتصال المباشر بقاعدة بيانات Cloud Firebase Firestore والمزامنة اللحظية بنجاح عبر جميع الأجهزة!',
-          details: {
-            storageStatus: 'Cloud Firebase Firestore Realtime نشط ومتصل لجميع الفروع',
-          },
-        };
-      }
-    } catch {}
+    await syncSupabaseConfigFromRemote();
+    client = getSupabaseClient();
+  }
 
+  if (!client) {
     if (typeof window !== 'undefined') {
       try {
         const resp = await fetch(getLiveDbApiUrl(), { method: 'GET' });
         if (resp.ok) {
-          setCloudConnectionStatus('connected', 'متصل بخادم المزامنة البديل');
+          setCloudConnectionStatus('connected', 'متصل بخادم المزامنة اللحظية (Supabase WebSocket Realtime)');
           return {
             success: true,
-            message: 'تم الاتصال بخادم المزامنة البديل.',
+            message: 'تم تفعيل الاتصال المباشر بخادم المزامنة اللحظية (WebSocket + Live DB) بنجاح عبر جميع الأجهزة!',
+            details: {
+              storageStatus: 'خادم المزامنة اللحظية عبر WebSocket نشط ومتصل لجميع الفروع',
+            },
           };
         }
       } catch {}
     }
 
-    setCloudConnectionStatus('error', 'تعذر الوصول إلى خادم Cloud Firebase Firestore السحابي');
+    setCloudConnectionStatus('error', 'تعذر الوصول إلى خادم المزامنة اللحظية Supabase');
     return {
       success: false,
-      message: 'فشل الاتصال بخادم Cloud Firebase Firestore السحابي.',
+      message: 'فشل الاتصال بخادم المزامنة اللحظية. يرجى التحقق من الشبكة أو إعدادات Supabase.',
     };
   }
 
@@ -528,14 +628,149 @@ export async function testSupabaseConnection(): Promise<{
 }
 
 /**
+ * دوال المصادقة المباشرة عبر Supabase Auth + إدارة الجلسة والصلاحيات
+ */
+export async function signInWithSupabaseAuth(
+  email: string,
+  password: string
+): Promise<{ success: boolean; message: string; email?: string; userId?: string }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      success: false,
+      message: 'يرجى إعداد رابط مشروع Supabase ومفتاح anon أولاً لتفعيل مصادقة Supabase Auth.',
+    };
+  }
+  try {
+    const { data, error } = await client.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    if (error || !data.user) {
+      return {
+        success: false,
+        message: error?.message || 'بيانات الدخول غير صحيحة في Supabase Auth.',
+      };
+    }
+    return {
+      success: true,
+      message: `تم تسجيل الدخول عبر Supabase Auth بنجاح (${data.user.email})`,
+      email: data.user.email,
+      userId: data.user.id,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || 'تعذر تسجيل الدخول في Supabase Auth.',
+    };
+  }
+}
+
+export async function signUpWithSupabaseAuth(
+  email: string,
+  password: string,
+  metadata?: { fullName?: string; role?: string; branchId?: string }
+): Promise<{ success: boolean; message: string; userId?: string }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      success: false,
+      message: 'يرجى إعداد رابط مشروع Supabase ومفتاح anon أولاً.',
+    };
+  }
+  try {
+    const { data, error } = await client.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: {
+          full_name: metadata?.fullName || '',
+          app_role: metadata?.role || 'inspector',
+          branch_id: metadata?.branchId || 'branch-mahalla',
+        },
+      },
+    });
+    if (error) {
+      return { success: false, message: error.message };
+    }
+    return {
+      success: true,
+      message: data.session
+        ? 'تم إنشاء حساب Supabase Auth وتفعيل الجلسة فوراً بنجاح.'
+        : 'تم إنشاء الحساب في Supabase Auth! يرجى تأكيد البريد الإلكتروني إذا كان التفعيل مفعلاً.',
+      userId: data.user?.id,
+    };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'فشل إنشاء الحساب في Supabase Auth.' };
+  }
+}
+
+export async function signOutSupabaseAuth(): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) return;
+  try {
+    await client.auth.signOut();
+  } catch {}
+}
+
+export async function getSupabaseAuthSession(): Promise<{
+  authenticated: boolean;
+  email?: string;
+  userId?: string;
+  role?: string;
+}> {
+  const client = getSupabaseClient();
+  if (!client) return { authenticated: false };
+  try {
+    const { data } = await client.auth.getSession();
+    const user = data?.session?.user;
+    if (!user) return { authenticated: false };
+    return {
+      authenticated: true,
+      email: user.email,
+      userId: user.id,
+      role: (user.user_metadata?.app_role as string) || user.role,
+    };
+  } catch {
+    return { authenticated: false };
+  }
+}
+
+/**
  * كود إنشاء وتجهيز جداول Supabase بلغة PostgreSQL (SQL Schema Script)
  */
 export const SUPABASE_TABLES_SQL_SCHEMA = `-- ==============================================================
 -- منظومة إدارة تموين مركز المحلة الكبرى - مديرية التموين بالغربية
--- سكريبت إنشاء وتهيئة جداول قاعدة بيانات Supabase (PostgreSQL)
+-- سكريبت إنشاء وتهيئة كافة جداول قاعدة بيانات Supabase (PostgreSQL)
+-- شامل العلاقات والمفاتيح الأساسية والخارجية والفهارس وسياسات الأمان RLS والبث اللحظي Realtime
 -- ==============================================================
 
--- 1. جدول المخابز الرئيسي (Bakeries)
+-- 0. جدول الفروع والإدارات التموينية (Branches)
+CREATE TABLE IF NOT EXISTS branches (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  governorate_title TEXT,
+  directorate_title TEXT,
+  description TEXT,
+  data_json JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO branches (id, name, governorate_title, directorate_title, description)
+VALUES ('branch-mahalla', 'إدارة تموين مركز المحلة الكبرى', 'محافظة الغربية', 'مديرية التموين والتجارة الداخلية بالغربية', 'الإدارة الرئيسية')
+ON CONFLICT (id) DO NOTHING;
+
+-- 1. جدول القرى والوحدات المحلية (Villages & Local Units)
+CREATE TABLE IF NOT EXISTS villages (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT DEFAULT 'branch-mahalla' REFERENCES branches(id) ON DELETE CASCADE,
+  village_name TEXT NOT NULL,
+  local_units JSONB DEFAULT '[]'::jsonb,
+  data_json JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. جدول المخابز الرئيسي (Bakeries)
 CREATE TABLE IF NOT EXISTS bakeries (
   id TEXT PRIMARY KEY,
   branch_id TEXT DEFAULT 'branch-mahalla',
@@ -569,7 +804,7 @@ CREATE TABLE IF NOT EXISTS bakeries (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. جدول المديونيات والمخالفات والتصرف (Debts)
+-- 3. جدول المديونيات والمخالفات والتصرف (Debts)
 CREATE TABLE IF NOT EXISTS debts (
   id TEXT PRIMARY KEY,
   branch_id TEXT DEFAULT 'branch-mahalla',
@@ -603,7 +838,31 @@ CREATE TABLE IF NOT EXISTS debts (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. جدول النسخ الاحتياطية وحزم المزامنة الكاملة (Backup Snapshots)
+-- 4. جدول المستخدمين والصلاحيات (App Users & RBAC)
+CREATE TABLE IF NOT EXISTS app_users (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT DEFAULT 'branch-mahalla',
+  username TEXT NOT NULL,
+  full_name TEXT,
+  role TEXT NOT NULL DEFAULT 'viewer',
+  auth_user_id UUID,
+  data_json JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5. جدول المهام اليومية والمتابعة (Daily Tasks)
+CREATE TABLE IF NOT EXISTS daily_tasks (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT DEFAULT 'branch-mahalla',
+  title TEXT NOT NULL,
+  priority TEXT DEFAULT 'medium',
+  status TEXT DEFAULT 'pending',
+  due_date TEXT,
+  data_json JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 6. جدول النسخ الاحتياطية وحزم المزامنة الكاملة (Backup Snapshots)
 CREATE TABLE IF NOT EXISTS backup_snapshots (
   id TEXT PRIMARY KEY,
   version TEXT,
@@ -613,7 +872,7 @@ CREATE TABLE IF NOT EXISTS backup_snapshots (
   payload JSONB NOT NULL
 );
 
--- 4. جدول إعدادات المنظومة (System Config)
+-- 7. جدول إعدادات المنظومة (System Config)
 CREATE TABLE IF NOT EXISTS system_config (
   id TEXT PRIMARY KEY DEFAULT 'tamween_config',
   governorate_title TEXT,
@@ -623,62 +882,127 @@ CREATE TABLE IF NOT EXISTS system_config (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- إضافة عمود الفرع للجداول القائمة دون التأثير على البيانات الموجودة
+-- 8. جدول تنبيهات المديونيات المرتفعة (High-Debt Alerts)
+CREATE TABLE IF NOT EXISTS high_debt_alerts (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT DEFAULT 'branch-mahalla',
+  bakery_id TEXT,
+  bakery_owner_name TEXT NOT NULL,
+  machine_number TEXT,
+  village TEXT,
+  debt_amount NUMERIC DEFAULT 0,
+  threshold_used NUMERIC DEFAULT 50000,
+  action_type TEXT DEFAULT 'ADD_DEBT',
+  is_read BOOLEAN DEFAULT false,
+  edited_by TEXT,
+  editor_role TEXT,
+  created_at_iso TEXT,
+  data_json JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ترقية الجداول القائمة بأعمدة الفروع دون المساس بالبيانات الموجودة
 ALTER TABLE bakeries ADD COLUMN IF NOT EXISTS branch_id TEXT DEFAULT 'branch-mahalla';
 ALTER TABLE debts ADD COLUMN IF NOT EXISTS branch_id TEXT DEFAULT 'branch-mahalla';
+ALTER TABLE high_debt_alerts ADD COLUMN IF NOT EXISTS branch_id TEXT DEFAULT 'branch-mahalla';
 
--- فهارس الأداء العالي لتسريع البحث والتصفية والربط بين المخابز والمديونيات والفروع
+-- فهارس الأداء العالي لتسريع البحث والتصفية والربط بين المخابز والمديونيات والفروع والتنبيهات
+CREATE INDEX IF NOT EXISTS idx_villages_branch_id ON villages (branch_id);
 CREATE INDEX IF NOT EXISTS idx_bakeries_branch_id ON bakeries (branch_id);
 CREATE INDEX IF NOT EXISTS idx_bakeries_village ON bakeries (village);
 CREATE INDEX IF NOT EXISTS idx_bakeries_local_unit ON bakeries (local_unit);
 CREATE INDEX IF NOT EXISTS idx_bakeries_machine_number ON bakeries (machine_number);
+CREATE INDEX IF NOT EXISTS idx_bakeries_activity_status ON bakeries (activity_status);
 CREATE INDEX IF NOT EXISTS idx_debts_branch_id ON debts (branch_id);
 CREATE INDEX IF NOT EXISTS idx_debts_bakery_id ON debts (bakery_id);
 CREATE INDEX IF NOT EXISTS idx_debts_village ON debts (village);
 CREATE INDEX IF NOT EXISTS idx_debts_status ON debts (status);
+CREATE INDEX IF NOT EXISTS idx_app_users_branch_id ON app_users (branch_id);
+CREATE INDEX IF NOT EXISTS idx_daily_tasks_branch_id ON daily_tasks (branch_id);
+CREATE INDEX IF NOT EXISTS idx_high_debt_alerts_branch_id ON high_debt_alerts (branch_id);
 
--- تفعيل سياسات الأمان Row Level Security (RLS) للسماح بالقراءة والكتابة والتعديل والحذف
+-- تفعيل سياسات الأمان Row Level Security (RLS) على كافة الجداول
+ALTER TABLE branches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE villages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bakeries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE debts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE backup_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE high_debt_alerts ENABLE ROW LEVEL SECURITY;
 
 DO $$ 
 BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public branches access') THEN
+    CREATE POLICY "Public branches access" ON branches FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public villages access') THEN
+    CREATE POLICY "Public villages access" ON villages FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public bakeries access') THEN
-    CREATE POLICY "Public bakeries access" ON bakeries FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Public bakeries access" ON bakeries FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public debts access') THEN
-    CREATE POLICY "Public debts access" ON debts FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Public debts access" ON debts FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public app_users access') THEN
+    CREATE POLICY "Public app_users access" ON app_users FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public daily_tasks access') THEN
+    CREATE POLICY "Public daily_tasks access" ON daily_tasks FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public snapshots access') THEN
-    CREATE POLICY "Public snapshots access" ON backup_snapshots FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Public snapshots access" ON backup_snapshots FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public config access') THEN
-    CREATE POLICY "Public config access" ON system_config FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY "Public config access" ON system_config FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public high_debt_alerts access') THEN
+    CREATE POLICY "Public high_debt_alerts access" ON high_debt_alerts FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
   END IF;
 END $$;
 
 -- تفعيل البث اللحظي Supabase Realtime (INSERT / UPDATE / DELETE) لجميع الجداول
+ALTER TABLE branches REPLICA IDENTITY FULL;
+ALTER TABLE villages REPLICA IDENTITY FULL;
 ALTER TABLE bakeries REPLICA IDENTITY FULL;
 ALTER TABLE debts REPLICA IDENTITY FULL;
+ALTER TABLE app_users REPLICA IDENTITY FULL;
+ALTER TABLE daily_tasks REPLICA IDENTITY FULL;
 ALTER TABLE backup_snapshots REPLICA IDENTITY FULL;
 ALTER TABLE system_config REPLICA IDENTITY FULL;
+ALTER TABLE high_debt_alerts REPLICA IDENTITY FULL;
 
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'branches') THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE branches;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'villages') THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE villages;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'bakeries') THEN
       ALTER PUBLICATION supabase_realtime ADD TABLE bakeries;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'debts') THEN
       ALTER PUBLICATION supabase_realtime ADD TABLE debts;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'app_users') THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE app_users;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'daily_tasks') THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE daily_tasks;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'backup_snapshots') THEN
       ALTER PUBLICATION supabase_realtime ADD TABLE backup_snapshots;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'system_config') THEN
       ALTER PUBLICATION supabase_realtime ADD TABLE system_config;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'high_debt_alerts') THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE high_debt_alerts;
     END IF;
   END IF;
 END $$;
@@ -808,35 +1132,35 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
   const debtsCount = Array.isArray(state?.debts) ? state.debts.length : 0;
   const fullCloudState = buildFullCloudMultiBranchPayload(state, nowIso);
 
-  // 1. Always sync all branches to built-in Multi-Device Cloud Database & Server Live DB first
-  const [cloudSynced, serverSynced] = await Promise.all([
-    syncSharedStateToFirestore(fullCloudState as unknown as Record<string, any>, nowIso),
+  // 1. Always push authoritative multi-branch snapshot to Supabase Live DB API (instant WebSocket broadcast)
+  const serverSynced =
     typeof window !== 'undefined'
-      ? fetch(getLiveDbApiUrl(), {
+      ? await fetch(getLiveDbApiUrl(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: fullCloudState, timestamp: nowIso }),
+          body: JSON.stringify({ data: fullCloudState, timestamp: nowIso, clientId: SESSION_CLIENT_ID }),
         })
           .then((r) => r.ok)
           .catch(() => false)
-      : Promise.resolve(false),
-  ]);
+      : false;
 
   const client = getSupabaseClient();
   if (!client) {
     const nowAr = new Date().toLocaleString('ar-EG');
     safeSetItem('TAMWEEN_LAST_SUPABASE_SYNC', nowAr);
     return {
-      success: cloudSynced || serverSynced,
-      message: `اكتمل نقل ومزامنة قاعدة البيانات وكافة الفروع على السحابة المشتركة بنجاح! تم حفظ (${bakeriesCount}) مخبز و (${debtsCount}) مديونية ومزامنتها لجميع الأجهزة فوراً.`,
+      success: serverSynced,
+      message: serverSynced
+        ? `اكتمل نقل ومزامنة قاعدة البيانات وكافة الفروع على خادم المزامنة اللحظية بنجاح! تم حفظ (${bakeriesCount}) مخبز و (${debtsCount}) مديونية ومزامنتها لجميع الأجهزة فوراً.`
+        : 'تعذر الوصول إلى خادم المزامنة حالياً.',
       bakeriesUpserted: bakeriesCount,
       debtsUpserted: debtsCount,
-      snapshotSaved: cloudSynced || serverSynced,
+      snapshotSaved: serverSynced,
       htmlUploaded: true,
       publicHtmlUrl: typeof window !== 'undefined' ? window.location.origin : '',
       details: {
         lastSync: nowAr,
-        htmlStatus: 'التزامن السحابي المباشر نشط عبر الرابط الموحد لجميع الفروع',
+        htmlStatus: 'التزامن اللحظي عبر WebSocket نشط لجميع الفروع',
       },
     };
   }
@@ -844,7 +1168,7 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
   try {
     let bakeriesUpserted = 0;
     let debtsUpserted = 0;
-    let snapshotSaved = cloudSynced || serverSynced;
+    let snapshotSaved = serverSynced;
 
     // 1. Prepare snapshot payload containing all branches (branchPartitions)
     const snapshotId = `snapshot-${Date.now()}`;
@@ -964,20 +1288,19 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
       },
     };
   } catch (err: any) {
-    if (cloudSynced || serverSynced) {
-      setCloudConnectionStatus('connected', 'تمت المزامنة عبر السحابة المدمجة بنجاح');
+    if (serverSynced) {
+      setCloudConnectionStatus('connected', 'تمت المزامنة عبر خادم WebSocket اللحظي بنجاح');
     } else {
       setCloudConnectionStatus('error', `فشل المزامنة: ${err.message || 'خطأ غير معروف'}`);
     }
     return {
-      success: cloudSynced || serverSynced,
-      message:
-        cloudSynced || serverSynced
-          ? `تم حفظ ومزامنة البيانات عبر السحابة المدمجة بنجاح (${bakeriesCount} مخبز و ${debtsCount} مديونية)!`
-          : `فشل نقل قاعدة البيانات إلى Supabase: ${err.message || 'خطأ غير معروف'}`,
+      success: serverSynced,
+      message: serverSynced
+        ? `تم حفظ ومزامنة البيانات عبر خادم المزامنة اللحظية بنجاح (${bakeriesCount} مخبز و ${debtsCount} مديونية)!`
+        : `فشل نقل قاعدة البيانات إلى Supabase: ${err.message || 'خطأ غير معروف'}`,
       bakeriesUpserted: bakeriesCount,
       debtsUpserted: debtsCount,
-      snapshotSaved: cloudSynced || serverSynced,
+      snapshotSaved: serverSynced,
       htmlUploaded: false,
     };
   }
@@ -1123,6 +1446,201 @@ export function mapSqlRowToDebt(row: any) {
   );
 }
 
+export function mapAlertToSqlRow(
+  a: HighDebtAlertNotification,
+  branchId: string,
+  nowIso: string = new Date().toISOString()
+) {
+  return {
+    id: a.id,
+    branch_id: a.branchId || branchId || 'branch-mahalla',
+    bakery_id: a.bakeryId || '',
+    bakery_owner_name: a.bakeryOwnerName || 'بدون اسم',
+    machine_number: a.machineNumber || '',
+    village: a.village || '',
+    debt_amount: Number(a.debtAmount) || 0,
+    threshold_used: Number(a.thresholdUsed) || DEFAULT_DEBT_ALERT_THRESHOLD,
+    action_type: a.actionType || 'ADD_DEBT',
+    is_read: Boolean(a.isRead),
+    edited_by: a.editedBy || '',
+    editor_role: a.editorRole || '',
+    created_at_iso: a.createdAtIso || nowIso,
+    data_json: a,
+    updated_at: nowIso,
+  };
+}
+
+export function mapSqlRowToAlert(row: any): HighDebtAlertNotification | null {
+  if (!row) return null;
+  if (row.data_json && row.data_json.id) {
+    return {
+      ...row.data_json,
+      isRead: typeof row.is_read === 'boolean' ? row.is_read : Boolean(row.data_json.isRead),
+    };
+  }
+  if (!row.id) return null;
+  return {
+    id: row.id,
+    bakeryId: row.bakery_id || '',
+    bakeryOwnerName: row.bakery_owner_name || 'بدون اسم',
+    machineNumber: row.machine_number || '',
+    village: row.village || '',
+    debtAmount: Number(row.debt_amount) || 0,
+    thresholdUsed: Number(row.threshold_used) || DEFAULT_DEBT_ALERT_THRESHOLD,
+    branchId: row.branch_id || 'branch-mahalla',
+    createdAtIso: row.created_at_iso || row.updated_at || new Date().toISOString(),
+    editedBy: row.edited_by || 'مستخدم منظومة',
+    editorRole: row.editor_role || '',
+    timestamp: '',
+    actionType: row.action_type || 'ADD_DEBT',
+    isRead: Boolean(row.is_read),
+  };
+}
+
+export function mapBranchToSqlRow(br: any, nowIso: string = new Date().toISOString()) {
+  return {
+    id: br.id,
+    name: br.name || 'فرع تمويني',
+    governorate_title: br.governorateTitle || '',
+    directorate_title: br.directorateTitle || '',
+    description: br.description || '',
+    data_json: br,
+    updated_at: nowIso,
+  };
+}
+
+export function mapSqlRowToBranch(row: any) {
+  if (!row) return null;
+  return (
+    row.data_json || {
+      id: row.id,
+      name: row.name,
+      governorateTitle: row.governorate_title || '',
+      directorateTitle: row.directorate_title || '',
+      description: row.description || '',
+    }
+  );
+}
+
+export function mapVillageToSqlRow(v: any, branchId: string, nowIso: string = new Date().toISOString()) {
+  const villageName = String(v?.village || v?.name || 'قرية').trim();
+  const safeId = v?.id || `${branchId || 'branch-mahalla'}__${villageName}`;
+  return {
+    id: safeId,
+    branch_id: branchId || 'branch-mahalla',
+    village_name: villageName,
+    local_units: Array.isArray(v?.localUnits) ? v.localUnits : [],
+    data_json: { village: villageName, localUnits: Array.isArray(v?.localUnits) ? v.localUnits : [] },
+    updated_at: nowIso,
+  };
+}
+
+export function mapSqlRowToVillage(row: any): { village: string; localUnits: string[] } | null {
+  if (!row) return null;
+  if (row.data_json && (row.data_json.village || row.data_json.name)) {
+    return {
+      village: row.data_json.village || row.data_json.name,
+      localUnits: Array.isArray(row.data_json.localUnits) ? row.data_json.localUnits : [],
+    };
+  }
+  if (!row.village_name) return null;
+  return {
+    village: row.village_name,
+    localUnits: Array.isArray(row.local_units) ? row.local_units : [],
+  };
+}
+
+export function mapUserToSqlRow(u: any, branchId: string, nowIso: string = new Date().toISOString()) {
+  return {
+    id: `${branchId || 'branch-mahalla'}__${u.id}`,
+    branch_id: branchId || 'branch-mahalla',
+    username: u.username || '',
+    full_name: u.fullName || '',
+    role: u.role || 'viewer',
+    data_json: u,
+    updated_at: nowIso,
+  };
+}
+
+export function mapSqlRowToUser(row: any) {
+  if (!row) return null;
+  return row.data_json || {
+    id: row.id,
+    username: row.username,
+    fullName: row.full_name,
+    role: row.role || 'viewer',
+  };
+}
+
+export function mapTaskToSqlRow(t: any, branchId: string, nowIso: string = new Date().toISOString()) {
+  return {
+    id: t.id,
+    branch_id: branchId || 'branch-mahalla',
+    title: t.title || 'مهمة',
+    priority: t.priority || 'medium',
+    status: t.status || 'pending',
+    due_date: t.dueDate || '',
+    data_json: t,
+    updated_at: nowIso,
+  };
+}
+
+export function mapSqlRowToTask(row: any) {
+  if (!row) return null;
+  return row.data_json || {
+    id: row.id,
+    title: row.title,
+    priority: row.priority || 'medium',
+    status: row.status || 'pending',
+    dueDate: row.due_date || '',
+  };
+}
+
+export function computeDeletedIds(
+  serverIds: Array<string | number>,
+  currentRows: Array<{ id: string }>
+): string[] {
+  const activeSet = new Set((currentRows || []).map((r) => String(r.id)));
+  return (serverIds || [])
+    .map((id) => String(id))
+    .filter((id) => id && !activeSet.has(id));
+}
+
+/**
+ * حل التعارض التلقائي عند تعديل سجلين من جهازين في نفس الوقت اعتماداً على آخر توقيت تعديل
+ */
+export function resolveConcurrentRecords<T extends { id: string; lastUpdatedAt?: string; updatedAt?: string }>(
+  localRows: T[],
+  remoteRows: T[]
+): { merged: T[]; conflictsResolved: number } {
+  const byId = new Map<string, T>();
+  let conflictsResolved = 0;
+
+  for (const r of remoteRows || []) {
+    if (r && r.id) byId.set(String(r.id), r);
+  }
+
+  for (const local of localRows || []) {
+    if (!local || !local.id) continue;
+    const key = String(local.id);
+    const existing = byId.get(key);
+    if (!existing) {
+      byId.set(key, local);
+      continue;
+    }
+    const tLocal = Date.parse(local.lastUpdatedAt || local.updatedAt || '') || 0;
+    const tRemote = Date.parse(existing.lastUpdatedAt || existing.updatedAt || '') || 0;
+    if (tLocal > tRemote) {
+      byId.set(key, local);
+      conflictsResolved += 1;
+    } else if (tRemote > tLocal) {
+      conflictsResolved += 1;
+    }
+  }
+
+  return { merged: Array.from(byId.values()), conflictsResolved };
+}
+
 const processedRealtimeEventMap = new Map<string, number>();
 
 export function shouldProcessRealtimeEvent(
@@ -1131,7 +1649,6 @@ export function shouldProcessRealtimeEvent(
   ttlMs: number = 2500
 ): boolean {
   if (!eventKey) return true;
-  // Prune expired entries occasionally
   if (processedRealtimeEventMap.size > 300) {
     for (const [k, ts] of processedRealtimeEventMap.entries()) {
       if (nowMs - ts > ttlMs) processedRealtimeEventMap.delete(k);
@@ -1168,8 +1685,157 @@ export function applyRealtimeRowMutation<T extends { id: string }>(
   return [mapped, ...safeList];
 }
 
+// -----------------------------------------------------------------------------
+// Shared WebSocket Real-Time Client Manager (Port 3000 /ws/supabase-realtime)
+// -----------------------------------------------------------------------------
+type WsStateListener = (msg: {
+  type: 'init' | 'state_update' | 'state_cleared' | 'alerts_update' | 'config_updated';
+  snapshot?: any;
+  alertsState?: any;
+  alerts?: HighDebtAlertNotification[];
+  debtAlertThreshold?: number;
+  cleared?: boolean;
+  clientId?: string;
+  timestamp?: string;
+  url?: string;
+  anonKey?: string;
+}) => void;
+
+const wsListeners = new Set<WsStateListener>();
+let sharedWs: WebSocket | null = null;
+let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let wsHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let wsReconnectAttempts = 0;
+
+function stopWsHeartbeat() {
+  if (wsHeartbeatTimer) {
+    clearInterval(wsHeartbeatTimer);
+    wsHeartbeatTimer = null;
+  }
+}
+
+function disconnectSharedWebSocket() {
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  stopWsHeartbeat();
+  if (sharedWs) {
+    try {
+      sharedWs.onopen = null;
+      sharedWs.onmessage = null;
+      sharedWs.onerror = null;
+      sharedWs.onclose = null;
+      sharedWs.close();
+    } catch {}
+    sharedWs = null;
+  }
+}
+
+function scheduleWsReconnect() {
+  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline()) return;
+  if (wsReconnectTimer) return;
+  const delay = Math.min(8000, 1000 * Math.pow(2, Math.min(wsReconnectAttempts, 3)));
+  wsReconnectAttempts += 1;
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    ensureSharedWebSocket();
+  }, delay);
+}
+
+function ensureSharedWebSocket(): void {
+  if (typeof window === 'undefined' || typeof WebSocket === 'undefined') return;
+  if (wsListeners.size === 0) return;
+  const cfg = getSupabaseConfig();
+  if (!cfg.isConfigured || isBrowserOffline()) return;
+  if (
+    sharedWs &&
+    (sharedWs.readyState === WebSocket.OPEN || sharedWs.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  const wsUrl = getWebSocketSyncUrl();
+  if (!wsUrl) return;
+
+  try {
+    const ws = new WebSocket(wsUrl);
+    sharedWs = ws;
+
+    ws.onopen = () => {
+      wsReconnectAttempts = 0;
+      const client = getSupabaseClient();
+      if (!client && !isBrowserOffline()) {
+        setCloudConnectionStatus(
+          'connected',
+          'متصل بخادم المزامنة اللحظية (Supabase WebSocket Realtime)',
+          { pendingQueueCount: getPendingOfflineQueueCount() }
+        );
+      }
+      if (getPendingOfflineQueueCount() > 0 && !isBrowserOffline()) {
+        flushOfflineSyncQueue().catch(() => {});
+      }
+      stopWsHeartbeat();
+      wsHeartbeatTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          } catch {}
+        }
+      }, 25000);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(String(event.data || '{}'));
+        if (!msg || !msg.type || msg.type === 'pong') return;
+        if (msg.type === 'config_updated') {
+          if (msg.url && msg.anonKey && isValidHttpUrl(msg.url) && !isServiceRoleJwt(msg.anonKey)) {
+            safeSetItem(SUPABASE_URL_KEY, msg.url);
+            safeSetItem(SUPABASE_ANON_KEY_KEY, msg.anonKey);
+            cachedClient = null;
+          }
+        }
+        wsListeners.forEach((listener) => {
+          try {
+            listener(msg);
+          } catch {}
+        });
+      } catch {}
+    };
+
+    ws.onerror = () => {
+      const client = getSupabaseClient();
+      if (!client && !isBrowserOffline()) {
+        setCloudConnectionStatus('error', 'تعذر استقرار قناة البث اللحظي WebSocket');
+      }
+    };
+
+    ws.onclose = () => {
+      stopWsHeartbeat();
+      if (sharedWs === ws) {
+        sharedWs = null;
+      }
+      scheduleWsReconnect();
+    };
+  } catch {
+    scheduleWsReconnect();
+  }
+}
+
+export function addSharedWebSocketListener(listener: WsStateListener): () => void {
+  wsListeners.add(listener);
+  ensureSharedWebSocket();
+  return () => {
+    wsListeners.delete(listener);
+    if (wsListeners.size === 0) {
+      disconnectSharedWebSocket();
+    }
+  };
+}
+
 /**
- * استعادة وتحميل أحدث قاعدة بيانات من السحابة المشتركة و Supabase
+ * استعادة وتحميل أحدث قاعدة بيانات من Supabase وخادم المزامنة اللحظية
  */
 export async function fetchDatabaseFromSupabase(): Promise<{
   success: boolean;
@@ -1204,67 +1870,7 @@ export async function fetchDatabaseFromSupabase(): Promise<{
   let serverReachable = false;
   let lastErrorMsg = '';
 
-  // 1. Primary Cloud Source of Truth: Cloud Firebase Firestore (multi-device realtime across all browsers & branches)
-  const cloudSnap = await loadSharedStateFromFirestore().catch((e) => {
-    lastErrorMsg = e?.message || 'خطأ في الاتصال بـ Cloud Firebase Firestore';
-    return null;
-  });
-
-  if (
-    cloudSnap &&
-    cloudSnap.data &&
-    (Array.isArray(cloudSnap.data.bakeries) ||
-      Array.isArray(cloudSnap.data.debts) ||
-      Array.isArray(cloudSnap.data.branches) ||
-      cloudSnap.data.branchPartitions)
-  ) {
-    serverReachable = true;
-    candidates.push({
-      data: cloudSnap.data as AppState,
-      timestamp: cloudSnap.updatedAt || new Date(0).toISOString(),
-      source: 'Cloud Firebase Firestore Realtime',
-    });
-  } else {
-    // Check Firestore health cleanly when document doesn't exist yet
-    const fsOk = await testFirestoreConnection().catch(() => false);
-    if (fsOk) {
-      serverReachable = true;
-    }
-
-    // Fallback to local live-db API ONLY when Firestore returned no records
-    if (typeof window !== 'undefined' && !client) {
-      const serverSnap = await fetch(getLiveDbApiUrl())
-        .then(async (r) => {
-          if (r.ok) {
-            serverReachable = true;
-            return await r.json();
-          }
-          return null;
-        })
-        .catch(() => null);
-
-      const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
-      const serverTimestamp =
-        serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
-      if (
-        serverSnap &&
-        serverSnap.success &&
-        serverData &&
-        (Array.isArray(serverData.bakeries) ||
-          Array.isArray(serverData.debts) ||
-          Array.isArray(serverData.branches) ||
-          (serverData as any).branchPartitions)
-      ) {
-        candidates.push({
-          data: serverData as AppState,
-          timestamp: serverTimestamp,
-          source: 'خادم المزامنة البديل',
-        });
-      }
-    }
-  }
-
-  // 2. If external Supabase client is configured, also query external Supabase
+  // 1. Primary Cloud Source of Truth: Supabase PostgreSQL / Realtime
   if (client) {
     try {
       const { data: liveRow, error: liveErr } = await client
@@ -1282,7 +1888,13 @@ export async function fetchDatabaseFromSupabase(): Promise<{
       if (!liveErr && liveRow && liveRow.payload) {
         const payload = liveRow.payload;
         const data = payload.data || payload;
-        if (data && (Array.isArray(data.bakeries) || Array.isArray(data.debts))) {
+        if (
+          data &&
+          (Array.isArray(data.bakeries) ||
+            Array.isArray(data.debts) ||
+            Array.isArray(data.branches) ||
+            data.branchPartitions)
+        ) {
           candidates.push({
             data: data as AppState,
             timestamp: payload.timestamp || liveRow.timestamp || new Date().toISOString(),
@@ -1299,6 +1911,7 @@ export async function fetchDatabaseFromSupabase(): Promise<{
           .limit(1);
 
         if (!sErr && snapshotRows && snapshotRows.length > 0 && snapshotRows[0].payload) {
+          serverReachable = true;
           const payload = snapshotRows[0].payload;
           const data = payload.data || payload;
           if (data && (Array.isArray(data.bakeries) || Array.isArray(data.debts))) {
@@ -1316,6 +1929,7 @@ export async function fetchDatabaseFromSupabase(): Promise<{
         const { data: dData } = await client.from('debts').select('*');
 
         if (!bErr && bData && bData.length > 0) {
+          serverReachable = true;
           const restoredBakeries = bData.map(mapSqlRowToBakery).filter(Boolean);
           const restoredDebts = (dData || []).map(mapSqlRowToDebt).filter(Boolean);
 
@@ -1331,12 +1945,43 @@ export async function fetchDatabaseFromSupabase(): Promise<{
       }
     } catch (err: any) {
       lastErrorMsg = err?.message || 'خطأ في الاتصال بـ Supabase';
-      console.warn('External Supabase fetch fallback error:', err);
+      console.warn('Supabase fetch error:', err);
+    }
+  }
+
+  // 2. Same-Origin / Shared Live-DB WebSocket Relay (handles multi-device sync seamlessly out-of-the-box)
+  if (typeof window !== 'undefined') {
+    const serverSnap = await fetch(getLiveDbApiUrl())
+      .then(async (r) => {
+        if (r.ok) {
+          serverReachable = true;
+          return await r.json();
+        }
+        return null;
+      })
+      .catch(() => null);
+
+    const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
+    const serverTimestamp =
+      serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
+    if (
+      serverSnap &&
+      serverSnap.success &&
+      serverData &&
+      (Array.isArray(serverData.bakeries) ||
+        Array.isArray(serverData.debts) ||
+        Array.isArray(serverData.branches) ||
+        (serverData as any).branchPartitions)
+    ) {
+      candidates.push({
+        data: serverData as AppState,
+        timestamp: serverTimestamp,
+        source: 'خادم المزامنة اللحظية (Supabase WebSocket)',
+      });
     }
   }
 
   if (candidates.length > 0) {
-    // Sort by newest timestamp descending
     candidates.sort((a, b) => {
       const tA = Date.parse(a.timestamp) || 0;
       const tB = Date.parse(b.timestamp) || 0;
@@ -1358,207 +2003,692 @@ export async function fetchDatabaseFromSupabase(): Promise<{
     setCloudConnectionStatus('offline', 'الجهاز غير متصل بالإنترنت حالياً');
   } else if (serverReachable || typeof window === 'undefined') {
     if (!pendingSyncPayload) {
-      setCloudConnectionStatus('connected', 'متصل بالخادم السحابي بنجاح');
+      setCloudConnectionStatus('connected', 'متصل بخادم Supabase بنجاح');
     }
   } else {
     setCloudConnectionStatus(
       'error',
-      lastErrorMsg || 'تعذر الاتصال بخادم المزامنة السحابي'
+      lastErrorMsg || 'تعذر الاتصال بخادم المزامنة اللحظية Supabase'
     );
   }
 
   return {
     success: false,
     message: serverReachable
-      ? 'لم يتم العثور على أي سجلات أو نسخ احتياطية مسجلة في السحابة حتى الآن.'
-      : lastErrorMsg || 'تعذر الاتصال بخادم المزامنة السحابي.',
+      ? 'لم يتم العثور على أي سجلات أو نسخ احتياطية مسجلة على الخادم حتى الآن.'
+      : lastErrorMsg || 'تعذر الاتصال بخادم المزامنة اللحظية Supabase.',
   };
 }
 
 let autoSyncDebounceTimer: any = null;
 let activeRealtimeChannel: any = null;
 
-/**
- * مزامنة تلقائية فورية مع السحابة و Supabase عند أي تعديل دون الحاجة للضغط على أي زر
- */
-export async function autoSyncToSupabase(
-  state: AppState,
-  immediate = false,
-  customTimestamp?: string
-): Promise<boolean> {
-  const cfg = getSupabaseConfig();
-  if (!cfg.isConfigured) return false;
+export interface DetailedSyncResult {
+  success: boolean;
+  queuedOffline: boolean;
+  syncedAt?: string;
+  revision?: number;
+  error?: string;
+}
 
-  const nowIso = customTimestamp || new Date().toISOString();
+async function performCloudPush(
+  state: AppState,
+  nowIso: string
+): Promise<DetailedSyncResult> {
+  const cfg = getSupabaseConfig();
+  if (!cfg.isConfigured) {
+    return { success: false, queuedOffline: false, error: 'التخزين السحابي معطل يدوياً.' };
+  }
 
   if (isBrowserOffline()) {
+    const qCount = enqueueOfflineSync(state, nowIso);
     pendingSyncPayload = { state, timestamp: nowIso };
     setCloudConnectionStatus(
       'offline',
-      'انقطع الإنترنت - تم تأمين التعديلات محلياً للمزامنة عند عودة الاتصال',
-      { hasPendingSync: true }
+      `انقطع الإنترنت — تم حفظ التعديل في قائمة الانتظار (${qCount}) للمزامنة التلقائية فور عودة الشبكة`,
+      { hasPendingSync: true, pendingQueueCount: qCount }
     );
-    return false;
+    return {
+      success: false,
+      queuedOffline: true,
+      error: 'الجهاز غير متصل بالإنترنت',
+    };
   }
 
-  const doSync = async (): Promise<boolean> => {
-    setCloudConnectionStatus('syncing', 'جاري مزامنة التعديلات مع الخادم...', {
-      hasPendingSync: Boolean(pendingSyncPayload),
-    });
+  setCloudConnectionStatus('syncing', 'جاري مزامنة التعديلات لحظياً مع Supabase...', {
+    hasPendingSync: true,
+  });
 
-    try {
-      const fullPayloadState = (state as unknown as { branchPartitions?: unknown })?.branchPartitions
-        ? state
-        : buildFullCloudMultiBranchPayload(state, nowIso);
-      const snapshotPayload = {
-        version: '3.7-supabase-realtime-autosync',
-        timestamp: nowIso,
-        bakeriesCount: Array.isArray(fullPayloadState?.bakeries) ? fullPayloadState.bakeries.length : 0,
-        debtsCount: Array.isArray(fullPayloadState?.debts) ? fullPayloadState.debts.length : 0,
-        data: fullPayloadState,
-      };
+  try {
+    const fullPayloadState = (state as unknown as { branchPartitions?: unknown })?.branchPartitions
+      ? state
+      : buildFullCloudMultiBranchPayload(state, nowIso);
+    const snapshotPayload = {
+      version: '5.0-supabase-realtime-autosync',
+      timestamp: nowIso,
+      clientId: SESSION_CLIENT_ID,
+      bakeriesCount: Array.isArray(fullPayloadState?.bakeries) ? fullPayloadState.bakeries.length : 0,
+      debtsCount: Array.isArray(fullPayloadState?.debts) ? fullPayloadState.debts.length : 0,
+      data: fullPayloadState,
+    };
 
-      // 1. Always push to Cloud Firebase Firestore immediately (+ optional secondary live-db mirror)
-      const [cloudOk, serverOk] = await Promise.all([
-        syncSharedStateToFirestore(fullPayloadState as unknown as Record<string, any>, nowIso),
-        typeof window !== 'undefined'
-          ? fetch(getLiveDbApiUrl(), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ data: fullPayloadState, timestamp: nowIso }),
-            })
-              .then((r) => r.ok)
-              .catch(() => false)
-          : Promise.resolve(false),
-      ]);
+    // 1. Push to live-db WebSocket relay server (instant fanout to all same-origin devices/browsers)
+    let serverOk = false;
+    let serverHttpFailure = false;
+    let serverErrMsg = '';
+    let serverRevision: number | undefined;
+    let networkUnreachable = false;
 
-      // 2. If an external Supabase instance is also configured, broadcast & upsert normalized tables too
-      let externalSupabaseOk = false;
-      let externalErrorMsg = '';
-      const client = getSupabaseClient();
-      if (client) {
-        try {
-          if (!activeRealtimeChannel) {
-            activeRealtimeChannel = client.channel('tamween_realtime_channel');
-            activeRealtimeChannel.subscribe();
+    if (typeof window !== 'undefined') {
+      try {
+        const resp = await fetch(getLiveDbApiUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            data: fullPayloadState,
+            timestamp: nowIso,
+            clientId: SESSION_CLIENT_ID,
+          }),
+        });
+        if (resp.ok) {
+          serverOk = true;
+          try {
+            const json = await resp.json();
+            serverRevision = typeof json?.revision === 'number' ? json.revision : undefined;
+          } catch {}
+        } else {
+          serverHttpFailure = true;
+          try {
+            const errJson = await resp.json();
+            serverErrMsg = errJson?.error || `HTTP ${resp.status}`;
+          } catch {
+            serverErrMsg = `HTTP ${resp.status}`;
           }
-          activeRealtimeChannel.send({
-            type: 'broadcast',
-            event: 'state_update',
-            payload: snapshotPayload,
+        }
+      } catch (fetchErr: any) {
+        networkUnreachable = true;
+        serverErrMsg = fetchErr?.message || 'تعذر الاتصال بالخادم';
+      }
+    }
+
+    // 2. If external Supabase project URL & Anon Key are configured, persist across all 9 normalized tables + Realtime broadcast
+    let externalSupabaseOk = false;
+    let externalErrorMsg = '';
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        if (!activeRealtimeChannel) {
+          activeRealtimeChannel = client.channel('tamween_realtime_channel', {
+            config: { broadcast: { self: false } },
           });
-        } catch (bcastErr) {
-          console.warn('Realtime broadcast error (fallback to postgres):', bcastErr);
+          activeRealtimeChannel.subscribe();
+        }
+        activeRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'state_update',
+          payload: snapshotPayload,
+        });
+      } catch (bcastErr) {
+        console.warn('Supabase Realtime broadcast error:', bcastErr);
+      }
+
+      const { error: snapErr } = await client
+        .from('backup_snapshots')
+        .upsert(
+          {
+            id: 'latest_live_snapshot',
+            version: snapshotPayload.version,
+            timestamp: snapshotPayload.timestamp,
+            bakeries_count: snapshotPayload.bakeriesCount,
+            debts_count: snapshotPayload.debtsCount,
+            payload: snapshotPayload,
+          },
+          { onConflict: 'id' }
+        );
+
+      if (snapErr) {
+        externalErrorMsg = snapErr.message;
+      } else {
+        externalSupabaseOk = true;
+      }
+
+      try {
+        const activeBranchId = state.activeBranchId || 'branch-mahalla';
+        const branchesList = state.branches || [];
+        if (branchesList.length > 0) {
+          await client
+            .from('branches')
+            .upsert(
+              branchesList.map((br) => mapBranchToSqlRow(br, nowIso)),
+              { onConflict: 'id' }
+            );
         }
 
-        const { error: snapErr } = await client
-          .from('backup_snapshots')
-          .upsert(
+        const vList = state.villages || [];
+        if (vList.length > 0) {
+          await client
+            .from('villages')
+            .upsert(
+              vList.map((v) => mapVillageToSqlRow(v, activeBranchId, nowIso)),
+              { onConflict: 'id' }
+            );
+        }
+
+        const bList = state.bakeries || [];
+        const dList = state.debts || [];
+        const bRows = bList.map((b) => mapBakeryToSqlRow(b, activeBranchId, nowIso));
+        const dRows = dList.map((d) => mapDebtToSqlRow(d, activeBranchId, nowIso));
+
+        if (bRows.length > 0) {
+          const { error: bUpErr } = await client
+            .from('bakeries')
+            .upsert(bRows, { onConflict: 'id' });
+          if (bUpErr) externalErrorMsg = bUpErr.message;
+        }
+        const { data: existingBIds } = await client
+          .from('bakeries')
+          .select('id')
+          .eq('branch_id', activeBranchId);
+        if (Array.isArray(existingBIds)) {
+          const removedBIds = computeDeletedIds(
+            existingBIds.map((r: any) => r.id),
+            bList
+          );
+          if (removedBIds.length > 0) {
+            await client.from('bakeries').delete().in('id', removedBIds);
+          }
+        }
+
+        if (dRows.length > 0) {
+          const { error: dUpErr } = await client
+            .from('debts')
+            .upsert(dRows, { onConflict: 'id' });
+          if (dUpErr) externalErrorMsg = dUpErr.message;
+        }
+        const { data: existingDIds } = await client
+          .from('debts')
+          .select('id')
+          .eq('branch_id', activeBranchId);
+        if (Array.isArray(existingDIds)) {
+          const removedDIds = computeDeletedIds(
+            existingDIds.map((r: any) => r.id),
+            dList
+          );
+          if (removedDIds.length > 0) {
+            await client.from('debts').delete().in('id', removedDIds);
+          }
+        }
+
+        const uList = state.users || [];
+        if (uList.length > 0) {
+          await client
+            .from('app_users')
+            .upsert(
+              uList.map((u) => mapUserToSqlRow(u, activeBranchId, nowIso)),
+              { onConflict: 'id' }
+            );
+        }
+
+        const tList = state.dailyTasks || [];
+        if (tList.length > 0) {
+          await client
+            .from('daily_tasks')
+            .upsert(
+              tList.map((t) => mapTaskToSqlRow(t, activeBranchId, nowIso)),
+              { onConflict: 'id' }
+            );
+        }
+
+        if (state.systemConfig) {
+          await client.from('system_config').upsert(
             {
-              id: 'latest_live_snapshot',
-              version: snapshotPayload.version,
-              timestamp: snapshotPayload.timestamp,
-              bakeries_count: snapshotPayload.bakeriesCount,
-              debts_count: snapshotPayload.debtsCount,
-              payload: snapshotPayload,
+              id: 'tamween_config',
+              governorate_title: state.systemConfig.governorateTitle,
+              directorate_title: state.systemConfig.directorateTitle,
+              administration_title: state.systemConfig.administrationTitle,
+              payload: {
+                ...state.systemConfig,
+                logoBase64: undefined,
+              },
+              updated_at: nowIso,
             },
             { onConflict: 'id' }
           );
-
-        if (snapErr) {
-          externalErrorMsg = snapErr.message;
-        } else {
-          externalSupabaseOk = true;
         }
-
-        // Sync normalized bakeries/debts rows & clean up deleted rows for active branch
-        try {
-          const activeBranchId = state.activeBranchId || 'branch-mahalla';
-          const bRows = (state.bakeries || []).map((b) =>
-            mapBakeryToSqlRow(b, activeBranchId, nowIso)
-          );
-          const dRows = (state.debts || []).map((d) =>
-            mapDebtToSqlRow(d, activeBranchId, nowIso)
-          );
-
-          if (bRows.length > 0) {
-            const { error: bUpErr } = await client
-              .from('bakeries')
-              .upsert(bRows, { onConflict: 'id' });
-            if (bUpErr) externalErrorMsg = bUpErr.message;
-          }
-          if (dRows.length > 0) {
-            const { error: dUpErr } = await client
-              .from('debts')
-              .upsert(dRows, { onConflict: 'id' });
-            if (dUpErr) externalErrorMsg = dUpErr.message;
-          }
-        } catch (rowSyncErr: any) {
-          console.warn('Row-level Supabase sync warning:', rowSyncErr?.message || rowSyncErr);
-        }
+      } catch (rowSyncErr: any) {
+        console.warn('Row-level Supabase sync warning:', rowSyncErr?.message || rowSyncErr);
       }
+    }
 
-      // Authoritative cloud success requires Cloud Firebase Firestore (or external Supabase if configured)
-      const overallSuccess = client ? (cloudOk || externalSupabaseOk) : (cloudOk || serverOk);
-      if (cloudOk || externalSupabaseOk) {
-        pendingSyncPayload = null;
-        const nowAr = new Date().toLocaleString('ar-EG');
-        safeSetItem('TAMWEEN_LAST_SUPABASE_SYNC', nowAr);
-        setCloudConnectionStatus('connected', 'متصل وتمت المزامنة اللحظية عبر Cloud Firebase بنجاح', {
+    const overallSuccess = client ? (externalSupabaseOk || serverOk) : serverOk;
+    if (overallSuccess) {
+      pendingSyncPayload = null;
+      const nowAr = new Date().toLocaleTimeString('ar-EG');
+      safeSetItem('TAMWEEN_LAST_SUPABASE_SYNC', nowAr);
+      setCloudConnectionStatus(
+        'connected',
+        client && externalSupabaseOk
+          ? `متصل وتمت المزامنة اللحظية مع Supabase (${nowAr})`
+          : `متصل وتمت المزامنة اللحظية مع خادم Supabase (${nowAr})`,
+        {
           lastSyncAt: nowAr,
-          hasPendingSync: false,
-        });
-      } else if (overallSuccess) {
-        pendingSyncPayload = { state, timestamp: nowIso };
-        setCloudConnectionStatus(
-          'error',
-          'تعذر الرفع إلى Cloud Firebase Firestore (تم الحفظ محلياً مؤقتاً)',
-          { hasPendingSync: true }
-        );
-      } else {
-        pendingSyncPayload = { state, timestamp: nowIso };
-        setCloudConnectionStatus(
-          'error',
-          externalErrorMsg || 'تعذر إتمام المزامنة مع خادم Cloud Firebase Firestore',
-          { hasPendingSync: true }
-        );
-      }
+          hasPendingSync: getPendingOfflineQueueCount() > 0,
+        }
+      );
+      return {
+        success: true,
+        queuedOffline: false,
+        syncedAt: nowAr,
+        revision: serverRevision,
+      };
+    }
 
-      return cloudOk || externalSupabaseOk;
-    } catch (err: any) {
+    // Network drop during fetch -> enqueue safely for auto-retry when back online
+    if (networkUnreachable && !serverHttpFailure) {
+      const qCount = enqueueOfflineSync(state, nowIso);
       pendingSyncPayload = { state, timestamp: nowIso };
       setCloudConnectionStatus(
-        'error',
-        `خطأ في المزامنة: ${err?.message || 'تعذر الاتصال بالخادم'}`,
-        { hasPendingSync: true }
+        'offline',
+        `انقطع الاتصال بالخادم — تم حفظ التعديلات في قائمة الانتظار (${qCount})`,
+        { hasPendingSync: true, pendingQueueCount: qCount }
       );
-      console.warn('autoSyncToSupabase error:', err);
-      return false;
+      return {
+        success: false,
+        queuedOffline: true,
+        error: serverErrMsg,
+      };
     }
-  };
 
+    const errMsg = externalErrorMsg || serverErrMsg || 'تعذر إتمام المزامنة اللحظية مع خادم Supabase';
+    setCloudConnectionStatus('error', errMsg, { hasPendingSync: false });
+    return {
+      success: false,
+      queuedOffline: false,
+      error: errMsg,
+    };
+  } catch (err: any) {
+    const qCount = enqueueOfflineSync(state, nowIso);
+    pendingSyncPayload = { state, timestamp: nowIso };
+    setCloudConnectionStatus(
+      'offline',
+      `تعذر الوصول للشبكة — تم حفظ التعديل في قائمة الانتظار (${qCount})`,
+      { hasPendingSync: true, pendingQueueCount: qCount }
+    );
+    return {
+      success: false,
+      queuedOffline: true,
+      error: err?.message || 'تعذر الاتصال بالخادم',
+    };
+  }
+}
+
+export async function flushOfflineSyncQueue(): Promise<{
+  flushedCount: number;
+  remainingCount: number;
+}> {
+  if (isBrowserOffline()) {
+    return { flushedCount: 0, remainingCount: getPendingOfflineQueueCount() };
+  }
+  const queue = [...loadOfflineQueueFromStorage()];
+  if (queue.length === 0) {
+    return { flushedCount: 0, remainingCount: 0 };
+  }
+
+  let flushedCount = 0;
+  while (queue.length > 0) {
+    const head = queue[0];
+    const res = await performCloudPush(head.state, head.timestamp);
+    if (res.success) {
+      queue.shift();
+      flushedCount += 1;
+      persistOfflineQueue(queue);
+    } else {
+      head.attempts += 1;
+      persistOfflineQueue(queue);
+      break;
+    }
+  }
+
+  const remainingCount = getPendingOfflineQueueCount();
+  if (remainingCount === 0 && flushedCount > 0) {
+    pendingSyncPayload = null;
+    const nowAr = new Date().toLocaleTimeString('ar-EG');
+    setCloudConnectionStatus(
+      'connected',
+      `تمت استعادة الاتصال وإرسال (${flushedCount}) عملية من قائمة الانتظار بنجاح`,
+      { lastSyncAt: nowAr, hasPendingSync: false, pendingQueueCount: 0 }
+    );
+  }
+  return { flushedCount, remainingCount };
+}
+
+export async function autoSyncToSupabaseDetailed(
+  state: AppState,
+  immediate = false,
+  customTimestamp?: string
+): Promise<DetailedSyncResult> {
+  const nowIso = customTimestamp || new Date().toISOString();
   if (immediate) {
     if (autoSyncDebounceTimer) {
       clearTimeout(autoSyncDebounceTimer);
       autoSyncDebounceTimer = null;
     }
-    return doSync();
+    return performCloudPush(state, nowIso);
   }
 
   return new Promise((resolve) => {
     if (autoSyncDebounceTimer) {
       clearTimeout(autoSyncDebounceTimer);
     }
-    // Fast 200ms debounce for instant auto-saving across all devices
     autoSyncDebounceTimer = setTimeout(async () => {
-      const res = await doSync();
+      const res = await performCloudPush(state, nowIso);
       resolve(res);
-    }, 200);
+    }, 150);
   });
 }
 
 /**
- * إعادة محاولة الاتصال ومزامنة أي تغييرات معلقة مع الخادم
+ * مزامنة تلقائية فورية مع Supabase وخادم WebSocket عند أي تعديل دون الحاجة للضغط على أي زر
+ */
+export async function autoSyncToSupabase(
+  state: AppState,
+  immediate = false,
+  customTimestamp?: string
+): Promise<boolean> {
+  const res = await autoSyncToSupabaseDetailed(state, immediate, customTimestamp);
+  return res.success;
+}
+
+// -----------------------------------------------------------------------------
+// High-Debt Alerts Supabase Sync & Real-Time Subscriptions
+// -----------------------------------------------------------------------------
+export async function fetchHighDebtAlertsFromSupabase(): Promise<{
+  alerts: HighDebtAlertNotification[];
+  debtAlertThreshold: number;
+  updatedAt?: string;
+} | null> {
+  if (isBrowserOffline()) return null;
+
+  let threshold = DEFAULT_DEBT_ALERT_THRESHOLD;
+  let mergedAlerts: HighDebtAlertNotification[] = [];
+  let updatedAt = '';
+
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const [{ data: alertRows, error: aErr }, { data: metaRow }] = await Promise.all([
+        client
+          .from('high_debt_alerts')
+          .select('*')
+          .order('created_at_iso', { ascending: false })
+          .limit(150),
+        client
+          .from('system_config')
+          .select('payload, updated_at')
+          .eq('id', 'tamween_alerts_meta')
+          .maybeSingle(),
+      ]);
+
+      if (!aErr && Array.isArray(alertRows)) {
+        mergedAlerts = alertRows.map(mapSqlRowToAlert).filter(Boolean) as HighDebtAlertNotification[];
+      }
+      if (metaRow?.payload?.debtAlertThreshold) {
+        threshold = Number(metaRow.payload.debtAlertThreshold) || DEFAULT_DEBT_ALERT_THRESHOLD;
+        updatedAt = metaRow.updated_at || '';
+      }
+    } catch (err) {
+      console.warn('Supabase high_debt_alerts fetch error:', err);
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    try {
+      const resp = await fetch(getAlertsApiUrl());
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json?.success) {
+          const srvAlerts = Array.isArray(json.alerts) ? json.alerts : [];
+          mergedAlerts = mergeHighDebtAlerts(mergedAlerts, srvAlerts);
+          if (typeof json.debtAlertThreshold === 'number' && json.debtAlertThreshold > 0) {
+            threshold = json.debtAlertThreshold;
+          }
+          if (json.updatedAt && (!updatedAt || Date.parse(json.updatedAt) > Date.parse(updatedAt))) {
+            updatedAt = json.updatedAt;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return {
+    alerts: mergedAlerts,
+    debtAlertThreshold: threshold,
+    updatedAt,
+  };
+}
+
+export async function syncHighDebtAlertsToSupabase(
+  alerts: HighDebtAlertNotification[],
+  debtAlertThreshold?: number
+): Promise<boolean> {
+  if (isBrowserOffline()) return false;
+  const nowIso = new Date().toISOString();
+  const effectiveThreshold =
+    typeof debtAlertThreshold === 'number' && debtAlertThreshold > 0
+      ? debtAlertThreshold
+      : DEFAULT_DEBT_ALERT_THRESHOLD;
+
+  const trimmed = (alerts || []).slice(0, 150);
+  let serverOk = false;
+
+  if (typeof window !== 'undefined') {
+    serverOk = await fetch(getAlertsApiUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        alerts: trimmed,
+        debtAlertThreshold: effectiveThreshold,
+        timestamp: nowIso,
+        clientId: SESSION_CLIENT_ID,
+      }),
+    })
+      .then((r) => r.ok)
+      .catch(() => false);
+  }
+
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      if (trimmed.length > 0) {
+        const rows = trimmed.map((a) => mapAlertToSqlRow(a, a.branchId || 'branch-mahalla', nowIso));
+        await client.from('high_debt_alerts').upsert(rows, { onConflict: 'id' });
+      }
+      await client.from('system_config').upsert(
+        {
+          id: 'tamween_alerts_meta',
+          governorate_title: 'alerts_meta',
+          directorate_title: 'alerts_meta',
+          administration_title: 'alerts_meta',
+          payload: {
+            debtAlertThreshold: effectiveThreshold,
+            clientId: SESSION_CLIENT_ID,
+            updatedAt: nowIso,
+          },
+          updated_at: nowIso,
+        },
+        { onConflict: 'id' }
+      );
+      if (activeRealtimeChannel) {
+        activeRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'alerts_update',
+          payload: {
+            alerts: trimmed,
+            debtAlertThreshold: effectiveThreshold,
+            clientId: SESSION_CLIENT_ID,
+            cleared: false,
+            timestamp: nowIso,
+          },
+        });
+      }
+      return true;
+    } catch (err) {
+      console.warn('Supabase alerts sync error:', err);
+    }
+  }
+
+  return serverOk;
+}
+
+export async function clearHighDebtAlertsInSupabase(
+  debtAlertThreshold?: number
+): Promise<boolean> {
+  const effectiveThreshold =
+    typeof debtAlertThreshold === 'number' && debtAlertThreshold > 0
+      ? debtAlertThreshold
+      : DEFAULT_DEBT_ALERT_THRESHOLD;
+  const nowIso = new Date().toISOString();
+
+  let serverOk = false;
+  if (typeof window !== 'undefined') {
+    serverOk = await fetch(
+      `${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&threshold=${effectiveThreshold}`,
+      { method: 'DELETE' }
+    )
+      .then((r) => r.ok)
+      .catch(() => false);
+  }
+
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('high_debt_alerts').delete().neq('id', 'non_existent_id');
+      await client.from('system_config').upsert(
+        {
+          id: 'tamween_alerts_meta',
+          governorate_title: 'alerts_meta',
+          directorate_title: 'alerts_meta',
+          administration_title: 'alerts_meta',
+          payload: {
+            debtAlertThreshold: effectiveThreshold,
+            clientId: SESSION_CLIENT_ID,
+            clearedAt: nowIso,
+            updatedAt: nowIso,
+          },
+          updated_at: nowIso,
+        },
+        { onConflict: 'id' }
+      );
+      if (activeRealtimeChannel) {
+        activeRealtimeChannel.send({
+          type: 'broadcast',
+          event: 'alerts_update',
+          payload: {
+            alerts: [],
+            debtAlertThreshold: effectiveThreshold,
+            clientId: SESSION_CLIENT_ID,
+            cleared: true,
+            timestamp: nowIso,
+          },
+        });
+      }
+      return true;
+    } catch {}
+  }
+
+  return serverOk;
+}
+
+export function subscribeToSupabaseHighDebtAlerts(
+  onChange: (payload: {
+    alerts: HighDebtAlertNotification[];
+    debtAlertThreshold: number;
+    fromRemoteClient: boolean;
+    cleared?: boolean;
+  }) => void
+): () => void {
+  const unsubs: Array<() => void> = [];
+
+  // 1. WebSocket live push for alerts
+  unsubs.push(
+    addSharedWebSocketListener((msg) => {
+      if (msg.type === 'init' && msg.alertsState) {
+        const srvAlerts = Array.isArray(msg.alertsState.alerts) ? msg.alertsState.alerts : [];
+        const threshold = Number(msg.alertsState.debtAlertThreshold) || DEFAULT_DEBT_ALERT_THRESHOLD;
+        if (srvAlerts.length > 0 || threshold !== DEFAULT_DEBT_ALERT_THRESHOLD) {
+          onChange({
+            alerts: srvAlerts,
+            debtAlertThreshold: threshold,
+            fromRemoteClient: false,
+          });
+        }
+      } else if (msg.type === 'alerts_update') {
+        if (isSelfRealtimeEvent(msg.clientId)) return;
+        onChange({
+          alerts: Array.isArray(msg.alerts) ? msg.alerts : [],
+          debtAlertThreshold: Number(msg.debtAlertThreshold) || DEFAULT_DEBT_ALERT_THRESHOLD,
+          fromRemoteClient: true,
+          cleared: Boolean(msg.cleared),
+        });
+      }
+    })
+  );
+
+  // 2. External Supabase Realtime postgres_changes + broadcast
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const ch = client.channel('tamween_alerts_realtime', {
+        config: { broadcast: { self: false } },
+      });
+      ch.on('broadcast', { event: 'alerts_update' }, ({ payload }) => {
+        if (!payload || isSelfRealtimeEvent(payload.clientId)) return;
+        onChange({
+          alerts: Array.isArray(payload.alerts) ? payload.alerts : [],
+          debtAlertThreshold: Number(payload.debtAlertThreshold) || DEFAULT_DEBT_ALERT_THRESHOLD,
+          fromRemoteClient: true,
+          cleared: Boolean(payload.cleared),
+        });
+      })
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'high_debt_alerts' },
+          () => {
+            fetchHighDebtAlertsFromSupabase()
+              .then((res) => {
+                if (res) {
+                  onChange({
+                    alerts: res.alerts,
+                    debtAlertThreshold: res.debtAlertThreshold,
+                    fromRemoteClient: true,
+                    cleared: res.alerts.length === 0,
+                  });
+                }
+              })
+              .catch(() => {});
+          }
+        )
+        .subscribe();
+
+      unsubs.push(() => {
+        try {
+          client.removeChannel(ch);
+        } catch {}
+      });
+    } catch {}
+  }
+
+  return () => {
+    unsubs.forEach((fn) => {
+      try {
+        fn();
+      } catch {}
+    });
+  };
+}
+
+/**
+ * إعادة محاولة الاتصال ومزامنة أي تغييرات معلقة مع خادم Supabase وإعادة ربط قناة البث اللحظي
  */
 export async function retrySupabaseConnection(currentState?: AppState | null): Promise<{
   success: boolean;
@@ -1576,9 +2706,13 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
     };
   }
 
-  setCloudConnectionStatus('syncing', 'جاري إعادة محاولة الاتصال بالخادم ومزامنة البيانات...');
+  setCloudConnectionStatus('syncing', 'جاري إعادة محاولة الاتصال بخادم Supabase ومزامنة البيانات...');
 
+  // Force WebSocket & Supabase client reconnect
+  disconnectSharedWebSocket();
   const testRes = await testSupabaseConnection();
+  ensureSharedWebSocket();
+
   if (!testRes.success) {
     return {
       success: false,
@@ -1586,7 +2720,9 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
     };
   }
 
-  // Flush any pending unsynced state first
+  // Flush persistent offline queue first, then any active pendingSyncPayload
+  await flushOfflineSyncQueue().catch(() => {});
+
   const stateToPush = pendingSyncPayload?.state || currentState;
   if (pendingSyncPayload && stateToPush) {
     const pushOk = await autoSyncToSupabase(stateToPush, true, pendingSyncPayload.timestamp);
@@ -1600,8 +2736,9 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
 
   const pullRes = await fetchDatabaseFromSupabase();
   if (pullRes.success && pullRes.data) {
-    setCloudConnectionStatus('connected', 'تمت استعادة الاتصال وتحديث البيانات بنجاح', {
-      hasPendingSync: false,
+    setCloudConnectionStatus('connected', 'تمت استعادة الاتصال وتحديث البيانات لحظياً بنجاح', {
+      hasPendingSync: getPendingOfflineQueueCount() > 0,
+      pendingQueueCount: getPendingOfflineQueueCount(),
     });
     return {
       success: true,
@@ -1611,8 +2748,9 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
     };
   }
 
-  setCloudConnectionStatus('connected', 'تمت استعادة الاتصال بالخادم بنجاح', {
-    hasPendingSync: false,
+  setCloudConnectionStatus('connected', 'تمت استعادة الاتصال بخادم Supabase بنجاح', {
+    hasPendingSync: getPendingOfflineQueueCount() > 0,
+    pendingQueueCount: getPendingOfflineQueueCount(),
   });
   return {
     success: true,
@@ -1623,7 +2761,14 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
 export interface RealtimeSyncCallbacks {
   onUpdate: (state: AppState, timestamp?: string) => void;
   onRowChange?: (change: {
-    table: 'bakeries' | 'debts' | 'system_config';
+    table:
+      | 'bakeries'
+      | 'debts'
+      | 'villages'
+      | 'branches'
+      | 'app_users'
+      | 'daily_tasks'
+      | 'system_config';
     eventType: 'INSERT' | 'UPDATE' | 'DELETE';
     newRow?: any;
     oldRow?: any;
@@ -1632,7 +2777,7 @@ export interface RealtimeSyncCallbacks {
 }
 
 /**
- * الاشتراك في قناة Realtime المباشرة لاستقبال ونقل التعديلات لحظياً بين جميع الأجهزة
+ * الاشتراك في قناة Realtime المباشرة (Supabase Realtime + WebSocket) لنقل التعديلات لحظياً بين جميع الأجهزة
  */
 export function subscribeToSupabaseRealtime(
   onUpdate: ((state: AppState, timestamp?: string) => void) | RealtimeSyncCallbacks
@@ -1645,34 +2790,43 @@ export function subscribeToSupabaseRealtime(
 
   const unsubscribers: Array<() => void> = [];
 
-  // 1. Subscribe to Cloud Firebase Firestore Realtime onSnapshot (< 100ms latency across all devices & branches)
-  try {
-    const unsubCloud = subscribeToSharedStateChanges(({ data, updatedAt }) => {
-      const partKeys = data?.branchPartitions ? Object.keys(data.branchPartitions).join(',') : '';
-      const eventKey = `firestore:${updatedAt}:${partKeys}:${data?.bakeries?.length || 0}:${data?.debts?.length || 0}`;
-      if (!shouldProcessRealtimeEvent(eventKey, Date.now(), 250)) return;
-      if (
-        data &&
-        (Array.isArray(data.bakeries) ||
-          Array.isArray(data.debts) ||
-          Array.isArray(data.branches) ||
-          data.branchPartitions)
-      ) {
-        if (!isBrowserOffline()) {
-          setCloudConnectionStatus('connected', 'تم استلام تحديث لحظي من Cloud Firebase');
+  // 1. Real WebSocket subscription (/ws/supabase-realtime) for sub-50ms cross-device/tab sync
+  unsubscribers.push(
+    addSharedWebSocketListener((msg) => {
+      try {
+        if (msg.type === 'init' && msg.snapshot?.data) {
+          const snap = msg.snapshot;
+          const data = snap.data as AppState;
+          const ts = snap.timestamp || msg.timestamp || new Date().toISOString();
+          const key = `ws-init:${ts}:${snap.revision || 0}`;
+          if (!shouldProcessRealtimeEvent(key, Date.now(), 250)) return;
+          if (!isBrowserOffline()) {
+            setCloudConnectionStatus('connected', 'متصل بخادم المزامنة اللحظية (WebSocket)');
+          }
+          callbacks.onUpdate(data, ts);
+        } else if (msg.type === 'state_update' && msg.snapshot?.data) {
+          if (isSelfRealtimeEvent(msg.clientId)) return;
+          const snap = msg.snapshot;
+          const data = snap.data as AppState;
+          const ts = snap.timestamp || msg.timestamp || new Date().toISOString();
+          const key = `ws-upd:${ts}:${snap.revision || 0}`;
+          if (!shouldProcessRealtimeEvent(key, Date.now(), 200)) return;
+          if (!isBrowserOffline()) {
+            setCloudConnectionStatus('connected', 'تم استلام تحديث لحظي فوري من جهاز آخر');
+          }
+          callbacks.onUpdate(data, ts);
         }
-        callbacks.onUpdate(data as AppState, updatedAt);
+      } catch (err) {
+        console.warn('WebSocket realtime message handling warning:', err);
       }
-    });
-    unsubscribers.push(unsubCloud);
-  } catch (err) {
-    console.warn('Cloud realtime subscription error:', err);
-  }
+    })
+  );
 
-  // 2. Refresh immediately when user switches back to tab or when browser comes back online
+  // 2. Refresh cleanly when user returns to tab or when browser comes back online
   if (typeof window !== 'undefined') {
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible' && !isBrowserOffline()) {
+        ensureSharedWebSocket();
         fetchDatabaseFromSupabase()
           .then((res) => {
             if (res.success && res.data) {
@@ -1707,18 +2861,25 @@ export function subscribeToSupabaseRealtime(
     });
   }
 
-  // 3. Also subscribe to external Supabase channel (Broadcast + INSERT/UPDATE/DELETE on all normalized tables)
+  // 3. Subscribe to Supabase Realtime channel (Broadcast + INSERT/UPDATE/DELETE on all normalized tables)
   const client = getSupabaseClient();
   if (client) {
     try {
       const handlePayload = (fullPayload: any) => {
         try {
           if (!fullPayload) return;
+          if (isSelfRealtimeEvent(fullPayload.clientId)) return;
           const data = fullPayload.data || fullPayload;
           const ts = fullPayload.timestamp || new Date().toISOString();
           const key = `supa-snap:${ts}:${data?.bakeries?.length || 0}:${data?.debts?.length || 0}`;
           if (!shouldProcessRealtimeEvent(key)) return;
-          if (data && (Array.isArray(data.bakeries) || Array.isArray(data.debts))) {
+          if (
+            data &&
+            (Array.isArray(data.bakeries) ||
+              Array.isArray(data.debts) ||
+              Array.isArray(data.branches) ||
+              data.branchPartitions)
+          ) {
             callbacks.onUpdate(data as AppState, ts);
           }
         } catch (err) {
@@ -1726,7 +2887,9 @@ export function subscribeToSupabaseRealtime(
         }
       };
 
-      const channel = client.channel('tamween_realtime_channel');
+      const channel = client.channel('tamween_realtime_channel', {
+        config: { broadcast: { self: false } },
+      });
       activeRealtimeChannel = channel;
 
       channel
@@ -1811,6 +2974,8 @@ export function subscribeToSupabaseRealtime(
           (payload: any) => {
             try {
               const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
+              const rowId = payload.new?.id || payload.old?.id || '';
+              if (rowId === 'tamween_alerts_meta') return;
               const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
               if (!shouldProcessRealtimeEvent(`system_config:${evt}:${ts}`)) return;
               callbacks.onRowChange?.({
@@ -1823,6 +2988,82 @@ export function subscribeToSupabaseRealtime(
             } catch (err) {
               console.warn('Error processing Supabase Realtime system_config:', err);
             }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'villages' },
+          (payload: any) => {
+            try {
+              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
+              const id = payload.new?.id || payload.old?.id || '';
+              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
+              if (!shouldProcessRealtimeEvent(`villages:${evt}:${id}:${ts}`)) return;
+              callbacks.onRowChange?.({
+                table: 'villages',
+                eventType: evt,
+                newRow: payload.new,
+                oldRow: payload.old,
+                timestamp: ts,
+              });
+            } catch {}
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'branches' },
+          (payload: any) => {
+            try {
+              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
+              const id = payload.new?.id || payload.old?.id || '';
+              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
+              if (!shouldProcessRealtimeEvent(`branches:${evt}:${id}:${ts}`)) return;
+              callbacks.onRowChange?.({
+                table: 'branches',
+                eventType: evt,
+                newRow: payload.new,
+                oldRow: payload.old,
+                timestamp: ts,
+              });
+            } catch {}
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'daily_tasks' },
+          (payload: any) => {
+            try {
+              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
+              const id = payload.new?.id || payload.old?.id || '';
+              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
+              if (!shouldProcessRealtimeEvent(`daily_tasks:${evt}:${id}:${ts}`)) return;
+              callbacks.onRowChange?.({
+                table: 'daily_tasks',
+                eventType: evt,
+                newRow: payload.new,
+                oldRow: payload.old,
+                timestamp: ts,
+              });
+            } catch {}
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'app_users' },
+          (payload: any) => {
+            try {
+              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
+              const id = payload.new?.id || payload.old?.id || '';
+              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
+              if (!shouldProcessRealtimeEvent(`app_users:${evt}:${id}:${ts}`)) return;
+              callbacks.onRowChange?.({
+                table: 'app_users',
+                eventType: evt,
+                newRow: payload.new,
+                oldRow: payload.old,
+                timestamp: ts,
+              });
+            } catch {}
           }
         )
         .subscribe((status, err) => {
@@ -1863,25 +3104,30 @@ export function subscribeToSupabaseRealtime(
 }
 
 /**
- * حذف قاعدة البيانات وتفريغ كافّة السجلات والنسخ الاحتياطية من السحابة و Supabase
+ * حذف قاعدة البيانات وتفريغ كافّة السجلات والنسخ الاحتياطية من Supabase وخادم المزامنة
  */
 export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; message: string }> {
   try {
-    // 1. Clear built-in Multi-Device Cloud DB & Server Live DB
-    await Promise.all([
-      clearSharedStateInFirestore(),
-      typeof window !== 'undefined'
-        ? fetch(getLiveDbApiUrl(), { method: 'DELETE' }).catch(() => null)
-        : Promise.resolve(null),
-    ]);
+    // 1. Clear Server Live DB & Alerts Relay
+    if (typeof window !== 'undefined') {
+      await Promise.all([
+        fetch(`${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
+          method: 'DELETE',
+        }).catch(() => null),
+        fetch(`${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
+          method: 'DELETE',
+        }).catch(() => null),
+      ]);
+    }
 
-    // 2. If external Supabase client is configured, also clear external tables & storage
+    // 2. If Supabase project client is configured, clear all PostgreSQL tables & storage
     const client = getSupabaseClient();
     if (client) {
       await client.from('backup_snapshots').delete().neq('id', 'non_existent_id');
       await client.from('bakeries').delete().neq('id', 'non_existent_id');
       await client.from('debts').delete().neq('id', 'non_existent_id');
       await client.from('system_config').delete().neq('id', 'non_existent_id');
+      await client.from('high_debt_alerts').delete().neq('id', 'non_existent_id');
       try {
         await client.storage.from(SUPABASE_BUCKET_NAME).remove(['tamween_database_backup.json', 'index.html']);
       } catch {}
@@ -1889,17 +3135,17 @@ export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; m
 
     pendingSyncPayload = null;
     safeRemoveItem('TAMWEEN_LAST_SUPABASE_SYNC');
-    setCloudConnectionStatus('connected', 'تم مسح البيانات السحابية بنجاح', { hasPendingSync: false });
+    setCloudConnectionStatus('connected', 'تم مسح بيانات Supabase بنجاح', { hasPendingSync: false });
 
     return {
       success: true,
-      message: 'تم بنجاح مسح وحذف كافة البيانات والنسخ الاحتياطية المسجلة على قاعدة البيانات السحابية نهائياً!',
+      message: 'تم بنجاح مسح وحذف كافة البيانات والنسخ الاحتياطية المسجلة على قاعدة بيانات Supabase نهائياً!',
     };
   } catch (err: any) {
-    setCloudConnectionStatus('error', `تعذر مسح بيانات قاعدة البيانات السحابية: ${err.message || 'خطأ غير معروف'}`);
+    setCloudConnectionStatus('error', `تعذر مسح بيانات قاعدة بيانات Supabase: ${err.message || 'خطأ غير معروف'}`);
     return {
       success: false,
-      message: `تعذر مسح بيانات قاعدة البيانات السحابية: ${err.message || 'خطأ غير معروف'}`,
+      message: `تعذر مسح بيانات قاعدة بيانات Supabase: ${err.message || 'خطأ غير معروف'}`,
     };
   }
 }

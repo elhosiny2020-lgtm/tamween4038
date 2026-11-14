@@ -299,7 +299,7 @@ export const AdminNotificationsDrawer: React.FC<AdminNotificationsDrawerProps> =
 
         {/* Footer */}
         <div className="p-3 bg-slate-900 border-t border-slate-800 text-[11px] font-bold text-slate-400 text-center shrink-0">
-          منظومة الرقابة التموينية والإنذار المبكر &bull; مزامنة فورية على Cloud Firebase
+          منظومة الرقابة التموينية والإنذار المبكر &bull; مزامنة فورية على Supabase Realtime
         </div>
       </aside>
     </div>

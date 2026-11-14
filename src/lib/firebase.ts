@@ -278,11 +278,6 @@ const SHARED_SYNC_DOC_ID = 'tamween_latest';
 const SUPABASE_LIVE_DOC_ID = 'tamween_supabase_live';
 export const SESSION_CLIENT_ID = `client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-// Test Firestore server reachability on boot per Firebase integration spec
-if (typeof window !== 'undefined') {
-  testFirestoreConnection().catch(() => {});
-}
-
 /**
  * حفظ ومزامنة أحدث بيانات المنظومة في Cloud Firebase Firestore لجميع الفروع والأجهزة لحظياً
  */

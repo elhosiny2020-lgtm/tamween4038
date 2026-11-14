@@ -20,8 +20,6 @@ import {
   uploadBackupToGoogleDriveDirect,
   downloadLatestBackupFromGoogleDriveDirect,
   sendBackupDirectToGmail,
-  syncWorkspaceToFirestore,
-  loadWorkspaceFromFirestore,
   getCachedAccessToken,
   auth,
 } from '../lib/firebase';
@@ -47,6 +45,12 @@ import {
   clearSupabaseDatabaseData,
   setSupabaseCloudDisabled,
   validateSupabaseCredentials,
+  autoSyncToSupabase,
+  signInWithSupabaseAuth,
+  signUpWithSupabaseAuth,
+  signOutSupabaseAuth,
+  getSupabaseAuthSession,
+  getPendingOfflineQueueCount,
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
 } from '../lib/supabase';
@@ -410,6 +414,19 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [uploadedHtmlPublicUrl, setUploadedHtmlPublicUrl] = useState<string | null>(null);
   const [showSupabaseSettings, setShowSupabaseSettings] = useState(true);
   const [copiedSqlSchema, setCopiedSqlSchema] = useState(false);
+  const [supaAuthEmail, setSupaAuthEmail] = useState('');
+  const [supaAuthPassword, setSupaAuthPassword] = useState('');
+  const [supaAuthSession, setSupaAuthSession] = useState<{
+    authenticated: boolean;
+    email?: string;
+    role?: string;
+  }>({ authenticated: false });
+
+  useEffect(() => {
+    if (isOpen) {
+      getSupabaseAuthSession().then(setSupaAuthSession).catch(() => {});
+    }
+  }, [isOpen, supabaseCfg.url]);
 
   useEffect(() => {
     const unsub = initGoogleAuthListener((user) => {
@@ -975,8 +992,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       const fileName = `tamween_mahalla_backup_${new Date().toISOString().split('T')[0]}.json`;
       const driveUpload = await uploadBackupToGoogleDriveDirect(payload, fileName);
 
-      // Also sync to Cloud Firestore & local server snapshot
-      await syncWorkspaceToFirestore(finalState).catch(() => {});
+      // Also sync to Supabase Realtime & local server snapshot
+      await autoSyncToSupabase(finalState, true).catch(() => {});
       fetch('/api/backup/snapshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -989,7 +1006,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       onRestoreState(finalState);
 
       setStatusMsg({
-        text: `${driveUpload.message} | وتمت المزامنة السحابية مع Firestore لحساب (${verifiedEmail}) بتاريخ (${nowArabic}).`,
+        text: `${driveUpload.message} | وتمت المزامنة السحابية مع Supabase لحساب (${verifiedEmail}) بتاريخ (${nowArabic}).`,
         type: 'success',
       });
     } catch (err: unknown) {
@@ -1084,9 +1101,53 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     setIsProcessing(false);
     if (testRes.success) {
       setStatusMsg({ text: testRes.message, type: 'success' });
+      getSupabaseAuthSession().then(setSupaAuthSession).catch(() => {});
     } else {
       setStatusMsg({ text: testRes.message, type: 'error' });
     }
+  };
+
+  const handleSupabaseAuthSignIn = async () => {
+    if (!supaAuthEmail.trim() || !supaAuthPassword) {
+      setStatusMsg({ text: 'يرجى إدخال البريد الإلكتروني وكلمة المرور لحساب Supabase Auth.', type: 'error' });
+      return;
+    }
+    setIsProcessing(true);
+    const res = await signInWithSupabaseAuth(supaAuthEmail, supaAuthPassword);
+    setIsProcessing(false);
+    if (res.success) {
+      setSupaAuthSession({ authenticated: true, email: res.email });
+      setSupaAuthPassword('');
+      setStatusMsg({ text: res.message, type: 'success' });
+    } else {
+      setStatusMsg({ text: res.message, type: 'error' });
+    }
+  };
+
+  const handleSupabaseAuthSignUp = async () => {
+    if (!supaAuthEmail.trim() || supaAuthPassword.length < 6) {
+      setStatusMsg({ text: 'يرجى إدخال بريد إلكتروني صحيح وكلمة مرور لا تقل عن 6 أحرف.', type: 'error' });
+      return;
+    }
+    setIsProcessing(true);
+    const res = await signUpWithSupabaseAuth(supaAuthEmail, supaAuthPassword, {
+      fullName: currentState.currentUser?.fullName,
+      role: currentState.currentUser?.role,
+      branchId: currentState.activeBranchId,
+    });
+    setIsProcessing(false);
+    if (res.success) {
+      getSupabaseAuthSession().then(setSupaAuthSession).catch(() => {});
+      setStatusMsg({ text: res.message, type: 'success' });
+    } else {
+      setStatusMsg({ text: res.message, type: 'error' });
+    }
+  };
+
+  const handleSupabaseAuthSignOut = async () => {
+    await signOutSupabaseAuth();
+    setSupaAuthSession({ authenticated: false });
+    setStatusMsg({ text: 'تم تسجيل الخروج من جلسة Supabase Auth.', type: 'info' });
   };
 
   const handleUploadIndexHtmlToSupabase = async () => {
@@ -1900,6 +1961,68 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   >
                     <span>📋 نسخ كود إنشاء الجداول (SQL Schema)</span>
                   </button>
+                </div>
+
+                {/* Supabase Auth Session & Sign-In Box */}
+                <div className="mt-2 pt-2.5 border-t border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black text-cyan-300">
+                      🔐 مصادقة المستخدمين عبر Supabase Auth + RLS
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      العمليات بالانتظار: {getPendingOfflineQueueCount()}
+                    </span>
+                  </div>
+                  {supaAuthSession.authenticated ? (
+                    <div className="flex items-center justify-between bg-emerald-950/60 border border-emerald-500/40 rounded-lg px-3 py-1.5">
+                      <span className="text-[11px] font-bold text-emerald-300">
+                        جلسة Supabase Auth نشطة: {supaAuthSession.email}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleSupabaseAuthSignOut}
+                        className="px-2 py-1 bg-rose-900/70 hover:bg-rose-800 text-rose-100 rounded text-[10px] font-black cursor-pointer"
+                      >
+                        تسجيل خروج Auth
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <input
+                        type="email"
+                        value={supaAuthEmail}
+                        onChange={(e) => setSupaAuthEmail(e.target.value)}
+                        placeholder="auth-user@domain.com"
+                        dir="ltr"
+                        className="px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs"
+                      />
+                      <input
+                        type="password"
+                        value={supaAuthPassword}
+                        onChange={(e) => setSupaAuthPassword(e.target.value)}
+                        placeholder="كلمة مرور Supabase Auth"
+                        className="px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs"
+                      />
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={handleSupabaseAuthSignIn}
+                          className="flex-1 py-1.5 px-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[11px] font-black cursor-pointer"
+                        >
+                          دخول Auth
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={handleSupabaseAuthSignUp}
+                          className="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-cyan-200 border border-cyan-500/40 rounded-lg text-[11px] font-black cursor-pointer"
+                        >
+                          حساب جديد
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -36,12 +36,11 @@ import {
   synchronizeBakeryAndDebts
 } from './utils/auditHelper';
 import {
-  auth,
-  syncWorkspaceToFirestore,
-  syncSharedStateToFirestore,
-  loadSharedStateFromFirestore,
-} from './lib/firebase';
-import { autoSyncToSupabase, fetchDatabaseFromSupabase } from './lib/supabase';
+  autoSyncToSupabase,
+  autoSyncToSupabaseDetailed,
+  fetchDatabaseFromSupabase,
+  SESSION_CLIENT_ID,
+} from './lib/supabase';
 import {
   BranchAuthVaultRecord,
   loadBranchAuthVault,
@@ -1457,11 +1456,19 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
   }
 }
 
-// Persist both to IndexedDB and LocalStorage synchronously & asynchronously (strictly scoped to active branch, with real-time Supabase sync across all branches)
+export interface PersistFullStateResult {
+  localSaved: boolean;
+  cloudSynced: boolean;
+  queuedOffline: boolean;
+  syncedAt?: string;
+  error?: string;
+}
+
+// Persist to local fallback cache and await central Supabase + WebSocket confirmation (returning structured sync result)
 export async function persistFullState(
   state: Omit<AppState, 'currentUser'> & { currentUser?: AppUser | null },
   options?: { skipCloudSync?: boolean; customTimestamp?: string }
-): Promise<void> {
+): Promise<PersistFullStateResult> {
   const targetBranchId = state.activeBranchId || getActiveBranchId();
   const isDefaultBranch = targetBranchId === DEFAULT_BRANCH_ID;
   const scopedKeys = getScopedKeysForBranch(targetBranchId);
@@ -1604,27 +1611,54 @@ export async function persistFullState(
     [scopedKeys.AUTOSAVE_BACKUP, backupSnapshot],
   ]);
 
-  // Dispatch Cloud Firebase Firestore & real-time multi-device sync immediately (non-blocking)
+  // Dispatch Supabase Realtime & WebSocket multi-device sync and await server confirmation
+  let cloudResult: {
+    cloudSynced: boolean;
+    queuedOffline: boolean;
+    syncedAt?: string;
+    error?: string;
+  } = {
+    cloudSynced: false,
+    queuedOffline: false,
+  };
+
   if (!options?.skipCloudSync) {
     const cloudStatePayload = buildFullCloudMultiBranchPayload(
       backupSnapshot.state,
       backupSnapshot.timestamp
     );
 
-    autoSyncToSupabase(
-      cloudStatePayload as unknown as AppState,
-      true,
-      backupSnapshot.timestamp
-    ).catch((syncErr) => {
-      console.warn('Background cloud multi-device sync warning:', syncErr);
-    });
-
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         const bc = new BroadcastChannel('tamween_cross_device_sync');
-        bc.postMessage({ type: 'STATE_UPDATED', timestamp: backupSnapshot.timestamp, branchId: targetBranchId });
+        bc.postMessage({
+          type: 'STATE_UPDATED',
+          timestamp: backupSnapshot.timestamp,
+          branchId: targetBranchId,
+          clientId: SESSION_CLIENT_ID,
+        });
         bc.close();
       } catch {}
+    }
+
+    try {
+      const syncRes = await autoSyncToSupabaseDetailed(
+        cloudStatePayload as unknown as AppState,
+        true,
+        backupSnapshot.timestamp
+      );
+      cloudResult = {
+        cloudSynced: syncRes.success,
+        queuedOffline: syncRes.queuedOffline,
+        syncedAt: syncRes.syncedAt,
+        error: syncRes.error,
+      };
+    } catch (syncErr: any) {
+      cloudResult = {
+        cloudSynced: false,
+        queuedOffline: false,
+        error: syncErr?.message || 'تعذر المزامنة مع خادم Supabase',
+      };
     }
   }
 
@@ -1668,6 +1702,14 @@ export async function persistFullState(
       // Graceful fallback
     }
   }, 0);
+
+  return {
+    localSaved: true,
+    cloudSynced: cloudResult.cloudSynced,
+    queuedOffline: cloudResult.queuedOffline,
+    syncedAt: cloudResult.syncedAt,
+    error: cloudResult.error,
+  };
 }
 
 export const OFFICIAL_CLOUD_API_URL =

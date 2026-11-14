@@ -115,6 +115,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const debtsPrintRef = React.useRef<HTMLDivElement>(null);
   const isViewer = currentUser?.role === 'viewer';
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setDebouncedSearchTerm('');
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedSearchTerm(searchTerm), 180);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
   const [selectedVillage, setSelectedVillage] = useState('ALL');
   const [selectedUnit, setSelectedUnit] = useState('ALL');
   const [selectedEntity, setSelectedEntity] = useState('ALL');
@@ -222,7 +231,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       issuingEntity: selectedEntity,
       status: selectedStatus,
       filterBakeryId,
-      searchTerm,
+      searchTerm: debouncedSearchTerm,
       isOverdueCheck: getDebtOverdueInfo,
     });
   }, [
@@ -235,7 +244,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     selectedEntity,
     selectedViolationType,
     selectedStatus,
-    searchTerm,
+    debouncedSearchTerm,
   ]);
 
   // Reset page when filters change
@@ -250,7 +259,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     selectedEntity,
     selectedViolationType,
     selectedStatus,
-    searchTerm,
+    debouncedSearchTerm,
     debtsPageSize,
   ]);
 
