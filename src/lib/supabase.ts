@@ -136,8 +136,9 @@ export function getPendingOfflineQueueCount(): number {
 }
 
 export function enqueueOfflineSync(state: AppState, timestamp: string = new Date().toISOString()): number {
-  const queue = [...loadOfflineQueueFromStorage()];
   const branchId = state?.activeBranchId || 'branch-mahalla';
+  // Keep only the latest pending full-state snapshot per branch so localStorage never overflows or duplicates
+  const queue = loadOfflineQueueFromStorage().filter((item) => item.branchId !== branchId);
   const entry: OfflineSyncEntry = {
     id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     timestamp,
@@ -146,7 +147,7 @@ export function enqueueOfflineSync(state: AppState, timestamp: string = new Date
     attempts: 0,
   };
   queue.push(entry);
-  persistOfflineQueue(queue);
+  persistOfflineQueue(queue.slice(-5));
   return getPendingOfflineQueueCount();
 }
 
@@ -321,11 +322,21 @@ export function setSupabaseCloudDisabled(disabled: boolean): void {
 
 function isLocalOrCloudOrigin(): boolean {
   if (typeof window === 'undefined') return false;
+  const proto = window.location.protocol;
+  if (proto === 'file:') return false;
   return (
-    window.location.hostname.includes('run.app') ||
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1'
+    proto === 'http:' ||
+    proto === 'https:'
   );
+}
+
+function getHealthApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    return isLocalOrCloudOrigin()
+      ? '/api/health'
+      : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/health';
+  }
+  return '/api/health';
 }
 
 function getLiveDbApiUrl(): string {
@@ -353,6 +364,27 @@ function getWebSocketSyncUrl(): string | null {
     return `${proto}//${window.location.host}/ws/supabase-realtime`;
   }
   return 'wss://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/ws/supabase-realtime';
+}
+
+async function probeServerHealth(): Promise<boolean> {
+  if (typeof window === 'undefined' || isBrowserOffline()) return false;
+  try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), 5000) : null;
+    const resp = await fetch(getHealthApiUrl(), {
+      method: 'GET',
+      credentials: 'same-origin',
+      signal: controller?.signal,
+    });
+    if (timer) clearTimeout(timer);
+    if (!resp.ok) return false;
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) return false;
+    const json = await resp.json().catch(() => null);
+    return Boolean(json && json.status === 'ok');
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -566,9 +598,14 @@ export async function testSupabaseConnection(): Promise<{
   if (!client) {
     if (typeof window !== 'undefined') {
       try {
-        const resp = await fetch(getLiveDbApiUrl(), { method: 'GET' });
-        if (resp.ok) {
-          setCloudConnectionStatus('connected', 'متصل بخادم المزامنة اللحظية (Supabase WebSocket Realtime)');
+        const resp = await fetch(getLiveDbApiUrl(), { method: 'GET', credentials: 'same-origin' });
+        const ct = resp.headers.get('content-type') || '';
+        const isJsonOk = resp.ok && ct.includes('application/json');
+        if (isJsonOk || (await probeServerHealth())) {
+          setCloudConnectionStatus('connected', 'متصل بخادم المزامنة اللحظية (Supabase WebSocket Realtime)', {
+            hasPendingSync: getPendingOfflineQueueCount() > 0,
+            pendingQueueCount: getPendingOfflineQueueCount(),
+          });
           return {
             success: true,
             message: 'تم تفعيل الاتصال المباشر بخادم المزامنة اللحظية (WebSocket + Live DB) بنجاح عبر جميع الأجهزة!',
@@ -1705,6 +1742,7 @@ const wsListeners = new Set<WsStateListener>();
 let sharedWs: WebSocket | null = null;
 let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let wsHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let wsHttpFallbackTimer: ReturnType<typeof setInterval> | null = null;
 let wsReconnectAttempts = 0;
 
 function stopWsHeartbeat() {
@@ -1714,12 +1752,64 @@ function stopWsHeartbeat() {
   }
 }
 
+function stopWsHttpFallback() {
+  if (wsHttpFallbackTimer) {
+    clearInterval(wsHttpFallbackTimer);
+    wsHttpFallbackTimer = null;
+  }
+}
+
+function startWsHttpFallback() {
+  if (wsHttpFallbackTimer || typeof window === 'undefined') return;
+  wsHttpFallbackTimer = setInterval(async () => {
+    if (wsListeners.size === 0 || isBrowserOffline()) return;
+    if (sharedWs && sharedWs.readyState === WebSocket.OPEN) {
+      stopWsHttpFallback();
+      return;
+    }
+    const ok = await probeServerHealth();
+    if (ok) {
+      if (getPendingOfflineQueueCount() > 0) {
+        flushOfflineSyncQueue().catch(() => {});
+      }
+      setCloudConnectionStatus(
+        'connected',
+        'متصل بخادم المزامنة اللحظية عبر HTTPS',
+        {
+          hasPendingSync: getPendingOfflineQueueCount() > 0,
+          pendingQueueCount: getPendingOfflineQueueCount(),
+        }
+      );
+      try {
+        const resp = await fetch(getLiveDbApiUrl(), { method: 'GET', credentials: 'same-origin' });
+        const ct = resp.headers.get('content-type') || '';
+        if (resp.ok && ct.includes('application/json')) {
+          const json = await resp.json();
+          if (json?.success && json?.snapshot?.data) {
+            wsListeners.forEach((listener) => {
+              try {
+                listener({
+                  type: 'state_update',
+                  clientId: json.snapshot.clientId || '',
+                  timestamp: json.snapshot.timestamp,
+                  snapshot: json.snapshot,
+                });
+              } catch {}
+            });
+          }
+        }
+      } catch {}
+    }
+  }, 10000);
+}
+
 function disconnectSharedWebSocket() {
   if (wsReconnectTimer) {
     clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;
   }
   stopWsHeartbeat();
+  stopWsHttpFallback();
   if (sharedWs) {
     try {
       sharedWs.onopen = null;
@@ -1764,12 +1854,16 @@ function ensureSharedWebSocket(): void {
 
     ws.onopen = () => {
       wsReconnectAttempts = 0;
+      stopWsHttpFallback();
       const client = getSupabaseClient();
       if (!client && !isBrowserOffline()) {
         setCloudConnectionStatus(
           'connected',
           'متصل بخادم المزامنة اللحظية (Supabase WebSocket Realtime)',
-          { pendingQueueCount: getPendingOfflineQueueCount() }
+          {
+            hasPendingSync: getPendingOfflineQueueCount() > 0,
+            pendingQueueCount: getPendingOfflineQueueCount(),
+          }
         );
       }
       if (getPendingOfflineQueueCount() > 0 && !isBrowserOffline()) {
@@ -1805,9 +1899,33 @@ function ensureSharedWebSocket(): void {
     };
 
     ws.onerror = () => {
+      // Do not immediately flip UI to "غير متصل" if HTTPS server API is actually healthy; verify via HTTP first
       const client = getSupabaseClient();
       if (!client && !isBrowserOffline()) {
-        setCloudConnectionStatus('error', 'تعذر استقرار قناة البث اللحظي WebSocket');
+        probeServerHealth()
+          .then((httpOk) => {
+            if (httpOk) {
+              setCloudConnectionStatus(
+                'connected',
+                'متصل بالخادم عبر HTTPS (قناة WebSocket قيد إعادة الربط)',
+                {
+                  hasPendingSync: getPendingOfflineQueueCount() > 0,
+                  pendingQueueCount: getPendingOfflineQueueCount(),
+                }
+              );
+              startWsHttpFallback();
+              if (getPendingOfflineQueueCount() > 0) {
+                flushOfflineSyncQueue().catch(() => {});
+              }
+            } else if (!isBrowserOffline()) {
+              setCloudConnectionStatus('error', 'تعذر الوصول إلى خادم المزامنة اللحظية Supabase');
+            }
+          })
+          .catch(() => {
+            if (!isBrowserOffline()) {
+              setCloudConnectionStatus('error', 'تعذر استقرار قناة البث اللحظي WebSocket');
+            }
+          });
       }
     };
 
@@ -1816,9 +1934,11 @@ function ensureSharedWebSocket(): void {
       if (sharedWs === ws) {
         sharedWs = null;
       }
+      startWsHttpFallback();
       scheduleWsReconnect();
     };
   } catch {
+    startWsHttpFallback();
     scheduleWsReconnect();
   }
 }
@@ -2033,7 +2153,8 @@ export interface DetailedSyncResult {
 
 async function performCloudPush(
   state: AppState,
-  nowIso: string
+  nowIso: string,
+  options?: { skipEnqueueOnFailure?: boolean }
 ): Promise<DetailedSyncResult> {
   const cfg = getSupabaseConfig();
   if (!cfg.isConfigured) {
@@ -2041,7 +2162,9 @@ async function performCloudPush(
   }
 
   if (isBrowserOffline()) {
-    const qCount = enqueueOfflineSync(state, nowIso);
+    const qCount = options?.skipEnqueueOnFailure
+      ? getPendingOfflineQueueCount()
+      : enqueueOfflineSync(state, nowIso);
     pendingSyncPayload = { state, timestamp: nowIso };
     setCloudConnectionStatus(
       'offline',
@@ -2081,21 +2204,33 @@ async function performCloudPush(
 
     if (typeof window !== 'undefined') {
       try {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), 12000) : null;
         const resp = await fetch(getLiveDbApiUrl(), {
           method: 'POST',
+          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             data: fullPayloadState,
             timestamp: nowIso,
             clientId: SESSION_CLIENT_ID,
           }),
+          signal: controller?.signal,
         });
-        if (resp.ok) {
-          serverOk = true;
-          try {
-            const json = await resp.json();
+        if (timer) clearTimeout(timer);
+        const contentType = resp.headers.get('content-type') || '';
+        if (resp.ok && contentType.includes('application/json')) {
+          const json = await resp.json().catch(() => null);
+          if (json && json.success) {
+            serverOk = true;
             serverRevision = typeof json?.revision === 'number' ? json.revision : undefined;
-          } catch {}
+          } else {
+            serverHttpFailure = true;
+            serverErrMsg = json?.error || 'استجابة غير متوقعة من خادم المزامنة';
+          }
+        } else if (resp.ok) {
+          serverHttpFailure = true;
+          serverErrMsg = 'نقطة المزامنة لا تعيد بيانات JSON صالحة';
         } else {
           serverHttpFailure = true;
           try {
@@ -2132,24 +2267,28 @@ async function performCloudPush(
         console.warn('Supabase Realtime broadcast error:', bcastErr);
       }
 
-      const { error: snapErr } = await client
-        .from('backup_snapshots')
-        .upsert(
-          {
-            id: 'latest_live_snapshot',
-            version: snapshotPayload.version,
-            timestamp: snapshotPayload.timestamp,
-            bakeries_count: snapshotPayload.bakeriesCount,
-            debts_count: snapshotPayload.debtsCount,
-            payload: snapshotPayload,
-          },
-          { onConflict: 'id' }
-        );
+      try {
+        const { error: snapErr } = await client
+          .from('backup_snapshots')
+          .upsert(
+            {
+              id: 'latest_live_snapshot',
+              version: snapshotPayload.version,
+              timestamp: snapshotPayload.timestamp,
+              bakeries_count: snapshotPayload.bakeriesCount,
+              debts_count: snapshotPayload.debtsCount,
+              payload: snapshotPayload,
+            },
+            { onConflict: 'id' }
+          );
 
-      if (snapErr) {
-        externalErrorMsg = snapErr.message;
-      } else {
-        externalSupabaseOk = true;
+        if (snapErr) {
+          externalErrorMsg = snapErr.message;
+        } else {
+          externalSupabaseOk = true;
+        }
+      } catch (snapEx: any) {
+        externalErrorMsg = snapEx?.message || 'تعذر الوصول إلى مشروع Supabase الخارجي';
       }
 
       try {
@@ -2263,6 +2402,11 @@ async function performCloudPush(
     const overallSuccess = client ? (externalSupabaseOk || serverOk) : serverOk;
     if (overallSuccess) {
       pendingSyncPayload = null;
+      // Since fullPayloadState already persists the complete latest multi-branch snapshot,
+      // clear superseded offline queue items (unless this call is an item flush handled by flushOfflineSyncQueue).
+      if (!options?.skipEnqueueOnFailure && getPendingOfflineQueueCount() > 0) {
+        clearOfflineSyncQueue();
+      }
       const nowAr = new Date().toLocaleTimeString('ar-EG');
       safeSetItem('TAMWEEN_LAST_SUPABASE_SYNC', nowAr);
       setCloudConnectionStatus(
@@ -2272,7 +2416,8 @@ async function performCloudPush(
           : `متصل وتمت المزامنة اللحظية مع خادم Supabase (${nowAr})`,
         {
           lastSyncAt: nowAr,
-          hasPendingSync: getPendingOfflineQueueCount() > 0,
+          hasPendingSync: options?.skipEnqueueOnFailure ? getPendingOfflineQueueCount() > 1 : false,
+          pendingQueueCount: options?.skipEnqueueOnFailure ? Math.max(0, getPendingOfflineQueueCount() - 1) : 0,
         }
       );
       return {
@@ -2285,7 +2430,9 @@ async function performCloudPush(
 
     // Network drop during fetch -> enqueue safely for auto-retry when back online
     if (networkUnreachable && !serverHttpFailure) {
-      const qCount = enqueueOfflineSync(state, nowIso);
+      const qCount = options?.skipEnqueueOnFailure
+        ? getPendingOfflineQueueCount()
+        : enqueueOfflineSync(state, nowIso);
       pendingSyncPayload = { state, timestamp: nowIso };
       setCloudConnectionStatus(
         'offline',
@@ -2300,14 +2447,16 @@ async function performCloudPush(
     }
 
     const errMsg = externalErrorMsg || serverErrMsg || 'تعذر إتمام المزامنة اللحظية مع خادم Supabase';
-    setCloudConnectionStatus('error', errMsg, { hasPendingSync: false });
+    setCloudConnectionStatus('error', errMsg, { hasPendingSync: getPendingOfflineQueueCount() > 0 });
     return {
       success: false,
       queuedOffline: false,
       error: errMsg,
     };
   } catch (err: any) {
-    const qCount = enqueueOfflineSync(state, nowIso);
+    const qCount = options?.skipEnqueueOnFailure
+      ? getPendingOfflineQueueCount()
+      : enqueueOfflineSync(state, nowIso);
     pendingSyncPayload = { state, timestamp: nowIso };
     setCloudConnectionStatus(
       'offline',
@@ -2322,11 +2471,13 @@ async function performCloudPush(
   }
 }
 
+let isFlushingOfflineQueue = false;
+
 export async function flushOfflineSyncQueue(): Promise<{
   flushedCount: number;
   remainingCount: number;
 }> {
-  if (isBrowserOffline()) {
+  if (isBrowserOffline() || isFlushingOfflineQueue) {
     return { flushedCount: 0, remainingCount: getPendingOfflineQueueCount() };
   }
   const queue = [...loadOfflineQueueFromStorage()];
@@ -2334,32 +2485,39 @@ export async function flushOfflineSyncQueue(): Promise<{
     return { flushedCount: 0, remainingCount: 0 };
   }
 
+  isFlushingOfflineQueue = true;
   let flushedCount = 0;
-  while (queue.length > 0) {
-    const head = queue[0];
-    const res = await performCloudPush(head.state, head.timestamp);
-    if (res.success) {
-      queue.shift();
-      flushedCount += 1;
-      persistOfflineQueue(queue);
-    } else {
-      head.attempts += 1;
-      persistOfflineQueue(queue);
-      break;
+  try {
+    while (queue.length > 0) {
+      const head = queue[0];
+      const res = await performCloudPush(head.state, head.timestamp, {
+        skipEnqueueOnFailure: true,
+      });
+      if (res.success) {
+        queue.shift();
+        flushedCount += 1;
+        persistOfflineQueue(queue);
+      } else {
+        head.attempts += 1;
+        persistOfflineQueue(queue);
+        break;
+      }
     }
-  }
 
-  const remainingCount = getPendingOfflineQueueCount();
-  if (remainingCount === 0 && flushedCount > 0) {
-    pendingSyncPayload = null;
-    const nowAr = new Date().toLocaleTimeString('ar-EG');
-    setCloudConnectionStatus(
-      'connected',
-      `تمت استعادة الاتصال وإرسال (${flushedCount}) عملية من قائمة الانتظار بنجاح`,
-      { lastSyncAt: nowAr, hasPendingSync: false, pendingQueueCount: 0 }
-    );
+    const remainingCount = getPendingOfflineQueueCount();
+    if (remainingCount === 0 && flushedCount > 0) {
+      pendingSyncPayload = null;
+      const nowAr = new Date().toLocaleTimeString('ar-EG');
+      setCloudConnectionStatus(
+        'connected',
+        `تمت استعادة الاتصال وإرسال (${flushedCount}) عملية من قائمة الانتظار بنجاح`,
+        { lastSyncAt: nowAr, hasPendingSync: false, pendingQueueCount: 0 }
+      );
+    }
+    return { flushedCount, remainingCount };
+  } finally {
+    isFlushingOfflineQueue = false;
   }
-  return { flushedCount, remainingCount };
 }
 
 export async function autoSyncToSupabaseDetailed(
@@ -2822,11 +2980,17 @@ export function subscribeToSupabaseRealtime(
     })
   );
 
-  // 2. Refresh cleanly when user returns to tab or when browser comes back online
+  // 2. Refresh cleanly when user returns to tab or when browser comes back online, and flush any pending queue
   if (typeof window !== 'undefined') {
+    if (getPendingOfflineQueueCount() > 0 && !isBrowserOffline()) {
+      flushOfflineSyncQueue().catch(() => {});
+    }
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible' && !isBrowserOffline()) {
         ensureSharedWebSocket();
+        if (getPendingOfflineQueueCount() > 0) {
+          flushOfflineSyncQueue().catch(() => {});
+        }
         fetchDatabaseFromSupabase()
           .then((res) => {
             if (res.success && res.data) {

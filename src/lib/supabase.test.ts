@@ -262,11 +262,14 @@ test('Self-echo filter, row deletion diffing, conflict resolution, and high-debt
   assert.strictEqual(restored?.isRead, true);
 });
 
-test('Offline sync queue safely stores mutations when offline and tracks pending queue count', async () => {
+test('Offline sync queue deduplicates per branch, safely stores mutations when offline, and clears when online sync succeeds', async () => {
   clearOfflineSyncQueue();
   assert.strictEqual(getPendingOfflineQueueCount(), 0);
 
   const origNavDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const origWinDesc = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const origFetch = globalThis.fetch;
+
   Object.defineProperty(globalThis, 'navigator', {
     configurable: true,
     value: { onLine: false },
@@ -279,15 +282,55 @@ test('Offline sync queue safely stores mutations when offline and tracks pending
     assert.strictEqual(getCloudConnectionSnapshot().pendingQueueCount, 1);
     assert.strictEqual(getCloudConnectionSnapshot().status, 'offline');
 
-    enqueueOfflineSync({ activeBranchId: 'branch-mahalla', bakeries: [], debts: [] } as any);
+    // Enqueueing another edit for the same branch replaces instead of duplicating
+    enqueueOfflineSync({ activeBranchId: 'branch-mahalla', bakeries: [{ id: 'b-new' }], debts: [] } as any);
+    assert.strictEqual(getPendingOfflineQueueCount(), 1);
+
+    // Enqueueing for a different branch keeps one per branch
+    enqueueOfflineSync({ activeBranchId: 'branch-samanoud', bakeries: [], debts: [] } as any);
     assert.strictEqual(getPendingOfflineQueueCount(), 2);
 
     const res = await retrySupabaseConnection(null);
     assert.strictEqual(res.success, false);
     assert.strictEqual(getCloudConnectionSnapshot().status, 'offline');
     assert.strictEqual(getCloudConnectionSnapshot().label, 'غير متصل');
+
+    // Simulate returning online with working /api/supabase/live-db endpoint
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { onLine: true },
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        location: { protocol: 'https:', hostname: 'localhost', host: 'localhost:3000' },
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
+    });
+    (globalThis as any).fetch = async () =>
+      new Response(JSON.stringify({ success: true, revision: 42 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+
+    const recoveredSync = await autoSyncToSupabaseDetailed(
+      { activeBranchId: 'branch-mahalla', bakeries: [{ id: 'b-final' }], debts: [] } as any,
+      true
+    );
+    assert.strictEqual(recoveredSync.success, true);
+    assert.strictEqual(recoveredSync.queuedOffline, false);
+    assert.strictEqual(getPendingOfflineQueueCount(), 0);
+    assert.strictEqual(getCloudConnectionSnapshot().status, 'connected');
+    assert.strictEqual(getCloudConnectionSnapshot().pendingQueueCount, 0);
   } finally {
     clearOfflineSyncQueue();
+    globalThis.fetch = origFetch;
+    if (origWinDesc) {
+      Object.defineProperty(globalThis, 'window', origWinDesc);
+    } else {
+      delete (globalThis as any).window;
+    }
     if (origNavDesc) {
       Object.defineProperty(globalThis, 'navigator', origNavDesc);
     } else {

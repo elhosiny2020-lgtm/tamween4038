@@ -1688,6 +1688,7 @@ export default function App() {
           id: Date.now(),
           message: 'بيانات جهازك محدثة بالفعل، لم يتم العثور على سجلات جديدة على الخادم السحابي.',
           timestamp: getArabicTimestamp(),
+          variant: 'success',
         });
       }
     } catch (err) {
@@ -1696,6 +1697,7 @@ export default function App() {
         id: Date.now(),
         message: 'تعذر الاتصال بالخادم السحابي لجلب أحدث البيانات. تحقق من اتصال الإنترنت.',
         timestamp: getArabicTimestamp(),
+        variant: 'error',
       });
     } finally {
       setIsSyncingWithCloud(false);
@@ -1713,12 +1715,14 @@ export default function App() {
         id: Date.now(),
         message: res.message,
         timestamp: getArabicTimestamp(),
+        variant: res.success ? 'success' : 'error',
       });
     } catch (err: any) {
       setSaveToast({
         id: Date.now(),
         message: err?.message || 'تعذر إعادة الاتصال بالخادم السحابي',
         timestamp: getArabicTimestamp(),
+        variant: 'error',
       });
     } finally {
       setIsRetryingConnection(false);
