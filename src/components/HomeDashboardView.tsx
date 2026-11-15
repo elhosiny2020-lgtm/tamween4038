@@ -416,24 +416,38 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
       )}
 
       {/* 8 Primary Executive KPI Cards (تعتمد على البيانات الحقيقية في القاعدة مع الانتقال السريع) */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
+      <div className="space-y-4">
+        {/* Executive Home Header Strip */}
+        <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 shadow-2xs flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-extrabold text-[#0F2342]">
+            <div className="text-[11px] font-bold text-[#1D4ED8] tracking-wide">
+              نظرة تنفيذية عامة · {stats.totalBakeries} مخبز مسجل
+            </div>
+            <h2 className="text-base sm:text-lg font-black text-[#0F2342] mt-0.5">
               المؤشرات الإحصائية الرئيسية للمنظومة
             </h2>
-            <p className="text-xs text-slate-500">
-              بيانات حية ومباشرة من سجلات قاعدة البيانات — انقر على أي بطاقة للانتقال إلى السجلات التفصيلية المرتبطة بها
+            <p className="text-xs text-slate-500 mt-0.5">
+              بيانات حية ومباشرة من قاعدة البيانات — اضغط على أي بطاقة للانتقال إلى السجلات المرتبطة بها
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
-            className="px-3.5 py-2 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-          >
-            <span>عرض جدول المخابز الكامل</span>
-            <ArrowLeft className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenLocalUnitsModal}
+              className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-[#0F2342] border border-slate-300 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <Layers className="w-3.5 h-3.5 text-[#1D4ED8]" />
+              <span>الوحدات المحلية</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
+              className="px-3.5 py-2 bg-[#0B1B36] hover:bg-[#1E3A8A] text-white rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+            >
+              <span>عرض جدول المخابز الكامل</span>
+              <ArrowLeft className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
@@ -441,19 +455,19 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
-            className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#1E40AF] rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group"
+            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-[#1D4ED8] rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
           >
-            <div>
-              <span className="text-xs font-bold text-slate-500 block">1. إجمالي عدد المخابز</span>
-              <span className="text-2xl font-black text-[#0F2342] mt-1.5 block font-mono tabular-nums">
-                {stats.totalBakeries.toLocaleString()}
-              </span>
-              <span className="text-[11px] text-emerald-700 font-semibold mt-1 block">
-                {stats.activeBakeries} مخبز يعمل · {stats.stoppedBakeries} متوقف
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-xs font-bold text-slate-600">1. إجمالي عدد المخابز</span>
+              <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1D4ED8] border border-blue-100 flex items-center justify-center shrink-0 group-hover:bg-[#0B1B36] group-hover:text-white transition">
+                <Store className="w-4 h-4" />
               </span>
             </div>
-            <div className="p-2.5 bg-[#EFF6FF] text-[#1E3A8A] rounded-xl group-hover:bg-[#1E3A8A] group-hover:text-white transition">
-              <Store className="w-5 h-5" />
+            <span className="text-2xl font-black text-[#0F2342] mt-2 block font-mono tabular-nums">
+              {stats.totalBakeries.toLocaleString()}
+            </span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] font-bold text-emerald-700 w-full">
+              {stats.activeBakeries} شغال · <span className="text-amber-700">{stats.stoppedBakeries} متوقف</span>
             </div>
           </button>
 
@@ -461,19 +475,22 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'QUOTAS' })}
-            className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#1E40AF] rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group"
+            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-[#1D4ED8] rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
           >
-            <div>
-              <span className="text-xs font-bold text-slate-500 block">2. إجمالي الحصص الفعلية</span>
-              <span className="text-2xl font-black text-[#0F2342] mt-1.5 block font-mono tabular-nums">
-                {stats.totalActualQuota.toLocaleString()}
-              </span>
-              <span className="text-[11px] text-slate-500 font-semibold mt-1 block">
-                شيكارة دقيق يومياً (تأمينية: {stats.totalInsuranceQuota})
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-xs font-bold text-slate-600">2. إجمالي الحصص الفعلية</span>
+              <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1D4ED8] border border-blue-100 flex items-center justify-center shrink-0 group-hover:bg-[#0B1B36] group-hover:text-white transition">
+                <Layers className="w-4 h-4" />
               </span>
             </div>
-            <div className="p-2.5 bg-[#EFF6FF] text-[#1E3A8A] rounded-xl group-hover:bg-[#1E3A8A] group-hover:text-white transition">
-              <Layers className="w-5 h-5" />
+            <span className="text-2xl font-black text-[#0F2342] mt-2 block font-mono tabular-nums">
+              {stats.totalActualQuota.toLocaleString()}
+            </span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+              شكارة/يوم · التأمينية:{' '}
+              <span className="font-mono tabular-nums font-bold text-[#0F2342]">
+                {stats.totalInsuranceQuota}
+              </span>
             </div>
           </button>
 
@@ -481,19 +498,19 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'QUOTAS' })}
-            className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#1E40AF] rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group"
+            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-emerald-600 rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
           >
-            <div>
-              <span className="text-xs font-bold text-slate-500 block">3. إجمالي عدد الأرغفة</span>
-              <span className="text-2xl font-black text-emerald-700 mt-1.5 block font-mono tabular-nums">
-                {stats.totalLoaves.toLocaleString()}
-              </span>
-              <span className="text-[11px] text-slate-500 font-semibold mt-1 block">
-                رغيف بلدي مدعم يومياً (× 660 / 725)
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-xs font-bold text-slate-600">3. إجمالي عدد الأرغفة</span>
+              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center justify-center shrink-0 group-hover:bg-emerald-700 group-hover:text-white transition">
+                <Wheat className="w-4 h-4" />
               </span>
             </div>
-            <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl group-hover:bg-emerald-700 group-hover:text-white transition">
-              <Wheat className="w-5 h-5" />
+            <span className="text-2xl font-black text-emerald-700 mt-2 block font-mono tabular-nums">
+              {stats.totalLoaves.toLocaleString()}
+            </span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+              رغيف بلدي مدعم يومياً (× 660 / 725)
             </div>
           </button>
 
@@ -501,19 +518,19 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'INSURANCE' })}
-            className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#1E40AF] rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group"
+            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-amber-600 rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
           >
-            <div>
-              <span className="text-xs font-bold text-slate-500 block">4. إجمالي المبالغ التأمينية</span>
-              <span className="text-2xl font-black text-[#0F2342] mt-1.5 block font-mono tabular-nums">
-                {stats.totalInsuranceValue.toLocaleString()}
-              </span>
-              <span className="text-[11px] text-slate-500 font-semibold mt-1 block">
-                جنيه مصري (مربوط بالحصة التأمينية)
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-xs font-bold text-slate-600">4. إجمالي المبالغ التأمينية</span>
+              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 border border-amber-100 flex items-center justify-center shrink-0 group-hover:bg-amber-600 group-hover:text-white transition">
+                <Coins className="w-4 h-4" />
               </span>
             </div>
-            <div className="p-2.5 bg-amber-50 text-amber-700 rounded-xl group-hover:bg-amber-600 group-hover:text-white transition">
-              <Coins className="w-5 h-5" />
+            <span className="text-2xl font-black text-[#0F2342] mt-2 block font-mono tabular-nums">
+              {stats.totalInsuranceValue.toLocaleString()}
+            </span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+              جنيه مصري · مربوط بالحصة التأمينية
             </div>
           </button>
 
@@ -521,19 +538,23 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'BENEFICIARIES' })}
-            className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#1E40AF] rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group"
+            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-[#1D4ED8] rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
           >
-            <div>
-              <span className="text-xs font-bold text-slate-500 block">5. إجمالي المستفيدين لعام 2023</span>
-              <span className="text-2xl font-black text-[#1E3A8A] mt-1.5 block font-mono tabular-nums">
-                {stats.totalBen2023.toLocaleString()}
-              </span>
-              <span className="text-[11px] text-slate-500 font-semibold mt-1 block">
-                متوسط 2023 المرجح: {annualReport.weightedGeneralAvg2023} رغيف/فرد
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-xs font-bold text-slate-600">5. مستفيدو عام 2023</span>
+              <span className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center shrink-0 group-hover:bg-[#0B1B36] group-hover:text-white transition">
+                <Users className="w-4 h-4" />
               </span>
             </div>
-            <div className="p-2.5 bg-slate-100 text-slate-700 rounded-xl group-hover:bg-[#1E3A8A] group-hover:text-white transition">
-              <Users className="w-5 h-5" />
+            <span className="text-2xl font-black text-[#1E3A8A] mt-2 block font-mono tabular-nums">
+              {stats.totalBen2023.toLocaleString()}
+            </span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+              المتوسط المرجح:{' '}
+              <span className="font-mono tabular-nums font-bold text-[#0F2342]">
+                {annualReport.weightedGeneralAvg2023}
+              </span>{' '}
+              رغيف/فرد
             </div>
           </button>
 
@@ -541,19 +562,23 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'BENEFICIARIES' })}
-            className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#1E40AF] rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group"
+            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-[#1D4ED8] rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
           >
-            <div>
-              <span className="text-xs font-bold text-slate-500 block">6. إجمالي المستفيدين لعام 2024</span>
-              <span className="text-2xl font-black text-[#1E3A8A] mt-1.5 block font-mono tabular-nums">
-                {stats.totalBen2024.toLocaleString()}
-              </span>
-              <span className="text-[11px] text-slate-500 font-semibold mt-1 block">
-                متوسط 2024 المرجح: {annualReport.weightedGeneralAvg2024} رغيف/فرد
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-xs font-bold text-slate-600">6. مستفيدو عام 2024</span>
+              <span className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center shrink-0 group-hover:bg-[#0B1B36] group-hover:text-white transition">
+                <Users className="w-4 h-4" />
               </span>
             </div>
-            <div className="p-2.5 bg-slate-100 text-slate-700 rounded-xl group-hover:bg-[#1E3A8A] group-hover:text-white transition">
-              <Users className="w-5 h-5" />
+            <span className="text-2xl font-black text-[#1E3A8A] mt-2 block font-mono tabular-nums">
+              {stats.totalBen2024.toLocaleString()}
+            </span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+              المتوسط المرجح:{' '}
+              <span className="font-mono tabular-nums font-bold text-[#0F2342]">
+                {annualReport.weightedGeneralAvg2024}
+              </span>{' '}
+              رغيف/فرد
             </div>
           </button>
 
@@ -561,19 +586,23 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'BENEFICIARIES' })}
-            className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#1E40AF] rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group"
+            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-[#1D4ED8] rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
           >
-            <div>
-              <span className="text-xs font-bold text-slate-500 block">7. إجمالي المستفيدين لعام 2025</span>
-              <span className="text-2xl font-black text-[#1E3A8A] mt-1.5 block font-mono tabular-nums">
-                {stats.totalBen2025.toLocaleString()}
-              </span>
-              <span className="text-[11px] text-slate-500 font-semibold mt-1 block">
-                متوسط 2025 المرجح: {annualReport.weightedGeneralAvg2025} رغيف/فرد
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-xs font-bold text-slate-600">7. مستفيدو عام 2025</span>
+              <span className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center shrink-0 group-hover:bg-[#0B1B36] group-hover:text-white transition">
+                <Users className="w-4 h-4" />
               </span>
             </div>
-            <div className="p-2.5 bg-slate-100 text-slate-700 rounded-xl group-hover:bg-[#1E3A8A] group-hover:text-white transition">
-              <Users className="w-5 h-5" />
+            <span className="text-2xl font-black text-[#1E3A8A] mt-2 block font-mono tabular-nums">
+              {stats.totalBen2025.toLocaleString()}
+            </span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+              المتوسط المرجح:{' '}
+              <span className="font-mono tabular-nums font-bold text-[#0F2342]">
+                {annualReport.weightedGeneralAvg2025}
+              </span>{' '}
+              رغيف/فرد
             </div>
           </button>
 
@@ -581,19 +610,22 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'EQUATIONS' })}
-            className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-[#1E40AF] rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group"
+            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-emerald-600 rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
           >
-            <div>
-              <span className="text-xs font-bold text-slate-500 block">8. متوسط نصيب الفرد الإجمالي</span>
-              <span className="text-2xl font-black text-emerald-700 mt-1.5 block font-mono tabular-nums">
-                {stats.overallPerCapita}
-              </span>
-              <span className="text-[11px] text-amber-700 font-semibold mt-1 block">
-                الفرق التراكمي: {annualReport.cumulativeWeightedDiff2025vs2023}
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-xs font-bold text-slate-600">8. متوسط نصيب الفرد الإجمالي</span>
+              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center justify-center shrink-0 group-hover:bg-emerald-700 group-hover:text-white transition">
+                <Calculator className="w-4 h-4" />
               </span>
             </div>
-            <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl group-hover:bg-emerald-700 group-hover:text-white transition">
-              <Calculator className="w-5 h-5" />
+            <span className="text-2xl font-black text-emerald-700 mt-2 block font-mono tabular-nums">
+              {stats.overallPerCapita}
+            </span>
+            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-amber-700 font-bold w-full">
+              الفرق التراكمي:{' '}
+              <span dir="ltr" className="inline-block font-mono tabular-nums">
+                {annualReport.cumulativeWeightedDiff2025vs2023}
+              </span>
             </div>
           </button>
 
@@ -601,28 +633,45 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
-            className="bg-white hover:bg-amber-50/40 border border-slate-200 hover:border-amber-400 rounded-xl p-4 text-right shadow-2xs transition flex items-start justify-between cursor-pointer group sm:col-span-2 lg:col-span-4"
+            className="bg-white hover:bg-amber-50/30 border border-slate-200 hover:border-amber-500 rounded-xl p-4 text-right shadow-2xs transition flex items-center justify-between gap-4 cursor-pointer group sm:col-span-2 lg:col-span-4"
           >
             <div className="flex flex-wrap items-center gap-4">
+              <div
+                className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                  stats.needsReviewCount === 0
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}
+              >
+                {stats.needsReviewCount === 0 ? (
+                  <CheckCircle2 className="w-5 h-5" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5" />
+                )}
+              </div>
               <div>
-                <span className="text-xs font-bold text-slate-500 block">
-                  9. عدد المخابز التي تحتاج إلى مراجعة بيانات (فروق حصص أو بيانات ناقصة)
+                <span className="text-xs font-bold text-slate-600 block">
+                  9. مؤشر جودة وتطابق بيانات المخابز (فحص الحصص والبيانات الأساسية)
                 </span>
-                <div className="flex items-baseline gap-3 mt-1">
-                  <span className="text-2xl font-black text-amber-700 font-mono tabular-nums">
+                <div className="flex flex-wrap items-baseline gap-2.5 mt-1">
+                  <span
+                    className={`text-xl font-black font-mono tabular-nums ${
+                      stats.needsReviewCount === 0 ? 'text-emerald-700' : 'text-amber-700'
+                    }`}
+                  >
                     {stats.needsReviewCount}
                   </span>
                   <span className="text-xs font-bold text-slate-600">
                     {stats.needsReviewCount === 0
-                      ? 'جميع المخابز مكتملة البيانات ومطابقة للحصص بنسبة 100%'
-                      : `مخبز يحتاج لمراجعة البيانات أو مطابقة الحصة الفعلية بالتأمينية`}
+                      ? 'جميع السجلات المسجلة مكتملة البيانات ومطابقة للحصص بنسبة 100%'
+                      : 'مخبز يحتاج لمراجعة البيانات أو مطابقة الحصة الفعلية بالتأمينية'}
                   </span>
                 </div>
               </div>
             </div>
-            <div className="p-2.5 bg-amber-50 text-amber-700 rounded-xl group-hover:bg-amber-600 group-hover:text-white transition">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
+            <span className="text-xs font-bold text-[#1D4ED8] group-hover:underline shrink-0">
+              فحص السجلات ←
+            </span>
           </button>
         </div>
       </div>
@@ -630,163 +679,185 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
       {/* Interactive 3-Year Comparison Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Chart 1: Beneficiaries Comparison Across 2023, 2024, 2025 by Village */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-extrabold text-[#0F2342] flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-[#1E40AF]" />
-                <span>مقارنة أعداد المستفيدين بين الأعوام (2023 - 2024 - 2025) حسب القرية</span>
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                انقر على أي عمود للانتقال الفوري إلى مخابز القرية المختارة في قاعدة البيانات
-              </p>
-            </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs">
+          <div className="pb-3 mb-4 border-b border-slate-100">
+            <h3 className="text-sm font-black text-[#0F2342] flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-[#1D4ED8]" />
+              <span>مقارنة أعداد المستفيدين (2023 - 2024 - 2025) حسب القرية</span>
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              انقر على أي عمود للانتقال الفوري إلى مخابز القرية المختارة
+            </p>
           </div>
 
           <div className="h-72 w-full" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={villageComparisonData}
-                onClick={(state: any) => {
-                  if (state && state.activeLabel) {
-                    onNavigateToBakeries({ village: state.activeLabel, columnFocus: 'BENEFICIARIES' });
-                  }
-                }}
+            {villageComparisonData.length === 0 ? (
+              <div
+                dir="rtl"
+                className="h-full flex flex-col items-center justify-center text-slate-500 gap-2 bg-slate-50/70 rounded-lg"
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                <XAxis dataKey="village" tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }} />
-                <YAxis tick={{ fontSize: 11, fill: '#334155' }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#FFFFFF',
-                    borderColor: '#CBD5E1',
-                    borderRadius: '10px',
-                    fontSize: '12px',
-                    color: '#0F172A',
+                <Activity className="w-6 h-6 text-slate-300" />
+                <span className="text-xs font-bold">لا توجد بيانات مستفيدين للعرض حالياً</span>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={villageComparisonData}
+                  onClick={(state: any) => {
+                    if (state && state.activeLabel) {
+                      onNavigateToBakeries({ village: state.activeLabel, columnFocus: 'BENEFICIARIES' });
+                    }
                   }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px', fontWeight: 700 }} />
-                <Bar dataKey="ben2023" name="مستفيدو 2023" fill="#0F2342" radius={[4, 4, 0, 0]} cursor="pointer" />
-                <Bar dataKey="ben2024" name="مستفيدو 2024" fill="#2563EB" radius={[4, 4, 0, 0]} cursor="pointer" />
-                <Bar dataKey="ben2025" name="مستفيدو 2025" fill="#0D9488" radius={[4, 4, 0, 0]} cursor="pointer" />
-              </BarChart>
-            </ResponsiveContainer>
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                  <XAxis dataKey="village" tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }} />
+                  <YAxis tick={{ fontSize: 11, fill: '#334155' }} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#FFFFFF',
+                      borderColor: '#CBD5E1',
+                      borderRadius: '8px',
+                      direction: 'rtl',
+                      fontSize: '12px',
+                      color: '#0F172A',
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '12px', fontWeight: 700 }} />
+                  <Bar dataKey="ben2023" name="مستفيدو 2023" fill="#0F2342" radius={[4, 4, 0, 0]} cursor="pointer" />
+                  <Bar dataKey="ben2024" name="مستفيدو 2024" fill="#1D4ED8" radius={[4, 4, 0, 0]} cursor="pointer" />
+                  <Bar dataKey="ben2025" name="مستفيدو 2025" fill="#059669" radius={[4, 4, 0, 0]} cursor="pointer" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
         {/* Chart 2: Per Capita Average Comparison (2023 vs 2024 vs 2025) */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-extrabold text-[#0F2342] flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-[#1E40AF]" />
-                <span>تطور متوسطات نصيب الفرد اليومي للأعوام الثلاثة (رغيف / فرد)</span>
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                مقارنة حية لمتوسط نصيب الفرد في القرى للأعوام 2023 و2024 و2025
-              </p>
-            </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs">
+          <div className="pb-3 mb-4 border-b border-slate-100">
+            <h3 className="text-sm font-black text-[#0F2342] flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-[#1D4ED8]" />
+              <span>تطور متوسطات نصيب الفرد اليومي للأعوام الثلاثة (رغيف / فرد)</span>
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              مقارنة حية لمتوسط نصيب الفرد في القرى للأعوام 2023 و2024 و2025
+            </p>
           </div>
 
           <div className="h-72 w-full" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={villageComparisonData}
-                onClick={(state: any) => {
-                  if (state && state.activeLabel) {
-                    onNavigateToBakeries({ village: state.activeLabel, columnFocus: 'EQUATIONS' });
-                  }
-                }}
+            {villageComparisonData.length === 0 ? (
+              <div
+                dir="rtl"
+                className="h-full flex flex-col items-center justify-center text-slate-500 gap-2 bg-slate-50/70 rounded-lg"
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                <XAxis dataKey="village" tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }} />
-                <YAxis tick={{ fontSize: 11, fill: '#334155' }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#FFFFFF',
-                    borderColor: '#CBD5E1',
-                    borderRadius: '10px',
-                    fontSize: '12px',
-                    color: '#0F172A',
+                <TrendingUp className="w-6 h-6 text-slate-300" />
+                <span className="text-xs font-bold">لا توجد بيانات متوسطات للعرض حالياً</span>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={villageComparisonData}
+                  onClick={(state: any) => {
+                    if (state && state.activeLabel) {
+                      onNavigateToBakeries({ village: state.activeLabel, columnFocus: 'EQUATIONS' });
+                    }
                   }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px', fontWeight: 700 }} />
-                <Line
-                  type="monotone"
-                  dataKey="avg2023"
-                  name="متوسط 2023"
-                  stroke="#0F2342"
-                  strokeWidth={2.5}
-                  dot={{ r: 4 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="avg2024"
-                  name="متوسط 2024"
-                  stroke="#2563EB"
-                  strokeWidth={2.5}
-                  dot={{ r: 4 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="avg2025"
-                  name="متوسط 2025"
-                  stroke="#15803D"
-                  strokeWidth={2.5}
-                  dot={{ r: 4 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                  <XAxis dataKey="village" tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }} />
+                  <YAxis tick={{ fontSize: 11, fill: '#334155' }} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#FFFFFF',
+                      borderColor: '#CBD5E1',
+                      borderRadius: '8px',
+                      direction: 'rtl',
+                      fontSize: '12px',
+                      color: '#0F172A',
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '12px', fontWeight: 700 }} />
+                  <Line
+                    type="monotone"
+                    dataKey="avg2023"
+                    name="متوسط 2023"
+                    stroke="#0F2342"
+                    strokeWidth={2.5}
+                    dot={{ r: 4 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="avg2024"
+                    name="متوسط 2024"
+                    stroke="#1D4ED8"
+                    strokeWidth={2.5}
+                    dot={{ r: 4 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="avg2025"
+                    name="متوسط 2025"
+                    stroke="#059669"
+                    strokeWidth={2.5}
+                    dot={{ r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Bottom Row: Latest Operations & Quick Bakeries Preview */}
-      <div className="grid grid-cols-1 gap-4">
+      {/* Bottom Row: Latest Operations & Quick Bakeries Table */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs">
+        <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
+          <h3 className="text-sm font-black text-[#0F2342] flex items-center gap-2">
+            <Clock className="w-4 h-4 text-[#1D4ED8]" />
+            <span>آخر السجلات والبيانات المحدثة بقاعدة البيانات</span>
+          </h3>
+          <button
+            type="button"
+            onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
+            className="text-xs font-bold text-[#1D4ED8] hover:underline cursor-pointer"
+          >
+            عرض الكل ←
+          </button>
+        </div>
 
-        {/* Latest Operations & Quick Bakeries Preview */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs">
-          <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
-            <h3 className="text-sm font-extrabold text-[#0F2342] flex items-center gap-2">
-              <Clock className="w-4 h-4 text-[#1E40AF]" />
-              <span>آخر العمليات والسجلات المحدثة بقاعدة البيانات</span>
-            </h3>
-            <button
-              type="button"
-              onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
-              className="text-xs font-bold text-[#1E40AF] hover:underline cursor-pointer"
-            >
-              عرض الكل ←
-            </button>
+        {bakeries.length === 0 ? (
+          <div className="py-8 text-center text-xs font-bold text-slate-400">
+            لا توجد سجلات مخابز مسجلة حالياً في قاعدة البيانات
           </div>
-
-          <div className="space-y-2 max-h-64 overflow-y-auto">
+        ) : (
+          <div className="divide-y divide-slate-100">
             {bakeries.slice(0, 6).map((b) => (
-              <div
+              <button
                 key={b.id}
+                type="button"
                 onClick={() => onSelectBakeryDetails(b)}
-                className="p-2.5 rounded-xl border border-slate-200 hover:border-blue-300 bg-slate-50/60 hover:bg-blue-50/40 transition flex items-center justify-between text-xs cursor-pointer"
+                className="w-full py-2.5 px-2 hover:bg-slate-50 transition flex items-center justify-between text-xs text-right cursor-pointer"
               >
                 <div>
-                  <div className="font-bold text-slate-900">{b.bakeryOwnerName}</div>
-                  <div className="text-[11px] text-slate-500">
-                    ماكينة: <span className="font-mono">{b.machineNumber}</span> · قرية {b.village} · حصة فعلية:{' '}
-                    <span className="font-mono font-bold text-[#0F2342]">{b.actualQuota}</span> شيكارة
+                  <div className="font-bold text-[#0F2342]">{b.bakeryOwnerName}</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    ماكينة <span className="font-mono tabular-nums">{b.machineNumber}</span> · قرية {b.village} · حصة فعلية{' '}
+                    <span className="font-mono tabular-nums font-bold text-[#0F2342]">{b.actualQuota}</span> شكارة
                   </div>
                 </div>
                 <div className="text-left">
-                  <span className="font-mono font-bold text-emerald-700 block tabular-nums">
+                  <span className="font-mono font-black text-emerald-700 block tabular-nums">
                     {b.loavesCount?.toLocaleString()} رغيف
                   </span>
-                  <span className="text-[10px] text-slate-500 font-mono">
+                  <span className="text-[11px] text-slate-500 font-mono tabular-nums">
                     متوسط الفرد: {Number(b.perCapitaAverage || 0).toFixed(2)}
                   </span>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 };
+
