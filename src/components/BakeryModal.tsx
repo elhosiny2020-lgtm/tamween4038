@@ -74,7 +74,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   bakeryToEdit,
   existingBakeries = [],
   villages,
-  activityStatuses = ['شغال', 'متوقف جزئي', 'متوقف كلي', 'ملغى'],
+  activityStatuses = ['يعمل', 'متوقف جزئي', 'متوقف كلي', 'ملغى'],
   bakeryCategories = ['مخبز بلدي مدعم', 'مخبز بلدي مطور', 'مخبز سياحي 72%', 'مخبز فينو وأفرنجي', 'مخبز طباقي'],
   breadTypes = ['بلدي مدعم ماو', 'بلدي مجر', 'خبز آلي', 'طباقي'],
   breadTypeCounts = ['1', '2', '3', '4', '5'],
@@ -144,7 +144,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [unitSiblingCount, setUnitSiblingCount] = useState<number>(0);
 
   // Classification & Operations
-  const [activityStatus, setActivityStatus] = useState('شغال');
+  const [activityStatus, setActivityStatus] = useState('يعمل');
   const [bakeryCategory, setBakeryCategory] = useState('مخبز بلدي مدعم');
   const [breadType, setBreadType] = useState('بلدي مدعم ماو');
   const [flourBagPrice, setFlourBagPrice] = useState<number>(950);
@@ -383,7 +383,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
         setAvgDiff(bakeryToEdit.avgDiff);
       }
 
-      setActivityStatus(bakeryToEdit.activityStatus || 'شغال');
+      setActivityStatus(bakeryToEdit.activityStatus || 'يعمل');
       setBakeryCategory(bakeryToEdit.bakeryCategory || 'مخبز بلدي مدعم');
       setBreadType(bakeryToEdit.breadType || 'بلدي مدعم ماو');
       setFlourBagPrice(bakeryToEdit.flourBagPrice !== undefined ? Number(bakeryToEdit.flourBagPrice) : 950);
@@ -449,7 +449,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
           : '0.00'
       );
 
-      setActivityStatus('شغال');
+      setActivityStatus('يعمل');
       setBakeryCategory('مخبز بلدي مدعم');
       setBreadType('بلدي مدعم ماو');
       setFlourBagPrice(950);
@@ -1916,28 +1916,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </label>
                 <input
                   type="number"
-                  step="0.5"
+                  readOnly={true}
                   value={insuranceQuota}
-                  onChange={(e) => {
-                    const q = parseFloat(e.target.value) || 0;
-                    setInsuranceQuota(q);
-                    const computedVal = calculateInsuranceValueFromQuota(q);
-                    setInsuranceValue(computedVal);
-                    calculateAllAverages(
-                      q,
-                      villagePopulation,
-                      beneficiaries2023,
-                      beneficiaries2024,
-                      beneficiaries2025,
-                      computedVal,
-                      actualQuota,
-                      breadTypeCount
-                    );
-                    if (q > 0) clearError('insuranceQuota');
-                  }}
-                  className={`w-full px-3 py-2 bg-amber-50/60 border border-amber-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500 num-enlarged text-center ${
-                    errors.insuranceQuota ? 'border-red-500 bg-red-50/50' : 'border-slate-300'
-                  }`}
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-black text-slate-800 num-enlarged text-center cursor-not-allowed"
                 />
                 {errors.insuranceQuota && (
                   <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
@@ -1990,15 +1971,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </label>
                 <input
                   type="number"
+                  readOnly={true}
                   value={loavesCount}
-                  onChange={(e) => {
-                    const l = Number(e.target.value) || 0;
-                    setLoavesCount(l);
-                    if (l > 0) setErrors((prev) => ({ ...prev, loavesCount: '' }));
-                  }}
-                  className={`w-full px-3 py-2 border-2 rounded-lg text-xs font-black num-enlarged text-center ${
-                    errors.loavesCount ? 'border-red-500 bg-red-50 text-red-900' : 'border-amber-400 bg-amber-50 text-amber-950'
-                  }`}
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-black text-slate-800 num-enlarged text-center cursor-not-allowed"
                 />
                 {errors.loavesCount && (
                   <p className="text-[11px] text-red-600 font-black mt-1 flex items-center gap-1">
@@ -2015,9 +1990,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </label>
                 <input
                   type="text"
+                  readOnly={true}
                   value={perCapitaAverage}
-                  onChange={(e) => setPerCapitaAverage(e.target.value)}
-                  className="w-full px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-black text-amber-950 num-enlarged text-center"
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-black text-slate-800 num-enlarged text-center cursor-not-allowed"
                 />
               </div>
             </div>
@@ -2232,9 +2207,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </label>
                 <input
                   type="text"
+                  readOnly={true}
                   value={avg2023}
-                  onChange={(e) => setAvg2023(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-black text-slate-800 num-enlarged text-center cursor-not-allowed"
                 />
               </div>
 
@@ -2245,9 +2220,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </label>
                 <input
                   type="text"
+                  readOnly={true}
                   value={avg2024}
-                  onChange={(e) => setAvg2024(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-black text-slate-800 num-enlarged text-center cursor-not-allowed"
                 />
               </div>
 
@@ -2258,9 +2233,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </label>
                 <input
                   type="text"
+                  readOnly={true}
                   value={avg2025}
-                  onChange={(e) => setAvg2025(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 num-enlarged text-center"
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-black text-slate-800 num-enlarged text-center cursor-not-allowed"
                 />
               </div>
 
@@ -2271,9 +2246,9 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 </label>
                 <input
                   type="text"
+                  readOnly={true}
                   value={avgDiff}
-                  onChange={(e) => setAvgDiff(e.target.value)}
-                  className="w-full px-3 py-2 bg-amber-100/70 border-2 border-amber-500 rounded-lg text-xs font-black text-amber-900 num-enlarged text-center"
+                  className="w-full px-3 py-2 bg-amber-100/70 border-2 border-amber-500 rounded-lg text-xs font-black text-amber-900 num-enlarged text-center cursor-not-allowed"
                 />
               </div>
             </div>

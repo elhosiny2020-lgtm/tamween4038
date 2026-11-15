@@ -168,7 +168,7 @@ export function calculateInsuranceQuota(insuranceValue: number): number {
   const val = Number(insuranceValue) || 0;
   if (val <= 0) return 0;
   const result = val / 235 / 3;
-  return Number(result.toFixed(2));
+  return Math.round(result);
 }
 
 /**
@@ -1441,7 +1441,7 @@ export function calculateBakeriesColumnTotals(
       uAvg24 += parseFloat(String(normB.avg2024 || '0')) || 0;
       uAvg25 += parseFloat(String(normB.avg2025 || '0')) || 0;
 
-      if (normB.activityStatus === 'شغال') activeCount++;
+      if (normB.activityStatus === 'يعمل') activeCount++;
       uFlourSum += Number(normB.flourBagPrice ?? 950) || 0;
       uBreadCountSum += extractBreadLoafMultiplier(normB.breadTypeCount);
 
@@ -1512,7 +1512,7 @@ export function calculateBakeriesColumnTotals(
     activeCount,
     stoppedCount,
     activitySummaryLabel:
-      stoppedCount > 0 ? `${activeCount} شغال / ${stoppedCount} غير نشط` : `${activeCount} شغال`,
+      stoppedCount > 0 ? `${activeCount} يعمل / ${stoppedCount} غير نشط` : `${activeCount} يعمل`,
     uniqueCategoriesCount: categoriesSet.size,
     bakeryCategorySummaryLabel: `${bakeryCount} مخبز (${categoriesSet.size || 1} تصنيف)`,
     uniqueBreadTypesCount: breadTypesSet.size,

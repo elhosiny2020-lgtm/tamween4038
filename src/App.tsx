@@ -4819,7 +4819,7 @@ export default function App() {
                                     <td className="py-2.5 px-2 border-l border-slate-200">
                                       <span
                                         className={`font-bold text-[11px] ${
-                                          b.activityStatus === 'شغال' ? 'text-emerald-700' : 'text-red-700'
+                                          b.activityStatus === 'يعمل' ? 'text-emerald-700' : 'text-red-700'
                                         }`}
                                       >
                                         {b.activityStatus}

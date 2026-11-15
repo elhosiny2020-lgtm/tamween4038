@@ -96,7 +96,7 @@ export function computeExecutiveSummary(
 
   for (const b of filteredBakeries) {
     const status = (b.activityStatus || '').trim();
-    if (status === 'شغال' || status === 'يعمل') {
+    if (status === 'يعمل') {
       activeCount++;
     } else {
       stoppedCount++;
@@ -223,7 +223,7 @@ export function analyzeOperationalAndLicenseAlerts(
 
   for (const b of bakeries) {
     const status = (b.activityStatus || '').trim();
-    if (status && status !== 'شغال' && status !== 'يعمل') {
+    if (status && status !== 'يعمل') {
       alerts.push({
         bakeryId: b.id,
         bakeryOwnerName: b.bakeryOwnerName || 'مخبز غير مسمى',

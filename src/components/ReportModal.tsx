@@ -1205,7 +1205,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                   className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black focus:ring-1 focus:ring-amber-500"
                 >
                   <option value="ALL">كافة الحالات</option>
-                  <option value="شغال">شغال</option>
+                  <option value="يعمل">يعمل</option>
                   <option value="متوقف جزئي">متوقف جزئي</option>
                   <option value="متوقف كلي">متوقف كلي</option>
                   <option value="ملغى">ملغى</option>

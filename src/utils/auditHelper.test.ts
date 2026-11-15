@@ -601,7 +601,7 @@ test('syncAllBranchesFromCloudPayload propagates newly added branches across dev
               breadTypeCount: 1,
               lineType: 'آلي كامل',
               fuelType: 'غاز طبيعي',
-              activityStatus: 'شغال',
+              activityStatus: 'يعمل',
             },
           ],
           debts: [],

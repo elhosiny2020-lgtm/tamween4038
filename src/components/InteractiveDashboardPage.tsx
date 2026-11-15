@@ -61,7 +61,6 @@ export interface InteractiveDashboardPageProps {
 }
 
 const STATUS_COLOR_MAP: Record<string, string> = {
-  شغال: '#10B981',
   يعمل: '#10B981',
   'متوقف جزئي': '#D4AF37',
   'متوقف كلي': '#F43F5E',
@@ -642,7 +641,7 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
           <div className="mt-3 pt-2.5 border-t border-emerald-100 flex items-center justify-between text-[11px]">
             <span className="text-emerald-700 font-black inline-flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              شغال: <span className="font-mono tabular-nums">{kpis.activeCount}</span>
+              يعمل: <span className="font-mono tabular-nums">{kpis.activeCount}</span>
             </span>
             <button
               type="button"

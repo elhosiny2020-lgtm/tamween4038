@@ -45,7 +45,7 @@ export const ActivityStatusModal: React.FC<ActivityStatusModalProps> = ({
   };
 
   const getStatusBadgeStyle = (statusName: string) => {
-    if (statusName === 'شغال') return 'bg-emerald-100 text-emerald-900 border-emerald-300';
+    if (statusName === 'يعمل') return 'bg-emerald-100 text-emerald-900 border-emerald-300';
     if (statusName.includes('جزئي')) return 'bg-amber-100 text-amber-900 border-amber-300';
     if (statusName.includes('كلي') || statusName.includes('مغلق')) return 'bg-red-100 text-red-900 border-red-300';
     if (statusName === 'ملغى') return 'bg-slate-200 text-slate-800 border-slate-300';

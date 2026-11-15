@@ -307,7 +307,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                     </span>
                     <h4 className="text-sm font-black text-emerald-300">
-                      موقعك منشور وشغال حالياً ومتاح 24/7 على السحابة مجاناً:
+                      موقعك منشور ويعمل حالياً ومتاح 24/7 على السحابة مجاناً:
                     </h4>
                   </div>
                   <span className="text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full">
@@ -535,7 +535,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                   <ol className="text-xs text-slate-300 list-decimal list-inside space-y-1 font-bold">
                     <li>حمل ملف الـ ZIP أعلاه أو مجلد <code className="text-amber-300 font-mono">dist</code>.</li>
                     <li>افتح لوحة تحكم Cloudflare Pages: <code className="text-amber-300 font-mono">dash.cloudflare.com &gt; Workers &amp; Pages</code>.</li>
-                    <li>اختر <strong>Upload assets</strong> واسحب الملف وسيكون موقعك شغالاً على نطاق مجاني <code className="text-emerald-400 font-mono">*.pages.dev</code>.</li>
+                    <li>اختر <strong>Upload assets</strong> واسحب الملف وسيكون موقعك يعملاً على نطاق مجاني <code className="text-emerald-400 font-mono">*.pages.dev</code>.</li>
                   </ol>
                   <div className="pt-1">
                     <a

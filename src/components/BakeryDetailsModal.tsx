@@ -130,7 +130,7 @@ export const BakeryDetailsModal: React.FC<BakeryDetailsModalProps> = ({
                 <span className="text-slate-500 block text-[11px]">{ct.activityStatus}</span>
                 <span
                   className={`font-bold mt-0.5 inline-block ${
-                    bakery.activityStatus === 'شغال' ? 'text-emerald-700' : 'text-red-700'
+                    bakery.activityStatus === 'يعمل' ? 'text-emerald-700' : 'text-red-700'
                   }`}
                 >
                   {bakery.activityStatus}

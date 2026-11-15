@@ -1078,7 +1078,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
       case 'flourBagPrice':
         return `${safeFormatNum(colTotals.flourBagPriceSum, 0)} ج.م`;
       case 'breadTypeCount':
-        return safeFormatNum(colTotals.breadTypeCountSum, 0);
+        return '—';
       case 'lineType':
         return colTotals.lineTypeSummaryLabel;
       case 'fuelType':

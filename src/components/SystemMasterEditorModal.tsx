@@ -110,7 +110,7 @@ const DROPDOWN_LISTS_META: DropdownListMeta[] = [
   {
     key: 'activityStatuses',
     title: 'نشاط وحالة تشغيل المخبز',
-    subtitle: 'القائمة المنسدلة لحالات التشغيل (شغال، متوقف جزئي، متوقف كلي، ملغى...)',
+    subtitle: 'القائمة المنسدلة لحالات التشغيل (يعمل، متوقف جزئي، متوقف كلي، ملغى...)',
     placeholder: 'أدخل حالة تشغيل جديدة...',
     badgeColor: 'bg-emerald-100 text-emerald-900 border-emerald-300',
     icon: <Activity className="w-4 h-4 text-emerald-600" />,

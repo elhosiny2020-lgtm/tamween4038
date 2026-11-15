@@ -28,7 +28,7 @@ function makeBakery(overrides: Partial<Bakery> = {}): Bakery {
     beneficiaries2025: 1100,
     avg2025: '6.00',
     avgDiff: '-4.92',
-    activityStatus: 'شغال',
+    activityStatus: 'يعمل',
     breadType: 'بلدي مدعم ماو',
     breadTypeCount: 660,
     lineType: 'نصف آلي',
@@ -95,7 +95,7 @@ describe('dashboardAnalytics pure helpers', () => {
 
   it('computes collection rate, operational rate, quota utilization, and threshold exceedance', () => {
     const bakeries = [
-      makeBakery({ id: 'b-1', activityStatus: 'شغال', actualQuota: 12, insuranceQuota: 10, loavesCount: 7920 }),
+      makeBakery({ id: 'b-1', activityStatus: 'يعمل', actualQuota: 12, insuranceQuota: 10, loavesCount: 7920 }),
       makeBakery({ id: 'b-2', activityStatus: 'متوقف كلي', actualQuota: 8, insuranceQuota: 10, loavesCount: 5280 }),
     ];
     const debts = [

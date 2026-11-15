@@ -210,7 +210,7 @@ test('Realtime event deduplication and row mutation helpers process INSERT, UPDA
     breadTypeCount: 1,
     lineType: 'نصف آلي',
     fuelType: 'غاز طبيعي',
-    activityStatus: 'شغال',
+    activityStatus: 'يعمل',
   };
 
   const sqlRow = mapBakeryToSqlRow(b1 as any, 'branch-mahalla');
@@ -816,7 +816,7 @@ test('Normalized SQL mappers maintain exact column parity with schema.sql (no da
       branchId: 'branch-mahalla',
       systemConfig: { administrationTitle: 'إدارة المحلة' },
       columnTitles: { owner: 'صاحب المخبز' },
-      activityStatuses: ['شغال'],
+      activityStatuses: ['يعمل'],
     },
     'branch-mahalla'
   );

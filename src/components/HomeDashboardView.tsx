@@ -75,7 +75,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
     const totalBen2025 = bakeries.reduce((acc, b) => acc + (Number(b.beneficiaries2025) || 0), 0);
     const overallPerCapita = totalBen2025 > 0 ? (totalLoaves / totalBen2025).toFixed(2) : '0.00';
 
-    const activeBakeries = bakeries.filter((b) => b.activityStatus === 'شغال').length;
+    const activeBakeries = bakeries.filter((b) => b.activityStatus === 'يعمل').length;
     const stoppedBakeries = totalBakeries - activeBakeries;
     const totalDebts = debts.reduce((acc, d) => acc + (Number(d.netRemainingDebt) || 0), 0);
     const needsReviewCount = bakeries.filter(
@@ -387,7 +387,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
                     {colTotals.actualQuota.toLocaleString()}
                   </td>
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-amber-200">
-                    {colTotals.breadTypeCountSum.toLocaleString()}
+                    —
                   </td>
                   <td className="py-2.5 px-2 border-l border-slate-700 font-mono text-emerald-300">
                     {colTotals.loavesCount.toLocaleString()}
@@ -468,7 +468,7 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
               {stats.totalBakeries.toLocaleString()}
             </span>
             <div className="mt-3 pt-2.5 border-t border-slate-200/80 text-[11px] font-black text-[#10B981] w-full">
-              {stats.activeBakeries} شغال · <span className="text-[#F43F5E]">{stats.stoppedBakeries} متوقف</span>
+              {stats.activeBakeries} يعمل · <span className="text-[#F43F5E]">{stats.stoppedBakeries} متوقف</span>
             </div>
           </button>
 

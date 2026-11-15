@@ -96,7 +96,7 @@ export const PAYMENT_METHODS: string[] = [
 ];
 
 export const DEFAULT_ACTIVITY_STATUSES: string[] = [
-  'شغال',
+  'يعمل',
   'متوقف جزئي',
   'متوقف كلي',
   'ملغى',
@@ -211,7 +211,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     beneficiaries2025: 37400,
     avg2025: (15840 / 37400).toFixed(2), // 0.42
     avgDiff: (15840 / 34200 - 15840 / 35800 - 15840 / 37400).toFixed(2), // -0.40 (م2023 - م2024 - م2025)
-    activityStatus: 'شغال',
+    activityStatus: 'يعمل',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,
@@ -245,7 +245,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     beneficiaries2025: 28900,
     avg2025: (13050 / 28900).toFixed(2), // 0.45
     avgDiff: (13050 / 26100 - 13050 / 27500 - 13050 / 28900).toFixed(2), // -0.43 (م2023 - م2024 - م2025)
-    activityStatus: 'شغال',
+    activityStatus: 'يعمل',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,
@@ -279,7 +279,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     beneficiaries2025: 30800,
     avg2025: (13200 / 30800).toFixed(2), // 0.43
     avgDiff: (13200 / 28000 - 13200 / 29500 - 13200 / 30800).toFixed(2), // -0.40 (م2023 - م2024 - م2025)
-    activityStatus: 'شغال',
+    activityStatus: 'يعمل',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,
@@ -313,7 +313,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     beneficiaries2025: 32900,
     avg2025: (15950 / 32900).toFixed(2), // 0.48
     avgDiff: (15950 / 29800 - 15950 / 31200 - 15950 / 32900).toFixed(2), // -0.46 (م2023 - م2024 - م2025)
-    activityStatus: 'شغال',
+    activityStatus: 'يعمل',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مجر',
     flourBagPrice: 950,
@@ -347,7 +347,7 @@ export const INITIAL_BAKERIES: Bakery[] = [
     beneficiaries2025: 25100,
     avg2025: (10560 / 25100).toFixed(2), // 0.42
     avgDiff: (10560 / 23000 - 10560 / 24200 - 10560 / 25100).toFixed(2), // -0.40 (م2023 - م2024 - م2025)
-    activityStatus: 'شغال',
+    activityStatus: 'يعمل',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,

@@ -80,7 +80,7 @@ function makeBakery(overrides: Partial<Bakery> = {}): Bakery {
     beneficiaries2025: 5000,
     avg2025: '2.70',
     avgDiff: '0.00',
-    activityStatus: 'شغال',
+    activityStatus: 'يعمل',
     bakeryCategory: 'مخبز بلدي مدعم',
     breadType: 'بلدي مدعم ماو',
     flourBagPrice: 950,
@@ -168,7 +168,7 @@ test('applyGranularRowChangeToState handles bakeries INSERT (camelCase & snake_c
       actual_quota: 10,
       insurance_value: 7050,
       loaves_count: 13500,
-      activity_status: 'شغال',
+      activity_status: 'يعمل',
     },
     timestamp: '2026-11-15T10:01:00.000Z',
   });
@@ -379,12 +379,12 @@ test('applyGranularRowChangeToState handles villages, inbox_messages, daily_task
     branchId: 'branch-mahalla',
     newRow: {
       payload: { debtAlertThreshold: 25000 },
-      activityStatuses: ['شغال', 'متوقف كلي', 'متوقف للصيانة'],
+      activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف للصيانة'],
     },
     timestamp: '2026-11-15T10:00:00.000Z',
   });
   assert.equal(state.systemConfig.debtAlertThreshold, 25000);
-  assert.deepEqual(state.activityStatuses, ['شغال', 'متوقف كلي', 'متوقف للصيانة']);
+  assert.deepEqual(state.activityStatuses, ['يعمل', 'متوقف كلي', 'متوقف للصيانة']);
 });
 
 test('resolveConflictWithServerRow replaces stale optimistic record with latest server version', () => {
