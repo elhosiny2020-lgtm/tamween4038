@@ -1,5 +1,5 @@
-import { Bakery, DebtRecord, VillageHierarchy, ColumnTitles, SystemConfig, AppUser, DailyBakeryTask, InboxChatMessage } from './types';
-import { UPLOADED_OFFICIAL_LOGO } from './uploadedLogo';
+import type { Bakery, DebtRecord, VillageHierarchy, ColumnTitles, SystemConfig, AppUser, DailyBakeryTask, InboxChatMessage } from './types.ts';
+import { UPLOADED_OFFICIAL_LOGO } from './uploadedLogo.ts';
 
 export const DEFAULT_OFFICIAL_LOGO = UPLOADED_OFFICIAL_LOGO;
 

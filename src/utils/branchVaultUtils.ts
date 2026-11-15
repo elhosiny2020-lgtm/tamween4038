@@ -1,4 +1,4 @@
-import type { SupplyBranch, BranchVaultCredential } from '../types';
+import type { SupplyBranch, BranchVaultCredential } from '../types.ts';
 
 export const DEFAULT_BRANCH_ID = 'branch-mahalla';
 export const SAMANOUD_BRANCH_ID = 'branch-samanoud';

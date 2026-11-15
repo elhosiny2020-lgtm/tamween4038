@@ -582,64 +582,66 @@ async function startServer() {
     }
   };
 
-  // Ensure normalized PostgreSQL schema & default branch on startup, safely migrate & verify any legacy JSON files first, and hydrate state from PG
-  try {
-    await ensurePostgresSchema();
-    await migrateAndVerifyLegacyJsonFilesToPostgres();
-    let { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
-      clientId: 'postgres-boot',
-      sqlOperation: 'SELECT',
-      affectedTable: 'bakeries',
-    });
-    if (pgBoot.bakeries.length === 0) {
-      const seededBakeries = INITIAL_BAKERIES.map((b) => ({
-        ...b,
-        id: b.id.replace(/^b-/, 'bk-'),
-      }));
-      const seededDebts = INITIAL_DEBTS.map((d) => ({
-        ...d,
-        id: d.id.replace(/^d-/, 'dt-'),
-        bakeryId: d.bakeryId.replace(/^b-/, 'bk-'),
-      }));
-      const seededTasks = INITIAL_DAILY_TASKS.map((t) => ({
-        ...t,
-        bakeryId: t.bakeryId ? t.bakeryId.replace(/^b-/, 'bk-') : undefined,
-      }));
-      await syncFullBranchStateToPostgres(
-        DEFAULT_BRANCH_ID,
-        {
-          activeBranchId: DEFAULT_BRANCH_ID,
-          bakeries: seededBakeries,
-          debts: seededDebts,
-          villages: DEFAULT_VILLAGES_HIERARCHY,
-          users: INITIAL_USERS,
-          dailyTasks: seededTasks,
-          inboxMessages: INITIAL_INBOX_MESSAGES,
-        },
-        { pruneRemoved: false }
-      );
-      const refreshed = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
-        clientId: 'postgres-boot-seed',
+  // Run PostgreSQL schema, legacy migration, and initial hydration asynchronously so httpServer.listen(PORT) binds immediately on Cloud Run
+  const startupBootstrapPromise = (async () => {
+    try {
+      await ensurePostgresSchema();
+      await migrateAndVerifyLegacyJsonFilesToPostgres();
+      let { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
+        clientId: 'postgres-boot',
         sqlOperation: 'SELECT',
         affectedTable: 'bakeries',
       });
-      pgBoot = refreshed.pgBoot;
-      snapshot = refreshed.snapshot;
+      if (pgBoot.bakeries.length === 0) {
+        const seededBakeries = INITIAL_BAKERIES.map((b) => ({
+          ...b,
+          id: b.id.replace(/^b-/, 'bk-'),
+        }));
+        const seededDebts = INITIAL_DEBTS.map((d) => ({
+          ...d,
+          id: d.id.replace(/^d-/, 'dt-'),
+          bakeryId: d.bakeryId.replace(/^b-/, 'bk-'),
+        }));
+        const seededTasks = INITIAL_DAILY_TASKS.map((t) => ({
+          ...t,
+          bakeryId: t.bakeryId ? t.bakeryId.replace(/^b-/, 'bk-') : undefined,
+        }));
+        await syncFullBranchStateToPostgres(
+          DEFAULT_BRANCH_ID,
+          {
+            activeBranchId: DEFAULT_BRANCH_ID,
+            bakeries: seededBakeries,
+            debts: seededDebts,
+            villages: DEFAULT_VILLAGES_HIERARCHY,
+            users: INITIAL_USERS,
+            dailyTasks: seededTasks,
+            inboxMessages: INITIAL_INBOX_MESSAGES,
+          },
+          { pruneRemoved: false }
+        );
+        const refreshed = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
+          clientId: 'postgres-boot-seed',
+          sqlOperation: 'SELECT',
+          affectedTable: 'bakeries',
+        });
+        pgBoot = refreshed.pgBoot;
+        snapshot = refreshed.snapshot;
+      }
+      if (pgBoot.hasAnyRows) {
+        liveRevision = Math.max(liveRevision, 1);
+        snapshot.revision = liveRevision;
+        cachedLiveSnapshot = snapshot;
+        cachedAlertsState = {
+          alerts: pgBoot.highDebtAlerts,
+          debtAlertThreshold: pgBoot.systemConfig?.debtAlertThreshold || 50000,
+          updatedAt: snapshot.timestamp,
+          revision: Math.max(cachedAlertsState.revision, 1),
+        };
+      }
+    } catch (err) {
+      console.warn('PostgreSQL startup bootstrap warning:', (err as Error)?.message);
     }
-    if (pgBoot.hasAnyRows) {
-      liveRevision = Math.max(liveRevision, 1);
-      snapshot.revision = liveRevision;
-      cachedLiveSnapshot = snapshot;
-      cachedAlertsState = {
-        alerts: pgBoot.highDebtAlerts,
-        debtAlertThreshold: pgBoot.systemConfig?.debtAlertThreshold || 50000,
-        updatedAt: snapshot.timestamp,
-        revision: Math.max(cachedAlertsState.revision, 1),
-      };
-    }
-  } catch (err) {
-    console.warn('PostgreSQL startup bootstrap warning:', (err as Error)?.message);
-  }
+  })();
 
   // Record initial startup security verification
   recordSecurityAudit({
@@ -1102,6 +1104,10 @@ async function startServer() {
 
   app.get('/api/db/bootstrap', async (req, res) => {
     try {
+      await Promise.race([
+        startupBootstrapPromise,
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]);
       const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
       const boot = await getBootstrapFromPostgres(branchId);
       res.json({
