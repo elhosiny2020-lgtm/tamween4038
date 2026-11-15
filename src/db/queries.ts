@@ -240,6 +240,7 @@ export function mapDbUserToApp(r: any): AppUser & { version?: number } {
     gmailPassword: String(r.gmail_password || ''),
     googleDriveAutoSync: Boolean(r.google_drive_auto_sync),
     customPermissions: Array.isArray(r.custom_permissions) ? r.custom_permissions : undefined,
+    isActive: r.is_active !== false,
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
     version: Number(r.version || 1),
   };

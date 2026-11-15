@@ -79,6 +79,7 @@ export function sanitizeBranchUsers(
       username: u.username.trim(),
       password: (u.password || '').trim(),
       branchId: cleanBranchId,
+      isActive: u.isActive !== false,
     });
   }
 

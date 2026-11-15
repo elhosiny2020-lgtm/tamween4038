@@ -479,6 +479,7 @@ export const INITIAL_USERS: AppUser[] = [
     fullName: 'مدير المنظومة التموينية',
     password: 'admin',
     role: 'admin',
+    isActive: true,
     gmailEmail: 'ELHOSINY2020@gmail.com',
     googleDriveAutoSync: true,
     createdAt: '2026-01-01'
@@ -489,6 +490,7 @@ export const INITIAL_USERS: AppUser[] = [
     fullName: 'مفتش أول رقابة تموينية',
     password: '123',
     role: 'inspector',
+    isActive: true,
     gmailEmail: 'ELHOSINY2020@gmail.com',
     googleDriveAutoSync: true,
     createdAt: '2026-02-15'
@@ -499,6 +501,7 @@ export const INITIAL_USERS: AppUser[] = [
     fullName: 'مشاهد / قارئ فقط (عرض وتصفح بدون تعديلات)',
     password: '123',
     role: 'viewer',
+    isActive: true,
     createdAt: '2026-03-01'
   }
 ];

@@ -14,12 +14,22 @@ export const createPool = () => {
       user: process.env.SQL_USER,
       password: process.env.SQL_PASSWORD,
       database: process.env.SQL_DB_NAME,
-      max: 15,
+      max: 10,
+      idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
     });
 
-    global._postgresPool.on('error', (err) => {
-      console.error('Unexpected error on idle SQL pool client:', err);
+    global._postgresPool.on('error', (err: any) => {
+      // Normal closure of idle connections by remote server, Cloud SQL scale-to-zero, or proxy
+      if (
+        err?.message?.includes('Connection terminated') ||
+        err?.code === 'ECONNRESET' ||
+        err?.code === '57P01' ||
+        err?.code === 'EPIPE'
+      ) {
+        return;
+      }
+      console.warn('Postgres pool background client event:', err?.message || err);
     });
   }
   return global._postgresPool;
