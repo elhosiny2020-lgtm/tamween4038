@@ -475,7 +475,24 @@ async function startServer() {
     res.json({ success: true, exists: false, snapshot: null });
   });
 
+  // Server-side 15-second keep-alive heartbeat to prevent Cloud Run / reverse-proxy 1006 idle disconnects
+  setInterval(() => {
+    const nowIso = new Date().toISOString();
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.ping();
+          client.send(JSON.stringify({ type: 'pong', timestamp: nowIso }));
+        } catch {}
+      }
+    });
+  }, 15000);
+
   wss.on('connection', (socket) => {
+    socket.on('error', () => {
+      // Prevent unhandled socket transport errors on proxy handoff
+    });
+
     // Send authoritative state immediately upon WebSocket connect/reconnect
     try {
       socket.send(
@@ -1028,8 +1045,13 @@ async function startServer() {
   // Vite development middleware vs Static Production files
   const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
   if (!isProd) {
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: !hmrDisabled,
+        ws: hmrDisabled ? false : undefined,
+      },
       appType: 'custom',
     });
     app.use(vite.middlewares);

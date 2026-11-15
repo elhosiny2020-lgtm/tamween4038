@@ -459,11 +459,14 @@ test('Realtime Diagnostics telemetry tracks all 9 subscribed tables, incoming/ou
     summary: 'تم تحديث كائن AppState في الذاكرة فوراً',
   });
 
-  recordRealtimeSocketError({
-    level: 'WARN',
-    source: 'WEBSOCKET',
-    message: 'اختبار تسجيل خطأ WebSocket في الكونسول التشخيصي',
-  });
+  recordRealtimeSocketError(
+    {
+      level: 'WARN',
+      source: 'WEBSOCKET',
+      message: 'اختبار تسجيل خطأ WebSocket في الكونسول التشخيصي',
+    },
+    { autoResolveImmediately: false }
+  );
 
   const updatedSnap = getRealtimeDiagnosticsSnapshot();
   assert.strictEqual(updatedSnap.eventsLog.length, 2);
@@ -562,5 +565,57 @@ test('Last 50 Realtime Events DataGrid classifies INSERT, UPDATE, and DELETE mut
   );
   clearRealtimeDiagnosticsLogs();
 });
+
+test('WebSockets & Realtime Console Interceptor automatically resolves socket warnings and resolveAllConsoleAndSocketIssues clears active errors to 0', async () => {
+  const {
+    recordRealtimeSocketError,
+    resolveAllConsoleAndSocketIssues,
+    getRealtimeDiagnosticsSnapshot,
+    clearRealtimeDiagnosticsLogs,
+  } = await import('./supabase');
+
+  clearRealtimeDiagnosticsLogs();
+
+  // 1. Default behavior: intercepted console warnings/errors are auto-resolved immediately
+  const autoEntry = recordRealtimeSocketError({
+    level: 'WARN',
+    source: 'CONSOLE_INTERCEPT',
+    message: 'WebSocket connection transient warning auto-healed',
+  });
+  assert.strictEqual(autoEntry.resolved, true);
+  assert.strictEqual(autoEntry.level, 'RESOLVED');
+
+  let snap = getRealtimeDiagnosticsSnapshot();
+  assert.strictEqual(snap.errorsLog.length, 0);
+  assert.strictEqual(snap.resolvedErrorsLog.length, 1);
+  assert.ok(snap.autoHealedCount >= 1);
+
+  // 2. If an unresolved error is recorded, resolveAllConsoleAndSocketIssues() resolves it and resets active errors to 0
+  recordRealtimeSocketError(
+    {
+      level: 'ERROR',
+      source: 'WEBSOCKET',
+      message: 'Unresolved socket disconnect test',
+    },
+    { autoResolveImmediately: false }
+  );
+  snap = getRealtimeDiagnosticsSnapshot();
+  assert.strictEqual(snap.errorsLog.length, 1);
+
+  const fixResult = await resolveAllConsoleAndSocketIssues();
+  assert.strictEqual(fixResult.success, true);
+  assert.strictEqual(fixResult.resolvedCount, 1);
+  assert.strictEqual(fixResult.stepsCompleted.length, 4);
+
+  snap = getRealtimeDiagnosticsSnapshot();
+  assert.strictEqual(snap.errorsLog.length, 0);
+  assert.strictEqual(snap.resolvedErrorsLog.length, 2);
+  assert.strictEqual(snap.webSocketState, 'OPEN');
+  assert.strictEqual(snap.sseStreamState, 'OPEN');
+  assert.strictEqual(snap.supabaseChannelState, 'SUBSCRIBED');
+
+  clearRealtimeDiagnosticsLogs();
+});
+
 
 
