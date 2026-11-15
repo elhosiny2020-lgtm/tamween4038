@@ -367,14 +367,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   const getBadgeClasses = (variant?: SidebarSubItem['badgeVariant']) => {
     switch (variant) {
       case 'danger':
-        return 'bg-[#F43F5E] text-white font-black';
+        return 'bg-[#F43F5E] text-white font-black badge-animated-coral animate-pulse';
       case 'warning':
-        return 'bg-amber-500 text-[#0A1628] font-black';
+        return 'bg-amber-500 text-[#0A1628] font-black badge-animated-gold';
       case 'gold':
-        return 'bg-[#D4AF37]/25 text-[#FDE68A] border border-[#D4AF37]/40 font-black';
+        return 'bg-[#D4AF37]/25 text-[#FDE68A] border border-[#D4AF37]/40 font-black badge-animated-gold';
       case 'teal':
       default:
-        return 'bg-[#0D9488]/25 text-[#5EEAD4] border border-[#0D9488]/40 font-black';
+        return 'bg-[#0D9488]/25 text-[#5EEAD4] border border-[#0D9488]/40 font-black badge-animated-teal';
     }
   };
 

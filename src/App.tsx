@@ -1754,13 +1754,13 @@ export default function App() {
       totalLoaves,
       totalDebts,
     };
-  }, [appState, bakeryRemainingDebtsMap]);
+  }, [appState?.bakeries, bakeryRemainingDebtsMap]);
 
   // Annual Weighted Averages Report Summary (المتوسط العام المرجح بأعداد المستفيدين 2023 - 2025)
   const annualWeightedSummary = useMemo(() => {
     if (!appState) return null;
     return calculateAnnualWeightedAveragesReport(filteredBakeries.length > 0 ? filteredBakeries : appState.bakeries);
-  }, [appState, filteredBakeries]);
+  }, [appState?.bakeries, filteredBakeries]);
 
   // Keep fresh ref of appState for 10-min pre-logout autosave
   const appStateRef = React.useRef(appState);
@@ -3045,13 +3045,16 @@ export default function App() {
                     {connectionSnapshot.status === 'syncing' ? (
                       <RotateCw className="w-3 h-3 text-[#D4AF37] animate-spin" />
                     ) : (
-                      <span
-                        className={`w-2 h-2 rounded-full ${
-                          connectionSnapshot.status === 'connected'
-                            ? 'bg-[#10B981] animate-pulse'
-                            : 'bg-[#F43F5E]'
-                        }`}
-                      />
+                      <span className="relative flex h-2 w-2">
+                        {connectionSnapshot.status === 'connected' && (
+                          <span className="beacon-dot-live animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75"></span>
+                        )}
+                        <span
+                          className={`relative inline-flex rounded-full h-2 w-2 ${
+                            connectionSnapshot.status === 'connected' ? 'bg-[#10B981]' : 'bg-[#F43F5E]'
+                          }`}
+                        />
+                      </span>
                     )}
                     <span>{connectionSnapshot.label}</span>
                     {connectionSnapshot.pendingQueueCount > 0 && (
@@ -3139,7 +3142,7 @@ export default function App() {
               {highDebtNotifications.filter((n) => !n.isRead).length > 0 && (
                 <span
                   data-testid="alerts-unread-badge"
-                  className="px-1.5 py-0.2 bg-[#F43F5E] text-white rounded-full text-[10px] font-mono font-bold tabular-nums"
+                  className="px-2 py-0.5 bg-[#F43F5E] text-white rounded-full text-[10px] font-mono font-black tabular-nums badge-animated-coral animate-pulse"
                 >
                   {highDebtNotifications.filter((n) => !n.isRead).length}
                 </span>
@@ -3156,7 +3159,7 @@ export default function App() {
               <Bell className="w-4 h-4 text-[#D4AF37]" />
               <span>الإشعارات</span>
               {totalNotificationsCount > 0 && (
-                <span className="px-1.5 py-0.2 bg-[#F43F5E] text-white rounded-full text-[10px] font-mono font-bold tabular-nums">
+                <span className="px-2 py-0.5 bg-[#F43F5E] text-white rounded-full text-[10px] font-mono font-black tabular-nums badge-animated-coral animate-pulse">
                   {totalNotificationsCount}
                 </span>
               )}
@@ -3768,8 +3771,9 @@ export default function App() {
           </div>
 
           {/* 3.3 Dynamic Active View Content */}
-          {activeTab === 'dashboard' ? (
-            <HomeDashboardView
+          <div key={activeTab} className="tab-content-enter">
+            {activeTab === 'dashboard' ? (
+              <HomeDashboardView
               bakeries={appState.bakeries}
               debts={appState.debts}
               villages={appState.villages}
@@ -5271,6 +5275,7 @@ export default function App() {
               </div>
             </div>
           )}
+          </div>
         </main>
       </div>
 

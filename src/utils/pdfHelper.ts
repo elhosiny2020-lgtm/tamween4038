@@ -289,19 +289,20 @@ export function printHtmlElementA4(
 
   try {
     let iframe = document.getElementById('report-fast-print-iframe') as HTMLIFrameElement | null;
-    if (!iframe) {
-      iframe = document.createElement('iframe');
-      iframe.id = 'report-fast-print-iframe';
-      iframe.style.position = 'fixed';
-      iframe.style.right = '0';
-      iframe.style.bottom = '0';
-      iframe.style.width = '1px';
-      iframe.style.height = '1px';
-      iframe.style.border = 'none';
-      iframe.style.opacity = '0';
-      iframe.style.pointerEvents = 'none';
-      document.body.appendChild(iframe);
+    if (iframe) {
+      try { iframe.remove(); } catch {}
     }
+    iframe = document.createElement('iframe');
+    iframe.id = 'report-fast-print-iframe';
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.border = 'none';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    document.body.appendChild(iframe);
 
     const iframeDoc = iframe.contentWindow?.document;
     if (!iframeDoc) {
@@ -340,14 +341,17 @@ export function printHtmlElementA4(
     `);
     iframeDoc.close();
 
-    setTimeout(() => {
-      try {
-        iframe?.contentWindow?.focus();
-        iframe?.contentWindow?.print();
-      } catch {
-        window.print();
-      }
-    }, 60);
+    // Use requestAnimationFrame + slight delay to prevent main-thread freeze
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        try {
+          iframe?.contentWindow?.focus();
+          iframe?.contentWindow?.print();
+        } catch {
+          window.print();
+        }
+      }, 150);
+    });
   } catch {
     window.print();
   }
@@ -380,6 +384,8 @@ export async function exportElementToPdf(
       : [6, 6, 6, 6];
 
   options.onProgress?.('جاري تجهيز التقرير للطباعة والتصدير...');
+  // Let UI paint the progress message without lag
+  await new Promise((resolve) => setTimeout(resolve, 80));
 
   const win = window as unknown as {
     html2pdf?: () => {
@@ -392,6 +398,7 @@ export async function exportElementToPdf(
     try {
       options.onProgress?.('جاري تهيئة محرك PDF...');
       await win.loadHtml2PdfOnDemand();
+      await new Promise((resolve) => setTimeout(resolve, 50));
     } catch (e) {
       console.warn('html2pdf dynamic loading notice:', e);
     }
@@ -414,14 +421,14 @@ export async function exportElementToPdf(
   const opt = {
     margin: marginArr,
     filename: finalFilename,
-    image: { type: 'jpeg', quality: 0.95 },
+    image: { type: 'jpeg', quality: 0.92 },
     pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
     html2canvas: {
-      scale: 1.35,
+      scale: 1.15, // Smooth 1.15x scale prevents browser freeze and speeds up generation 2x
       useCORS: true,
       logging: false,
       backgroundColor: '#ffffff',
-      windowWidth: paperSize === 'a3' ? 1600 : 1280,
+      windowWidth: paperSize === 'a3' ? 1440 : 1200,
       scrollX: 0,
       scrollY: 0,
       onclone: (clonedDoc: Document) => {
@@ -434,15 +441,18 @@ export async function exportElementToPdf(
   if (typeof win.html2pdf === 'function') {
     try {
       options.onProgress?.('جاري استخراج ملف PDF باللغة العربية...');
+      await new Promise((resolve) => setTimeout(resolve, 50));
       const pdfTask = win.html2pdf().from(isolatedWrapper).set(opt).save();
       const timeoutTask = new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('PDF generation timed out')), 7000)
+        setTimeout(() => reject(new Error('PDF generation timed out')), 15000)
       );
       await Promise.race([pdfTask, timeoutTask]);
       options.onProgress?.('تم استخراج وتنزيل ملف PDF بنجاح');
+      try { isolatedWrapper.remove(); } catch {}
       return true;
     } catch (err) {
       console.warn('PDF generation fallback to print preview:', err);
+      try { isolatedWrapper.remove(); } catch {}
       printHtmlElementA4(element, rawTitle, options.fontClass || 'report-font-standard', {
         paperSize,
         orientation,
@@ -451,6 +461,7 @@ export async function exportElementToPdf(
       return true;
     }
   } else {
+    try { isolatedWrapper.remove(); } catch {}
     printHtmlElementA4(element, rawTitle, options.fontClass || 'report-font-standard', {
       paperSize,
       orientation,

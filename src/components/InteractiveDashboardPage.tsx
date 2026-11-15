@@ -369,7 +369,7 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
     <section
       dir="rtl"
       data-testid="interactive-dashboard-page"
-      className="space-y-4 pb-8 text-slate-900"
+      className="space-y-4 pb-8 text-slate-900 tab-content-enter"
     >
       {/* 1. Executive Masthead & Filter Toolbar */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
@@ -437,7 +437,7 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                 <Bell className="w-3.5 h-3.5" />
                 <span>سجل التنبيهات</span>
                 {unreadAlertsCount > 0 && (
-                  <span className="bg-white text-red-700 px-1.5 py-0.5 rounded-sm text-[10px] font-mono font-black tabular-nums leading-none">
+                  <span className="bg-white text-red-700 px-1.5 py-0.5 rounded-sm text-[10px] font-mono font-black tabular-nums leading-none badge-animated-coral animate-pulse">
                     {unreadAlertsCount}
                   </span>
                 )}

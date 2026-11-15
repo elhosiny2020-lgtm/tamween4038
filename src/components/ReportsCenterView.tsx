@@ -1144,7 +1144,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
   ];
 
   return (
-    <div className="space-y-5" dir="rtl">
+    <div className="space-y-5 tab-content-enter" dir="rtl">
       {/* 1. Top Header Banner of Reports Center */}
       <div className="bg-gradient-to-l from-[#0A1931] via-[#0F2342] to-[#1E3A8A] text-white rounded-2xl p-5 shadow-md border border-blue-900/40 flex flex-wrap items-center justify-between gap-4 no-print">
         <div className="flex items-center gap-3.5">
@@ -1287,16 +1287,22 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                 key={rep.id}
                 type="button"
                 onClick={() => handleSelectReport(rep)}
-                className={`p-3 rounded-xl border text-right transition flex flex-col justify-between cursor-pointer ${
+                className={`p-3 rounded-xl border text-right transition-all flex flex-col justify-between cursor-pointer relative overflow-hidden ${
                   isActive
-                    ? 'bg-[#0F2342] text-white border-[#1E40AF] shadow-sm'
+                    ? 'bg-[#0A1628] text-white border-[#D4AF37] shadow-md ring-2 ring-[#D4AF37]/40 scale-[1.01]'
                     : 'bg-slate-50/70 hover:bg-blue-50/50 text-slate-800 border-slate-200 hover:border-blue-300'
                 }`}
               >
+                {isActive && (
+                  <span className="absolute top-2 left-2 flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4AF37] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#D4AF37]"></span>
+                  </span>
+                )}
                 <div>
                   <span
                     className={`text-[10px] font-bold block mb-0.5 ${
-                      isActive ? 'text-blue-200' : 'text-slate-500'
+                      isActive ? 'text-[#D4AF37]' : 'text-slate-500'
                     }`}
                   >
                     {rep.groupTitle}
