@@ -77,7 +77,9 @@ async function startServer() {
   // Dedicated Supabase config & live-db storage for seamless cross-device synchronization
   const SUPABASE_CONFIG_PATH = path.resolve(__dirname, 'supabase_config.json');
   const SUPABASE_CONFIG_TMP = '/tmp/supabase_config.json';
+  const SUPABASE_LIVE_DB_PRIMARY = path.resolve(__dirname, '.tamween_live_db.json');
   const SUPABASE_LIVE_DB_TMP = '/tmp/tamween_supabase_live_db.json';
+  const SUPABASE_ALERTS_PRIMARY = path.resolve(__dirname, '.tamween_alerts_db.json');
   const SUPABASE_ALERTS_TMP = '/tmp/tamween_supabase_alerts.json';
 
   let cachedLiveSnapshot: any = null;
@@ -95,29 +97,44 @@ async function startServer() {
   };
   let liveRevision = 0;
 
-  // Hydrate cached snapshots from disk on server startup
-  try {
-    if (fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
-      cachedLiveSnapshot = JSON.parse(fs.readFileSync(SUPABASE_LIVE_DB_TMP, 'utf-8'));
-      liveRevision = Number(cachedLiveSnapshot?.revision || 1);
-    }
-  } catch {
-    cachedLiveSnapshot = null;
+  // Hydrate cached snapshots from durable workspace file or /tmp on server startup
+  for (const candidatePath of [SUPABASE_LIVE_DB_PRIMARY, SUPABASE_LIVE_DB_TMP]) {
+    try {
+      if (fs.existsSync(candidatePath)) {
+        const parsed = JSON.parse(fs.readFileSync(candidatePath, 'utf-8'));
+        if (parsed && parsed.data) {
+          if (
+            !cachedLiveSnapshot ||
+            (Date.parse(parsed.timestamp || '') || 0) > (Date.parse(cachedLiveSnapshot.timestamp || '') || 0)
+          ) {
+            cachedLiveSnapshot = parsed;
+            liveRevision = Math.max(liveRevision, Number(parsed?.revision || 1));
+          }
+        }
+      }
+    } catch {}
   }
 
-  try {
-    if (fs.existsSync(SUPABASE_ALERTS_TMP)) {
-      const parsedAlerts = JSON.parse(fs.readFileSync(SUPABASE_ALERTS_TMP, 'utf-8'));
-      if (parsedAlerts && typeof parsedAlerts === 'object') {
-        cachedAlertsState = {
-          alerts: Array.isArray(parsedAlerts.alerts) ? parsedAlerts.alerts : [],
-          debtAlertThreshold: Number(parsedAlerts.debtAlertThreshold) || 50000,
-          updatedAt: parsedAlerts.updatedAt || '',
-          revision: Number(parsedAlerts.revision) || 0,
-        };
+  for (const alertsPath of [SUPABASE_ALERTS_PRIMARY, SUPABASE_ALERTS_TMP]) {
+    try {
+      if (fs.existsSync(alertsPath)) {
+        const parsedAlerts = JSON.parse(fs.readFileSync(alertsPath, 'utf-8'));
+        if (parsedAlerts && typeof parsedAlerts === 'object') {
+          if (
+            !cachedAlertsState.updatedAt ||
+            (Date.parse(parsedAlerts.updatedAt || '') || 0) > (Date.parse(cachedAlertsState.updatedAt || '') || 0)
+          ) {
+            cachedAlertsState = {
+              alerts: Array.isArray(parsedAlerts.alerts) ? parsedAlerts.alerts : [],
+              debtAlertThreshold: Number(parsedAlerts.debtAlertThreshold) || 50000,
+              updatedAt: parsedAlerts.updatedAt || '',
+              revision: Number(parsedAlerts.revision) || 0,
+            };
+          }
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   wss.on('connection', (socket) => {
     // Send authoritative state immediately upon WebSocket connect/reconnect
@@ -250,11 +267,33 @@ async function startServer() {
     }
   });
 
+  // Lightweight metadata probe (<200 bytes) so background clients detect revisions without pulling full JSON
+  app.get('/api/supabase/live-meta', (_req, res) => {
+    if (!cachedLiveSnapshot) {
+      res.json({ success: true, exists: false, revision: liveRevision });
+      return;
+    }
+    res.json({
+      success: true,
+      exists: true,
+      revision: cachedLiveSnapshot.revision || liveRevision,
+      timestamp: cachedLiveSnapshot.timestamp || '',
+      clientId: cachedLiveSnapshot.clientId || '',
+      bakeriesCount: cachedLiveSnapshot.bakeriesCount || 0,
+      debtsCount: cachedLiveSnapshot.debtsCount || 0,
+    });
+  });
+
   // Live Supabase SQL/Cloud State synchronization endpoint + immediate WebSocket fanout
   app.get('/api/supabase/live-db', (_req, res) => {
     try {
-      if (!cachedLiveSnapshot && fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
-        cachedLiveSnapshot = JSON.parse(fs.readFileSync(SUPABASE_LIVE_DB_TMP, 'utf-8'));
+      if (!cachedLiveSnapshot) {
+        for (const p of [SUPABASE_LIVE_DB_PRIMARY, SUPABASE_LIVE_DB_TMP]) {
+          if (fs.existsSync(p)) {
+            cachedLiveSnapshot = JSON.parse(fs.readFileSync(p, 'utf-8'));
+            if (cachedLiveSnapshot) break;
+          }
+        }
       }
       if (!cachedLiveSnapshot) {
         res.json({ success: true, exists: false, snapshot: null });
@@ -283,7 +322,9 @@ async function startServer() {
         data: stateData,
       };
       cachedLiveSnapshot = snapshot;
-      fs.writeFileSync(SUPABASE_LIVE_DB_TMP, JSON.stringify(snapshot), 'utf-8');
+      const serialized = JSON.stringify(snapshot);
+      try { fs.writeFileSync(SUPABASE_LIVE_DB_PRIMARY, serialized, 'utf-8'); } catch {}
+      try { fs.writeFileSync(SUPABASE_LIVE_DB_TMP, serialized, 'utf-8'); } catch {}
       broadcastWs({
         type: 'state_update',
         clientId,
@@ -297,19 +338,19 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/supabase/live-db', (req, res) => {
+  app.delete('/api/supabase/live-db', (_req, res) => {
     try {
-      const clientId = String(req.query?.clientId || '');
-      cachedLiveSnapshot = null;
-      if (fs.existsSync(SUPABASE_LIVE_DB_TMP)) {
-        fs.unlinkSync(SUPABASE_LIVE_DB_TMP);
+      // Permanent Data Retention Policy: never delete registered database records or snapshots
+      if (cachedLiveSnapshot) {
+        const serialized = JSON.stringify(cachedLiveSnapshot);
+        try { fs.writeFileSync(SUPABASE_LIVE_DB_PRIMARY, serialized, 'utf-8'); } catch {}
+        try { fs.writeFileSync(SUPABASE_LIVE_DB_TMP, serialized, 'utf-8'); } catch {}
       }
-      broadcastWs({
-        type: 'state_cleared',
-        clientId,
-        timestamp: new Date().toISOString(),
+      res.json({
+        success: true,
+        retained: true,
+        message: 'تم تفعيل الحماية الدائمة للبيانات المسجلة والاحتفاظ بها دون حذف.',
       });
-      res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
     }
@@ -340,7 +381,9 @@ async function startServer() {
         revision: (cachedAlertsState.revision || 0) + 1,
         clientId,
       };
-      fs.writeFileSync(SUPABASE_ALERTS_TMP, JSON.stringify(cachedAlertsState), 'utf-8');
+      const serializedAlerts = JSON.stringify(cachedAlertsState);
+      try { fs.writeFileSync(SUPABASE_ALERTS_PRIMARY, serializedAlerts, 'utf-8'); } catch {}
+      try { fs.writeFileSync(SUPABASE_ALERTS_TMP, serializedAlerts, 'utf-8'); } catch {}
       broadcastWs({
         type: 'alerts_update',
         clientId,
@@ -367,7 +410,9 @@ async function startServer() {
         revision: (cachedAlertsState.revision || 0) + 1,
         clientId,
       };
-      fs.writeFileSync(SUPABASE_ALERTS_TMP, JSON.stringify(cachedAlertsState), 'utf-8');
+      const serializedAlerts = JSON.stringify(cachedAlertsState);
+      try { fs.writeFileSync(SUPABASE_ALERTS_PRIMARY, serializedAlerts, 'utf-8'); } catch {}
+      try { fs.writeFileSync(SUPABASE_ALERTS_TMP, serializedAlerts, 'utf-8'); } catch {}
       broadcastWs({
         type: 'alerts_update',
         clientId,

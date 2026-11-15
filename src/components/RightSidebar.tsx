@@ -26,6 +26,7 @@ import {
   CheckSquare,
   CalendarClock,
   BarChart3,
+  BookOpen,
 } from 'lucide-react';
 
 export type SidebarNavId = string;
@@ -154,6 +155,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       iconBg: 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm shadow-blue-950',
       activeBorder: 'border-blue-500/60',
       items: [
+        {
+          id: 'user-guide',
+          label: 'دليل المستخدم (صور وفيديو)',
+          subtitle: 'تعليمات مصورة وفيديو لكافة مميزات المنظومة',
+          icon: <BookOpen className="w-4 h-4 shrink-0" />,
+          badge: 'فيديو',
+          badgeColor: 'emerald',
+        },
         {
           id: 'dashboard-charts',
           label: 'لوحة التحكم والرسوم البيانية',
@@ -416,6 +425,63 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           </span>
         </div>
       )}
+
+      {/* Prominent User Guide Quick Access Button in Sidebar */}
+      <div className="px-2.5 pt-2.5">
+        <button
+          type="button"
+          onClick={() =>
+            onSelectNav(
+              'user-guide',
+              '1. قسم إدارة المخابز',
+              'دليل المستخدم (صور وفيديو)'
+            )
+          }
+          title="دليل المستخدم — تعليمات مصورة وفيديو حول كيفية استخدام كافة الميزات"
+          className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl border transition-all duration-200 cursor-pointer ${
+            activeNavId === 'user-guide'
+              ? 'bg-emerald-500 text-slate-950 border-emerald-300 font-black shadow-md'
+              : 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-200 border-emerald-700/70 font-bold'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span
+              className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                activeNavId === 'user-guide'
+                  ? 'bg-slate-950 text-emerald-400'
+                  : 'bg-emerald-600 text-white'
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+            </span>
+            {!isCollapsed && (
+              <div className="text-right min-w-0">
+                <div className="text-[12.5px] font-black truncate">
+                  دليل المستخدم (صور وفيديو)
+                </div>
+                <div
+                  className={`text-[10px] truncate ${
+                    activeNavId === 'user-guide' ? 'text-slate-800 font-bold' : 'text-emerald-300/90'
+                  }`}
+                >
+                  شرح مصور وفيديو لكافة الميزات
+                </div>
+              </div>
+            )}
+          </div>
+          {!isCollapsed && (
+            <span
+              className={`text-[10px] font-black px-2 py-0.5 rounded-md shrink-0 ${
+                activeNavId === 'user-guide'
+                  ? 'bg-slate-950 text-emerald-300'
+                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+              }`}
+            >
+              دليل شامل
+            </span>
+          )}
+        </button>
+      </div>
 
       {/* Scrollable Navigation Groups — Executive Smooth Card Buttons */}
       <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-3 custom-scrollbar">

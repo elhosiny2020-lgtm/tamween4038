@@ -1093,16 +1093,26 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       return;
     }
     setIsProcessing(true);
-    setStatusMsg({ text: 'جاري حفظ إعدادات Supabase والتحقق من الاتصال...', type: 'info' });
+    setStatusMsg({
+      text: 'جاري حفظ إعدادات خادم Supabase ونقل البيانات المسجلة تلقائياً إلى الخادم بدون حذف أي سجل...',
+      type: 'info',
+    });
     setSupabaseCloudDisabled(false);
     const newCfg = saveSupabaseConfig(supabaseUrlInput, supabaseKeyInput);
     setSupabaseCfg(newCfg);
     const testRes = await testSupabaseConnection();
-    setIsProcessing(false);
     if (testRes.success) {
-      setStatusMsg({ text: testRes.message, type: 'success' });
+      const migRes = await migrateDatabaseToSupabase(currentState);
+      setIsProcessing(false);
+      setStatusMsg({
+        text: migRes.success
+          ? `${testRes.message} — وتم تلقائياً الاحتفاظ بالبيانات المسجلة وترحيل (${migRes.bakeriesUpserted}) مخبز و (${migRes.debtsUpserted}) مديونية إلى الخادم بنجاح!`
+          : testRes.message,
+        type: 'success',
+      });
       getSupabaseAuthSession().then(setSupaAuthSession).catch(() => {});
     } else {
+      setIsProcessing(false);
       setStatusMsg({ text: testRes.message, type: 'error' });
     }
   };

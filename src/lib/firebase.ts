@@ -278,13 +278,60 @@ const SHARED_SYNC_DOC_ID = 'tamween_latest';
 const SUPABASE_LIVE_DOC_ID = 'tamween_supabase_live';
 export const SESSION_CLIENT_ID = `client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+let firestoreQuotaExceededFlag = false;
+let lastFirestoreQuotaError = '';
+const lastSyncedBranchPayloadDigest = new Map<string, string>();
+let lastSyncedDirectoryDigest = '';
+
+export function isFirestoreQuotaError(err: unknown): boolean {
+  const msg =
+    err instanceof Error
+      ? `${(err as any).code || ''} ${err.message}`
+      : String(err || '');
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('resource-exhausted') ||
+    lower.includes('quota exceeded') ||
+    lower.includes('quota limit exceeded') ||
+    lower.includes('free daily write units')
+  );
+}
+
+export function isFirestoreQuotaExceeded(): boolean {
+  return firestoreQuotaExceededFlag;
+}
+
+export function resetFirestoreQuotaFlag(): void {
+  firestoreQuotaExceededFlag = false;
+  lastFirestoreQuotaError = '';
+}
+
+export function getFirestoreQuotaUpgradeUrl(): string {
+  const projectId = (firebaseConfig as { projectId?: string }).projectId || '';
+  const dbId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId || '(default)';
+  return `https://console.firebase.google.com/project/${projectId}/firestore/databases/${dbId}/data?openUpgradeDialog=true`;
+}
+
+export function getLastFirestoreQuotaError(): string {
+  return lastFirestoreQuotaError;
+}
+
 /**
  * حفظ ومزامنة أحدث بيانات المنظومة في Cloud Firebase Firestore لجميع الفروع والأجهزة لحظياً
+ * مع إرجاع حالة مفصلة تشمل اكتشاف امتلاء الحصة اليومية المجانية
  */
-export async function syncSharedStateToFirestore(
+export async function syncSharedStateToFirestoreWithStatus(
   state: Record<string, any>,
   customTimestamp?: string
-): Promise<boolean> {
+): Promise<{ success: boolean; quotaExceeded: boolean; error?: string }> {
+  if (firestoreQuotaExceededFlag) {
+    return {
+      success: false,
+      quotaExceeded: true,
+      error: lastFirestoreQuotaError || 'تم استهلاك الحد اليومي المجاني لعمليات الكتابة على Firestore',
+    };
+  }
+
   try {
     const updatedAt = customTimestamp || new Date().toISOString();
     const branchesList = Array.isArray(state.branches) ? state.branches : [];
@@ -312,19 +359,23 @@ export async function syncSharedStateToFirestore(
 
       const partJson = JSON.stringify(compacted);
       if (partJson.length <= FIRESTORE_MAX_DOC_BYTES + 80_000) {
-        const docId = buildFirestoreBranchDocId(bId);
-        branchWrites.push(
-          setDoc(doc(db, 'shared_sync', docId), {
-            syncId: docId,
-            branchId: bId,
-            updatedAt,
-            clientId: SESSION_CLIENT_ID,
-            bakeriesCount: Array.isArray(compacted.bakeries) ? compacted.bakeries.length : 0,
-            debtsCount: Array.isArray(compacted.debts) ? compacted.debts.length : 0,
-            payloadJson: partJson,
-            cleared: false,
-          })
-        );
+        if (lastSyncedBranchPayloadDigest.get(bId) !== partJson) {
+          const docId = buildFirestoreBranchDocId(bId);
+          branchWrites.push(
+            setDoc(doc(db, 'shared_sync', docId), {
+              syncId: docId,
+              branchId: bId,
+              updatedAt,
+              clientId: SESSION_CLIENT_ID,
+              bakeriesCount: Array.isArray(compacted.bakeries) ? compacted.bakeries.length : 0,
+              debtsCount: Array.isArray(compacted.debts) ? compacted.debts.length : 0,
+              payloadJson: partJson,
+              cleared: false,
+            }).then(() => {
+              lastSyncedBranchPayloadDigest.set(bId, partJson);
+            })
+          );
+        }
       }
     }
 
@@ -337,80 +388,69 @@ export async function syncSharedStateToFirestore(
       0
     );
 
-    // Always write lightweight directory doc (< 15KB) so every device discovers branches & latest revision instantaneously
-    const directoryWrite = setDoc(doc(db, 'shared_sync', FIRESTORE_DIRECTORY_DOC_ID), {
-      syncId: FIRESTORE_DIRECTORY_DOC_ID,
-      updatedAt,
-      clientId: SESSION_CLIENT_ID,
-      activeBranchId,
-      branchesJson: JSON.stringify(branchesList),
-      branchIds,
-      branchAuthVaultsJson: state.branchAuthVaults ? JSON.stringify(state.branchAuthVaults) : '',
-      debtAlertThreshold: state.systemConfig?.debtAlertThreshold ?? 50000,
-      bakeriesCount: totalBakeries || (Array.isArray(state.bakeries) ? state.bakeries.length : 0),
-      debtsCount: totalDebts || (Array.isArray(state.debts) ? state.debts.length : 0),
-      cleared: false,
-    });
+    const branchesJson = JSON.stringify(branchesList);
+    const branchAuthVaultsJson = state.branchAuthVaults ? JSON.stringify(state.branchAuthVaults) : '';
+    const debtAlertThreshold = state.systemConfig?.debtAlertThreshold ?? 50000;
+    const dirDigest = `${activeBranchId}|${branchesJson}|${branchAuthVaultsJson}|${debtAlertThreshold}|${totalBakeries}|${totalDebts}`;
 
-    // Optional compact combined mirror for legacy readers if under size cap
-    const cleanCombinedState = {
-      activeBranchId: state.activeBranchId,
-      branches: branchesList,
-      bakeries: state.bakeries || [],
-      debts: state.debts || [],
-      villages: state.villages,
-      issuingEntities: state.issuingEntities,
-      violationTypes: state.violationTypes,
-      activityStatuses: state.activityStatuses,
-      bakeryCategories: state.bakeryCategories,
-      breadTypes: state.breadTypes,
-      breadTypeCounts: state.breadTypeCounts,
-      lineTypes: state.lineTypes,
-      fuelTypes: state.fuelTypes,
-      leaseContractTypes: state.leaseContractTypes,
-      responsibleManagerOptions: state.responsibleManagerOptions,
-      paymentMethods: state.paymentMethods,
-      dailyTasks: state.dailyTasks,
-      inboxMessages: state.inboxMessages,
-      columnTitles: state.columnTitles,
-      systemConfig: state.systemConfig
-        ? { ...state.systemConfig, logoBase64: undefined }
-        : undefined,
-      users: state.users,
-      branchPartitions: compactPartitions,
-      branchAuthVaults: state.branchAuthVaults,
-    };
-    const combinedJson = JSON.stringify(cleanCombinedState);
-    const legacyWrites: Array<Promise<void>> = [];
-    if (combinedJson.length <= FIRESTORE_MAX_DOC_BYTES + 80_000) {
-      legacyWrites.push(
-        setDoc(doc(db, 'shared_sync', SUPABASE_LIVE_DOC_ID), {
-          syncId: SUPABASE_LIVE_DOC_ID,
+    const pendingWrites: Array<Promise<void>> = [...branchWrites];
+
+    if (dirDigest !== lastSyncedDirectoryDigest || branchWrites.length > 0) {
+      pendingWrites.push(
+        setDoc(doc(db, 'shared_sync', FIRESTORE_DIRECTORY_DOC_ID), {
+          syncId: FIRESTORE_DIRECTORY_DOC_ID,
           updatedAt,
           clientId: SESSION_CLIENT_ID,
-          bakeriesCount: Array.isArray(state.bakeries) ? state.bakeries.length : 0,
-          debtsCount: Array.isArray(state.debts) ? state.debts.length : 0,
-          payloadJson: combinedJson,
+          activeBranchId,
+          branchesJson,
+          branchIds,
+          branchAuthVaultsJson,
+          debtAlertThreshold,
+          bakeriesCount: totalBakeries || (Array.isArray(state.bakeries) ? state.bakeries.length : 0),
+          debtsCount: totalDebts || (Array.isArray(state.debts) ? state.debts.length : 0),
           cleared: false,
-        }),
-        setDoc(doc(db, 'shared_sync', SHARED_SYNC_DOC_ID), {
-          syncId: SHARED_SYNC_DOC_ID,
-          updatedAt,
-          clientId: SESSION_CLIENT_ID,
-          bakeriesCount: Array.isArray(state.bakeries) ? state.bakeries.length : 0,
-          debtsCount: Array.isArray(state.debts) ? state.debts.length : 0,
-          payloadJson: combinedJson,
-          cleared: false,
+        }).then(() => {
+          lastSyncedDirectoryDigest = dirDigest;
         })
       );
     }
 
-    await Promise.all([directoryWrite, ...branchWrites, ...legacyWrites]);
-    return true;
-  } catch (err) {
+    if (pendingWrites.length === 0) {
+      return { success: true, quotaExceeded: false };
+    }
+
+    await Promise.all(pendingWrites);
+    return { success: true, quotaExceeded: false };
+  } catch (err: any) {
+    if (isFirestoreQuotaError(err)) {
+      firestoreQuotaExceededFlag = true;
+      lastFirestoreQuotaError =
+        'Quota exceeded: تم بلوغ الحد اليومي المجاني لعمليات الكتابة في Firestore (سيتم التصفير تلقائياً غداً).';
+      console.warn('Firestore write quota exceeded:', err?.message || err);
+      return {
+        success: false,
+        quotaExceeded: true,
+        error: lastFirestoreQuotaError,
+      };
+    }
     console.warn('syncSharedStateToFirestore error:', err);
-    return false;
+    return {
+      success: false,
+      quotaExceeded: false,
+      error: err?.message || 'تعذر الكتابة إلى Cloud Firestore',
+    };
   }
+}
+
+/**
+ * حفظ ومزامنة أحدث بيانات المنظومة في Cloud Firebase Firestore لجميع الفروع والأجهزة لحظياً
+ */
+export async function syncSharedStateToFirestore(
+  state: Record<string, any>,
+  customTimestamp?: string
+): Promise<boolean> {
+  const res = await syncSharedStateToFirestoreWithStatus(state, customTimestamp);
+  return res.success;
 }
 
 async function readFirestoreDocServerFirst(docId: string) {

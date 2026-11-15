@@ -198,8 +198,10 @@ import {
   Home,
   Save,
   Clock,
-  RotateCw
+  RotateCw,
+  BookOpen
 } from 'lucide-react';
+import { UserGuideView } from './components/UserGuideView';
 
 const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
   index: 'الرقم المسلسل للمخبز في السجل العام للإدارة',
@@ -264,7 +266,7 @@ const ThHeaderTooltip: React.FC<{ label: string; tooltipKey: string; className?:
 export default function App() {
   const { isInstallable, install } = usePWAInstall();
   const [appState, setAppState] = useState<AppState | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'charts' | 'bakeries' | 'debts' | 'reports'>('bakeries');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'charts' | 'bakeries' | 'debts' | 'reports' | 'user-guide'>('bakeries');
   const [activeReportId, setActiveReportId] = useState<ReportTemplateId>('bak-all');
   const [activeSidebarNavId, setActiveSidebarNavId] = useState<SidebarNavId>('bakeries-all');
   const [breadcrumbGroup, setBreadcrumbGroup] = useState<string>('إدارة المخابز');
@@ -589,6 +591,13 @@ export default function App() {
             currentUser: isAutoStart ? (state.currentUser || state.users[0] || INITIAL_USERS[0]) : state.currentUser,
           });
           setSaveTimestamp(getArabicTimestamp());
+          if (pendingCloudUpdateRef.current && applyIncomingCloudStateRef.current) {
+            const pending = pendingCloudUpdateRef.current;
+            pendingCloudUpdateRef.current = null;
+            setTimeout(() => {
+              applyIncomingCloudStateRef.current?.(pending.data, pending.timestamp);
+            }, 20);
+          }
         }
       })
       .catch((err) => {
@@ -631,6 +640,7 @@ export default function App() {
   }, []);
 
   const lastAppliedCloudTimestampRef = React.useRef<string>('');
+  const pendingCloudUpdateRef = React.useRef<{ data: AppState; timestamp?: string } | null>(null);
   const applyIncomingCloudStateRef = React.useRef<
     ((incomingData: AppState, remoteTimestamp?: string) => void) | null
   >(null);
@@ -641,13 +651,16 @@ export default function App() {
       if (!incomingData) return;
 
       // 1. Write all branch partitions from cloud payload into their respective isolated local storage keys
-      syncAllBranchesFromCloudPayload(incomingData, remoteTimestamp);
+      syncAllBranchesFromCloudPayload(incomingData, remoteTimestamp, { forceRealtimePush: true });
       if (remoteTimestamp) {
         lastAppliedCloudTimestampRef.current = remoteTimestamp;
       }
 
       setAppState((current) => {
-        if (!current) return current;
+        if (!current) {
+          pendingCloudUpdateRef.current = { data: incomingData, timestamp: remoteTimestamp };
+          return current;
+        }
 
         const currentBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
         const mergedBranches = getBranchesList();
@@ -2151,6 +2164,9 @@ export default function App() {
 
     switch (navId) {
       // 1. قسم إدارة المخابز
+      case 'user-guide':
+        setActiveTab('user-guide');
+        break;
       case 'bakeries-all':
         setActiveTab('bakeries');
         setColumnViewMode('ALL');
@@ -2802,6 +2818,19 @@ export default function App() {
                 <Printer className="w-3.5 h-3.5" />
                 <span>مركز التقارير والطباعة</span>
               </button>
+              <button
+                type="button"
+                data-testid="nav-user-guide-tab"
+                onClick={() => handleSelectSidebarNav('user-guide', '1. قسم إدارة المخابز', 'دليل المستخدم (صور وفيديو)')}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'user-guide'
+                    ? 'bg-emerald-700 text-white shadow-2xs'
+                    : 'text-emerald-900 bg-emerald-50 hover:bg-emerald-700 hover:text-white border border-emerald-300'
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>دليل المستخدم (صور وفيديو)</span>
+              </button>
             </div>
           </div>
 
@@ -3080,6 +3109,52 @@ export default function App() {
                 setBreadcrumbItem('سجل مديونيات المخابز');
               }}
               onOpenAlertsDrawer={() => setIsAdminDrawerOpen(true)}
+            />
+          ) : activeTab === 'user-guide' ? (
+            /* USER GUIDE VIEW (دليل المستخدم المصور والفيديو) */
+            <UserGuideView
+              onNavigateTab={(tab) => {
+                setActiveTab(tab);
+                if (tab === 'bakeries') {
+                  setActiveSidebarNavId('bakeries-all');
+                  setBreadcrumbGroup('1. قسم إدارة المخابز');
+                  setBreadcrumbItem('إدارة المخابز');
+                } else if (tab === 'debts') {
+                  setActiveSidebarNavId('debts-records');
+                  setBreadcrumbGroup('3. قسم سجل المديونيات');
+                  setBreadcrumbItem('سجل المديونيات');
+                } else if (tab === 'reports') {
+                  setActiveSidebarNavId('reports-center');
+                  setBreadcrumbGroup('مركز التقارير والطباعة');
+                  setBreadcrumbItem('شاشة التقارير والطباعة المتقدمة');
+                } else if (tab === 'charts') {
+                  setActiveSidebarNavId('dashboard-charts');
+                  setBreadcrumbGroup('1. قسم إدارة المخابز');
+                  setBreadcrumbItem('لوحة التحكم والرسوم البيانية');
+                }
+              }}
+              onOpenModal={(modal) => {
+                if (modal === 'add-bakery') {
+                  setBakeryToEdit(null);
+                  setIsBakeryModalOpen(true);
+                } else if (modal === 'add-debt') {
+                  setActiveTab('debts');
+                  setOpenDebtScheduleSignal((prev) => prev + 1);
+                } else if (modal === 'backup-sync') {
+                  setIsBackupModalOpen(true);
+                } else if (modal === 'villages-units') {
+                  setIsLocalUnitsModalOpen(true);
+                } else if (modal === 'branches') {
+                  setIsBranchesModalOpen(true);
+                } else if (modal === 'users') {
+                  setIsUsersModalOpen(true);
+                } else if (modal === 'audit') {
+                  setIsAuditModalOpen(true);
+                }
+              }}
+              bakeriesCount={appState.bakeries.length}
+              debtsCount={appState.debts.length}
+              villagesCount={appState.villages.length}
             />
           ) : activeTab === 'reports' ? (
             /* REPORTS CENTER VIEW */

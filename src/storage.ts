@@ -884,12 +884,32 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
   };
 }
 
+export function shouldApplyIncomingPartitionTimestamp(
+  localTs: string | null | undefined,
+  remoteTs: string | null | undefined,
+  isLocalUntouched: boolean,
+  forceRealtimePush: boolean = false
+): boolean {
+  if (isLocalUntouched) return true;
+  if (!localTs) return true;
+  if (!remoteTs) return forceRealtimePush;
+  const localMs = Date.parse(localTs) || 0;
+  const remoteMs = Date.parse(remoteTs) || 0;
+  if (!localMs || !remoteMs) return true;
+  if (forceRealtimePush) {
+    // Allow 10s clock-skew tolerance on live push events while still blocking genuinely stale old snapshots
+    return remoteMs >= localMs - 10_000;
+  }
+  return remoteMs >= localMs;
+}
+
 export function writeBranchPartitionToLocal(
   branchId: string,
   part: BranchPartitionPayload,
-  fallbackTimestamp?: string
-): void {
-  if (!part || typeof localStorage === 'undefined') return;
+  fallbackTimestamp?: string,
+  options?: { forceRealtimePush?: boolean }
+): boolean {
+  if (!part || typeof localStorage === 'undefined') return false;
   const isDefault = branchId === DEFAULT_BRANCH_ID;
   const bKeys = getScopedKeysForBranch(branchId);
   const branches = getBranchesList();
@@ -904,7 +924,6 @@ export function writeBranchPartitionToLocal(
 
     let existingBake: Bakery[] = [];
     let existingDebts: DebtRecord[] = [];
-    let existingUsers: AppUser[] | null = null;
     let existingConfig: SystemConfig | null = null;
 
     try {
@@ -912,8 +931,6 @@ export function writeBranchPartitionToLocal(
       if (rB) existingBake = JSON.parse(rB);
       const rD = localStorage.getItem(bKeys.DEBTS);
       if (rD) existingDebts = JSON.parse(rD);
-      const rU = localStorage.getItem(bKeys.USERS);
-      if (rU) existingUsers = JSON.parse(rU);
       const rC = localStorage.getItem(bKeys.CONFIG);
       if (rC) existingConfig = JSON.parse(rC);
     } catch {}
@@ -922,9 +939,17 @@ export function writeBranchPartitionToLocal(
       ? !hasExplicitSave && isDefaultSeedState(existingBake, existingDebts)
       : !hasExplicitSave && existingBake.length === 0 && existingDebts.length === 0;
 
-    const localTimeMs = !isLocalUntouched && localTs ? Date.parse(localTs) || 0 : 0;
     const remoteTs = part.updatedAt || fallbackTimestamp || '';
-    const remoteTimeMs = remoteTs ? Date.parse(remoteTs) || Date.now() : Date.now();
+    if (
+      !shouldApplyIncomingPartitionTimestamp(
+        isLocalUntouched ? '' : localTs,
+        remoteTs,
+        isLocalUntouched,
+        Boolean(options?.forceRealtimePush)
+      )
+    ) {
+      return false;
+    }
 
     // Sync isolated branch auth vault (usernames, passwords, rolePermissions, customRoles) for this branch
     syncAllBranchAuthVaultsFromCloud(
@@ -934,7 +959,7 @@ export function writeBranchPartitionToLocal(
     );
     const updatedVault = loadBranchAuthVault(branchId, branchObj?.name);
 
-    // Always adopt incoming cloud partitions across all devices so edits on any device reflect immediately
+    // Adopt incoming cloud partition once freshness is confirmed
     const synced = synchronizeBakeryAndDebts(
       (part.bakeries || []).map(normalizeBakeryPerCapita),
       part.debts || []
@@ -1014,16 +1039,19 @@ export function writeBranchPartitionToLocal(
         localStorage.setItem(bKeys.AUTOSAVE_TIMESTAMP, remoteTs);
       }
       localStorage.setItem(bKeys.INITIALIZED, 'true');
+      return true;
   } catch (err) {
     console.warn('Error writing branch partition to local storage:', err);
+    return false;
   }
 }
 
 export function syncAllBranchesFromCloudPayload(
   cloudData: Partial<AppState> | null | undefined,
-  remoteTimestamp?: string
-): void {
-  if (!cloudData) return;
+  remoteTimestamp?: string,
+  options?: { forceRealtimePush?: boolean }
+): boolean {
+  if (!cloudData) return false;
 
   // 1. Sync branches list across all devices safely with zero duplicates
   const currentBranches = getBranchesList();
@@ -1064,23 +1092,37 @@ export function syncAllBranchesFromCloudPayload(
   const deduplicatedBranches = sanitizeAndDeduplicateBranches(rawBranches);
   saveBranchesList(deduplicatedBranches);
 
-  const defaultPartition: BranchPartitionPayload = remotePartitions[DEFAULT_BRANCH_ID] || {
-    ...cloudData,
-    activeBranchId: DEFAULT_BRANCH_ID,
-    updatedAt: remoteTimestamp,
-  };
-  writeBranchPartitionToLocal(DEFAULT_BRANCH_ID, defaultPartition, remoteTimestamp);
+  const hasPartitionsMap = Boolean(
+    (cloudData as unknown as { branchPartitions?: Record<string, BranchPartitionPayload> }).branchPartitions &&
+      Object.keys(remotePartitions).length > 0
+  );
+  let appliedAny = false;
+
+  // Only update DEFAULT_BRANCH_ID if explicitly present in remotePartitions OR payload is a legacy flat single-branch snapshot
+  if (remotePartitions[DEFAULT_BRANCH_ID] || !hasPartitionsMap) {
+    const defaultPartition: BranchPartitionPayload = remotePartitions[DEFAULT_BRANCH_ID] || {
+      ...cloudData,
+      activeBranchId: DEFAULT_BRANCH_ID,
+      updatedAt: remoteTimestamp,
+    };
+    if (writeBranchPartitionToLocal(DEFAULT_BRANCH_ID, defaultPartition, remoteTimestamp, options)) {
+      appliedAny = true;
+    }
+  }
 
   // 3. Sync every isolated branch partition in branchPartitions
   Object.entries(remotePartitions).forEach(([bId, part]) => {
     if (!bId || bId === DEFAULT_BRANCH_ID || !part) return;
-    writeBranchPartitionToLocal(bId, part, remoteTimestamp);
+    if (writeBranchPartitionToLocal(bId, part, remoteTimestamp, options)) {
+      appliedAny = true;
+    }
   });
 
   // 4. Sync dedicated branch auth vaults across all branches
   if (remoteAuthVaults) {
     syncAllBranchAuthVaultsFromCloud(remoteAuthVaults, remotePartitions, remoteTimestamp);
   }
+  return appliedAny;
 }
 
 export function buildFullCloudMultiBranchPayload(
@@ -1116,7 +1158,7 @@ export function buildFullCloudMultiBranchPayload(
           rolePermissions: vault.rolePermissions,
           roleLabels: vault.roleLabels,
           customRoles: vault.customRoles,
-          logoBase64: DEFAULT_OFFICIAL_LOGO,
+          logoBase64: '',
         },
         updatedAt: snapshotTimestamp,
       };
@@ -1132,7 +1174,7 @@ export function buildFullCloudMultiBranchPayload(
           rolePermissions: vault.rolePermissions,
           roleLabels: vault.roleLabels,
           customRoles: vault.customRoles,
-          logoBase64: DEFAULT_OFFICIAL_LOGO,
+          logoBase64: '',
         },
         updatedAt: localPart.updatedAt || snapshotTimestamp,
       };
@@ -1155,7 +1197,7 @@ export function buildFullCloudMultiBranchPayload(
     systemConfig: {
       ...DEFAULT_SYSTEM_CONFIG,
       ...(defaultBranchState.systemConfig || {}),
-      logoBase64: DEFAULT_OFFICIAL_LOGO,
+      logoBase64: '',
     },
     currentUser: null,
     branchPartitions,

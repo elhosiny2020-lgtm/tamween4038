@@ -28,9 +28,14 @@ import {
   getPendingOfflineQueueCount,
   clearOfflineSyncQueue,
   autoSyncToSupabaseDetailed,
+  mergeMultiBranchStatesNonDestructive,
+  saveToPermanentSafetyVault,
+  loadFromPermanentSafetyVault,
+  clearSupabaseDatabaseData,
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
 } from './supabase';
+import { shouldApplyIncomingPartitionTimestamp } from '../storage';
 
 test('Supabase schema contains all 9 normalized tables, foreign keys, indexes, RLS policies, and Realtime publication', () => {
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS branches'));
@@ -339,3 +344,79 @@ test('Offline sync queue deduplicates per branch, safely stores mutations when o
     setCloudConnectionStatus('connected', 'متصل بالخادم السحابي بنجاح', { pendingQueueCount: 0, hasPendingSync: false });
   }
 });
+
+test('Permanent Safety Vault and Non-Destructive Multi-Branch Merge retain all registered records across server changes', async () => {
+  // 1. Timestamp guard blocks older stale boot snapshots unless forceRealtimePush is true
+  assert.strictEqual(
+    shouldApplyIncomingPartitionTimestamp(
+      '2026-11-14T12:00:00.000Z',
+      '2026-11-14T11:00:00.000Z',
+      false
+    ),
+    false
+  );
+  assert.strictEqual(
+    shouldApplyIncomingPartitionTimestamp(
+      '2026-11-14T12:00:00.000Z',
+      '2026-11-14T11:00:00.000Z',
+      true
+    ),
+    true
+  );
+
+  // 2. Non-destructive multi-branch merge preserves records from both servers/devices
+  const serverAState: any = {
+    activeBranchId: 'branch-mahalla',
+    bakeries: [{ id: 'b-101', bakeryOwnerName: 'مخبز الأمل', lastUpdatedAt: '2026-11-14T10:00:00Z' }],
+    debts: [{ id: 'd-101', bakeryOwnerName: 'مخبز الأمل', netRemainingDebt: 5000 }],
+    villages: [{ village: 'بشبيش', localUnits: ['بشبيش'] }],
+    branchPartitions: {
+      'branch-mahalla': {
+        bakeries: [{ id: 'b-101', bakeryOwnerName: 'مخبز الأمل', lastUpdatedAt: '2026-11-14T10:00:00Z' }],
+        debts: [{ id: 'd-101', bakeryOwnerName: 'مخبز الأمل', netRemainingDebt: 5000 }],
+      },
+    },
+  };
+
+  const serverBState: any = {
+    activeBranchId: 'branch-mahalla',
+    bakeries: [
+      { id: 'b-101', bakeryOwnerName: 'مخبز الأمل المحدث', lastUpdatedAt: '2026-11-14T12:00:00Z' },
+      { id: 'b-202', bakeryOwnerName: 'مخبز التوفيق الجديد', lastUpdatedAt: '2026-11-14T12:05:00Z' },
+    ],
+    debts: [{ id: 'd-202', bakeryOwnerName: 'مخبز التوفيق الجديد', netRemainingDebt: 8000 }],
+    villages: [{ village: 'دمرو', localUnits: ['دمرو'] }],
+    branchPartitions: {
+      'branch-mahalla': {
+        bakeries: [{ id: 'b-202', bakeryOwnerName: 'مخبز التوفيق الجديد', lastUpdatedAt: '2026-11-14T12:05:00Z' }],
+        debts: [{ id: 'd-202', bakeryOwnerName: 'مخبز التوفيق الجديد', netRemainingDebt: 8000 }],
+      },
+    },
+  };
+
+  saveToPermanentSafetyVault(serverAState, '2026-11-14T10:00:00Z');
+  saveToPermanentSafetyVault(serverBState, '2026-11-14T12:05:00Z');
+
+  const vault = loadFromPermanentSafetyVault();
+  assert.ok(vault?.data);
+  assert.ok(vault!.data.bakeries.length >= 2);
+  assert.strictEqual(
+    vault!.data.bakeries.find((b: any) => b.id === 'b-101')?.bakeryOwnerName,
+    'مخبز الأمل المحدث'
+  );
+  assert.strictEqual(
+    vault!.data.bakeries.find((b: any) => b.id === 'b-202')?.bakeryOwnerName,
+    'مخبز التوفيق الجديد'
+  );
+  assert.ok(vault!.data.debts.length >= 2);
+  assert.ok((vault!.data as any).branchPartitions['branch-mahalla'].bakeries.length >= 2);
+
+  // 3. clearSupabaseDatabaseData protects registered records instead of wiping them
+  const countBeforeClear = vault!.data.bakeries.length;
+  const clearRes = await clearSupabaseDatabaseData();
+  assert.strictEqual(clearRes.success, true);
+  assert.ok(clearRes.message.includes('الحماية الدائمة'));
+  const vaultAfterClear = loadFromPermanentSafetyVault();
+  assert.strictEqual(vaultAfterClear?.data.bakeries.length, countBeforeClear);
+});
+

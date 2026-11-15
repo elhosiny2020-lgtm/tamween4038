@@ -156,6 +156,155 @@ export function clearOfflineSyncQueue(): void {
   safeRemoveItem(OFFLINE_QUEUE_KEY);
 }
 
+export const PERMANENT_VAULT_KEY = 'TAMWEEN_PERMANENT_VAULT_V1';
+
+export interface PermanentVaultPayload {
+  timestamp: string;
+  data: AppState;
+}
+
+/**
+ * دمج غير إتلافي (Non-Destructive Merge) لبيانات جميع الفروع والسجلات لضمان عدم ضياع أي سجل عند تغيير الخادم أو الدمج بين جهازيْن
+ */
+export function mergeMultiBranchStatesNonDestructive(
+  baseState: AppState | null | undefined,
+  incomingState: AppState | null | undefined
+): AppState | null {
+  if (!baseState && !incomingState) return null;
+  if (!baseState) return stripHeavyLogo(incomingState as AppState);
+  if (!incomingState) return stripHeavyLogo(baseState);
+
+  const mergeById = <T extends { id?: string; lastUpdatedAt?: string; updatedAt?: string }>(
+    listA: T[] | undefined,
+    listB: T[] | undefined
+  ): T[] => {
+    const a = Array.isArray(listA) ? listA : [];
+    const b = Array.isArray(listB) ? listB : [];
+    const map = new Map<string, T>();
+    for (const item of a) {
+      if (item && item.id) map.set(String(item.id), item);
+    }
+    for (const item of b) {
+      if (!item || !item.id) continue;
+      const key = String(item.id);
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, item);
+      } else {
+        const tExisting = Date.parse(existing.lastUpdatedAt || existing.updatedAt || '') || 0;
+        const tIncoming = Date.parse(item.lastUpdatedAt || item.updatedAt || '') || 0;
+        if (tIncoming >= tExisting) {
+          map.set(key, item);
+        }
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const mergeVillages = (vA: any[] | undefined, vB: any[] | undefined) => {
+    const map = new Map<string, { village: string; localUnits: string[] }>();
+    for (const list of [vA || [], vB || []]) {
+      for (const v of list) {
+        const name = String(v?.village || v?.name || '').trim();
+        if (!name) continue;
+        const prev = map.get(name);
+        const units = Array.isArray(v?.localUnits) ? v.localUnits : [];
+        if (!prev) {
+          map.set(name, { village: name, localUnits: [...units] });
+        } else {
+          const combined = Array.from(new Set([...prev.localUnits, ...units]));
+          map.set(name, { village: name, localUnits: combined });
+        }
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const basePartitions = ((baseState as any)?.branchPartitions || {}) as Record<string, any>;
+  const incPartitions = ((incomingState as any)?.branchPartitions || {}) as Record<string, any>;
+  const allBranchIds = Array.from(
+    new Set([...Object.keys(basePartitions), ...Object.keys(incPartitions)])
+  );
+  const mergedPartitions: Record<string, any> = {};
+
+  for (const brId of allBranchIds) {
+    const pBase = basePartitions[brId] || {};
+    const pInc = incPartitions[brId] || {};
+    mergedPartitions[brId] = {
+      ...pBase,
+      ...pInc,
+      bakeries: mergeById(pBase.bakeries, pInc.bakeries),
+      debts: mergeById(pBase.debts, pInc.debts),
+      villages: mergeVillages(pBase.villages, pInc.villages),
+      users: mergeById(pBase.users, pInc.users),
+      dailyTasks: mergeById(pBase.dailyTasks, pInc.dailyTasks),
+      inboxMessages: mergeById(pBase.inboxMessages, pInc.inboxMessages),
+      updatedAt:
+        (Date.parse(pInc.updatedAt || '') || 0) >= (Date.parse(pBase.updatedAt || '') || 0)
+          ? pInc.updatedAt || pBase.updatedAt || new Date().toISOString()
+          : pBase.updatedAt,
+    };
+  }
+
+  const merged: AppState = {
+    ...baseState,
+    ...incomingState,
+    branches: mergeById(baseState.branches as any, incomingState.branches as any) as any,
+    bakeries: mergeById(baseState.bakeries as any, incomingState.bakeries as any) as any,
+    debts: mergeById(baseState.debts as any, incomingState.debts as any) as any,
+    villages: mergeVillages(baseState.villages, incomingState.villages),
+    users: mergeById(baseState.users as any, incomingState.users as any) as any,
+    dailyTasks: mergeById(baseState.dailyTasks as any, incomingState.dailyTasks as any) as any,
+    inboxMessages: mergeById(baseState.inboxMessages as any, incomingState.inboxMessages as any) as any,
+  };
+
+  if (allBranchIds.length > 0) {
+    (merged as any).branchPartitions = mergedPartitions;
+  }
+
+  return stripHeavyLogo(merged);
+}
+
+/**
+ * حفظ نسخة أمان دائمة غير قابلة للحذف لجميع البيانات المسجلة لضمان بقائها حتى عند تغيير الخادم
+ */
+export function saveToPermanentSafetyVault(
+  state: AppState,
+  timestamp: string = new Date().toISOString()
+): void {
+  if (!state) return;
+  try {
+    const hasRecords =
+      (Array.isArray(state.bakeries) && state.bakeries.length > 0) ||
+      (Array.isArray(state.debts) && state.debts.length > 0) ||
+      Boolean((state as any).branchPartitions);
+    if (!hasRecords) return;
+
+    const existing = loadFromPermanentSafetyVault();
+    const mergedData = existing?.data
+      ? mergeMultiBranchStatesNonDestructive(existing.data, state) || stripHeavyLogo(state)
+      : stripHeavyLogo(state);
+
+    const payload: PermanentVaultPayload = {
+      timestamp,
+      data: mergedData,
+    };
+    safeSetItem(PERMANENT_VAULT_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+export function loadFromPermanentSafetyVault(): PermanentVaultPayload | null {
+  try {
+    const raw = safeGetItem(PERMANENT_VAULT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.data && (Array.isArray(parsed.data.bakeries) || parsed.data.branchPartitions)) {
+      return parsed as PermanentVaultPayload;
+    }
+  } catch {}
+  return null;
+}
+
 let connectionSnapshot: CloudConnectionSnapshot = {
   status: typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'connected',
   label:
@@ -348,6 +497,15 @@ function getLiveDbApiUrl(): string {
   return '/api/supabase/live-db';
 }
 
+function getLiveMetaApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    return isLocalOrCloudOrigin()
+      ? '/api/supabase/live-meta'
+      : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/live-meta';
+  }
+  return '/api/supabase/live-meta';
+}
+
 function getAlertsApiUrl(): string {
   if (typeof window !== 'undefined') {
     return isLocalOrCloudOrigin()
@@ -493,6 +651,16 @@ export function saveSupabaseConfig(url: string, anonKey: string): SupabaseConfig
           anonKey: isValidHttpUrl(cleanUrl) ? cleanKey : '',
         }),
       }).catch(() => {});
+
+      // Automatically migrate registered data from Permanent Safety Vault to the newly configured Supabase server
+      if (cleanUrl && cleanKey && isValidHttpUrl(cleanUrl)) {
+        const vault = loadFromPermanentSafetyVault();
+        if (vault?.data) {
+          setTimeout(() => {
+            migrateDatabaseToSupabase(vault.data).catch(() => {});
+          }, 250);
+        }
+      }
     } catch {}
   }
 
@@ -1165,9 +1333,25 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
 }> {
   setSupabaseCloudDisabled(false);
   const nowIso = new Date().toISOString();
-  const bakeriesCount = Array.isArray(state?.bakeries) ? state.bakeries.length : 0;
-  const debtsCount = Array.isArray(state?.debts) ? state.debts.length : 0;
-  const fullCloudState = buildFullCloudMultiBranchPayload(state, nowIso);
+  const rawFullState = buildFullCloudMultiBranchPayload(state, nowIso);
+  const vault = loadFromPermanentSafetyVault();
+  const fullCloudState =
+    (vault?.data
+      ? mergeMultiBranchStatesNonDestructive(vault.data, rawFullState)
+      : rawFullState) || rawFullState;
+
+  saveToPermanentSafetyVault(fullCloudState, nowIso);
+
+  const bakeriesCount = Array.isArray(fullCloudState?.bakeries)
+    ? fullCloudState.bakeries.length
+    : Array.isArray(state?.bakeries)
+    ? state.bakeries.length
+    : 0;
+  const debtsCount = Array.isArray(fullCloudState?.debts)
+    ? fullCloudState.debts.length
+    : Array.isArray(state?.debts)
+    ? state.debts.length
+    : 0;
 
   // 1. Always push authoritative multi-branch snapshot to Supabase Live DB API (instant WebSocket broadcast)
   const serverSynced =
@@ -2108,6 +2292,7 @@ export async function fetchDatabaseFromSupabase(): Promise<{
       return tB - tA;
     });
     const best = candidates[0];
+    saveToPermanentSafetyVault(best.data, best.timestamp);
     if (!pendingSyncPayload && !isBrowserOffline()) {
       setCloudConnectionStatus('connected', `متصل بالخادم (${best.source})`);
     }
@@ -2116,6 +2301,26 @@ export async function fetchDatabaseFromSupabase(): Promise<{
       message: `تم بنجاح تحميل أحدث بيانات مسجلة من ${best.source} (${best.data.bakeries?.length || 0} مخبز و ${best.data.debts?.length || 0} مديونية)!`,
       data: best.data,
       timestamp: best.timestamp,
+    };
+  }
+
+  // Auto-heal / Auto-migrate: If the connected server is empty (e.g. server changed or reset)
+  // and this device holds registered records in its Permanent Safety Vault, immediately migrate them to the server!
+  const vault = loadFromPermanentSafetyVault();
+  if (vault?.data) {
+    if (serverReachable && !isBrowserOffline()) {
+      performCloudPush(vault.data, vault.timestamp || new Date().toISOString(), {
+        skipEnqueueOnFailure: true,
+      }).catch(() => {});
+    }
+    if (!pendingSyncPayload && !isBrowserOffline()) {
+      setCloudConnectionStatus('connected', 'تم استرجاع البيانات المسجلة ومزامنتها تلقائياً مع الخادم');
+    }
+    return {
+      success: true,
+      message: 'تم استرجاع البيانات المسجلة من خزنة الأمان الدائمة وترحيلها تلقائياً إلى الخادم الحالي دون فقدان أي بيان.',
+      data: vault.data,
+      timestamp: vault.timestamp,
     };
   }
 
@@ -2186,6 +2391,7 @@ async function performCloudPush(
     const fullPayloadState = (state as unknown as { branchPartitions?: unknown })?.branchPartitions
       ? state
       : buildFullCloudMultiBranchPayload(state, nowIso);
+    saveToPermanentSafetyVault(fullPayloadState, nowIso);
     const snapshotPayload = {
       version: '5.0-supabase-realtime-autosync',
       timestamp: nowIso,
@@ -2324,38 +2530,12 @@ async function performCloudPush(
             .upsert(bRows, { onConflict: 'id' });
           if (bUpErr) externalErrorMsg = bUpErr.message;
         }
-        const { data: existingBIds } = await client
-          .from('bakeries')
-          .select('id')
-          .eq('branch_id', activeBranchId);
-        if (Array.isArray(existingBIds)) {
-          const removedBIds = computeDeletedIds(
-            existingBIds.map((r: any) => r.id),
-            bList
-          );
-          if (removedBIds.length > 0) {
-            await client.from('bakeries').delete().in('id', removedBIds);
-          }
-        }
 
         if (dRows.length > 0) {
           const { error: dUpErr } = await client
             .from('debts')
             .upsert(dRows, { onConflict: 'id' });
           if (dUpErr) externalErrorMsg = dUpErr.message;
-        }
-        const { data: existingDIds } = await client
-          .from('debts')
-          .select('id')
-          .eq('branch_id', activeBranchId);
-        if (Array.isArray(existingDIds)) {
-          const removedDIds = computeDeletedIds(
-            existingDIds.map((r: any) => r.id),
-            dList
-          );
-          if (removedDIds.length > 0) {
-            await client.from('debts').delete().in('id', removedDIds);
-          }
         }
 
         const uList = state.users || [];
@@ -3017,7 +3197,74 @@ export function subscribeToSupabaseRealtime(
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    // Continuous 2.5s lightweight revision check (/api/supabase/live-meta) so cross-device updates
+    // arrive within ~2 seconds even if a reverse proxy or network drops WebSocket frames
+    let lastSeenMetaRevision = -1;
+    let lastSeenMetaTimestamp = '';
+    let isPollingMeta = false;
+    const metaPollTimer = setInterval(async () => {
+      if (isPollingMeta || isBrowserOffline()) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      isPollingMeta = true;
+      try {
+        const metaResp = await fetch(getLiveMetaApiUrl(), {
+          method: 'GET',
+          credentials: 'same-origin',
+        });
+        if (metaResp.ok) {
+          const meta = await metaResp.json().catch(() => null);
+          if (meta && meta.success) {
+            if (!meta.exists) {
+              // If the server was restarted or switched and has no snapshot yet, auto-populate from permanent vault
+              const vault = loadFromPermanentSafetyVault();
+              if (vault?.data) {
+                await performCloudPush(vault.data, vault.timestamp || new Date().toISOString(), {
+                  skipEnqueueOnFailure: true,
+                });
+              }
+            } else {
+              const rev = Number(meta.revision) || 0;
+              const ts = String(meta.timestamp || '');
+              const isNewRevision =
+                (rev > 0 && rev !== lastSeenMetaRevision) ||
+                (ts && ts !== lastSeenMetaTimestamp);
+              if (isNewRevision) {
+                lastSeenMetaRevision = rev;
+                lastSeenMetaTimestamp = ts;
+                if (!isSelfRealtimeEvent(meta.clientId)) {
+                  const fullResp = await fetch(getLiveDbApiUrl(), {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                  });
+                  if (fullResp.ok) {
+                    const fullJson = await fullResp.json().catch(() => null);
+                    const snapData = (fullJson?.snapshot?.data || fullJson?.data) as AppState | undefined;
+                    const snapTs =
+                      fullJson?.snapshot?.timestamp || fullJson?.timestamp || ts || new Date().toISOString();
+                    if (snapData) {
+                      saveToPermanentSafetyVault(snapData, snapTs);
+                      setCloudConnectionStatus(
+                        'connected',
+                        'متصل وتمت المزامنة التلقائية الفورية بين الأجهزة'
+                      );
+                      callbacks.onUpdate(snapData, snapTs);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore transient poll errors
+      } finally {
+        isPollingMeta = false;
+      }
+    }, 2500);
+
     unsubscribers.push(() => {
+      clearInterval(metaPollTimer);
       window.removeEventListener('focus', handleVisibilityOrFocus);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -3268,48 +3515,26 @@ export function subscribeToSupabaseRealtime(
 }
 
 /**
- * حذف قاعدة البيانات وتفريغ كافّة السجلات والنسخ الاحتياطية من Supabase وخادم المزامنة
+ * حماية قاعدة البيانات المسجلة على Supabase وخادم المزامنة من الحذف النهائي والاحتفاظ بها دائماً
  */
 export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; message: string }> {
   try {
-    // 1. Clear Server Live DB & Alerts Relay
-    if (typeof window !== 'undefined') {
-      await Promise.all([
-        fetch(`${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
-          method: 'DELETE',
-        }).catch(() => null),
-        fetch(`${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
-          method: 'DELETE',
-        }).catch(() => null),
-      ]);
+    const vault = loadFromPermanentSafetyVault();
+    if (vault?.data) {
+      await performCloudPush(vault.data, new Date().toISOString(), { skipEnqueueOnFailure: true });
     }
-
-    // 2. If Supabase project client is configured, clear all PostgreSQL tables & storage
-    const client = getSupabaseClient();
-    if (client) {
-      await client.from('backup_snapshots').delete().neq('id', 'non_existent_id');
-      await client.from('bakeries').delete().neq('id', 'non_existent_id');
-      await client.from('debts').delete().neq('id', 'non_existent_id');
-      await client.from('system_config').delete().neq('id', 'non_existent_id');
-      await client.from('high_debt_alerts').delete().neq('id', 'non_existent_id');
-      try {
-        await client.storage.from(SUPABASE_BUCKET_NAME).remove(['tamween_database_backup.json', 'index.html']);
-      } catch {}
-    }
-
-    pendingSyncPayload = null;
-    safeRemoveItem('TAMWEEN_LAST_SUPABASE_SYNC');
-    setCloudConnectionStatus('connected', 'تم مسح بيانات Supabase بنجاح', { hasPendingSync: false });
-
+    setCloudConnectionStatus('connected', 'البيانات المسجلة محمية ضد الحذف النهائي ومحفوظة على Supabase', {
+      hasPendingSync: false,
+    });
     return {
       success: true,
-      message: 'تم بنجاح مسح وحذف كافة البيانات والنسخ الاحتياطية المسجلة على قاعدة بيانات Supabase نهائياً!',
+      message:
+        'نظام الحماية الدائمة مفعّل: تم الاحتفاظ بكافة البيانات المسجلة على Supabase وخزنة الأمان الدائمة ومنع حذفها نهائياً حتى عند تغيير الخادم.',
     };
   } catch (err: any) {
-    setCloudConnectionStatus('error', `تعذر مسح بيانات قاعدة بيانات Supabase: ${err.message || 'خطأ غير معروف'}`);
     return {
       success: false,
-      message: `تعذر مسح بيانات قاعدة بيانات Supabase: ${err.message || 'خطأ غير معروف'}`,
+      message: `تعذر تحديث حالة الحماية الدائمة: ${err.message || 'خطأ غير معروف'}`,
     };
   }
 }
