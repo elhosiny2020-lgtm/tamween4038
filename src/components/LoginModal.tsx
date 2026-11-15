@@ -360,18 +360,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-1">
-              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-[#0D9488] focus:ring-[#0D9488]"
-                />
-                <span className="text-xs font-bold text-slate-600">
-                  الاحتفاظ بجلسة الدخول على هذا الجهاز
-                </span>
-              </label>
+            <div className="flex items-center justify-end pt-1">
 
               {onRegisterUser && (
                 <button
