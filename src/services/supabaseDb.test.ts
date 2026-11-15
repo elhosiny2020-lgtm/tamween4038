@@ -152,7 +152,7 @@ test('applyGranularRowChangeToState handles bakeries INSERT (camelCase & snake_c
   assert.equal(state.bakeries.length, 1);
   assert.equal(state.bakeries[0].bakeryOwnerName, 'مخبز النصر');
 
-  // 2. Snake_case + data_json INSERT (as emitted by Supabase postgres_changes)
+  // 2. Normalized snake_case INSERT (as emitted by Supabase postgres_changes)
   state = applyGranularRowChangeToState(state, {
     table: 'bakeries',
     eventType: 'INSERT',
@@ -164,7 +164,11 @@ test('applyGranularRowChangeToState handles bakeries INSERT (camelCase & snake_c
       bakery_owner_name: 'مخبز الهدى',
       village: 'دمرو',
       local_unit: 'دمرو',
-      data_json: makeBakery({ id: 'b-2', machineNumber: '2002', bakeryOwnerName: 'مخبز الهدى', village: 'دمرو' }),
+      insurance_quota: 10,
+      actual_quota: 10,
+      insurance_value: 7050,
+      loaves_count: 13500,
+      activity_status: 'شغال',
     },
     timestamp: '2026-11-15T10:01:00.000Z',
   });

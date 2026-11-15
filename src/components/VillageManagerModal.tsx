@@ -6,7 +6,9 @@ interface VillageManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   villages: VillageHierarchy[];
-  onSaveVillages: (updated: VillageHierarchy[]) => void;
+  onSaveVillages: (
+    updated: VillageHierarchy[]
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
 }
 
 export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
@@ -21,6 +23,11 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
   const [msg, setMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [pendingDeleteVillage, setPendingDeleteVillage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    setList(villages);
+  }, [villages]);
 
   // Escape key closing is intentionally disabled per user preference
 
@@ -32,8 +39,9 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
     setTimeout(() => setErrorMsg(''), 3000);
   };
 
-  const handleAddVillage = (e: React.FormEvent) => {
+  const handleAddVillage = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const name = newVillageName.trim();
     if (!name) return;
 
@@ -42,36 +50,60 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
       return;
     }
 
+    const prevList = list;
     const updated = [...list, { village: name, localUnits: [`${name} الرئيسية`] }];
     setList(updated);
-    setNewVillageName('');
-    onSaveVillages(updated);
-    setErrorMsg('');
-    setMsg(`تمت إضافة قرية ${name} بنجاح`);
-    setTimeout(() => setMsg(''), 2000);
+    setIsSubmitting(true);
+    try {
+      const res = await onSaveVillages(updated);
+      if (res && res.success === false && !res.queuedOffline) {
+        setList(prevList);
+        showError(res.error || 'تعذر حفظ القرية الجديدة في قاعدة البيانات');
+        return;
+      }
+      setNewVillageName('');
+      setErrorMsg('');
+      setMsg(`تمت إضافة وحفظ قرية ${name} في قاعدة البيانات بنجاح`);
+      setTimeout(() => setMsg(''), 2000);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDeleteVillage = (villageName: string) => {
     setPendingDeleteVillage(villageName);
   };
 
-  const confirmDeleteVillage = () => {
-    if (!pendingDeleteVillage) return;
+  const confirmDeleteVillage = async () => {
+    if (!pendingDeleteVillage || isSubmitting) return;
     const villageName = pendingDeleteVillage;
     setPendingDeleteVillage(null);
+    const prevList = list;
     const updated = list.filter((v) => v.village !== villageName);
     setList(updated);
-    onSaveVillages(updated);
-    setErrorMsg('');
-    setMsg(`تم حذف قرية ${villageName}`);
-    setTimeout(() => setMsg(''), 2000);
+    setIsSubmitting(true);
+    try {
+      const res = await onSaveVillages(updated);
+      if (res && res.success === false && !res.queuedOffline) {
+        setList(prevList);
+        showError(res.error || 'تعذر حذف القرية من قاعدة البيانات');
+        return;
+      }
+      setErrorMsg('');
+      setMsg(`تم حذف قرية ${villageName}`);
+      setTimeout(() => setMsg(''), 2000);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleAddUnit = (villageName: string) => {
+  const handleAddUnit = async (villageName: string) => {
+    if (isSubmitting) return;
     const unitName = (newUnitNames[villageName] || '').trim();
     if (!unitName) return;
 
     let duplicateFound = false;
+    const prevList = list;
     const updated = list.map((v) => {
       if (v.village === villageName) {
         if (v.localUnits.includes(unitName)) {
@@ -89,11 +121,23 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
     }
 
     setList(updated);
-    setNewUnitNames((prev) => ({ ...prev, [villageName]: '' }));
-    onSaveVillages(updated);
+    setIsSubmitting(true);
+    try {
+      const res = await onSaveVillages(updated);
+      if (res && res.success === false && !res.queuedOffline) {
+        setList(prevList);
+        showError(res.error || 'تعذر حفظ الوحدة المحلية في قاعدة البيانات');
+        return;
+      }
+      setNewUnitNames((prev) => ({ ...prev, [villageName]: '' }));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleDeleteUnit = (villageName: string, unitName: string) => {
+  const handleDeleteUnit = async (villageName: string, unitName: string) => {
+    if (isSubmitting) return;
+    const prevList = list;
     const updated = list.map((v) => {
       if (v.village === villageName) {
         return { ...v, localUnits: v.localUnits.filter((u) => u !== unitName) };
@@ -101,7 +145,16 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
       return v;
     });
     setList(updated);
-    onSaveVillages(updated);
+    setIsSubmitting(true);
+    try {
+      const res = await onSaveVillages(updated);
+      if (res && res.success === false && !res.queuedOffline) {
+        setList(prevList);
+        showError(res.error || 'تعذر حذف الوحدة المحلية من قاعدة البيانات');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -152,10 +205,11 @@ export const VillageManagerModal: React.FC<VillageManagerModalProps> = ({
             />
             <button
               type="submit"
-              className="inline-flex items-center gap-1 px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-black shadow-sm transition cursor-pointer"
+              disabled={isSubmitting}
+              className="inline-flex items-center gap-1 px-4 py-2 bg-amber-700 hover:bg-amber-800 disabled:opacity-60 text-white rounded-lg text-xs font-black shadow-sm transition cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              إضافة قرية
+              {isSubmitting ? 'جاري الحفظ...' : 'إضافة قرية'}
             </button>
           </form>
         </div>

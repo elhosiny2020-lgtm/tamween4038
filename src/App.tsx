@@ -29,8 +29,6 @@ import {
   saveBranchesList,
   syncAllBranchesFromCloudPayload,
   readBranchPartitionFromLocal,
-  fetchLatestServerState,
-  syncStateToServer,
   isDefaultSeedState
 } from './storage';
 import {
@@ -975,7 +973,7 @@ export default function App() {
       branchId?: string;
       executeDb: () => Promise<DbMutationResult>;
       patchReturnedRow?: (current: AppState, savedRow: any) => AppState;
-    }) => {
+    }): Promise<DbMutationResult> => {
       const previousState = latestAppStateRef.current;
       latestAppStateRef.current = params.nextState;
       setAppState(params.nextState);
@@ -989,9 +987,9 @@ export default function App() {
       const effectiveBranchId =
         params.branchId || params.nextState.activeBranchId || DEFAULT_BRANCH_ID;
 
-      saveLockRef.current = saveLockRef.current
+      const mutationPromise = saveLockRef.current
         .catch(() => {})
-        .then(async () => {
+        .then(async (): Promise<DbMutationResult> => {
           const res = await params.executeDb();
           if (res.success) {
             let confirmedState = latestAppStateRef.current || params.nextState;
@@ -1051,10 +1049,17 @@ export default function App() {
               variant: 'error',
             });
           }
+          return res;
         })
         .finally(() => {
           setTimeout(() => setIsSavingPulse(false), 600);
         });
+
+      saveLockRef.current = mutationPromise.then(
+        () => undefined,
+        () => undefined
+      );
+      return mutationPromise;
     },
     []
   );
@@ -1843,16 +1848,8 @@ export default function App() {
     setIsSyncingWithCloud(true);
     try {
       const supaRes = await fetchDatabaseFromSupabase();
-      let cloudData: Partial<AppState> | undefined = supaRes.success ? supaRes.data : undefined;
-      let savedAt: string | undefined = supaRes.timestamp;
-
-      if (!cloudData) {
-        const serverSnap = await fetchLatestServerState();
-        if (serverSnap && serverSnap.data) {
-          cloudData = serverSnap.data;
-          savedAt = serverSnap.savedAt;
-        }
-      }
+      const cloudData: Partial<AppState> | undefined = supaRes.success ? supaRes.data : undefined;
+      const savedAt: string | undefined = supaRes.timestamp;
 
       if (cloudData) {
         syncAllBranchesFromCloudPayload(cloudData, savedAt);
@@ -2063,7 +2060,7 @@ export default function App() {
           });
           setIsDailyBriefingModalOpen(true);
         }}
-        onRegisterUser={(newUser) => {
+        onRegisterUser={async (newUser) => {
           const scopedNewUser: AppUser = {
             ...newUser,
             branchId: activeBranchId,
@@ -2074,19 +2071,12 @@ export default function App() {
             activeBranchId,
             appState.systemConfig.administrationTitle
           );
-          saveBranchAuthVault(activeBranchId, {
-            branchName: appState.systemConfig.administrationTitle,
-            users: updatedUsers,
-            rolePermissions: appState.systemConfig.rolePermissions,
-            roleLabels: appState.systemConfig.roleLabels,
-            customRoles: appState.systemConfig.customRoles,
-          });
           const baseWithUser: AppState = {
             ...appState,
             users: updatedUsers,
           };
           const mergedState = performGmailDriveAdditiveMerge(baseWithUser, scopedNewUser);
-          commitRowMutation({
+          const res = await commitRowMutation({
             nextState: { ...mergedState, currentUser: null },
             table: 'app_users',
             branchId: activeBranchId,
@@ -2099,6 +2089,16 @@ export default function App() {
                 operation: 'INSERT',
               }),
           });
+          if (res.success || res.queuedOffline) {
+            saveBranchAuthVault(activeBranchId, {
+              branchName: appState.systemConfig.administrationTitle,
+              users: updatedUsers,
+              rolePermissions: appState.systemConfig.rolePermissions,
+              roleLabels: appState.systemConfig.roleLabels,
+              customRoles: appState.systemConfig.customRoles,
+            });
+          }
+          return res;
         }}
       />
     );
@@ -2227,7 +2227,7 @@ export default function App() {
       );
     });
 
-    commitRowMutation({
+    return commitRowMutation({
       nextState: { ...appState, bakeries: synced.bakeries, debts: synced.debts },
       table: 'bakeries',
       branchId,
@@ -2366,7 +2366,7 @@ export default function App() {
       ? ` — ⚠️ تنبيه: تجاوزت المديونية (${savedDebt.netRemainingDebt.toLocaleString('en-US')} ج.م) حد التنبيه (${alertThreshold.toLocaleString('en-US')} ج.م) وتم إضافته لسجل التنبيهات!`
       : '';
 
-    commitRowMutation({
+    return commitRowMutation({
       nextState: { ...appState, bakeries: synced.bakeries, debts: synced.debts },
       table: 'debts',
       branchId,
@@ -5377,7 +5377,7 @@ export default function App() {
               const prev = prevVillages.find((p) => p.village === v.village);
               return !prev || JSON.stringify(prev.localUnits) !== JSON.stringify(v.localUnits);
             });
-            commitRowMutation({
+            return commitRowMutation({
               nextState: { ...appState, villages: updatedVillages },
               table: 'villages',
               branchId,
@@ -5472,7 +5472,7 @@ export default function App() {
           branchName={appState.systemConfig.administrationTitle}
           users={appState.users}
           currentUser={appState.currentUser}
-          onAddUser={(newUser) => {
+          onAddUser={async (newUser) => {
             const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
             const scopedUser: AppUser = {
               ...newUser,
@@ -5484,19 +5484,31 @@ export default function App() {
               branchId,
               appState.systemConfig.administrationTitle
             );
-            saveBranchAuthVault(branchId, {
-              branchName: appState.systemConfig.administrationTitle,
-              users: updatedUsers,
-              rolePermissions: appState.systemConfig.rolePermissions,
-              roleLabels: appState.systemConfig.roleLabels,
-              customRoles: appState.systemConfig.customRoles,
+            const res = await commitRowMutation({
+              nextState: { ...appState, users: updatedUsers },
+              table: 'app_users',
+              branchId,
+              toastMessage: `تم إضافة وحفظ المستخدم (${scopedUser.username}) في قاعدة البيانات ومزامنته لجميع الأجهزة`,
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'app_users',
+                  branchId,
+                  row: scopedUser,
+                  operation: 'INSERT',
+                }),
             });
-            triggerSave(
-              { ...appState, users: updatedUsers },
-              `تم إضافة وحفظ المستخدم (${scopedUser.username}) في ملف صلاحيات (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً لجميع الأجهزة`
-            );
+            if (res.success || res.queuedOffline) {
+              saveBranchAuthVault(branchId, {
+                branchName: appState.systemConfig.administrationTitle,
+                users: updatedUsers,
+                rolePermissions: appState.systemConfig.rolePermissions,
+                roleLabels: appState.systemConfig.roleLabels,
+                customRoles: appState.systemConfig.customRoles,
+              });
+            }
+            return res;
           }}
-          onUpdateUser={(updatedUser) => {
+          onUpdateUser={async (updatedUser) => {
             const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
             const scopedUser: AppUser = { ...updatedUser, branchId };
             const updatedUsers = sanitizeBranchUsers(
@@ -5505,43 +5517,64 @@ export default function App() {
               appState.systemConfig.administrationTitle
             );
             const isCurrent = appState.currentUser?.id === scopedUser.id;
-            if (isCurrent) {
-              saveSessionUser(scopedUser);
-            }
-            saveBranchAuthVault(branchId, {
-              branchName: appState.systemConfig.administrationTitle,
-              users: updatedUsers,
-              rolePermissions: appState.systemConfig.rolePermissions,
-              roleLabels: appState.systemConfig.roleLabels,
-              customRoles: appState.systemConfig.customRoles,
-            });
-            triggerSave(
-              {
+            const res = await commitRowMutation({
+              nextState: {
                 ...appState,
                 users: updatedUsers,
                 currentUser: isCurrent ? scopedUser : appState.currentUser,
               },
-              `تم حفظ تعديل بيانات الحساب (${scopedUser.fullName}) والصلاحيات في ملف (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً`
-            );
+              table: 'app_users',
+              branchId,
+              toastMessage: `تم حفظ تعديل بيانات الحساب (${scopedUser.fullName}) والصلاحيات ومزامنته لجميع الأجهزة`,
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'app_users',
+                  branchId,
+                  row: scopedUser,
+                  operation: 'UPDATE',
+                }),
+            });
+            if (res.success || res.queuedOffline) {
+              if (isCurrent) saveSessionUser(scopedUser);
+              saveBranchAuthVault(branchId, {
+                branchName: appState.systemConfig.administrationTitle,
+                users: updatedUsers,
+                rolePermissions: appState.systemConfig.rolePermissions,
+                roleLabels: appState.systemConfig.roleLabels,
+                customRoles: appState.systemConfig.customRoles,
+              });
+            }
+            return res;
           }}
-          onDeleteUser={(userId) => {
+          onDeleteUser={async (userId) => {
             const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
             const updatedUsers = sanitizeBranchUsers(
               appState.users.filter((u) => u.id !== userId),
               branchId,
               appState.systemConfig.administrationTitle
             );
-            saveBranchAuthVault(branchId, {
-              branchName: appState.systemConfig.administrationTitle,
-              users: updatedUsers,
-              rolePermissions: appState.systemConfig.rolePermissions,
-              roleLabels: appState.systemConfig.roleLabels,
-              customRoles: appState.systemConfig.customRoles,
+            const res = await commitRowMutation({
+              nextState: { ...appState, users: updatedUsers },
+              table: 'app_users',
+              branchId,
+              toastMessage: `تم حذف المستخدم من قاعدة البيانات ومزامنة التحديث لجميع الأجهزة`,
+              executeDb: () =>
+                deleteRowFromDb({
+                  table: 'app_users',
+                  id: userId,
+                  branchId,
+                }),
             });
-            triggerSave(
-              { ...appState, users: updatedUsers },
-              `تم حذف المستخدم من ملف صلاحيات (${appState.systemConfig.administrationTitle}) ومزامنة التحديث سحابياً`
-            );
+            if (res.success || res.queuedOffline) {
+              saveBranchAuthVault(branchId, {
+                branchName: appState.systemConfig.administrationTitle,
+                users: updatedUsers,
+                rolePermissions: appState.systemConfig.rolePermissions,
+                roleLabels: appState.systemConfig.roleLabels,
+                customRoles: appState.systemConfig.customRoles,
+              });
+            }
+            return res;
           }}
         />
       )}
@@ -5561,14 +5594,28 @@ export default function App() {
               roleLabels: updatedConfig.roleLabels,
               customRoles: updatedConfig.customRoles,
             });
-            triggerSave(
-              { ...appState, systemConfig: updatedConfig },
-              `تم حفظ إعدادات الصلاحيات المتقدمة والأدوار لـ (${appState.systemConfig.administrationTitle}) ومزامنتها سحابياً لجميع الأجهزة`
-            );
+            commitRowMutation({
+              nextState: { ...appState, systemConfig: updatedConfig },
+              table: 'system_config',
+              branchId,
+              toastMessage: `تم حفظ إعدادات الصلاحيات المتقدمة والأدوار لـ (${appState.systemConfig.administrationTitle}) ومزامنتها لجميع الأجهزة`,
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'system_config',
+                  branchId,
+                  row: {
+                    branchId,
+                    systemConfig: updatedConfig,
+                    columnTitles: appState.columnTitles,
+                    activityStatuses: appState.activityStatuses,
+                  },
+                  operation: 'UPDATE',
+                }),
+            });
           }}
           users={appState.users}
           currentUser={appState.currentUser}
-          onAddUser={(newUser) => {
+          onAddUser={async (newUser) => {
             const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
             const scopedUser: AppUser = {
               ...newUser,
@@ -5580,19 +5627,31 @@ export default function App() {
               branchId,
               appState.systemConfig.administrationTitle
             );
-            saveBranchAuthVault(branchId, {
-              branchName: appState.systemConfig.administrationTitle,
-              users: updatedUsers,
-              rolePermissions: appState.systemConfig.rolePermissions,
-              roleLabels: appState.systemConfig.roleLabels,
-              customRoles: appState.systemConfig.customRoles,
+            const res = await commitRowMutation({
+              nextState: { ...appState, users: updatedUsers },
+              table: 'app_users',
+              branchId,
+              toastMessage: `تم إضافة وحفظ المستخدم الجديد (${scopedUser.fullName}) في قاعدة البيانات ومزامنته لجميع الأجهزة`,
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'app_users',
+                  branchId,
+                  row: scopedUser,
+                  operation: 'INSERT',
+                }),
             });
-            triggerSave(
-              { ...appState, users: updatedUsers },
-              `تم إضافة وحفظ المستخدم الجديد (${scopedUser.fullName}) في ملف (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً`
-            );
+            if (res.success || res.queuedOffline) {
+              saveBranchAuthVault(branchId, {
+                branchName: appState.systemConfig.administrationTitle,
+                users: updatedUsers,
+                rolePermissions: appState.systemConfig.rolePermissions,
+                roleLabels: appState.systemConfig.roleLabels,
+                customRoles: appState.systemConfig.customRoles,
+              });
+            }
+            return res;
           }}
-          onUpdateUser={(updatedUser) => {
+          onUpdateUser={async (updatedUser) => {
             const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
             const scopedUser: AppUser = { ...updatedUser, branchId };
             const updatedUsers = sanitizeBranchUsers(
@@ -5601,43 +5660,64 @@ export default function App() {
               appState.systemConfig.administrationTitle
             );
             const isCurrent = appState.currentUser?.id === scopedUser.id;
-            if (isCurrent) {
-              saveSessionUser(scopedUser);
-            }
-            saveBranchAuthVault(branchId, {
-              branchName: appState.systemConfig.administrationTitle,
-              users: updatedUsers,
-              rolePermissions: appState.systemConfig.rolePermissions,
-              roleLabels: appState.systemConfig.roleLabels,
-              customRoles: appState.systemConfig.customRoles,
-            });
-            triggerSave(
-              {
+            const res = await commitRowMutation({
+              nextState: {
                 ...appState,
                 users: updatedUsers,
                 currentUser: isCurrent ? scopedUser : appState.currentUser,
               },
-              `تم حفظ تعديل بيانات الحساب (${scopedUser.fullName}) واليوزر والباسورد في ملف (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً`
-            );
+              table: 'app_users',
+              branchId,
+              toastMessage: `تم حفظ تعديل بيانات الحساب (${scopedUser.fullName}) واليوزر والباسورد ومزامنته لجميع الأجهزة`,
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'app_users',
+                  branchId,
+                  row: scopedUser,
+                  operation: 'UPDATE',
+                }),
+            });
+            if (res.success || res.queuedOffline) {
+              if (isCurrent) saveSessionUser(scopedUser);
+              saveBranchAuthVault(branchId, {
+                branchName: appState.systemConfig.administrationTitle,
+                users: updatedUsers,
+                rolePermissions: appState.systemConfig.rolePermissions,
+                roleLabels: appState.systemConfig.roleLabels,
+                customRoles: appState.systemConfig.customRoles,
+              });
+            }
+            return res;
           }}
-          onDeleteUser={(userId) => {
+          onDeleteUser={async (userId) => {
             const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
             const updatedUsers = sanitizeBranchUsers(
               appState.users.filter((u) => u.id !== userId),
               branchId,
               appState.systemConfig.administrationTitle
             );
-            saveBranchAuthVault(branchId, {
-              branchName: appState.systemConfig.administrationTitle,
-              users: updatedUsers,
-              rolePermissions: appState.systemConfig.rolePermissions,
-              roleLabels: appState.systemConfig.roleLabels,
-              customRoles: appState.systemConfig.customRoles,
+            const res = await commitRowMutation({
+              nextState: { ...appState, users: updatedUsers },
+              table: 'app_users',
+              branchId,
+              toastMessage: `تم حذف المستخدم من قاعدة البيانات ومزامنة القائمة لجميع الأجهزة`,
+              executeDb: () =>
+                deleteRowFromDb({
+                  table: 'app_users',
+                  id: userId,
+                  branchId,
+                }),
             });
-            triggerSave(
-              { ...appState, users: updatedUsers },
-              `تم حذف المستخدم من ملف (${appState.systemConfig.administrationTitle}) ومزامنة القائمة سحابياً`
-            );
+            if (res.success || res.queuedOffline) {
+              saveBranchAuthVault(branchId, {
+                branchName: appState.systemConfig.administrationTitle,
+                users: updatedUsers,
+                rolePermissions: appState.systemConfig.rolePermissions,
+                roleLabels: appState.systemConfig.roleLabels,
+                customRoles: appState.systemConfig.customRoles,
+              });
+            }
+            return res;
           }}
         />
       )}
@@ -6113,7 +6193,7 @@ export default function App() {
         onSelectBranch={(branchId) => {
           handleSwitchBranch(branchId, appState.branches || getBranchesList());
         }}
-        onBranchesChange={(updatedBranches, nextBranchId) => {
+        onBranchesChange={async (updatedBranches, nextBranchId) => {
           const prevBranches = appState.branches || getBranchesList();
           const nextIds = new Set(updatedBranches.map((b) => b.id));
           const removedBranches = prevBranches.filter((b) => !nextIds.has(b.id));
@@ -6130,6 +6210,7 @@ export default function App() {
                 id: rem.id,
                 branchId: rem.id,
               });
+              if (!lastRes.success) return lastRes;
             }
             for (const br of updatedBranches) {
               const isNew = !prevBranches.some((p) => p.id === br.id);
@@ -6139,13 +6220,15 @@ export default function App() {
                 row: br,
                 operation: isNew ? 'INSERT' : 'UPDATE',
               });
+              if (!lastRes.success) return lastRes;
             }
             return lastRes;
           };
 
           if (targetBranchId !== currentBranchId) {
-            syncBranchesToPg().catch(() => {});
+            const res = await syncBranchesToPg();
             handleSwitchBranch(targetBranchId, updatedBranches);
+            return res;
           } else {
             const nextState: AppState = {
               ...appState,
@@ -6156,7 +6239,7 @@ export default function App() {
                 administrationTitle: activeObj?.name || appState.systemConfig.administrationTitle,
               },
             };
-            commitRowMutation({
+            return commitRowMutation({
               nextState,
               table: 'branches',
               branchId: targetBranchId,

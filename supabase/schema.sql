@@ -442,3 +442,28 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- =========================================================================
+-- إعداد حاوية التخزين السحابي (Supabase Storage Bucket) وسياسات الوصول الآمنة
+-- =========================================================================
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('tamween-backups', 'tamween-backups', false)
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
+
+DROP POLICY IF EXISTS "Tamween storage read policy" ON storage.objects;
+CREATE POLICY "Tamween storage read policy" ON storage.objects
+  FOR SELECT USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated'));
+
+DROP POLICY IF EXISTS "Tamween storage insert policy" ON storage.objects;
+CREATE POLICY "Tamween storage insert policy" ON storage.objects
+  FOR INSERT WITH CHECK (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
+
+DROP POLICY IF EXISTS "Tamween storage update policy" ON storage.objects;
+CREATE POLICY "Tamween storage update policy" ON storage.objects
+  FOR UPDATE USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer())
+  WITH CHECK (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
+
+DROP POLICY IF EXISTS "Tamween storage delete policy" ON storage.objects;
+CREATE POLICY "Tamween storage delete policy" ON storage.objects
+  FOR DELETE USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
+

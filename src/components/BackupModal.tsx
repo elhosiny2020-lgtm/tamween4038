@@ -53,6 +53,11 @@ import {
   getPendingOfflineQueueCount,
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
+  uploadTamweenFileToStorage,
+  listTamweenStorageFiles,
+  readTamweenFileFromStorage,
+  deleteTamweenFileFromStorage,
+  UnifiedStorageFileInfo,
 } from '../lib/supabase';
 import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -332,7 +337,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         setDriveAccounts(updated);
         localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(updated));
         localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${accToDelete.email.toLowerCase()}`);
-        localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${accToDelete.email.toLowerCase()}`);
 
         if (gmailEmail.toLowerCase() === accToDelete.email.toLowerCase()) {
           const nextEmail = updated.length > 0 ? updated[0].email : '';
@@ -421,12 +425,21 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     email?: string;
     role?: string;
   }>({ authenticated: false });
+  const [storageFiles, setStorageFiles] = useState<UnifiedStorageFileInfo[]>([]);
+  const [storageBusy, setStorageBusy] = useState(false);
+
+  const refreshStorageFiles = async () => {
+    const branchId = currentState.activeBranchId || DEFAULT_BRANCH_ID;
+    const files = await listTamweenStorageFiles(branchId);
+    setStorageFiles(files);
+  };
 
   useEffect(() => {
     if (isOpen) {
       getSupabaseAuthSession().then(setSupaAuthSession).catch(() => {});
+      refreshStorageFiles().catch(() => {});
     }
-  }, [isOpen, supabaseCfg.url]);
+  }, [isOpen, supabaseCfg.url, currentState.activeBranchId]);
 
   useEffect(() => {
     const unsub = initGoogleAuthListener((user) => {
@@ -788,23 +801,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           currentUser: currentState.currentUser,
         };
 
-        const syncPayload = {
-          version: '3.5-google-drive-gmail-merge',
-          timestamp: new Date().toISOString(),
-          destinationType: 'GOOGLE_DRIVE',
-          gmailEmail: gmailEmail.trim(),
-          targetPath: customBackupPath,
-          data: restoredData,
-        };
-
-        localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(syncPayload));
-        if (gmailEmail.trim()) {
-          localStorage.setItem(
-            `TAMWEEN_GMAIL_DRIVE_SYNC_${gmailEmail.trim().toLowerCase()}`,
-            JSON.stringify(syncPayload)
-          );
-        }
-
         onRestoreState(restoredData);
         setStatusMsg({
           text: `تم استيراد ودمج النسخة الاحتياطية من Google Drive (${file.name}) بنجاح وفق قاعدة ADD ONLY (إضافة الجديد فقط دون حذف أو استبدال السجلات الأصلية)! إجمالي المخابز الآن (${restoredData.bakeries.length}) مخبز (أضيف ${addedBakeries} مخبز جديد) وإجمالي المديونيات (${restoredData.debts.length}).`,
@@ -836,14 +832,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       }
 
       if (!sourceData) {
-        const gmailKey = gmailEmail.trim().toLowerCase();
-        const savedStr =
-          (gmailKey ? localStorage.getItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`) : null) ||
-          localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD') ||
-          localStorage.getItem('TAMWEEN_GITHUB_SYNC_PAYLOAD');
+        const savedStr = localStorage.getItem('TAMWEEN_GITHUB_SYNC_PAYLOAD');
         if (!savedStr) {
           throw new Error(
-            'لا توجد نسخة Google Drive محفوظة مسبقاً. يرجى الضغط على "ربط الجيميل ورفع النسخة على Google Drive" أو اختيار ملف JSON.'
+            'لا توجد نسخة Google Drive سحابية محفوظة. يرجى الضغط على "ربط الجيميل ورفع النسخة على Google Drive" أو اختيار ملف JSON.'
           );
         }
         const parsed = JSON.parse(savedStr);
@@ -985,20 +977,12 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         data: finalState,
       };
 
-      localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(payload));
-      localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, JSON.stringify(payload));
-
-      // Upload directly to Google Drive API
-      const fileName = `tamween_mahalla_backup_${new Date().toISOString().split('T')[0]}.json`;
+      // Upload directly to Google Drive API using a fixed filename (updates in-place without duplicates)
+      const fileName = 'tamween_mahalla_cloud_backup.json';
       const driveUpload = await uploadBackupToGoogleDriveDirect(payload, fileName);
 
-      // Also sync to Supabase Realtime & local server snapshot
+      // Sync to PostgreSQL / Supabase Realtime (single source of truth)
       await autoSyncToSupabase(finalState, true).catch(() => {});
-      fetch('/api/backup/snapshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch(() => {});
 
       const nowArabic = new Date().toLocaleString('ar-EG');
       localStorage.setItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC', nowArabic);
@@ -1176,6 +1160,86 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
+  const handleUploadFixedSnapshotFile = async () => {
+    if (storageBusy) return;
+    setStorageBusy(true);
+    try {
+      const branchId = currentState.activeBranchId || DEFAULT_BRANCH_ID;
+      const fixedName = 'tamween_branch_snapshot.json';
+      const content = JSON.stringify(
+        {
+          schemaVersion: '4.0-fixed-storage',
+          branchId,
+          updatedAt: new Date().toISOString(),
+          bakeriesCount: currentState.bakeries.length,
+          debtsCount: currentState.debts.length,
+          data: currentState,
+        },
+        null,
+        2
+      );
+      const res = await uploadTamweenFileToStorage({
+        branchId,
+        fileName: fixedName,
+        content,
+        contentType: 'application/json',
+      });
+      await refreshStorageFiles();
+      if (res.success) {
+        setStatusMsg({
+          text: `تم رفع وتحديث ملف (${fixedName}) بالمسار الثابت على التخزين الموحد بدون إنشاء نسخ مكررة.`,
+          type: 'success',
+        });
+      } else {
+        setStatusMsg({
+          text: res.error || 'تعذر رفع الملف إلى التخزين السحابي الموحد.',
+          type: 'error',
+        });
+      }
+    } finally {
+      setStorageBusy(false);
+    }
+  };
+
+  const handleDownloadStorageFile = async (fileName: string) => {
+    if (storageBusy) return;
+    setStorageBusy(true);
+    try {
+      const branchId = currentState.activeBranchId || DEFAULT_BRANCH_ID;
+      const file = await readTamweenFileFromStorage(fileName, branchId);
+      if (!file || !file.content) {
+        setStatusMsg({ text: `تعذر قراءة الملف (${fileName}) من التخزين.`, type: 'error' });
+        return;
+      }
+      const blob = new Blob([file.content], { type: file.contentType || 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatusMsg({ text: `تم تنزيل وقراءة الملف (${fileName}) بنجاح.`, type: 'success' });
+    } finally {
+      setStorageBusy(false);
+    }
+  };
+
+  const handleDeleteStorageFile = async (fileName: string) => {
+    if (storageBusy) return;
+    setStorageBusy(true);
+    try {
+      const branchId = currentState.activeBranchId || DEFAULT_BRANCH_ID;
+      const ok = await deleteTamweenFileFromStorage(fileName, branchId);
+      await refreshStorageFiles();
+      setStatusMsg({
+        text: ok ? `تم حذف الملف (${fileName}) من التخزين بنجاح.` : `تعذر حذف الملف (${fileName}).`,
+        type: ok ? 'success' : 'error',
+      });
+    } finally {
+      setStorageBusy(false);
+    }
+  };
+
   const handleMigrateAllDatabaseToSupabase = async () => {
     setIsProcessing(true);
     setStatusMsg({ text: 'جاري نقل وترحيل ومزامنة كافة جداول قاعدة البيانات (المخابز والمديونيات) إلى Supabase...', type: 'info' });
@@ -1315,15 +1379,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       confirmLabel: 'حذف نسخ Drive',
       variant: 'danger',
       onConfirm: () => {
-        const gmailKey = gmailEmail.trim().toLowerCase();
-        if (gmailKey) {
-          localStorage.removeItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`);
-        }
-        localStorage.removeItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD');
         localStorage.removeItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC');
         setLastCloudDriveSyncTime(null);
         setStatusMsg({
-          text: 'تم مسح وحذف كافة حزم وقواعد البيانات المخزنة سحابياً لـ Google Drive بنجاح 🗑️!',
+          text: 'تم مسح سجل مزامنة Google Drive المحلي بنجاح 🗑️!',
           type: 'success',
         });
       },
@@ -2120,6 +2179,74 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   <span>حذف قاعدة البيانات من مكان الرفع والتخزين 🗑️</span>
                 </button>
               </div>
+
+              {/* Unified Fixed-Path File Storage Manager (tamween-backups & PostgreSQL Storage) */}
+              <div className="mt-3 pt-3 border-t border-emerald-500/30 relative z-10 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] font-black text-emerald-200 flex items-center gap-1.5">
+                    <FileJson className="w-4 h-4 text-emerald-400" />
+                    <span>ملفات التخزين السحابي الموحد (مسارات ثابتة بدون تكرار — Bucket: {SUPABASE_BUCKET_NAME})</span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={storageBusy}
+                      onClick={handleUploadFixedSnapshotFile}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-black cursor-pointer transition"
+                    >
+                      {storageBusy ? 'جاري الرفع...' : 'رفع / تحديث نسخة ثابتة (Upsert)'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={storageBusy}
+                      onClick={() => refreshStorageFiles()}
+                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-lg text-[10px] font-black cursor-pointer transition"
+                    >
+                      تحديث القائمة
+                    </button>
+                  </div>
+                </div>
+
+                {storageFiles.length === 0 ? (
+                  <p className="text-[10px] font-bold text-slate-300/80 bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/60">
+                    لا توجد ملفات مرفوعة لهذا الفرع بعد. عند رفع أي ملف سيتم تحديث نفس المسار الثابت (Upsert) لمنع تكرار ملفات JSON.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {storageFiles.map((file) => (
+                      <div
+                        key={file.id}
+                        className="flex items-center justify-between gap-2 bg-slate-900/75 border border-emerald-500/30 rounded-lg px-3 py-1.5 text-[11px]"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-mono font-black text-emerald-200 truncate">{file.fileName}</div>
+                          <div className="text-[10px] text-slate-400">
+                            {(file.sizeBytes / 1024).toFixed(1)} KB • {new Date(file.updatedAt).toLocaleString('ar-EG')}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            disabled={storageBusy}
+                            onClick={() => handleDownloadStorageFile(file.fileName)}
+                            className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-[10px] font-black cursor-pointer"
+                          >
+                            تنزيل
+                          </button>
+                          <button
+                            type="button"
+                            disabled={storageBusy}
+                            onClick={() => handleDeleteStorageFile(file.fileName)}
+                            className="px-2 py-1 bg-rose-700 hover:bg-rose-600 text-white rounded-md text-[10px] font-black cursor-pointer"
+                          >
+                            حذف
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -2809,22 +2936,15 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                       debtsCount: currentState.debts.length,
                       data: currentState,
                     };
-                    localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', JSON.stringify(payload));
-                    if (gmailEmail.trim()) {
-                      localStorage.setItem(
-                        `TAMWEEN_GMAIL_DRIVE_SYNC_${gmailEmail.trim().toLowerCase()}`,
-                        JSON.stringify(payload)
-                      );
-                    }
                     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `tamween_google_drive_backup_${new Date().toISOString().split('T')[0]}.json`;
+                    a.download = 'tamween_google_drive_backup.json';
                     a.click();
                     URL.revokeObjectURL(url);
                     setStatusMsg({
-                      text: `تم تصدير وحفظ النسخة الاحتياطية بنجاح لـ Google Drive (${gmailEmail || customBackupPath})!`,
+                      text: `تم تصدير النسخة الاحتياطية الموحدة لـ Google Drive (${gmailEmail || customBackupPath})!`,
                       type: 'success',
                     });
                   }}

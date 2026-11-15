@@ -25,9 +25,12 @@ import {
   getPendingOfflineQueueCount,
   getSecurityShieldHeaders,
   getSupabaseClient,
+  mapRowToSqlByTable,
   mapSqlRowToBakery,
   mapSqlRowToBranch,
   mapSqlRowToDebt,
+  mapSqlRowToInbox,
+  mapSqlRowToSystemConfig,
   mapSqlRowToTask,
   mapSqlRowToUser,
   mapSqlRowToVillage,
@@ -117,21 +120,7 @@ function normalizeIncomingUser(raw: any): AppUser | null {
 function normalizeIncomingInboxMessage(raw: any): InboxChatMessage | null {
   if (!raw) return null;
   if ('senderId' in raw && !raw.data_json) return raw as InboxChatMessage;
-  const payload = raw.data_json || {};
-  return {
-    id: String(raw.id || payload.id || ''),
-    senderId: String(raw.sender_id || payload.senderId || ''),
-    senderName: String(raw.sender_name || payload.senderName || ''),
-    senderRole: String(raw.sender_role || payload.senderRole || 'inspector'),
-    recipientTarget: String(raw.recipient_target || payload.recipientTarget || 'ALL'),
-    recipientLabel: String(raw.recipient_label || payload.recipientLabel || 'الجميع'),
-    messageType: (raw.message_type || payload.messageType || 'instruction') as InboxChatMessage['messageType'],
-    content: String(raw.content || payload.content || ''),
-    relatedBakeryId: raw.related_bakery_id || payload.relatedBakeryId || undefined,
-    relatedBakeryName: raw.related_bakery_name || payload.relatedBakeryName || undefined,
-    readBy: Array.isArray(raw.read_by) ? raw.read_by : Array.isArray(payload.readBy) ? payload.readBy : [],
-    timestamp: String(raw.timestamp || payload.timestamp || new Date().toISOString()),
-  };
+  return mapSqlRowToInbox(raw);
 }
 
 /**
@@ -281,9 +270,12 @@ export function applyGranularRowChangeToState(
   }
 
   if (table === 'system_config' && newRow) {
-    const cfgPayload = newRow.systemConfig || newRow.payload;
-    const colPayload = newRow.columnTitles || newRow.column_titles;
-    const actPayload = newRow.activityStatuses || newRow.activity_statuses;
+    const mappedCfg = newRow.governorate_title !== undefined || newRow.debt_alert_threshold !== undefined
+      ? mapSqlRowToSystemConfig(newRow)
+      : null;
+    const cfgPayload = mappedCfg?.systemConfig || newRow.systemConfig || newRow.payload;
+    const colPayload = mappedCfg?.columnTitles || newRow.columnTitles || newRow.column_titles;
+    const actPayload = mappedCfg?.activityStatuses || newRow.activityStatuses || newRow.activity_statuses;
     return {
       ...prev,
       ...(cfgPayload
@@ -454,12 +446,15 @@ export async function saveRowToDb<T = any>(params: {
       };
     }
 
-    // Mirror to external Supabase if configured
+    // Mirror normalized SQL row to external Supabase if configured
     const client = getSupabaseClient();
-    if (client && table !== 'dropdown_lists') {
+    if (client) {
       try {
-        await client.from(table).upsert(json.row || row, { onConflict: 'id' });
-      } catch {}
+        const { sqlRow, onConflict } = mapRowToSqlByTable(table, json.row || row, branchId);
+        await client.from(table).upsert(sqlRow, { onConflict });
+      } catch (supaErr) {
+        console.error(`Supabase mirror upsert warning (${table}):`, supaErr);
+      }
     }
 
     markTableRealtimeEvent(table as any, json.operation || op, json.timestamp || new Date().toISOString());
@@ -550,8 +545,11 @@ export async function deleteRowFromDb(params: {
     const client = getSupabaseClient();
     if (client) {
       try {
-        await client.from(table).delete().eq('id', id);
-      } catch {}
+        const pkCol = table === 'system_config' ? 'branch_id' : 'id';
+        await client.from(table).delete().eq(pkCol, id);
+      } catch (supaErr) {
+        console.error(`Supabase mirror delete warning (${table}):`, supaErr);
+      }
     }
 
     markTableRealtimeEvent(table as any, 'DELETE', json.timestamp || new Date().toISOString());

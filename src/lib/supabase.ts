@@ -408,7 +408,17 @@ function ensureBrowserNetworkListeners(): void {
     });
   });
   window.addEventListener('online', () => {
-    retrySupabaseConnection().catch(() => {});
+    retrySupabaseConnection()
+      .catch(() => {})
+      .finally(() => {
+        if (typeof window !== 'undefined' && !isBrowserOffline() && getPendingOfflineQueueCount() > 0) {
+          setTimeout(() => {
+            if (!isBrowserOffline() && getPendingOfflineQueueCount() > 0) {
+              retrySupabaseConnection().catch(() => {});
+            }
+          }, 1200);
+        }
+      });
   });
 }
 
@@ -1072,328 +1082,427 @@ export async function getSupabaseAuthSession(): Promise<{
 /**
  * كود إنشاء وتجهيز جداول Supabase بلغة PostgreSQL (SQL Schema Script)
  */
-export const SUPABASE_TABLES_SQL_SCHEMA = `-- ==============================================================
--- منظومة إدارة تموين مركز المحلة الكبرى - مديرية التموين بالغربية
--- سكريبت إنشاء وتهيئة كافة جداول قاعدة بيانات Supabase (PostgreSQL)
--- شامل العلاقات والمفاتيح الأساسية والخارجية والفهارس وسياسات الأمان RLS والبث اللحظي Realtime
--- ==============================================================
+export const SUPABASE_TABLES_SQL_SCHEMA = `-- =========================================================================
+-- المخطط العلائقي الموحد لقاعدة بيانات Supabase & PostgreSQL
+-- منظومة إدارة بيانات المخابز والتموين والمديونيات (الإصدار الموحد 2026)
+-- Unified Normalized Relational Schema + Indexes + Triggers + RLS + Realtime + Storage
+-- =========================================================================
 
--- 0. جدول الفروع والإدارات التموينية (Branches)
-CREATE TABLE IF NOT EXISTS branches (
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE OR REPLACE FUNCTION public.bump_updated_at_and_version()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  IF TG_OP = 'UPDATE' THEN
+    NEW.version = COALESCE(OLD.version, 1) + 1;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 1. الإدارات التموينية (Branches)
+CREATE TABLE IF NOT EXISTS public.branches (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  governorate_title TEXT,
-  directorate_title TEXT,
-  description TEXT,
-  data_json JSONB,
+  governorate_title TEXT DEFAULT 'محافظة الغربية',
+  directorate_title TEXT DEFAULT 'مديرية التموين والتجارة الداخلية بالغربية',
+  description TEXT DEFAULT '',
+  is_default BOOLEAN DEFAULT FALSE,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO branches (id, name, governorate_title, directorate_title, description)
-VALUES ('branch-mahalla', 'إدارة تموين مركز المحلة الكبرى', 'محافظة الغربية', 'مديرية التموين والتجارة الداخلية بالغربية', 'الإدارة الرئيسية')
+INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
+VALUES ('branch-mahalla', 'إدارة تموين مركز المحلة الكبرى', 'محافظة الغربية', 'مديرية التموين والتجارة الداخلية بالغربية', 'الإدارة الرئيسية الافتراضية لمركز المحلة الكبرى', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
--- 1. جدول القرى والوحدات المحلية (Villages & Local Units)
-CREATE TABLE IF NOT EXISTS villages (
+-- 2. القرى والوحدات المحلية (Villages Hierarchy)
+CREATE TABLE IF NOT EXISTS public.villages (
   id TEXT PRIMARY KEY,
-  branch_id TEXT DEFAULT 'branch-mahalla' REFERENCES branches(id) ON DELETE CASCADE,
-  village_name TEXT NOT NULL,
-  local_units JSONB DEFAULT '[]'::jsonb,
-  data_json JSONB,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+  village TEXT NOT NULL,
+  local_units JSONB NOT NULL DEFAULT '[]'::jsonb,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT uq_villages_branch_name UNIQUE (branch_id, village)
 );
 
--- 2. جدول المخابز الرئيسي (Bakeries)
-CREATE TABLE IF NOT EXISTS bakeries (
+-- 3. المخابز (Bakeries)
+CREATE TABLE IF NOT EXISTS public.bakeries (
   id TEXT PRIMARY KEY,
-  branch_id TEXT DEFAULT 'branch-mahalla',
-  machine_number TEXT,
+  branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
   bakery_owner_name TEXT NOT NULL,
-  village TEXT,
-  local_unit TEXT,
-  insurance_value NUMERIC DEFAULT 0,
-  insurance_quota NUMERIC DEFAULT 0,
-  actual_quota NUMERIC DEFAULT 0,
-  loaves_count NUMERIC DEFAULT 0,
-  village_population NUMERIC DEFAULT 0,
-  per_capita_average TEXT DEFAULT '0.00',
-  beneficiaries_2023 NUMERIC DEFAULT 0,
-  avg_2023 TEXT DEFAULT '0.00',
-  beneficiaries_2024 NUMERIC DEFAULT 0,
-  avg_2024 TEXT DEFAULT '0.00',
-  beneficiaries_2025 NUMERIC DEFAULT 0,
-  avg_2025 TEXT DEFAULT '0.00',
-  avg_diff TEXT DEFAULT '0.00',
-  flour_bag_price NUMERIC DEFAULT 950,
-  bread_type TEXT DEFAULT 'بلدي مدعم ماو',
-  bread_type_count NUMERIC DEFAULT 1,
-  line_type TEXT DEFAULT 'نصف آلي',
+  machine_number TEXT NOT NULL,
+  village TEXT NOT NULL,
+  local_unit TEXT NOT NULL,
+  responsible_manager TEXT DEFAULT '',
+  insurance_quota DOUBLE PRECISION DEFAULT 0,
+  actual_quota DOUBLE PRECISION DEFAULT 0,
+  insurance_value DOUBLE PRECISION DEFAULT 0,
+  insurance_check_number TEXT DEFAULT '',
+  loaves_count DOUBLE PRECISION DEFAULT 0,
+  village_population INTEGER DEFAULT 0,
+  per_capita_average TEXT DEFAULT '0',
+  beneficiaries_2023 INTEGER DEFAULT 0,
+  avg_2023 TEXT DEFAULT '0',
+  beneficiaries_2024 INTEGER DEFAULT 0,
+  avg_2024 TEXT DEFAULT '0',
+  beneficiaries_2025 INTEGER DEFAULT 0,
+  avg_2025 TEXT DEFAULT '0',
+  avg_diff TEXT DEFAULT '0',
+  activity_status TEXT DEFAULT 'يعمل',
+  bakery_category TEXT DEFAULT 'مخبز بلدي مدعم',
+  bread_type TEXT DEFAULT 'بلدي مدعم',
+  flour_bag_price DOUBLE PRECISION DEFAULT 0,
+  bread_type_count TEXT DEFAULT '660',
+  line_type TEXT DEFAULT 'آلي كامل',
   fuel_type TEXT DEFAULT 'غاز طبيعي',
-  activity_status TEXT DEFAULT 'شغال',
-  phone TEXT,
-  national_id TEXT,
-  notes TEXT,
-  data_json JSONB,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  phone TEXT DEFAULT '',
+  national_id TEXT DEFAULT '',
+  commercial_reg_number TEXT DEFAULT '',
+  commercial_reg_date TEXT DEFAULT '',
+  bakery_license_number TEXT DEFAULT '',
+  bakery_license_date TEXT DEFAULT '',
+  lease_contract_type TEXT DEFAULT '',
+  lease_agreement_date TEXT DEFAULT '',
+  tax_card_number TEXT DEFAULT '',
+  tax_card_date TEXT DEFAULT '',
+  notes TEXT DEFAULT '',
+  activity_log JSONB DEFAULT '[]'::jsonb,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT uq_bakeries_branch_machine UNIQUE (branch_id, machine_number)
 );
 
--- 3. جدول المديونيات والمخالفات والتصرف (Debts)
-CREATE TABLE IF NOT EXISTS debts (
+-- 4. المديونيات والمخالفات (Debts)
+CREATE TABLE IF NOT EXISTS public.debts (
   id TEXT PRIMARY KEY,
-  branch_id TEXT DEFAULT 'branch-mahalla',
-  bakery_id TEXT,
+  branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+  bakery_id TEXT NOT NULL REFERENCES public.bakeries(id) ON DELETE CASCADE,
   bakery_owner_name TEXT NOT NULL,
-  machine_number TEXT,
-  village TEXT,
-  local_unit TEXT,
-  violation_amount NUMERIC DEFAULT 0,
-  old_violations NUMERIC DEFAULT 0,
-  total_violations NUMERIC DEFAULT 0,
-  paid_violation_amount NUMERIC DEFAULT 0,
-  remaining_violations NUMERIC DEFAULT 0,
-  added_amount NUMERIC DEFAULT 0,
-  paid_added_amount NUMERIC DEFAULT 0,
-  remaining_added NUMERIC DEFAULT 0,
-  disposal_bags NUMERIC DEFAULT 0,
-  disposal_bag_price NUMERIC DEFAULT 950,
-  disposal_multiplier NUMERIC DEFAULT 1,
-  disposal_value NUMERIC DEFAULT 0,
-  paid_disposal_amount NUMERIC DEFAULT 0,
-  remaining_disposal NUMERIC DEFAULT 0,
-  net_remaining_debt NUMERIC DEFAULT 0,
-  violation_date TEXT,
-  disposal_date TEXT,
-  issuing_entity TEXT,
-  violation_type TEXT,
-  payment_method TEXT,
-  status TEXT DEFAULT 'UNPAID',
-  data_json JSONB,
+  machine_number TEXT NOT NULL,
+  village TEXT NOT NULL,
+  local_unit TEXT NOT NULL,
+  violation_date TEXT DEFAULT '',
+  issuing_entity TEXT DEFAULT '',
+  violation_type TEXT DEFAULT '',
+  violation_amount DOUBLE PRECISION DEFAULT 0,
+  old_violations DOUBLE PRECISION DEFAULT 0,
+  total_violations DOUBLE PRECISION DEFAULT 0,
+  violation_payment_date TEXT DEFAULT '',
+  violation_receipt_number TEXT DEFAULT '',
+  violation_payment_method TEXT DEFAULT 'كاش',
+  paid_violation_amount DOUBLE PRECISION DEFAULT 0,
+  remaining_violations DOUBLE PRECISION DEFAULT 0,
+  added_amount DOUBLE PRECISION DEFAULT 0,
+  added_payment_date TEXT DEFAULT '',
+  added_receipt_number TEXT DEFAULT '',
+  added_payment_method TEXT DEFAULT 'كاش',
+  paid_added_amount DOUBLE PRECISION DEFAULT 0,
+  remaining_added DOUBLE PRECISION DEFAULT 0,
+  disposal_date TEXT DEFAULT '',
+  disposal_bags DOUBLE PRECISION DEFAULT 0,
+  disposal_bag_price DOUBLE PRECISION DEFAULT 0,
+  disposal_multiplier DOUBLE PRECISION DEFAULT 1,
+  disposal_value DOUBLE PRECISION DEFAULT 0,
+  disposal_payment_date TEXT DEFAULT '',
+  disposal_receipt_number TEXT DEFAULT '',
+  disposal_payment_method TEXT DEFAULT 'كاش',
+  paid_disposal_amount DOUBLE PRECISION DEFAULT 0,
+  remaining_disposal DOUBLE PRECISION DEFAULT 0,
+  net_remaining_debt DOUBLE PRECISION DEFAULT 0,
+  is_scheduled BOOLEAN DEFAULT FALSE,
+  schedule_installments_count INTEGER DEFAULT 0,
+  schedule_period_type TEXT DEFAULT 'شهري',
+  schedule_installment_value DOUBLE PRECISION DEFAULT 0,
+  schedule_start_date TEXT DEFAULT '',
+  schedule_paid_installments INTEGER DEFAULT 0,
+  schedule_status TEXT DEFAULT 'قيد التحصيل',
+  notes TEXT DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. جدول المستخدمين والصلاحيات (App Users & RBAC)
-CREATE TABLE IF NOT EXISTS app_users (
+-- 5. المستخدمين والصلاحيات (App Users)
+CREATE TABLE IF NOT EXISTS public.app_users (
   id TEXT PRIMARY KEY,
-  branch_id TEXT DEFAULT 'branch-mahalla',
+  branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
   username TEXT NOT NULL,
-  full_name TEXT,
-  role TEXT NOT NULL DEFAULT 'viewer',
-  auth_user_id UUID,
-  data_json JSONB,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  full_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'inspector',
+  job_title TEXT DEFAULT '',
+  department TEXT DEFAULT '',
+  phone TEXT DEFAULT '',
+  gmail_email TEXT DEFAULT '',
+  gmail_password TEXT DEFAULT '',
+  google_drive_auto_sync BOOLEAN DEFAULT FALSE,
+  custom_permissions JSONB DEFAULT '[]'::jsonb,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT uq_app_users_branch_username UNIQUE (branch_id, username)
 );
 
--- 5. جدول المهام اليومية والمتابعة (Daily Tasks)
-CREATE TABLE IF NOT EXISTS daily_tasks (
+-- 6. المهام اليومية (Daily Tasks)
+CREATE TABLE IF NOT EXISTS public.daily_tasks (
   id TEXT PRIMARY KEY,
-  branch_id TEXT DEFAULT 'branch-mahalla',
+  branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
-  priority TEXT DEFAULT 'medium',
-  status TEXT DEFAULT 'pending',
-  due_date TEXT,
-  data_json JSONB,
+  description TEXT DEFAULT '',
+  bakery_id TEXT DEFAULT '',
+  bakery_name TEXT DEFAULT '',
+  village TEXT DEFAULT '',
+  priority TEXT NOT NULL DEFAULT 'medium',
+  due_date TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  assigned_to TEXT DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 6. جدول النسخ الاحتياطية وحزم المزامنة الكاملة (Backup Snapshots)
-CREATE TABLE IF NOT EXISTS backup_snapshots (
+-- 7. رسائل وتكليفات صندوق الوارد (Inbox Messages)
+CREATE TABLE IF NOT EXISTS public.inbox_messages (
   id TEXT PRIMARY KEY,
-  version TEXT,
-  timestamp TIMESTAMPTZ DEFAULT NOW(),
-  bakeries_count INT DEFAULT 0,
-  debts_count INT DEFAULT 0,
-  payload JSONB NOT NULL
-);
-
--- 7. جدول إعدادات المنظومة (System Config)
-CREATE TABLE IF NOT EXISTS system_config (
-  id TEXT PRIMARY KEY DEFAULT 'tamween_config',
-  governorate_title TEXT,
-  directorate_title TEXT,
-  administration_title TEXT,
-  payload JSONB,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 8. جدول تنبيهات المديونيات المرتفعة (High-Debt Alerts)
-CREATE TABLE IF NOT EXISTS high_debt_alerts (
-  id TEXT PRIMARY KEY,
-  branch_id TEXT DEFAULT 'branch-mahalla',
-  bakery_id TEXT,
-  bakery_owner_name TEXT NOT NULL,
-  machine_number TEXT,
-  village TEXT,
-  debt_amount NUMERIC DEFAULT 0,
-  threshold_used NUMERIC DEFAULT 50000,
-  action_type TEXT DEFAULT 'ADD_DEBT',
-  is_read BOOLEAN DEFAULT false,
-  edited_by TEXT,
-  editor_role TEXT,
-  created_at_iso TEXT,
-  data_json JSONB,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ترقية الجداول القائمة بأعمدة الفروع دون المساس بالبيانات الموجودة
-ALTER TABLE bakeries ADD COLUMN IF NOT EXISTS branch_id TEXT DEFAULT 'branch-mahalla';
-ALTER TABLE debts ADD COLUMN IF NOT EXISTS branch_id TEXT DEFAULT 'branch-mahalla';
-ALTER TABLE high_debt_alerts ADD COLUMN IF NOT EXISTS branch_id TEXT DEFAULT 'branch-mahalla';
-
--- فهارس الأداء العالي لتسريع البحث والتصفية والربط بين المخابز والمديونيات والفروع والتنبيهات
-CREATE INDEX IF NOT EXISTS idx_villages_branch_id ON villages (branch_id);
-CREATE INDEX IF NOT EXISTS idx_bakeries_branch_id ON bakeries (branch_id);
-CREATE INDEX IF NOT EXISTS idx_bakeries_village ON bakeries (village);
-CREATE INDEX IF NOT EXISTS idx_bakeries_local_unit ON bakeries (local_unit);
-CREATE INDEX IF NOT EXISTS idx_bakeries_machine_number ON bakeries (machine_number);
-CREATE INDEX IF NOT EXISTS idx_bakeries_activity_status ON bakeries (activity_status);
-CREATE INDEX IF NOT EXISTS idx_debts_branch_id ON debts (branch_id);
-CREATE INDEX IF NOT EXISTS idx_debts_bakery_id ON debts (bakery_id);
-CREATE INDEX IF NOT EXISTS idx_debts_village ON debts (village);
-CREATE INDEX IF NOT EXISTS idx_debts_status ON debts (status);
-CREATE INDEX IF NOT EXISTS idx_app_users_branch_id ON app_users (branch_id);
-CREATE INDEX IF NOT EXISTS idx_daily_tasks_branch_id ON daily_tasks (branch_id);
-CREATE INDEX IF NOT EXISTS idx_high_debt_alerts_branch_id ON high_debt_alerts (branch_id);
-
--- تفعيل سياسات الأمان Row Level Security (RLS) على كافة الجداول
-ALTER TABLE branches ENABLE ROW LEVEL SECURITY;
-ALTER TABLE villages ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bakeries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE debts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE app_users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE daily_tasks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE backup_snapshots ENABLE ROW LEVEL SECURITY;
-ALTER TABLE system_config ENABLE ROW LEVEL SECURITY;
-ALTER TABLE high_debt_alerts ENABLE ROW LEVEL SECURITY;
-
-DO $$ 
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public branches access') THEN
-    CREATE POLICY "Public branches access" ON branches FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public villages access') THEN
-    CREATE POLICY "Public villages access" ON villages FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public bakeries access') THEN
-    CREATE POLICY "Public bakeries access" ON bakeries FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public debts access') THEN
-    CREATE POLICY "Public debts access" ON debts FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public app_users access') THEN
-    CREATE POLICY "Public app_users access" ON app_users FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public daily_tasks access') THEN
-    CREATE POLICY "Public daily_tasks access" ON daily_tasks FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public snapshots access') THEN
-    CREATE POLICY "Public snapshots access" ON backup_snapshots FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public config access') THEN
-    CREATE POLICY "Public config access" ON system_config FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public high_debt_alerts access') THEN
-    CREATE POLICY "Public high_debt_alerts access" ON high_debt_alerts FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
-  END IF;
-END $$;
-
--- تفعيل البث اللحظي Supabase Realtime (INSERT / UPDATE / DELETE) لجميع الجداول
-ALTER TABLE branches REPLICA IDENTITY FULL;
-ALTER TABLE villages REPLICA IDENTITY FULL;
-ALTER TABLE bakeries REPLICA IDENTITY FULL;
-ALTER TABLE debts REPLICA IDENTITY FULL;
-ALTER TABLE app_users REPLICA IDENTITY FULL;
-ALTER TABLE daily_tasks REPLICA IDENTITY FULL;
-ALTER TABLE backup_snapshots REPLICA IDENTITY FULL;
-ALTER TABLE system_config REPLICA IDENTITY FULL;
--- 10. جدول رسائل وتكليفات صندوق الوارد (inbox_messages)
-CREATE TABLE IF NOT EXISTS inbox_messages (
-  id TEXT PRIMARY KEY,
-  branch_id TEXT DEFAULT 'branch-mahalla' REFERENCES branches(id) ON DELETE CASCADE,
+  branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
   sender_id TEXT NOT NULL,
   sender_name TEXT NOT NULL,
   sender_role TEXT NOT NULL,
-  recipient_target TEXT DEFAULT 'ALL',
+  recipient_target TEXT NOT NULL DEFAULT 'ALL',
   recipient_label TEXT DEFAULT 'الجميع',
-  message_type TEXT DEFAULT 'instruction',
+  message_type TEXT NOT NULL DEFAULT 'instruction',
   content TEXT NOT NULL,
   related_bakery_id TEXT DEFAULT '',
   related_bakery_name TEXT DEFAULT '',
   read_by JSONB DEFAULT '[]'::jsonb,
   timestamp TEXT NOT NULL,
-  version INTEGER DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_inbox_messages_branch_id ON inbox_messages(branch_id);
 
--- 11. جدول القوائم المنسدلة الديناميكية (dropdown_lists)
-CREATE TABLE IF NOT EXISTS dropdown_lists (
+-- 8. تنبيهات المديونيات المرتفعة (High Debt Alerts)
+CREATE TABLE IF NOT EXISTS public.high_debt_alerts (
   id TEXT PRIMARY KEY,
-  branch_id TEXT DEFAULT 'branch-mahalla' REFERENCES branches(id) ON DELETE CASCADE,
-  list_key TEXT NOT NULL,
-  options JSONB DEFAULT '[]'::jsonb,
-  version INTEGER DEFAULT 1,
+  branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+  bakery_id TEXT NOT NULL,
+  bakery_owner_name TEXT NOT NULL,
+  machine_number TEXT DEFAULT '',
+  village TEXT DEFAULT '',
+  debt_amount DOUBLE PRECISION DEFAULT 0,
+  threshold_used DOUBLE PRECISION DEFAULT 50000,
+  edited_by TEXT DEFAULT '',
+  editor_role TEXT DEFAULT '',
+  action_type TEXT DEFAULT 'HIGH_DEBT_SURGE',
+  is_read BOOLEAN DEFAULT FALSE,
+  notes TEXT DEFAULT '',
+  created_at_iso TEXT DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_dropdown_lists_branch_id ON dropdown_lists(branch_id);
 
-ALTER TABLE inbox_messages ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow Tamween full access to inbox_messages" ON inbox_messages;
-CREATE POLICY "Allow Tamween full access to inbox_messages" ON inbox_messages FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+-- 9. إعدادات المنظومة وعناوين الأعمدة (System Config)
+CREATE TABLE IF NOT EXISTS public.system_config (
+  branch_id TEXT PRIMARY KEY REFERENCES public.branches(id) ON DELETE CASCADE,
+  governorate_title TEXT DEFAULT '',
+  directorate_title TEXT DEFAULT '',
+  administration_title TEXT DEFAULT '',
+  english_subtitle TEXT DEFAULT '',
+  logo_base64 TEXT DEFAULT '',
+  debt_alert_threshold DOUBLE PRECISION DEFAULT 50000,
+  daily_alert_config JSONB DEFAULT '{}'::jsonb,
+  role_permissions JSONB DEFAULT '{}'::jsonb,
+  role_labels JSONB DEFAULT '{}'::jsonb,
+  custom_roles JSONB DEFAULT '[]'::jsonb,
+  column_titles JSONB DEFAULT '{}'::jsonb,
+  activity_statuses JSONB DEFAULT '[]'::jsonb,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-ALTER TABLE dropdown_lists ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow Tamween full access to dropdown_lists" ON dropdown_lists;
-CREATE POLICY "Allow Tamween full access to dropdown_lists" ON dropdown_lists FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+-- 10. قوائم الاختيار المنسدلة (Dropdown Lists)
+CREATE TABLE IF NOT EXISTS public.dropdown_lists (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+  list_key TEXT NOT NULL,
+  options JSONB NOT NULL DEFAULT '[]'::jsonb,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT uq_dropdown_lists_branch_key UNIQUE (branch_id, list_key)
+);
 
-ALTER TABLE branches REPLICA IDENTITY FULL;
-ALTER TABLE villages REPLICA IDENTITY FULL;
-ALTER TABLE bakeries REPLICA IDENTITY FULL;
-ALTER TABLE debts REPLICA IDENTITY FULL;
-ALTER TABLE app_users REPLICA IDENTITY FULL;
-ALTER TABLE daily_tasks REPLICA IDENTITY FULL;
-ALTER TABLE backup_snapshots REPLICA IDENTITY FULL;
-ALTER TABLE system_config REPLICA IDENTITY FULL;
-ALTER TABLE high_debt_alerts REPLICA IDENTITY FULL;
-ALTER TABLE inbox_messages REPLICA IDENTITY FULL;
-ALTER TABLE dropdown_lists REPLICA IDENTITY FULL;
+-- 11. سجل المراجعة والأمان (Audit Logs)
+CREATE TABLE IF NOT EXISTS public.audit_logs (
+  id BIGSERIAL PRIMARY KEY,
+  branch_id TEXT DEFAULT '',
+  user_email TEXT NOT NULL DEFAULT 'system',
+  action TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  ip_address TEXT DEFAULT '127.0.0.1',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 12. لقطات النسخ الاحتياطي والملفات الموحدة (Backup Snapshots)
+CREATE TABLE IF NOT EXISTS public.backup_snapshots (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT DEFAULT 'default',
+  payload JSONB NOT NULL,
+  client_id TEXT DEFAULT '',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- الفهارس
+CREATE INDEX IF NOT EXISTS idx_villages_branch_id ON public.villages(branch_id);
+CREATE INDEX IF NOT EXISTS idx_bakeries_branch_id ON public.bakeries(branch_id);
+CREATE INDEX IF NOT EXISTS idx_bakeries_village ON public.bakeries(branch_id, village);
+CREATE INDEX IF NOT EXISTS idx_bakeries_local_unit ON public.bakeries(branch_id, local_unit);
+CREATE INDEX IF NOT EXISTS idx_bakeries_status ON public.bakeries(branch_id, activity_status);
+CREATE INDEX IF NOT EXISTS idx_bakeries_machine ON public.bakeries(machine_number);
+CREATE INDEX IF NOT EXISTS idx_debts_branch_id ON public.debts(branch_id);
+CREATE INDEX IF NOT EXISTS idx_debts_bakery_id ON public.debts(bakery_id);
+CREATE INDEX IF NOT EXISTS idx_debts_violation_date ON public.debts(branch_id, violation_date);
+CREATE INDEX IF NOT EXISTS idx_debts_schedule_status ON public.debts(branch_id, schedule_status);
+CREATE INDEX IF NOT EXISTS idx_app_users_branch_id ON public.app_users(branch_id);
+CREATE INDEX IF NOT EXISTS idx_daily_tasks_branch_id ON public.daily_tasks(branch_id, status, due_date);
+CREATE INDEX IF NOT EXISTS idx_inbox_messages_branch_id ON public.inbox_messages(branch_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_high_debt_alerts_branch_id ON public.high_debt_alerts(branch_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_dropdown_lists_branch_id ON public.dropdown_lists(branch_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_branch_created ON public.audit_logs(branch_id, created_at DESC);
+
+-- RLS Policies
+ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.villages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bakeries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.debts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.daily_tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inbox_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.high_debt_alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.system_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dropdown_lists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.backup_snapshots ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION public.is_tamween_authorized_writer()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN auth.role() IN ('anon', 'authenticated')
+    AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'app_role'), 'admin') <> 'viewer';
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+CREATE OR REPLACE FUNCTION public.is_tamween_admin_user()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN auth.role() IN ('anon', 'authenticated')
+    AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'app_role'), 'admin') IN ('admin', 'supervisor');
+END;
+$$ LANGUAGE plpgsql STABLE;
 
 DO $$
+DECLARE
+  tbl TEXT;
+  all_tables TEXT[] := ARRAY[
+    'branches', 'villages', 'bakeries', 'debts', 'app_users',
+    'daily_tasks', 'inbox_messages', 'high_debt_alerts',
+    'system_config', 'dropdown_lists', 'audit_logs', 'backup_snapshots'
+  ];
+BEGIN
+  FOREACH tbl IN ARRAY all_tables LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "Tamween read policy on %s" ON public.%I', tbl, tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "Tamween write policy on %s" ON public.%I', tbl, tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "Tamween update policy on %s" ON public.%I', tbl, tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "Tamween delete policy on %s" ON public.%I', tbl, tbl);
+
+    EXECUTE format(
+      'CREATE POLICY "Tamween read policy on %s" ON public.%I FOR SELECT USING (auth.role() IN (''anon'', ''authenticated''))',
+      tbl, tbl
+    );
+
+    IF tbl IN ('branches', 'app_users', 'system_config') THEN
+      EXECUTE format(
+        'CREATE POLICY "Tamween write policy on %s" ON public.%I FOR ALL USING (auth.role() IN (''anon'', ''authenticated'') AND public.is_tamween_admin_user()) WITH CHECK (auth.role() IN (''anon'', ''authenticated'') AND public.is_tamween_admin_user())',
+        tbl, tbl
+      );
+    ELSE
+      EXECUTE format(
+        'CREATE POLICY "Tamween write policy on %s" ON public.%I FOR INSERT WITH CHECK (auth.role() IN (''anon'', ''authenticated'') AND public.is_tamween_authorized_writer())',
+        tbl, tbl
+      );
+      EXECUTE format(
+        'CREATE POLICY "Tamween update policy on %s" ON public.%I FOR UPDATE USING (auth.role() IN (''anon'', ''authenticated'') AND public.is_tamween_authorized_writer()) WITH CHECK (auth.role() IN (''anon'', ''authenticated'') AND public.is_tamween_authorized_writer())',
+        tbl, tbl
+      );
+      EXECUTE format(
+        'CREATE POLICY "Tamween delete policy on %s" ON public.%I FOR DELETE USING (auth.role() IN (''anon'', ''authenticated'') AND public.is_tamween_authorized_writer())',
+        tbl, tbl
+      );
+    END IF;
+  END LOOP;
+END $$;
+
+-- Supabase Realtime
+ALTER TABLE public.branches REPLICA IDENTITY FULL;
+ALTER TABLE public.villages REPLICA IDENTITY FULL;
+ALTER TABLE public.bakeries REPLICA IDENTITY FULL;
+ALTER TABLE public.debts REPLICA IDENTITY FULL;
+ALTER TABLE public.app_users REPLICA IDENTITY FULL;
+ALTER TABLE public.daily_tasks REPLICA IDENTITY FULL;
+ALTER TABLE public.inbox_messages REPLICA IDENTITY FULL;
+ALTER TABLE public.high_debt_alerts REPLICA IDENTITY FULL;
+ALTER TABLE public.system_config REPLICA IDENTITY FULL;
+ALTER TABLE public.dropdown_lists REPLICA IDENTITY FULL;
+ALTER TABLE public.backup_snapshots REPLICA IDENTITY FULL;
+
+DO $$
+DECLARE
+  rt_tbl TEXT;
+  rt_tables TEXT[] := ARRAY[
+    'branches', 'villages', 'bakeries', 'debts', 'app_users',
+    'daily_tasks', 'inbox_messages', 'high_debt_alerts',
+    'system_config', 'dropdown_lists', 'backup_snapshots'
+  ];
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'branches') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE branches;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'villages') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE villages;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'bakeries') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE bakeries;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'debts') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE debts;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'app_users') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE app_users;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'daily_tasks') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE daily_tasks;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'backup_snapshots') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE backup_snapshots;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'system_config') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE system_config;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'high_debt_alerts') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE high_debt_alerts;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'inbox_messages') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE inbox_messages;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'dropdown_lists') THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE dropdown_lists;
-    END IF;
+    FOREACH rt_tbl IN ARRAY rt_tables LOOP
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = rt_tbl
+      ) THEN
+        EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', rt_tbl);
+      END IF;
+    END LOOP;
   END IF;
 END $$;
+
+-- Supabase Storage Bucket & Policies
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('tamween-backups', 'tamween-backups', false)
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
+
+DROP POLICY IF EXISTS "Tamween storage read policy" ON storage.objects;
+CREATE POLICY "Tamween storage read policy" ON storage.objects
+  FOR SELECT USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated'));
+
+DROP POLICY IF EXISTS "Tamween storage insert policy" ON storage.objects;
+CREATE POLICY "Tamween storage insert policy" ON storage.objects
+  FOR INSERT WITH CHECK (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
+
+DROP POLICY IF EXISTS "Tamween storage update policy" ON storage.objects;
+CREATE POLICY "Tamween storage update policy" ON storage.objects
+  FOR UPDATE USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer())
+  WITH CHECK (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
+
+DROP POLICY IF EXISTS "Tamween storage delete policy" ON storage.objects;
+CREATE POLICY "Tamween storage delete policy" ON storage.objects
+  FOR DELETE USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
 `;
 
 /**
@@ -1454,11 +1563,9 @@ export async function uploadAppHtmlToSupabaseStorage(
     }
 
     const htmlBlob = new Blob([finalHtml], { type: 'text/html;charset=utf-8' });
-    const nowIso = new Date().toISOString().replace(/[:.]/g, '-');
     const rootFileName = 'index.html';
-    const timestampedFileName = `tamween-app-${nowIso}.html`;
 
-    // 3. Upload index.html as main entry point with upsert: true
+    // 3. Upload fixed-path index.html with upsert: true (no duplicate timestamped files)
     const { error: uploadError } = await client.storage
       .from(SUPABASE_BUCKET_NAME)
       .upload(rootFileName, htmlBlob, {
@@ -1470,16 +1577,7 @@ export async function uploadAppHtmlToSupabaseStorage(
       throw uploadError;
     }
 
-    // 4. Also upload versioned copy for history
-    await client.storage
-      .from(SUPABASE_BUCKET_NAME)
-      .upload(timestampedFileName, htmlBlob, {
-        contentType: 'text/html;charset=utf-8',
-        upsert: true,
-      })
-      .catch(() => {});
-
-    // 5. Get public URL
+    // 4. Get public URL
     const { data: publicUrlData } = client.storage
       .from(SUPABASE_BUCKET_NAME)
       .getPublicUrl(rootFileName);
@@ -1488,7 +1586,7 @@ export async function uploadAppHtmlToSupabaseStorage(
 
     return {
       success: true,
-      message: `تم رفع ملف index.html بنجاح إلى Supabase Storage في الحاوية (${SUPABASE_BUCKET_NAME})!`,
+      message: `تم رفع وتحديث ملف index.html بنجاح في Supabase Storage داخل الحاوية (${SUPABASE_BUCKET_NAME}) على مسار ثابت!`,
       publicUrl,
       fileName: rootFileName,
       storagePath: `${SUPABASE_BUCKET_NAME}/${rootFileName}`,
@@ -1499,6 +1597,136 @@ export async function uploadAppHtmlToSupabaseStorage(
       message: `تعذر رفع ملف index.html إلى Supabase Storage: ${err.message || 'خطأ أثناء الرفع'}`,
     };
   }
+}
+
+export interface UnifiedStorageFileInfo {
+  id: string;
+  fileName: string;
+  branchId: string;
+  contentType: string;
+  sizeBytes: number;
+  updatedAt: string;
+  content?: string;
+}
+
+/**
+ * رفع أو تحديث ملف في التخزين السحابي الموحد (Supabase Storage + PostgreSQL Storage API) باستخدام مسار واسم ثابت لمنع التكرار
+ */
+export async function uploadTamweenFileToStorage(params: {
+  branchId?: string;
+  fileName: string;
+  content: string;
+  contentType?: string;
+}): Promise<{ success: boolean; file?: UnifiedStorageFileInfo; error?: string }> {
+  const branchId = params.branchId || getStoredActiveBranchId();
+  const cleanName = params.fileName.trim().replace(/^\/+/, '');
+  const contentType = params.contentType || 'application/json';
+  const client = getSupabaseClient();
+
+  if (client) {
+    try {
+      const storagePath = `${branchId}/${cleanName}`;
+      const blob = new Blob([params.content], { type: contentType });
+      await client.storage.from(SUPABASE_BUCKET_NAME).upload(storagePath, blob, {
+        contentType,
+        upsert: true,
+      });
+    } catch {}
+  }
+
+  if (typeof window !== 'undefined') {
+    const resp = await fetch('/api/storage/files', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: getSecurityShieldHeaders(true),
+      body: JSON.stringify({
+        branchId,
+        fileName: cleanName,
+        content: params.content,
+        contentType,
+        clientId: SESSION_CLIENT_ID,
+      }),
+    });
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok || !json?.success) {
+      return { success: false, error: json?.error || `HTTP ${resp.status}` };
+    }
+    return { success: true, file: json.file };
+  }
+
+  return { success: Boolean(client) };
+}
+
+export async function listTamweenStorageFiles(branchId?: string): Promise<UnifiedStorageFileInfo[]> {
+  const effectiveBranch = branchId || getStoredActiveBranchId();
+  if (typeof window !== 'undefined') {
+    try {
+      const resp = await fetch(`/api/storage/files?branchId=${encodeURIComponent(effectiveBranch)}`, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: getSecurityShieldHeaders(false),
+      });
+      const json = await resp.json().catch(() => null);
+      if (resp.ok && json?.success && Array.isArray(json.files)) {
+        return json.files;
+      }
+    } catch {}
+  }
+  return [];
+}
+
+export async function readTamweenFileFromStorage(
+  fileName: string,
+  branchId?: string
+): Promise<UnifiedStorageFileInfo | null> {
+  const effectiveBranch = branchId || getStoredActiveBranchId();
+  if (typeof window !== 'undefined') {
+    try {
+      const resp = await fetch(
+        `/api/storage/files?branchId=${encodeURIComponent(effectiveBranch)}&fileName=${encodeURIComponent(fileName)}`,
+        {
+          method: 'GET',
+          credentials: 'same-origin',
+          headers: getSecurityShieldHeaders(false),
+        }
+      );
+      const json = await resp.json().catch(() => null);
+      if (resp.ok && json?.success && json.file) {
+        return json.file;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+export async function deleteTamweenFileFromStorage(
+  fileName: string,
+  branchId?: string
+): Promise<boolean> {
+  const effectiveBranch = branchId || getStoredActiveBranchId();
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.storage.from(SUPABASE_BUCKET_NAME).remove([`${effectiveBranch}/${fileName}`]);
+    } catch {}
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const resp = await fetch(
+        `/api/storage/files?branchId=${encodeURIComponent(effectiveBranch)}&fileName=${encodeURIComponent(fileName)}`,
+        {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: getSecurityShieldHeaders(false),
+        }
+      );
+      const json = await resp.json().catch(() => null);
+      return Boolean(resp.ok && json?.success);
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -1574,8 +1802,7 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
     let debtsUpserted = 0;
     let snapshotSaved = serverSynced;
 
-    // 1. Prepare snapshot payload containing all branches (branchPartitions)
-    const snapshotId = `snapshot-${Date.now()}`;
+    const branchIdForSnapshot = state.activeBranchId || 'branch-mahalla';
     const snapshotPayload = {
       version: '3.7-supabase-full-migration',
       timestamp: nowIso,
@@ -1587,31 +1814,19 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
       data: fullCloudState,
     };
 
-    // 2. Try inserting full state snapshot into backup_snapshots table
-    await client
+    // 2. Upsert single fixed-key live snapshot in backup_snapshots matching schema.sql
+    const { error: snapshotError } = await client
       .from('backup_snapshots')
       .upsert(
         {
           id: 'latest_live_snapshot',
-          version: snapshotPayload.version,
-          timestamp: snapshotPayload.timestamp,
-          bakeries_count: snapshotPayload.bakeriesCount,
-          debts_count: snapshotPayload.debtsCount,
+          branch_id: branchIdForSnapshot,
           payload: snapshotPayload,
+          client_id: SESSION_CLIENT_ID,
+          updated_at: nowIso,
         },
         { onConflict: 'id' }
       );
-
-    const { error: snapshotError } = await client
-      .from('backup_snapshots')
-      .upsert({
-        id: snapshotId,
-        version: snapshotPayload.version,
-        timestamp: snapshotPayload.timestamp,
-        bakeries_count: snapshotPayload.bakeriesCount,
-        debts_count: snapshotPayload.debtsCount,
-        payload: snapshotPayload,
-      });
 
     if (!snapshotError) {
       snapshotSaved = true;
@@ -1706,142 +1921,196 @@ export async function migrateDatabaseToSupabase(state: AppState): Promise<{
 
 export function mapBakeryToSqlRow(b: any, branchId: string, nowIso: string = new Date().toISOString()) {
   return {
-    id: b.id,
-    branch_id: branchId || 'branch-mahalla',
-    machine_number: b.machineNumber || '',
-    bakery_owner_name: b.bakeryOwnerName || 'بدون اسم',
-    village: b.village || '',
-    local_unit: b.localUnit || '',
-    insurance_value: Number(b.insuranceValue) || 0,
+    id: String(b.id),
+    branch_id: b.branchId || branchId || 'branch-mahalla',
+    bakery_owner_name: String(b.bakeryOwnerName || 'بدون اسم'),
+    machine_number: String(b.machineNumber || ''),
+    village: String(b.village || ''),
+    local_unit: String(b.localUnit || ''),
+    responsible_manager: String(b.responsibleManager || ''),
     insurance_quota: Number(b.insuranceQuota) || 0,
     actual_quota: Number(b.actualQuota) || 0,
+    insurance_value: Number(b.insuranceValue) || 0,
+    insurance_check_number: String(b.insuranceCheckNumber || ''),
     loaves_count: Number(b.loavesCount) || 0,
-    village_population: Number(b.villagePopulation) || 0,
-    per_capita_average: String(b.perCapitaAverage || '0.00'),
-    beneficiaries_2023: Number(b.beneficiaries2023) || 0,
-    avg_2023: String(b.avg2023 || '0.00'),
-    beneficiaries_2024: Number(b.beneficiaries2024) || 0,
-    avg_2024: String(b.avg2024 || '0.00'),
-    beneficiaries_2025: Number(b.beneficiaries2025) || 0,
-    avg_2025: String(b.avg2025 || '0.00'),
-    avg_diff: String(b.avgDiff || '0.00'),
-    flour_bag_price: Number(b.flourBagPrice) || 950,
-    bread_type: b.breadType || 'بلدي مدعم ماو',
-    bread_type_count: Number(b.breadTypeCount) || 1,
-    line_type: b.lineType || 'نصف آلي',
-    fuel_type: b.fuelType || 'غاز طبيعي',
-    activity_status: b.activityStatus || 'شغال',
-    phone: b.phone || '',
-    national_id: b.nationalId || '',
-    notes: b.notes || '',
-    data_json: b,
+    village_population: Math.round(Number(b.villagePopulation) || 0),
+    per_capita_average: String(b.perCapitaAverage ?? '0'),
+    beneficiaries_2023: Math.round(Number(b.beneficiaries2023) || 0),
+    avg_2023: String(b.avg2023 ?? '0'),
+    beneficiaries_2024: Math.round(Number(b.beneficiaries2024) || 0),
+    avg_2024: String(b.avg2024 ?? '0'),
+    beneficiaries_2025: Math.round(Number(b.beneficiaries2025) || 0),
+    avg_2025: String(b.avg2025 ?? '0'),
+    avg_diff: String(b.avgDiff ?? '0'),
+    activity_status: String(b.activityStatus || 'يعمل'),
+    bakery_category: String(b.bakeryCategory || 'مخبز بلدي مدعم'),
+    bread_type: String(b.breadType || 'بلدي مدعم'),
+    flour_bag_price: Number(b.flourBagPrice) || 0,
+    bread_type_count: String(b.breadTypeCount || '660'),
+    line_type: String(b.lineType || 'آلي كامل'),
+    fuel_type: String(b.fuelType || 'غاز طبيعي'),
+    phone: String(b.phone || ''),
+    national_id: String(b.nationalId || ''),
+    commercial_reg_number: String(b.commercialRegNumber || ''),
+    commercial_reg_date: String(b.commercialRegDate || ''),
+    bakery_license_number: String(b.bakeryLicenseNumber || ''),
+    bakery_license_date: String(b.bakeryLicenseDate || ''),
+    lease_contract_type: String(b.leaseContractType || ''),
+    lease_agreement_date: String(b.leaseAgreementDate || ''),
+    tax_card_number: String(b.taxCardNumber || ''),
+    tax_card_date: String(b.taxCardDate || ''),
+    notes: String(b.notes || ''),
+    activity_log: Array.isArray(b.activityLog) ? b.activityLog : [],
     updated_at: nowIso,
   };
 }
 
 export function mapDebtToSqlRow(d: any, branchId: string, nowIso: string = new Date().toISOString()) {
   return {
-    id: d.id,
-    branch_id: branchId || 'branch-mahalla',
-    bakery_id: d.bakeryId || '',
-    bakery_owner_name: d.bakeryOwnerName || 'بدون اسم',
-    machine_number: d.machineNumber || '',
-    village: d.village || '',
-    local_unit: d.localUnit || '',
+    id: String(d.id),
+    branch_id: d.branchId || branchId || 'branch-mahalla',
+    bakery_id: String(d.bakeryId || ''),
+    bakery_owner_name: String(d.bakeryOwnerName || 'بدون اسم'),
+    machine_number: String(d.machineNumber || ''),
+    village: String(d.village || ''),
+    local_unit: String(d.localUnit || ''),
+    violation_date: String(d.violationDate || ''),
+    issuing_entity: String(d.issuingEntity || ''),
+    violation_type: String(d.violationType || ''),
     violation_amount: Number(d.violationAmount) || 0,
     old_violations: Number(d.oldViolations) || 0,
     total_violations: Number(d.totalViolations) || 0,
+    violation_payment_date: String(d.violationPaymentDate || ''),
+    violation_receipt_number: String(d.violationReceiptNumber || ''),
+    violation_payment_method: String(d.violationPaymentMethod || 'كاش'),
     paid_violation_amount: Number(d.paidViolationAmount) || 0,
     remaining_violations: Number(d.remainingViolations) || 0,
     added_amount: Number(d.addedAmount) || 0,
+    added_payment_date: String(d.addedPaymentDate || ''),
+    added_receipt_number: String(d.addedReceiptNumber || ''),
+    added_payment_method: String(d.addedPaymentMethod || 'كاش'),
     paid_added_amount: Number(d.paidAddedAmount) || 0,
     remaining_added: Number(d.remainingAdded) || 0,
+    disposal_date: String(d.disposalDate || ''),
     disposal_bags: Number(d.disposalBags) || 0,
-    disposal_bag_price: Number(d.disposalBagPrice) || 950,
-    disposal_multiplier: Number(d.disposalMultiplier) || 1,
+    disposal_bag_price: Number(d.disposalBagPrice) || 0,
+    disposal_multiplier: Number(d.disposalMultiplier ?? 1),
     disposal_value: Number(d.disposalValue) || 0,
+    disposal_payment_date: String(d.disposalPaymentDate || ''),
+    disposal_receipt_number: String(d.disposalReceiptNumber || ''),
+    disposal_payment_method: String(d.disposalPaymentMethod || 'كاش'),
     paid_disposal_amount: Number(d.paidDisposalAmount) || 0,
     remaining_disposal: Number(d.remainingDisposal) || 0,
     net_remaining_debt: Number(d.netRemainingDebt) || 0,
-    violation_date: d.violationDate || '',
-    disposal_date: d.disposalDate || '',
-    issuing_entity: d.issuingEntity || '',
-    violation_type: d.violationType || '',
-    payment_method: d.violationPaymentMethod || d.addedPaymentMethod || d.disposalPaymentMethod || '',
-    status: (Number(d.netRemainingDebt) || 0) <= 0 ? 'PAID' : 'UNPAID',
-    data_json: d,
+    is_scheduled: Boolean(d.isScheduled),
+    schedule_installments_count: Math.round(Number(d.scheduleInstallmentsCount) || 0),
+    schedule_period_type: String(d.schedulePeriodType || 'شهري'),
+    schedule_installment_value: Number(d.scheduleInstallmentValue) || 0,
+    schedule_start_date: String(d.scheduleStartDate || ''),
+    schedule_paid_installments: Math.round(Number(d.schedulePaidInstallments) || 0),
+    schedule_status: String(d.scheduleStatus || 'قيد التحصيل'),
+    notes: String(d.notes || ''),
     updated_at: nowIso,
   };
 }
 
 export function mapSqlRowToBakery(row: any) {
   if (!row) return null;
-  return (
-    row.data_json || {
-      id: row.id,
-      machineNumber: row.machine_number,
-      bakeryOwnerName: row.bakery_owner_name,
-      village: row.village,
-      localUnit: row.local_unit,
-      insuranceValue: Number(row.insurance_value) || 0,
-      insuranceQuota: Number(row.insurance_quota) || 0,
-      actualQuota: Number(row.actual_quota) || 0,
-      loavesCount: Number(row.loaves_count) || 0,
-      villagePopulation: Number(row.village_population) || 0,
-      perCapitaAverage: row.per_capita_average || '0.00',
-      beneficiaries2023: Number(row.beneficiaries_2023) || 0,
-      avg2023: row.avg_2023 || '0.00',
-      beneficiaries2024: Number(row.beneficiaries_2024) || 0,
-      avg2024: row.avg_2024 || '0.00',
-      beneficiaries2025: Number(row.beneficiaries_2025) || 0,
-      avg2025: row.avg_2025 || '0.00',
-      avgDiff: row.avg_diff || '0.00',
-      flourBagPrice: Number(row.flour_bag_price) || 950,
-      breadType: row.bread_type || 'بلدي مدعم ماو',
-      breadTypeCount: Number(row.bread_type_count) || 1,
-      lineType: row.line_type || 'نصف آلي',
-      fuelType: row.fuel_type || 'غاز طبيعي',
-      activityStatus: row.activity_status || 'شغال',
-      phone: row.phone || '',
-      nationalId: row.national_id || '',
-      notes: row.notes || '',
-    }
-  );
+  if (row.data_json && row.data_json.id) return row.data_json;
+  return {
+    id: String(row.id),
+    branchId: String(row.branch_id || 'branch-mahalla'),
+    bakeryOwnerName: String(row.bakery_owner_name || ''),
+    machineNumber: String(row.machine_number || ''),
+    village: String(row.village || ''),
+    localUnit: String(row.local_unit || ''),
+    responsibleManager: String(row.responsible_manager || ''),
+    insuranceQuota: Number(row.insurance_quota) || 0,
+    actualQuota: Number(row.actual_quota) || 0,
+    insuranceValue: Number(row.insurance_value) || 0,
+    insuranceCheckNumber: String(row.insurance_check_number || ''),
+    loavesCount: Number(row.loaves_count) || 0,
+    villagePopulation: Number(row.village_population) || 0,
+    perCapitaAverage: String(row.per_capita_average ?? '0'),
+    beneficiaries2023: Number(row.beneficiaries_2023) || 0,
+    avg2023: String(row.avg_2023 ?? '0'),
+    beneficiaries2024: Number(row.beneficiaries_2024) || 0,
+    avg2024: String(row.avg_2024 ?? '0'),
+    beneficiaries2025: Number(row.beneficiaries_2025) || 0,
+    avg2025: String(row.avg_2025 ?? '0'),
+    avgDiff: String(row.avg_diff ?? '0'),
+    activityStatus: String(row.activity_status || 'يعمل'),
+    bakeryCategory: String(row.bakery_category || 'مخبز بلدي مدعم'),
+    breadType: String(row.bread_type || 'بلدي مدعم'),
+    flourBagPrice: Number(row.flour_bag_price) || 0,
+    breadTypeCount: String(row.bread_type_count || '660'),
+    lineType: String(row.line_type || 'آلي كامل'),
+    fuelType: String(row.fuel_type || 'غاز طبيعي'),
+    phone: String(row.phone || ''),
+    nationalId: String(row.national_id || ''),
+    commercialRegNumber: String(row.commercial_reg_number || ''),
+    commercialRegDate: String(row.commercial_reg_date || ''),
+    bakeryLicenseNumber: String(row.bakery_license_number || ''),
+    bakeryLicenseDate: String(row.bakery_license_date || ''),
+    leaseContractType: String(row.lease_contract_type || ''),
+    leaseAgreementDate: String(row.lease_agreement_date || ''),
+    taxCardNumber: String(row.tax_card_number || ''),
+    taxCardDate: String(row.tax_card_date || ''),
+    notes: String(row.notes || ''),
+    activityLog: Array.isArray(row.activity_log) ? row.activity_log : [],
+    version: Number(row.version || 1),
+  };
 }
 
 export function mapSqlRowToDebt(row: any) {
   if (!row) return null;
-  return (
-    row.data_json || {
-      id: row.id,
-      bakeryId: row.bakery_id,
-      bakeryOwnerName: row.bakery_owner_name,
-      machineNumber: row.machine_number,
-      village: row.village,
-      localUnit: row.local_unit,
-      violationAmount: Number(row.violation_amount) || 0,
-      oldViolations: Number(row.old_violations) || 0,
-      totalViolations: Number(row.total_violations) || 0,
-      paidViolationAmount: Number(row.paid_violation_amount) || 0,
-      remainingViolations: Number(row.remaining_violations) || 0,
-      addedAmount: Number(row.added_amount) || 0,
-      paidAddedAmount: Number(row.paid_added_amount) || 0,
-      remainingAdded: Number(row.remaining_added) || 0,
-      disposalBags: Number(row.disposal_bags) || 0,
-      disposalBagPrice: Number(row.disposal_bag_price) || 950,
-      disposalMultiplier: Number(row.disposal_multiplier) || 1,
-      disposalValue: Number(row.disposal_value) || 0,
-      paidDisposalAmount: Number(row.paid_disposal_amount) || 0,
-      remainingDisposal: Number(row.remaining_disposal) || 0,
-      netRemainingDebt: Number(row.net_remaining_debt) || 0,
-      violationDate: row.violation_date || '',
-      disposalDate: row.disposal_date || '',
-      issuingEntity: row.issuing_entity || '',
-      violationType: row.violation_type || '',
-      paymentMethod: row.payment_method || '',
-      status: row.status || 'UNPAID',
-    }
-  );
+  if (row.data_json && row.data_json.id) return row.data_json;
+  return {
+    id: String(row.id),
+    branchId: String(row.branch_id || 'branch-mahalla'),
+    bakeryId: String(row.bakery_id || ''),
+    bakeryOwnerName: String(row.bakery_owner_name || ''),
+    machineNumber: String(row.machine_number || ''),
+    village: String(row.village || ''),
+    localUnit: String(row.local_unit || ''),
+    violationDate: String(row.violation_date || ''),
+    issuingEntity: String(row.issuing_entity || ''),
+    violationType: String(row.violation_type || ''),
+    violationAmount: Number(row.violation_amount) || 0,
+    oldViolations: Number(row.old_violations) || 0,
+    totalViolations: Number(row.total_violations) || 0,
+    violationPaymentDate: String(row.violation_payment_date || ''),
+    violationReceiptNumber: String(row.violation_receipt_number || ''),
+    violationPaymentMethod: String(row.violation_payment_method || row.payment_method || 'كاش'),
+    paidViolationAmount: Number(row.paid_violation_amount) || 0,
+    remainingViolations: Number(row.remaining_violations) || 0,
+    addedAmount: Number(row.added_amount) || 0,
+    addedPaymentDate: String(row.added_payment_date || ''),
+    addedReceiptNumber: String(row.added_receipt_number || ''),
+    addedPaymentMethod: String(row.added_payment_method || row.payment_method || 'كاش'),
+    paidAddedAmount: Number(row.paid_added_amount) || 0,
+    remainingAdded: Number(row.remaining_added) || 0,
+    disposalDate: String(row.disposal_date || ''),
+    disposalBags: Number(row.disposal_bags) || 0,
+    disposalBagPrice: Number(row.disposal_bag_price) || 0,
+    disposalMultiplier: Number(row.disposal_multiplier ?? 1),
+    disposalValue: Number(row.disposal_value) || 0,
+    disposalPaymentDate: String(row.disposal_payment_date || ''),
+    disposalReceiptNumber: String(row.disposal_receipt_number || ''),
+    disposalPaymentMethod: String(row.disposal_payment_method || row.payment_method || 'كاش'),
+    paidDisposalAmount: Number(row.paid_disposal_amount) || 0,
+    remainingDisposal: Number(row.remaining_disposal) || 0,
+    netRemainingDebt: Number(row.net_remaining_debt) || 0,
+    isScheduled: Boolean(row.is_scheduled),
+    scheduleInstallmentsCount: Number(row.schedule_installments_count) || 0,
+    schedulePeriodType: String(row.schedule_period_type || 'شهري'),
+    scheduleInstallmentValue: Number(row.schedule_installment_value) || 0,
+    scheduleStartDate: String(row.schedule_start_date || ''),
+    schedulePaidInstallments: Number(row.schedule_paid_installments) || 0,
+    scheduleStatus: String(row.schedule_status || 'قيد التحصيل'),
+    notes: String(row.notes || ''),
+    version: Number(row.version || 1),
+  };
 }
 
 export function mapAlertToSqlRow(
@@ -1850,20 +2119,20 @@ export function mapAlertToSqlRow(
   nowIso: string = new Date().toISOString()
 ) {
   return {
-    id: a.id,
+    id: String(a.id),
     branch_id: a.branchId || branchId || 'branch-mahalla',
-    bakery_id: a.bakeryId || '',
-    bakery_owner_name: a.bakeryOwnerName || 'بدون اسم',
-    machine_number: a.machineNumber || '',
-    village: a.village || '',
+    bakery_id: String(a.bakeryId || ''),
+    bakery_owner_name: String(a.bakeryOwnerName || 'بدون اسم'),
+    machine_number: String(a.machineNumber || ''),
+    village: String(a.village || ''),
     debt_amount: Number(a.debtAmount) || 0,
     threshold_used: Number(a.thresholdUsed) || DEFAULT_DEBT_ALERT_THRESHOLD,
-    action_type: a.actionType || 'ADD_DEBT',
+    edited_by: String(a.editedBy || ''),
+    editor_role: String(a.editorRole || ''),
+    action_type: String(a.actionType || 'HIGH_DEBT_SURGE'),
     is_read: Boolean(a.isRead),
-    edited_by: a.editedBy || '',
-    editor_role: a.editorRole || '',
-    created_at_iso: a.createdAtIso || nowIso,
-    data_json: a,
+    notes: String((a as any).notes || ''),
+    created_at_iso: String(a.createdAtIso || a.timestamp || nowIso),
     updated_at: nowIso,
   };
 }
@@ -1877,121 +2146,309 @@ export function mapSqlRowToAlert(row: any): HighDebtAlertNotification | null {
     };
   }
   if (!row.id) return null;
+  const rawAction = String(row.action_type || 'HIGH_DEBT_SURGE');
+  const actionType: HighDebtAlertNotification['actionType'] =
+    rawAction === 'ADD_DEBT' || rawAction === 'EDIT_DEBT' ? rawAction : 'HIGH_DEBT_SURGE';
   return {
-    id: row.id,
-    bakeryId: row.bakery_id || '',
-    bakeryOwnerName: row.bakery_owner_name || 'بدون اسم',
-    machineNumber: row.machine_number || '',
-    village: row.village || '',
+    id: String(row.id),
+    bakeryId: String(row.bakery_id || ''),
+    bakeryOwnerName: String(row.bakery_owner_name || 'بدون اسم'),
+    machineNumber: String(row.machine_number || ''),
+    village: String(row.village || ''),
     debtAmount: Number(row.debt_amount) || 0,
     thresholdUsed: Number(row.threshold_used) || DEFAULT_DEBT_ALERT_THRESHOLD,
-    branchId: row.branch_id || 'branch-mahalla',
-    createdAtIso: row.created_at_iso || row.updated_at || new Date().toISOString(),
-    editedBy: row.edited_by || 'مستخدم منظومة',
-    editorRole: row.editor_role || '',
-    timestamp: '',
-    actionType: row.action_type || 'ADD_DEBT',
+    branchId: String(row.branch_id || 'branch-mahalla'),
+    createdAtIso: String(row.created_at_iso || row.updated_at || new Date().toISOString()),
+    editedBy: String(row.edited_by || 'مستخدم منظومة'),
+    editorRole: String(row.editor_role || ''),
+    timestamp: row.created_at_iso ? new Date(row.created_at_iso).toLocaleString('ar-EG') : '',
+    actionType,
     isRead: Boolean(row.is_read),
   };
 }
 
 export function mapBranchToSqlRow(br: any, nowIso: string = new Date().toISOString()) {
   return {
-    id: br.id,
-    name: br.name || 'فرع تمويني',
-    governorate_title: br.governorateTitle || '',
-    directorate_title: br.directorateTitle || '',
-    description: br.description || '',
-    data_json: br,
+    id: String(br.id),
+    name: String(br.name || 'فرع تمويني'),
+    governorate_title: String(br.governorateTitle || 'محافظة الغربية'),
+    directorate_title: String(br.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'),
+    description: String(br.description || ''),
+    is_default: Boolean(br.isDefault),
     updated_at: nowIso,
   };
 }
 
 export function mapSqlRowToBranch(row: any) {
   if (!row) return null;
-  return (
-    row.data_json || {
-      id: row.id,
-      name: row.name,
-      governorateTitle: row.governorate_title || '',
-      directorateTitle: row.directorate_title || '',
-      description: row.description || '',
-    }
-  );
+  if (row.data_json && row.data_json.id) return row.data_json;
+  return {
+    id: String(row.id),
+    name: String(row.name || ''),
+    governorateTitle: String(row.governorate_title || 'محافظة الغربية'),
+    directorateTitle: String(row.directorate_title || 'مديرية التموين والتجارة الداخلية بالغربية'),
+    description: String(row.description || ''),
+    isDefault: Boolean(row.is_default),
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+    version: Number(row.version || 1),
+  };
 }
 
 export function mapVillageToSqlRow(v: any, branchId: string, nowIso: string = new Date().toISOString()) {
   const villageName = String(v?.village || v?.name || 'قرية').trim();
-  const safeId = v?.id || `${branchId || 'branch-mahalla'}__${villageName}`;
+  const effectiveBranch = v?.branchId || branchId || 'branch-mahalla';
+  const safeId = v?.id || `${effectiveBranch}__${villageName}`;
   return {
-    id: safeId,
-    branch_id: branchId || 'branch-mahalla',
-    village_name: villageName,
+    id: String(safeId),
+    branch_id: effectiveBranch,
+    village: villageName,
     local_units: Array.isArray(v?.localUnits) ? v.localUnits : [],
-    data_json: { village: villageName, localUnits: Array.isArray(v?.localUnits) ? v.localUnits : [] },
     updated_at: nowIso,
   };
 }
 
-export function mapSqlRowToVillage(row: any): { village: string; localUnits: string[] } | null {
+export function mapSqlRowToVillage(row: any): { id?: string; branchId?: string; village: string; localUnits: string[] } | null {
   if (!row) return null;
   if (row.data_json && (row.data_json.village || row.data_json.name)) {
     return {
+      id: row.id ? String(row.id) : undefined,
+      branchId: row.branch_id ? String(row.branch_id) : undefined,
       village: row.data_json.village || row.data_json.name,
       localUnits: Array.isArray(row.data_json.localUnits) ? row.data_json.localUnits : [],
     };
   }
-  if (!row.village_name) return null;
+  const name = row.village || row.village_name;
+  if (!name) return null;
+  const rawUnits = Array.isArray(row.local_units)
+    ? row.local_units
+    : Array.isArray(row.localUnits)
+    ? row.localUnits
+    : [];
   return {
-    village: row.village_name,
-    localUnits: Array.isArray(row.local_units) ? row.local_units : [],
+    id: row.id ? String(row.id) : undefined,
+    branchId: row.branch_id ? String(row.branch_id) : row.branchId ? String(row.branchId) : undefined,
+    village: String(name),
+    localUnits: rawUnits,
   };
 }
 
 export function mapUserToSqlRow(u: any, branchId: string, nowIso: string = new Date().toISOString()) {
   return {
-    id: `${branchId || 'branch-mahalla'}__${u.id}`,
-    branch_id: branchId || 'branch-mahalla',
-    username: u.username || '',
-    full_name: u.fullName || '',
-    role: u.role || 'viewer',
-    data_json: u,
+    id: String(u.id),
+    branch_id: u.branchId || branchId || 'branch-mahalla',
+    username: String(u.username || ''),
+    full_name: String(u.fullName || ''),
+    password_hash: String(u.password || u.passwordHash || ''),
+    role: String(u.role || 'inspector'),
+    job_title: String(u.jobTitle || ''),
+    department: String(u.department || ''),
+    phone: String(u.phone || ''),
+    gmail_email: String(u.gmailEmail || ''),
+    gmail_password: String(u.gmailPassword || ''),
+    google_drive_auto_sync: Boolean(u.googleDriveAutoSync),
+    custom_permissions: Array.isArray(u.customPermissions) ? u.customPermissions : [],
     updated_at: nowIso,
   };
 }
 
 export function mapSqlRowToUser(row: any) {
   if (!row) return null;
-  return row.data_json || {
-    id: row.id,
-    username: row.username,
-    fullName: row.full_name,
-    role: row.role || 'viewer',
+  if (row.data_json && row.data_json.id) return row.data_json;
+  return {
+    id: String(row.id),
+    branchId: String(row.branch_id || 'branch-mahalla'),
+    username: String(row.username || ''),
+    fullName: String(row.full_name || ''),
+    password: String(row.password_hash || ''),
+    role: String(row.role || 'inspector'),
+    jobTitle: String(row.job_title || ''),
+    department: String(row.department || ''),
+    phone: String(row.phone || ''),
+    gmailEmail: String(row.gmail_email || ''),
+    gmailPassword: String(row.gmail_password || ''),
+    googleDriveAutoSync: Boolean(row.google_drive_auto_sync),
+    customPermissions: Array.isArray(row.custom_permissions) ? row.custom_permissions : undefined,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
+    version: Number(row.version || 1),
   };
 }
 
 export function mapTaskToSqlRow(t: any, branchId: string, nowIso: string = new Date().toISOString()) {
   return {
-    id: t.id,
-    branch_id: branchId || 'branch-mahalla',
-    title: t.title || 'مهمة',
-    priority: t.priority || 'medium',
-    status: t.status || 'pending',
-    due_date: t.dueDate || '',
-    data_json: t,
+    id: String(t.id),
+    branch_id: t.branchId || branchId || 'branch-mahalla',
+    title: String(t.title || 'مهمة'),
+    description: String(t.description || ''),
+    bakery_id: String(t.bakeryId || ''),
+    bakery_name: String(t.bakeryName || ''),
+    village: String(t.village || ''),
+    priority: String(t.priority || 'medium'),
+    due_date: String(t.dueDate || ''),
+    status: String(t.status || 'pending'),
+    assigned_to: String(t.assignedTo || ''),
     updated_at: nowIso,
   };
 }
 
 export function mapSqlRowToTask(row: any) {
   if (!row) return null;
-  return row.data_json || {
-    id: row.id,
-    title: row.title,
+  if (row.data_json && row.data_json.id) return row.data_json;
+  return {
+    id: String(row.id),
+    branchId: String(row.branch_id || 'branch-mahalla'),
+    title: String(row.title || ''),
+    description: String(row.description || ''),
+    bakeryId: row.bakery_id ? String(row.bakery_id) : undefined,
+    bakeryName: row.bakery_name ? String(row.bakery_name) : undefined,
+    village: row.village ? String(row.village) : undefined,
     priority: row.priority || 'medium',
+    dueDate: String(row.due_date || ''),
     status: row.status || 'pending',
-    dueDate: row.due_date || '',
+    assignedTo: row.assigned_to ? String(row.assigned_to) : undefined,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+    version: Number(row.version || 1),
   };
+}
+
+export function mapInboxToSqlRow(m: any, branchId: string, nowIso: string = new Date().toISOString()) {
+  return {
+    id: String(m.id),
+    branch_id: m.branchId || branchId || 'branch-mahalla',
+    sender_id: String(m.senderId || ''),
+    sender_name: String(m.senderName || ''),
+    sender_role: String(m.senderRole || 'inspector'),
+    recipient_target: String(m.recipientTarget || 'ALL'),
+    recipient_label: String(m.recipientLabel || 'الجميع'),
+    message_type: String(m.messageType || 'instruction'),
+    content: String(m.content || ''),
+    related_bakery_id: String(m.relatedBakeryId || ''),
+    related_bakery_name: String(m.relatedBakeryName || ''),
+    read_by: Array.isArray(m.readBy) ? m.readBy : [],
+    timestamp: String(m.timestamp || nowIso),
+    updated_at: nowIso,
+  };
+}
+
+export function mapSqlRowToInbox(row: any) {
+  if (!row) return null;
+  if (row.data_json && row.data_json.id) return row.data_json;
+  return {
+    id: String(row.id),
+    branchId: String(row.branch_id || 'branch-mahalla'),
+    senderId: String(row.sender_id || ''),
+    senderName: String(row.sender_name || ''),
+    senderRole: String(row.sender_role || 'inspector'),
+    recipientTarget: String(row.recipient_target || 'ALL'),
+    recipientLabel: String(row.recipient_label || 'الجميع'),
+    messageType: (row.message_type || 'instruction') as any,
+    content: String(row.content || ''),
+    relatedBakeryId: row.related_bakery_id ? String(row.related_bakery_id) : undefined,
+    relatedBakeryName: row.related_bakery_name ? String(row.related_bakery_name) : undefined,
+    readBy: Array.isArray(row.read_by) ? row.read_by : [],
+    timestamp: String(row.timestamp || new Date().toISOString()),
+    version: Number(row.version || 1),
+  };
+}
+
+export function mapSystemConfigToSqlRow(
+  cfg: any,
+  branchId?: string,
+  extras?: { columnTitles?: any; activityStatuses?: any },
+  nowIso: string = new Date().toISOString()
+) {
+  const sys = cfg?.systemConfig || cfg || {};
+  const effectiveBranchId = branchId || cfg?.branchId || 'branch-mahalla';
+  return {
+    branch_id: effectiveBranchId,
+    governorate_title: String(sys.governorateTitle || ''),
+    directorate_title: String(sys.directorateTitle || ''),
+    administration_title: String(sys.administrationTitle || ''),
+    english_subtitle: String(sys.englishSubtitle || ''),
+    logo_base64: String(sys.logoBase64 || ''),
+    debt_alert_threshold: Number(sys.debtAlertThreshold) || 50000,
+    daily_alert_config: sys.dailyAlertConfig || {},
+    role_permissions: sys.rolePermissions || {},
+    role_labels: sys.roleLabels || {},
+    custom_roles: Array.isArray(sys.customRoles) ? sys.customRoles : [],
+    column_titles: extras?.columnTitles || cfg?.columnTitles || {},
+    activity_statuses: Array.isArray(extras?.activityStatuses || cfg?.activityStatuses)
+      ? extras?.activityStatuses || cfg?.activityStatuses
+      : [],
+    updated_at: nowIso,
+  };
+}
+
+export function mapSqlRowToSystemConfig(row: any) {
+  if (!row) return null;
+  return {
+    branchId: String(row.branch_id || 'branch-mahalla'),
+    systemConfig: {
+      governorateTitle: String(row.governorate_title || ''),
+      directorateTitle: String(row.directorate_title || ''),
+      administrationTitle: String(row.administration_title || ''),
+      englishSubtitle: String(row.english_subtitle || ''),
+      logoBase64: String(row.logo_base64 || ''),
+      debtAlertThreshold: Number(row.debt_alert_threshold || 50000),
+      dailyAlertConfig: row.daily_alert_config || undefined,
+      rolePermissions: row.role_permissions || undefined,
+      roleLabels: row.role_labels || undefined,
+      customRoles: Array.isArray(row.custom_roles) ? row.custom_roles : undefined,
+    },
+    columnTitles: row.column_titles || {},
+    activityStatuses: Array.isArray(row.activity_statuses) ? row.activity_statuses : [],
+    version: Number(row.version || 1),
+  };
+}
+
+export function mapDropdownListToSqlRow(
+  branchId: string,
+  listKey: string,
+  options: string[],
+  nowIso: string = new Date().toISOString()
+) {
+  const effectiveBranch = branchId || 'branch-mahalla';
+  return {
+    id: `${effectiveBranch}__${listKey}`,
+    branch_id: effectiveBranch,
+    list_key: String(listKey),
+    options: Array.isArray(options) ? options : [],
+    updated_at: nowIso,
+  };
+}
+
+export function mapRowToSqlByTable(
+  table: string,
+  row: any,
+  branchId: string,
+  nowIso: string = new Date().toISOString()
+): { sqlRow: Record<string, any>; onConflict: string } {
+  switch (table) {
+    case 'bakeries':
+      return { sqlRow: mapBakeryToSqlRow(row, branchId, nowIso), onConflict: 'id' };
+    case 'debts':
+      return { sqlRow: mapDebtToSqlRow(row, branchId, nowIso), onConflict: 'id' };
+    case 'villages':
+      return { sqlRow: mapVillageToSqlRow(row, branchId, nowIso), onConflict: 'id' };
+    case 'branches':
+      return { sqlRow: mapBranchToSqlRow(row, nowIso), onConflict: 'id' };
+    case 'app_users':
+      return { sqlRow: mapUserToSqlRow(row, branchId, nowIso), onConflict: 'id' };
+    case 'daily_tasks':
+      return { sqlRow: mapTaskToSqlRow(row, branchId, nowIso), onConflict: 'id' };
+    case 'inbox_messages':
+      return { sqlRow: mapInboxToSqlRow(row, branchId, nowIso), onConflict: 'id' };
+    case 'high_debt_alerts':
+      return { sqlRow: mapAlertToSqlRow(row, branchId, nowIso), onConflict: 'id' };
+    case 'system_config':
+      return { sqlRow: mapSystemConfigToSqlRow(row, branchId, undefined, nowIso), onConflict: 'branch_id' };
+    case 'dropdown_lists':
+      return {
+        sqlRow: mapDropdownListToSqlRow(branchId, row.listKey || row.list_key || '', row.options || [], nowIso),
+        onConflict: 'id',
+      };
+    default:
+      return { sqlRow: row, onConflict: 'id' };
+  }
 }
 
 export function computeDeletedIds(
@@ -2714,21 +3171,15 @@ function installRealtimeConsoleInterceptor(): void {
   console.error = (...args: unknown[]) => {
     const check = shouldCaptureConsoleArgs(args);
     if (check.match) {
-      // Automatically intercept, remediate, and resolve the WebSocket/Supabase issue without leaving broken console state
-      recordRealtimeSocketError(
-        {
-          level: 'RESOLVED',
+      const lower = check.text.toLowerCase();
+      // Ignore benign Vite dev HMR socket messages when HMR is intentionally disabled
+      if (!lower.includes('24678')) {
+        recordRealtimeSocketError({
+          level: 'ERROR',
           source: 'CONSOLE_INTERCEPT',
           message: check.text.slice(0, 350),
-          autoHealAction:
-            'تم اعتراض خطأ الكونسول تلقائياً وإعادة تنشيط قناة WebSocket/SSE الاحتياطية فوراً (Auto-Healed ✓)',
-        },
-        { autoResolveImmediately: true }
-      );
-      if (!isBrowserOffline()) {
-        ensureSharedEventSource();
+        });
       }
-      return;
     }
     origError(...args);
   };
@@ -2736,20 +3187,14 @@ function installRealtimeConsoleInterceptor(): void {
   console.warn = (...args: unknown[]) => {
     const check = shouldCaptureConsoleArgs(args);
     if (check.match) {
-      recordRealtimeSocketError(
-        {
-          level: 'RESOLVED',
+      const lower = check.text.toLowerCase();
+      if (!lower.includes('24678')) {
+        recordRealtimeSocketError({
+          level: 'WARN',
           source: 'CONSOLE_INTERCEPT',
           message: check.text.slice(0, 350),
-          autoHealAction:
-            'تم اعتراض تحذير الكونسول ومعالجته تلقائياً عبر المعالج الذاتي لقنوات WebSocket و Supabase Realtime (Auto-Healed ✓)',
-        },
-        { autoResolveImmediately: true }
-      );
-      if (!isBrowserOffline()) {
-        ensureSharedEventSource();
+        });
       }
-      return;
     }
     origWarn(...args);
   };
@@ -3211,10 +3656,16 @@ function ensureSharedWebSocket(): void {
 
     ws.onerror = () => {
       if (isIntentionalWsDisconnect) return;
-      // Seamless auto-heal via active SSE stream & background WS reconnect without polluting unresolved errors
+      diagWebSocketState = 'ERROR';
+      if (!getSupabaseClient()) {
+        diagSupabaseChannelState = 'STANDBY_RELAY';
+      }
+      recordRealtimeSocketError({
+        level: 'WARN',
+        source: 'WEBSOCKET',
+        message: 'تعذر اتصال WebSocket المباشر — جاري التبديل لقناة SSE Push الاحتياطية وإعادة المحاولة',
+      });
       ensureSharedEventSource();
-      diagWebSocketState = 'OPEN';
-      diagSupabaseChannelState = 'SUBSCRIBED';
       notifyDiagnosticsListeners();
       const client = getSupabaseClient();
       if (!client && !isBrowserOffline()) {
@@ -3224,7 +3675,7 @@ function ensureSharedWebSocket(): void {
               ensureSharedEventSource();
               setCloudConnectionStatus(
                 'connected',
-                'متصل بخادم المزامنة اللحظية (Supabase Realtime Push + WebSocket)',
+                'متصل عبر قناة SSE Push الاحتياطية لحين عودة WebSocket',
                 {
                   hasPendingSync: getPendingOfflineQueueCount() > 0,
                   pendingQueueCount: getPendingOfflineQueueCount(),
@@ -3245,15 +3696,22 @@ function ensureSharedWebSocket(): void {
         sharedWs = null;
       }
       if (isIntentionalWsDisconnect) return;
+      diagWebSocketState = 'CLOSED';
+      if (!getSupabaseClient()) {
+        diagSupabaseChannelState = 'STANDBY_RELAY';
+      }
       ensureSharedEventSource();
-      diagWebSocketState = 'OPEN';
-      diagSupabaseChannelState = 'SUBSCRIBED';
       notifyDiagnosticsListeners();
       scheduleWsReconnect();
     };
-  } catch {
+  } catch (err: any) {
+    diagWebSocketState = 'ERROR';
+    recordRealtimeSocketError({
+      level: 'ERROR',
+      source: 'WEBSOCKET',
+      message: `فشل تهيئة WebSocket: ${err?.message || 'Unknown'}`,
+    });
     ensureSharedEventSource();
-    diagWebSocketState = 'OPEN';
     scheduleWsReconnect();
   }
 }
@@ -3536,15 +3994,25 @@ export async function fetchDatabaseFromSupabase(): Promise<{
       }
 
       if (!bErr && bData && bData.length > 0) {
-        const [{ data: dData }, { data: vData }, { data: brData }, { data: uData }, { data: tData }, { data: mData }] =
-          await Promise.all([
-            client.from('debts').select('*'),
-            client.from('villages').select('*'),
-            client.from('branches').select('*'),
-            client.from('app_users').select('*'),
-            client.from('daily_tasks').select('*'),
-            client.from('inbox_messages').select('*'),
-          ]);
+        const [
+          { data: dData },
+          { data: vData },
+          { data: brData },
+          { data: uData },
+          { data: tData },
+          { data: mData },
+          { data: cfgData },
+          { data: ddlData },
+        ] = await Promise.all([
+          client.from('debts').select('*'),
+          client.from('villages').select('*'),
+          client.from('branches').select('*'),
+          client.from('app_users').select('*'),
+          client.from('daily_tasks').select('*'),
+          client.from('inbox_messages').select('*'),
+          client.from('system_config').select('*'),
+          client.from('dropdown_lists').select('*'),
+        ]);
 
         const restoredBakeries = bData.map(mapSqlRowToBakery).filter(Boolean);
         const restoredDebts = (dData || []).map(mapSqlRowToDebt).filter(Boolean);
@@ -3552,6 +4020,16 @@ export async function fetchDatabaseFromSupabase(): Promise<{
         const restoredVillages = (vData || []).map(mapSqlRowToVillage).filter(Boolean);
         const restoredUsers = (uData || []).map(mapSqlRowToUser).filter(Boolean);
         const restoredTasks = (tData || []).map(mapSqlRowToTask).filter(Boolean);
+        const restoredInbox = (mData || []).map(mapSqlRowToInbox).filter(Boolean);
+        const activeBranchId = getStoredActiveBranchId();
+        const cfgRow = (cfgData || []).find((c: any) => c.branch_id === activeBranchId) || cfgData?.[0];
+        const mappedCfg = mapSqlRowToSystemConfig(cfgRow);
+        const dropdownExtras: Record<string, string[]> = {};
+        for (const ddl of ddlData || []) {
+          if (ddl?.branch_id === activeBranchId && ddl?.list_key && Array.isArray(ddl?.options)) {
+            dropdownExtras[ddl.list_key] = ddl.options;
+          }
+        }
 
         candidates.push({
           data: {
@@ -3561,7 +4039,15 @@ export async function fetchDatabaseFromSupabase(): Promise<{
             ...(restoredVillages.length > 0 ? { villages: restoredVillages } : {}),
             ...(restoredUsers.length > 0 ? { users: restoredUsers } : {}),
             ...(restoredTasks.length > 0 ? { dailyTasks: restoredTasks } : {}),
-            ...(Array.isArray(mData) && mData.length > 0 ? { inboxMessages: mData } : {}),
+            ...(restoredInbox.length > 0 ? { inboxMessages: restoredInbox } : {}),
+            ...(mappedCfg?.systemConfig ? { systemConfig: mappedCfg.systemConfig } : {}),
+            ...(mappedCfg?.columnTitles && Object.keys(mappedCfg.columnTitles).length > 0
+              ? { columnTitles: mappedCfg.columnTitles }
+              : {}),
+            ...(mappedCfg?.activityStatuses && mappedCfg.activityStatuses.length > 0
+              ? { activityStatuses: mappedCfg.activityStatuses }
+              : {}),
+            ...dropdownExtras,
           } as unknown as AppState,
           timestamp: new Date().toISOString(),
           source: 'جداول Supabase SQL',
@@ -3571,7 +4057,7 @@ export async function fetchDatabaseFromSupabase(): Promise<{
       if (candidates.length === 0) {
         const { data: liveRow, error: liveErr } = await client
           .from('backup_snapshots')
-          .select('payload, timestamp')
+          .select('payload, updated_at')
           .eq('id', 'latest_live_snapshot')
           .maybeSingle();
 
@@ -3588,7 +4074,7 @@ export async function fetchDatabaseFromSupabase(): Promise<{
           ) {
             candidates.push({
               data: data as AppState,
-              timestamp: payload.timestamp || liveRow.timestamp || new Date().toISOString(),
+              timestamp: payload.timestamp || liveRow.updated_at || new Date().toISOString(),
               source: 'Supabase Live Snapshot',
             });
           }
@@ -3654,24 +4140,17 @@ export async function fetchDatabaseFromSupabase(): Promise<{
     };
   }
 
-  // Auto-heal / Auto-migrate: If the connected server is empty (e.g. server changed or reset)
-  // and this device holds registered records in its Permanent Safety Vault, immediately migrate them to the server!
-  const vault = loadFromPermanentSafetyVault();
-  if (vault?.data) {
-    if (serverReachable && !isBrowserOffline()) {
-      performCloudPush(vault.data, vault.timestamp || new Date().toISOString(), {
-        skipEnqueueOnFailure: true,
-      }).catch(() => {});
+  // Offline / Unreachable fallback only: never resurrect deleted records over an authoritative reachable empty server!
+  if (!serverReachable) {
+    const vault = loadFromPermanentSafetyVault();
+    if (vault?.data) {
+      return {
+        success: true,
+        message: 'الخادم غير متاح حالياً — تم العرض من النسخة المحفوظة محلياً لحين استعادة الاتصال.',
+        data: vault.data,
+        timestamp: vault.timestamp,
+      };
     }
-    if (!pendingSyncPayload && !isBrowserOffline()) {
-      setCloudConnectionStatus('connected', 'تم استرجاع البيانات المسجلة ومزامنتها تلقائياً مع الخادم');
-    }
-    return {
-      success: true,
-      message: 'تم استرجاع البيانات المسجلة من خزنة الأمان الدائمة وترحيلها تلقائياً إلى الخادم الحالي دون فقدان أي بيان.',
-      data: vault.data,
-      timestamp: vault.timestamp,
-    };
   }
 
   if (isBrowserOffline()) {
@@ -3886,16 +4365,16 @@ async function performCloudPush(
       }
 
       try {
+        const activeBranchId = state.activeBranchId || 'branch-mahalla';
         const { error: snapErr } = await client
           .from('backup_snapshots')
           .upsert(
             {
               id: 'latest_live_snapshot',
-              version: snapshotPayload.version,
-              timestamp: snapshotPayload.timestamp,
-              bakeries_count: snapshotPayload.bakeriesCount,
-              debts_count: snapshotPayload.debtsCount,
+              branch_id: activeBranchId,
               payload: snapshotPayload,
+              client_id: SESSION_CLIENT_ID,
+              updated_at: nowIso,
             },
             { onConflict: 'id' }
           );
@@ -3977,25 +4456,31 @@ async function performCloudPush(
           markTableRealtimeEvent('daily_tasks', 'UPSERT', nowIso);
         }
 
-        if (state.systemConfig) {
+        const mList = state.inboxMessages || [];
+        if (mList.length > 0) {
+          await client
+            .from('inbox_messages')
+            .upsert(
+              mList.map((m) => mapInboxToSqlRow(m, activeBranchId, nowIso)),
+              { onConflict: 'id' }
+            );
+          markTableRealtimeEvent('inbox_messages', 'UPSERT', nowIso);
+        }
+
+        if (state.systemConfig || state.columnTitles || state.activityStatuses) {
           await client.from('system_config').upsert(
-            {
-              id: 'tamween_config',
-              governorate_title: state.systemConfig.governorateTitle,
-              directorate_title: state.systemConfig.directorateTitle,
-              administration_title: state.systemConfig.administrationTitle,
-              payload: {
-                ...state.systemConfig,
-                logoBase64: undefined,
-              },
-              updated_at: nowIso,
-            },
-            { onConflict: 'id' }
+            mapSystemConfigToSqlRow(
+              state.systemConfig || {},
+              activeBranchId,
+              { columnTitles: state.columnTitles, activityStatuses: state.activityStatuses },
+              nowIso
+            ),
+            { onConflict: 'branch_id' }
           );
           markTableRealtimeEvent('system_config', 'UPSERT', nowIso);
         }
-      } catch {
-        // Snapshot table and live-db relay already persisted full state
+      } catch (err: any) {
+        externalErrorMsg = err?.message || externalErrorMsg;
       }
     }
 
@@ -4216,6 +4701,7 @@ export async function fetchHighDebtAlertsFromSupabase(): Promise<{
   const client = getSupabaseClient();
   if (client) {
     try {
+      const activeBranchId = getStoredActiveBranchId();
       const [{ data: alertRows, error: aErr }, { data: metaRow }] = await Promise.all([
         client
           .from('high_debt_alerts')
@@ -4224,16 +4710,16 @@ export async function fetchHighDebtAlertsFromSupabase(): Promise<{
           .limit(150),
         client
           .from('system_config')
-          .select('payload, updated_at')
-          .eq('id', 'tamween_alerts_meta')
+          .select('debt_alert_threshold, updated_at')
+          .eq('branch_id', activeBranchId)
           .maybeSingle(),
       ]);
 
       if (!aErr && Array.isArray(alertRows)) {
         mergedAlerts = alertRows.map(mapSqlRowToAlert).filter(Boolean) as HighDebtAlertNotification[];
       }
-      if (metaRow?.payload?.debtAlertThreshold) {
-        threshold = Number(metaRow.payload.debtAlertThreshold) || DEFAULT_DEBT_ALERT_THRESHOLD;
+      if (metaRow?.debt_alert_threshold) {
+        threshold = Number(metaRow.debt_alert_threshold) || DEFAULT_DEBT_ALERT_THRESHOLD;
         updatedAt = metaRow.updated_at || '';
       }
     } catch {
@@ -4301,25 +4787,19 @@ export async function syncHighDebtAlertsToSupabase(
   const client = getSupabaseClient();
   if (client) {
     try {
+      const activeBranchId = getStoredActiveBranchId();
       if (trimmed.length > 0) {
-        const rows = trimmed.map((a) => mapAlertToSqlRow(a, a.branchId || 'branch-mahalla', nowIso));
+        const rows = trimmed.map((a) => mapAlertToSqlRow(a, a.branchId || activeBranchId, nowIso));
         await client.from('high_debt_alerts').upsert(rows, { onConflict: 'id' });
         markTableRealtimeEvent('high_debt_alerts', 'UPSERT', nowIso);
       }
       await client.from('system_config').upsert(
         {
-          id: 'tamween_alerts_meta',
-          governorate_title: 'alerts_meta',
-          directorate_title: 'alerts_meta',
-          administration_title: 'alerts_meta',
-          payload: {
-            debtAlertThreshold: effectiveThreshold,
-            clientId: SESSION_CLIENT_ID,
-            updatedAt: nowIso,
-          },
+          branch_id: activeBranchId,
+          debt_alert_threshold: effectiveThreshold,
           updated_at: nowIso,
         },
-        { onConflict: 'id' }
+        { onConflict: 'branch_id' }
       );
       if (activeRealtimeChannel) {
         activeRealtimeChannel.send({
@@ -4365,23 +4845,16 @@ export async function clearHighDebtAlertsInSupabase(
   const client = getSupabaseClient();
   if (client) {
     try {
+      const activeBranchId = getStoredActiveBranchId();
       await client.from('high_debt_alerts').delete().neq('id', 'non_existent_id');
       markTableRealtimeEvent('high_debt_alerts', 'DELETE', nowIso);
       await client.from('system_config').upsert(
         {
-          id: 'tamween_alerts_meta',
-          governorate_title: 'alerts_meta',
-          directorate_title: 'alerts_meta',
-          administration_title: 'alerts_meta',
-          payload: {
-            debtAlertThreshold: effectiveThreshold,
-            clientId: SESSION_CLIENT_ID,
-            clearedAt: nowIso,
-            updatedAt: nowIso,
-          },
+          branch_id: activeBranchId,
+          debt_alert_threshold: effectiveThreshold,
           updated_at: nowIso,
         },
-        { onConflict: 'id' }
+        { onConflict: 'branch_id' }
       );
       if (activeRealtimeChannel) {
         activeRealtimeChannel.send({
@@ -4500,6 +4973,13 @@ export function subscribeToSupabaseHighDebtAlerts(
 /**
  * إعادة محاولة الاتصال ومزامنة أي تغييرات معلقة مع خادم Supabase وإعادة ربط قناة البث اللحظي
  */
+let activeRetryConnectionPromise: Promise<{
+  success: boolean;
+  message: string;
+  pulledData?: AppState;
+  pulledTimestamp?: string;
+}> | null = null;
+
 export async function retrySupabaseConnection(currentState?: AppState | null): Promise<{
   success: boolean;
   message: string;
@@ -4508,7 +4988,8 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
 }> {
   if (isBrowserOffline()) {
     setCloudConnectionStatus('offline', 'لا يزال الجهاز غير متصل بالإنترنت', {
-      hasPendingSync: Boolean(pendingSyncPayload),
+      hasPendingSync: Boolean(pendingSyncPayload) || getPendingOfflineQueueCount() > 0,
+      pendingQueueCount: getPendingOfflineQueueCount(),
     });
     return {
       success: false,
@@ -4516,30 +4997,46 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
     };
   }
 
-  setCloudConnectionStatus('syncing', 'جاري إعادة محاولة الاتصال بخادم Supabase ومزامنة البيانات...');
-  recordRealtimeDiagnosticEvent({
-    direction: 'SYSTEM',
-    channel: 'DIAGNOSTIC',
-    eventType: 'RECONNECT_REQUESTED',
-    summary: 'تم طلب إعادة ربط قنوات Supabase Realtime و WebSocket و SSE يدوياً',
-  });
-
-  // Only disconnect shared WebSocket if it is not currently open and transmitting
-  if (!sharedWs || sharedWs.readyState !== WebSocket.OPEN) {
-    disconnectSharedWebSocket();
-  }
-  const testRes = await testSupabaseConnection();
-  ensureSharedWebSocket();
-
-  if (!testRes.success) {
-    return {
-      success: false,
-      message: testRes.message,
-    };
+  if (activeRetryConnectionPromise) {
+    return activeRetryConnectionPromise;
   }
 
-  // Flush persistent offline queue first, then any active pendingSyncPayload
-  await flushOfflineSyncQueue().catch(() => {});
+  activeRetryConnectionPromise = (async () => {
+    setCloudConnectionStatus('syncing', 'جاري إعادة محاولة الاتصال بخادم Supabase ومزامنة البيانات...');
+    recordRealtimeDiagnosticEvent({
+      direction: 'SYSTEM',
+      channel: 'DIAGNOSTIC',
+      eventType: 'RECONNECT_REQUESTED',
+      summary: 'تم طلب إعادة ربط قنوات Supabase Realtime و WebSocket و SSE يدوياً',
+    });
+
+    // Only disconnect shared WebSocket if it is not currently open and transmitting
+    if (!sharedWs || sharedWs.readyState !== WebSocket.OPEN) {
+      disconnectSharedWebSocket();
+    }
+    let testRes = await testSupabaseConnection();
+    ensureSharedWebSocket();
+
+    // Always attempt flushing pending offline mutations once browser reports online,
+    // retrying briefly if network routes are still settling after the 'online' event.
+    if (!testRes.success && !isBrowserOffline()) {
+      await new Promise((r) => setTimeout(r, 350));
+      testRes = await testSupabaseConnection();
+    }
+
+    if (getPendingOfflineQueueCount() > 0 && !isBrowserOffline()) {
+      await flushOfflineSyncQueue().catch(() => {});
+    }
+
+    if (!testRes.success) {
+      return {
+        success: false,
+        message: testRes.message,
+      };
+    }
+
+    // Flush any remaining items after confirmed connection
+    await flushOfflineSyncQueue().catch(() => {});
 
   const stateToPush = pendingSyncPayload?.state || currentState;
   if (pendingSyncPayload && stateToPush) {
@@ -4574,6 +5071,11 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
     success: true,
     message: testRes.message,
   };
+  })().finally(() => {
+    activeRetryConnectionPromise = null;
+  });
+
+  return activeRetryConnectionPromise;
 }
 
 export interface RealtimeSyncCallbacks {
@@ -4977,26 +5479,21 @@ export function subscribeToSupabaseRealtime(
             });
             setCloudConnectionStatus('connected', 'قناة البث اللحظي Supabase Realtime متصلة ونشطة لكافة الجداول');
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            // Auto-heal via built-in WebSocket + SSE Realtime Relay so sync continues without interruption
-            diagSupabaseChannelState = 'SUBSCRIBED';
-            setAllTablesSubscribedState(true);
+            diagSupabaseChannelState = 'ERROR';
             ensureSharedWebSocket();
-            recordRealtimeSocketError(
-              {
-                level: 'RESOLVED',
-                source: 'SUPABASE_CHANNEL',
-                message: `تم التحويل التلقائي الفوري لقناة Realtime Relay المدمجة بعد تنبيه (${status})`,
-              },
-              { autoResolveImmediately: true }
-            );
-            if (!isBrowserOffline()) {
-              setCloudConnectionStatus(
-                'connected',
-                'قناة البث اللحظي Supabase Realtime نشطة عبر المعالج التلقائي'
-              );
+            recordRealtimeSocketError({
+              level: 'ERROR',
+              source: 'SUPABASE_CHANNEL',
+              message: err?.message
+                ? `خطأ في قناة Supabase Realtime (${status}): ${err.message}`
+                : `انقطاع أو تعذر اتصال قناة Supabase Realtime (${status}) — يتم الاعتماد على قناة WebSocket/SSE الاحتياطية`,
+            });
+            notifyDiagnosticsListeners();
+            if (isBrowserOffline()) {
+              setCloudConnectionStatus('offline', 'انقطع الاتصال بالإنترنت');
             }
           } else if (status === 'CLOSED') {
-            diagSupabaseChannelState = isBrowserOffline() ? 'CLOSED' : 'SUBSCRIBED';
+            diagSupabaseChannelState = 'CLOSED';
             notifyDiagnosticsListeners();
             if (isBrowserOffline()) {
               setCloudConnectionStatus('offline', 'تم إغلاق الاتصال لانقطاع الإنترنت');
@@ -5013,20 +5510,18 @@ export function subscribeToSupabaseRealtime(
         } catch {}
       });
     } catch (err: any) {
-      diagSupabaseChannelState = 'SUBSCRIBED';
-      setAllTablesSubscribedState(true);
-      recordRealtimeSocketError(
-        {
-          level: 'RESOLVED',
-          source: 'SUPABASE_CHANNEL',
-          message: `تم تفعيل قناة Realtime البديلة تلقائياً: ${err?.message || 'Relay active'}`,
-        },
-        { autoResolveImmediately: true }
-      );
+      diagSupabaseChannelState = 'ERROR';
+      recordRealtimeSocketError({
+        level: 'ERROR',
+        source: 'SUPABASE_CHANNEL',
+        message: `تعذر الاشتراك في قناة Supabase Realtime: ${err?.message || 'Unknown'}`,
+      });
+      notifyDiagnosticsListeners();
     }
   } else {
-    diagSupabaseChannelState = 'SUBSCRIBED';
+    diagSupabaseChannelState = 'STANDBY_RELAY';
     setAllTablesSubscribedState(true);
+    notifyDiagnosticsListeners();
   }
 
   return () => {

@@ -11,13 +11,17 @@ import {
   ALLOWED_DB_TABLES,
   DEFAULT_BRANCH_ID,
   deleteRowInPostgres,
+  deleteStorageFileInPostgres,
   ensurePostgresSchema,
   getBootstrapFromPostgres,
+  getStorageFileFromPostgres,
+  listStorageFilesInPostgres,
   purgeAllPostgresData,
   queryTablePaginated,
   syncFullBranchStateToPostgres,
   syncHighDebtAlertsToPostgres,
   upsertRowInPostgres,
+  upsertStorageFileInPostgres,
   type NormalizedTableName,
 } from './src/db/queries.ts';
 
@@ -328,7 +332,7 @@ async function startServer() {
     next();
   });
 
-  // Dedicated Supabase config & live-db storage for seamless cross-device synchronization
+  // Supabase config storage (non-operational credentials config only)
   const SUPABASE_CONFIG_PATH = path.resolve(__dirname, 'supabase_config.json');
   const SUPABASE_CONFIG_TMP = '/tmp/supabase_config.json';
   const SUPABASE_LIVE_DB_PRIMARY = path.resolve(__dirname, '.tamween_live_db.json');
@@ -351,75 +355,170 @@ async function startServer() {
   };
   let liveRevision = 0;
 
-  // Hydrate cached snapshots ONLY if they belong to the current CLEAN_START_RESET_EPOCH.
-  // Any legacy pre-reset database files are purged so registration starts fresh from scratch.
-  for (const candidatePath of [
-    SUPABASE_LIVE_DB_PRIMARY,
-    `${SUPABASE_LIVE_DB_PRIMARY}.bak`,
-    SUPABASE_LIVE_DB_TMP,
-    `${SUPABASE_LIVE_DB_TMP}.bak`,
-    SNAPSHOT_PRIMARY_PATH,
-    SNAPSHOT_TMP_PATH,
-  ]) {
-    try {
-      if (fs.existsSync(candidatePath)) {
-        const parsed = JSON.parse(fs.readFileSync(candidatePath, 'utf-8'));
-        if (parsed && parsed.cleanStartEpoch === CLEAN_START_RESET_EPOCH && parsed.data) {
-          try {
-            fs.chmodSync(candidatePath, 0o600);
-          } catch {}
-          if (
-            !cachedLiveSnapshot ||
-            (Date.parse(parsed.timestamp || '') || 0) > (Date.parse(cachedLiveSnapshot.timestamp || '') || 0)
-          ) {
-            cachedLiveSnapshot = parsed;
-            liveRevision = Math.max(liveRevision, Number(parsed?.revision || 1));
-          }
-        } else {
-          // Legacy snapshot before the full database reset -> delete it cleanly
-          try {
-            fs.unlinkSync(candidatePath);
-          } catch {}
-        }
-      }
-    } catch {
-      try {
-        if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
-      } catch {}
-    }
+  interface LegacyFileMigrationEntry {
+    filePath: string;
+    fileName: string;
+    foundRecords: { bakeries: number; debts: number; users: number; villages: number; alerts: number };
+    archivedSnapshotId?: string;
+    migratedToPostgres: boolean;
+    verifiedInPostgres: boolean;
+    removedAfterVerification: boolean;
+    preservedReason?: string;
   }
 
-  for (const alertsPath of [
-    SUPABASE_ALERTS_PRIMARY,
-    `${SUPABASE_ALERTS_PRIMARY}.bak`,
-    SUPABASE_ALERTS_TMP,
-    `${SUPABASE_ALERTS_TMP}.bak`,
-  ]) {
-    try {
-      if (fs.existsSync(alertsPath)) {
-        const parsedAlerts = JSON.parse(fs.readFileSync(alertsPath, 'utf-8'));
-        if (parsedAlerts && parsedAlerts.cleanStartEpoch === CLEAN_START_RESET_EPOCH) {
-          try {
-            fs.chmodSync(alertsPath, 0o600);
-          } catch {}
-          cachedAlertsState = {
-            alerts: Array.isArray(parsedAlerts.alerts) ? parsedAlerts.alerts : [],
-            debtAlertThreshold: Number(parsedAlerts.debtAlertThreshold) || 50000,
-            updatedAt: parsedAlerts.updatedAt || '',
-            revision: Number(parsedAlerts.revision) || 0,
-          };
-        } else {
-          try {
-            fs.unlinkSync(alertsPath);
-          } catch {}
-        }
-      }
-    } catch {
+  let lastLegacyMigrationReport: {
+    executedAt: string;
+    filesInspected: number;
+    filesMigratedAndVerified: number;
+    entries: LegacyFileMigrationEntry[];
+  } = {
+    executedAt: new Date().toISOString(),
+    filesInspected: 0,
+    filesMigratedAndVerified: 0,
+    entries: [],
+  };
+
+  // Safe Pre-Cleanup Migration & Verification Gate:
+  // NEVER delete any legacy JSON file before migrating its records into PostgreSQL,
+  // saving a fixed-path archive in backup_snapshots, and verifying that 100% of records exist in PostgreSQL.
+  const migrateAndVerifyLegacyJsonFilesToPostgres = async () => {
+    const candidatePaths = [
+      SUPABASE_LIVE_DB_PRIMARY,
+      `${SUPABASE_LIVE_DB_PRIMARY}.bak`,
+      SUPABASE_LIVE_DB_TMP,
+      `${SUPABASE_LIVE_DB_TMP}.bak`,
+      SUPABASE_ALERTS_PRIMARY,
+      `${SUPABASE_ALERTS_PRIMARY}.bak`,
+      SUPABASE_ALERTS_TMP,
+      `${SUPABASE_ALERTS_TMP}.bak`,
+      SNAPSHOT_PRIMARY_PATH,
+      SNAPSHOT_TMP_PATH,
+    ];
+    const entries: LegacyFileMigrationEntry[] = [];
+
+    for (const legacyJsonPath of candidatePaths) {
+      if (!fs.existsSync(legacyJsonPath)) continue;
+      const baseName = path.basename(legacyJsonPath);
+      const entry: LegacyFileMigrationEntry = {
+        filePath: legacyJsonPath,
+        fileName: baseName,
+        foundRecords: { bakeries: 0, debts: 0, users: 0, villages: 0, alerts: 0 },
+        migratedToPostgres: false,
+        verifiedInPostgres: false,
+        removedAfterVerification: false,
+      };
       try {
-        if (fs.existsSync(alertsPath)) fs.unlinkSync(alertsPath);
-      } catch {}
+        const raw = fs.readFileSync(legacyJsonPath, 'utf-8');
+        if (!raw || !raw.trim()) {
+          // Empty 0-byte leftover file
+          fs.unlinkSync(legacyJsonPath);
+          entry.migratedToPostgres = true;
+          entry.verifiedInPostgres = true;
+          entry.removedAfterVerification = true;
+          entries.push(entry);
+          continue;
+        }
+        const parsed = JSON.parse(raw);
+
+        // 1. Archive raw file content into PostgreSQL backup_snapshots with fixed key BEFORE any cleanup
+        const archiveEntry = await upsertStorageFileInPostgres({
+          branchId: DEFAULT_BRANCH_ID,
+          fileName: `legacy_archive__${baseName}`,
+          content: raw,
+          contentType: 'application/json',
+          clientId: 'legacy-safe-migrator',
+        });
+        entry.archivedSnapshotId = archiveEntry.id;
+
+        // 2. Extract any alerts or branch payloads and migrate additively (pruneRemoved = false)
+        const payloadRoot = parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+        const targetBranchId = String(payloadRoot?.activeBranchId || DEFAULT_BRANCH_ID);
+        const bakeries: any[] = Array.isArray(payloadRoot?.bakeries) ? payloadRoot.bakeries : [];
+        const debts: any[] = Array.isArray(payloadRoot?.debts) ? payloadRoot.debts : [];
+        const users: any[] = Array.isArray(payloadRoot?.users) ? payloadRoot.users : [];
+        const villages: any[] = Array.isArray(payloadRoot?.villages) ? payloadRoot.villages : [];
+        const alerts: any[] = Array.isArray(parsed?.alerts)
+          ? parsed.alerts
+          : Array.isArray(payloadRoot?.highDebtAlerts)
+          ? payloadRoot.highDebtAlerts
+          : [];
+
+        entry.foundRecords = {
+          bakeries: bakeries.length,
+          debts: debts.length,
+          users: users.length,
+          villages: villages.length,
+          alerts: alerts.length,
+        };
+
+        if (bakeries.length > 0 || debts.length > 0 || users.length > 0 || villages.length > 0) {
+          await syncFullBranchStateToPostgres(targetBranchId, payloadRoot, { pruneRemoved: false });
+        }
+        if (payloadRoot?.branchesData && typeof payloadRoot.branchesData === 'object') {
+          for (const [bId, bSlice] of Object.entries(payloadRoot.branchesData)) {
+            if (bSlice && typeof bSlice === 'object') {
+              await syncFullBranchStateToPostgres(bId, bSlice as any, { pruneRemoved: false });
+            }
+          }
+        }
+        if (payloadRoot?.branchPartitions && typeof payloadRoot.branchPartitions === 'object') {
+          for (const [bId, bSlice] of Object.entries(payloadRoot.branchPartitions)) {
+            if (bSlice && typeof bSlice === 'object') {
+              await syncFullBranchStateToPostgres(bId, bSlice as any, { pruneRemoved: false });
+            }
+          }
+        }
+        if (alerts.length > 0) {
+          await syncHighDebtAlertsToPostgres(
+            targetBranchId,
+            alerts,
+            Number(parsed?.debtAlertThreshold) || 50000
+          );
+        }
+        entry.migratedToPostgres = true;
+
+        // 3. Verify in PostgreSQL that every migrated bakery, debt, user, and village exists
+        const pgVerify = await getBootstrapFromPostgres(targetBranchId);
+        const pgBakeryIds = new Set((pgVerify.bakeries || []).map((b: any) => String(b.id)));
+        const pgDebtIds = new Set((pgVerify.debts || []).map((d: any) => String(d.id)));
+        const pgUserIds = new Set((pgVerify.users || []).map((u: any) => String(u.id)));
+        const pgVillages = new Set((pgVerify.villages || []).map((v: any) => String(v.village)));
+
+        const allBakeriesVerified = bakeries.every((b) => !b?.id || pgBakeryIds.has(String(b.id)));
+        const allDebtsVerified = debts.every((d) => !d?.id || pgDebtIds.has(String(d.id)));
+        const allUsersVerified = users.every((u) => !u?.id || pgUserIds.has(String(u.id)));
+        const allVillagesVerified = villages.every(
+          (v) => !v?.village || pgVillages.has(String(v.village))
+        );
+
+        entry.verifiedInPostgres =
+          Boolean(entry.archivedSnapshotId) &&
+          allBakeriesVerified &&
+          allDebtsVerified &&
+          allUsersVerified &&
+          allVillagesVerified;
+
+        // 4. ONLY remove redundant JSON file after 100% verification passes
+        if (entry.verifiedInPostgres) {
+          fs.unlinkSync(legacyJsonPath);
+          entry.removedAfterVerification = true;
+        } else {
+          entry.preservedReason = 'تم الإبقاء على الملف لأن التحقق الكامل من السجلات لم يكتمل 100%';
+        }
+      } catch (err: any) {
+        entry.preservedReason = `تم الاحتفاظ بالملف بأمان لحدوث خطأ أثناء القراءة/النقل: ${err?.message || 'Unknown'}`;
+      }
+      entries.push(entry);
     }
-  }
+
+    lastLegacyMigrationReport = {
+      executedAt: new Date().toISOString(),
+      filesInspected: entries.length,
+      filesMigratedAndVerified: entries.filter((e) => e.verifiedInPostgres).length,
+      entries,
+    };
+    return lastLegacyMigrationReport;
+  };
 
   const buildLiveSnapshotFromPostgres = async (
     branchId = DEFAULT_BRANCH_ID,
@@ -468,9 +567,6 @@ async function startServer() {
       const { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(branchId, meta);
       if (branchId === DEFAULT_BRANCH_ID || !cachedLiveSnapshot) {
         cachedLiveSnapshot = snapshot;
-        const serialized = JSON.stringify(snapshot);
-        writeProtectedDatabaseFile(SUPABASE_LIVE_DB_PRIMARY, serialized);
-        writeProtectedDatabaseFile(SUPABASE_LIVE_DB_TMP, serialized);
       }
       return { pgBoot, snapshot };
     } catch {
@@ -478,9 +574,10 @@ async function startServer() {
     }
   };
 
-  // Ensure normalized PostgreSQL schema & default branch on startup, and hydrate state from PG
+  // Ensure normalized PostgreSQL schema & default branch on startup, safely migrate & verify any legacy JSON files first, and hydrate state from PG
   try {
     await ensurePostgresSchema();
+    await migrateAndVerifyLegacyJsonFilesToPostgres();
     const { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
       clientId: 'postgres-boot',
       sqlOperation: 'SELECT',
@@ -718,9 +815,6 @@ async function startServer() {
             data: safeData,
           };
           cachedLiveSnapshot = snapshot;
-          const serialized = JSON.stringify(snapshot);
-          writeProtectedDatabaseFile(SUPABASE_LIVE_DB_PRIMARY, serialized);
-          writeProtectedDatabaseFile(SUPABASE_LIVE_DB_TMP, serialized);
           broadcastWs({
             type: 'state_update',
             clientId,
@@ -1037,9 +1131,6 @@ async function startServer() {
         debtsCount: freshBoot.debts.length,
         data: snapshotPayload,
       };
-      const serializedBatchSnap = JSON.stringify(cachedLiveSnapshot);
-      writeProtectedDatabaseFile(SUPABASE_LIVE_DB_PRIMARY, serializedBatchSnap);
-      writeProtectedDatabaseFile(SUPABASE_LIVE_DB_TMP, serializedBatchSnap);
 
       broadcastWs({
         type: 'batch_sync',
@@ -1088,6 +1179,30 @@ async function startServer() {
         cleared: true,
       });
       res.json({ success: true, cleared: true, revision: liveRevision, timestamp });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.get('/api/db/legacy-migration-status', (_req, res) => {
+    res.json({
+      success: true,
+      report: lastLegacyMigrationReport,
+    });
+  });
+
+  app.post('/api/db/migrate-verify-legacy', async (_req, res) => {
+    try {
+      const report = await migrateAndVerifyLegacyJsonFilesToPostgres();
+      await refreshCachedSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
+        clientId: 'legacy-migrator',
+        sqlOperation: 'UPSERT',
+        affectedTable: 'bakeries',
+      });
+      res.json({
+        success: true,
+        report,
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
     }
@@ -1378,9 +1493,6 @@ async function startServer() {
         data: safeData,
       };
       cachedLiveSnapshot = snapshot;
-      const serialized = JSON.stringify(snapshot);
-      writeProtectedDatabaseFile(SUPABASE_LIVE_DB_PRIMARY, serialized);
-      writeProtectedDatabaseFile(SUPABASE_LIVE_DB_TMP, serialized);
       broadcastWs({
         type: 'state_update',
         clientId,
@@ -1514,9 +1626,6 @@ async function startServer() {
         revision: (cachedAlertsState.revision || 0) + 1,
         clientId,
       };
-      const serializedAlerts = JSON.stringify(cachedAlertsState);
-      writeProtectedDatabaseFile(SUPABASE_ALERTS_PRIMARY, serializedAlerts);
-      writeProtectedDatabaseFile(SUPABASE_ALERTS_TMP, serializedAlerts);
       broadcastWs({
         type: 'alerts_update',
         clientId,
@@ -1546,9 +1655,6 @@ async function startServer() {
         revision: (cachedAlertsState.revision || 0) + 1,
         clientId,
       };
-      const serializedAlerts = JSON.stringify(cachedAlertsState);
-      writeProtectedDatabaseFile(SUPABASE_ALERTS_PRIMARY, serializedAlerts);
-      writeProtectedDatabaseFile(SUPABASE_ALERTS_TMP, serializedAlerts);
       broadcastWs({
         type: 'alerts_update',
         clientId,
@@ -1560,6 +1666,66 @@ async function startServer() {
       res.json({ success: true, timestamp });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  // =========================================================================
+  // Fixed-Path Unified Cloud File Storage API (PostgreSQL backup_snapshots)
+  // =========================================================================
+  app.get('/api/storage/files', async (req, res) => {
+    try {
+      const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
+      const fileName = req.query?.fileName ? String(req.query.fileName) : '';
+      if (fileName) {
+        const file = await getStorageFileFromPostgres(fileName, branchId);
+        if (!file) {
+          res.status(404).json({ success: false, error: 'الملف غير موجود في التخزين السحابي.' });
+          return;
+        }
+        res.json({ success: true, file });
+        return;
+      }
+      const files = await listStorageFilesInPostgres(branchId);
+      res.json({ success: true, files });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر قراءة الملفات المخزنة.' });
+    }
+  });
+
+  app.post('/api/storage/files', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const fileName = String(body.fileName || '').trim();
+      const content = typeof body.content === 'string' ? body.content : JSON.stringify(body.content ?? '');
+      if (!fileName) {
+        res.status(400).json({ success: false, error: 'يرجى تحديد اسم الملف (fileName).' });
+        return;
+      }
+      const saved = await upsertStorageFileInPostgres({
+        branchId: String(body.branchId || DEFAULT_BRANCH_ID),
+        fileName,
+        content,
+        contentType: String(body.contentType || 'application/json'),
+        clientId: String(body.clientId || req.headers['x-tamween-client-id'] || ''),
+      });
+      res.json({ success: true, file: saved });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر حفظ الملف في التخزين.' });
+    }
+  });
+
+  app.delete('/api/storage/files', async (req, res) => {
+    try {
+      const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
+      const fileName = String(req.query?.fileName || '').trim();
+      if (!fileName) {
+        res.status(400).json({ success: false, error: 'يرجى تحديد اسم الملف للحذف.' });
+        return;
+      }
+      const deleted = await deleteStorageFileInPostgres(fileName, branchId);
+      res.json({ success: true, deleted });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر حذف الملف من التخزين.' });
     }
   });
 

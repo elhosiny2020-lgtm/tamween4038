@@ -34,7 +34,22 @@ import {
   clearSupabaseDatabaseData,
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
+  mapBranchToSqlRow,
+  mapSqlRowToBranch,
+  mapVillageToSqlRow,
+  mapSqlRowToVillage,
+  mapUserToSqlRow,
+  mapSqlRowToUser,
+  mapTaskToSqlRow,
+  mapSqlRowToTask,
+  mapInboxToSqlRow,
+  mapSqlRowToInbox,
+  mapSystemConfigToSqlRow,
+  mapSqlRowToSystemConfig,
+  mapDropdownListToSqlRow,
+  mapRowToSqlByTable,
 } from './supabase';
+import { normalizeStorageFileKey } from '../db/queries';
 import {
   shouldApplyIncomingPartitionTimestamp,
   syncAllBranchesFromCloudPayload,
@@ -42,18 +57,23 @@ import {
   getScopedKeysForBranch,
 } from '../storage';
 
-test('Supabase schema contains all 9 normalized tables, foreign keys, indexes, RLS policies, and Realtime publication', () => {
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS branches'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS villages'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('REFERENCES branches(id) ON DELETE CASCADE'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS bakeries'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS debts'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS app_users'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS daily_tasks'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS backup_snapshots'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS system_config'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS high_debt_alerts'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("branch_id TEXT DEFAULT 'branch-mahalla'"));
+test('Supabase schema contains all normalized tables, foreign keys, unique constraints, indexes, RLS policies, Storage bucket, and Realtime publication', () => {
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.branches'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.villages'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('REFERENCES public.branches(id) ON DELETE CASCADE'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.bakeries'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.debts'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.app_users'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.daily_tasks'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.inbox_messages'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.backup_snapshots'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.system_config'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.dropdown_lists'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS public.high_debt_alerts'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CONSTRAINT uq_villages_branch_name UNIQUE (branch_id, village)'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CONSTRAINT uq_app_users_branch_username UNIQUE (branch_id, username)'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CONSTRAINT uq_dropdown_lists_branch_key UNIQUE (branch_id, list_key)'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_villages_branch_id'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_bakeries_branch_id'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_debts_branch_id'));
@@ -62,14 +82,17 @@ test('Supabase schema contains all 9 normalized tables, foreign keys, indexes, R
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE INDEX IF NOT EXISTS idx_high_debt_alerts_branch_id'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ENABLE ROW LEVEL SECURITY'));
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("auth.role() IN ('anon', 'authenticated')"));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE branches REPLICA IDENTITY FULL'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE villages REPLICA IDENTITY FULL'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE bakeries REPLICA IDENTITY FULL'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE high_debt_alerts REPLICA IDENTITY FULL'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER PUBLICATION supabase_realtime ADD TABLE branches'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER PUBLICATION supabase_realtime ADD TABLE villages'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER PUBLICATION supabase_realtime ADD TABLE bakeries'));
-  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER PUBLICATION supabase_realtime ADD TABLE high_debt_alerts'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE public.branches REPLICA IDENTITY FULL'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE public.villages REPLICA IDENTITY FULL'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE public.bakeries REPLICA IDENTITY FULL'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('ALTER TABLE public.high_debt_alerts REPLICA IDENTITY FULL'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("pubname = 'supabase_realtime'"));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', rt_tbl)"));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("'branches', 'villages', 'bakeries', 'debts', 'app_users'"));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("'backup_snapshots'"));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('INSERT INTO storage.buckets (id, name, public)'));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes("VALUES ('tamween-backups', 'tamween-backups', false)"));
+  assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('storage.objects'));
   assert.strictEqual(SUPABASE_BUCKET_NAME, 'tamween-backups');
 });
 
@@ -684,6 +707,146 @@ test('syncAllBranchesFromCloudPayload isolates non-default activeBranchId flat p
     }
   }
 });
+
+test('Normalized SQL mappers maintain exact column parity with schema.sql (no data_json or village_name) and deterministic Storage file keys', () => {
+  const bakerySql = mapBakeryToSqlRow(
+    {
+      id: 'b-norm-1',
+      bakeryOwnerName: 'مخبز الإخلاص',
+      machineNumber: '777',
+      village: 'بشبيش',
+      localUnit: 'بشبيش الرئيسية',
+      insuranceQuota: 10,
+      actualQuota: 10,
+      insuranceValue: 7050,
+      loavesCount: 6600,
+    } as any,
+    'branch-mahalla'
+  );
+  assert.strictEqual((bakerySql as any).data_json, undefined);
+  assert.strictEqual(bakerySql.bakery_owner_name, 'مخبز الإخلاص');
+
+  const debtSql = mapDebtToSqlRow(
+    {
+      id: 'd-norm-1',
+      bakeryId: 'b-norm-1',
+      bakeryOwnerName: 'مخبز الإخلاص',
+      machineNumber: '777',
+      village: 'بشبيش',
+      localUnit: 'بشبيش الرئيسية',
+      netRemainingDebt: 1200,
+    } as any,
+    'branch-mahalla'
+  );
+  assert.strictEqual((debtSql as any).data_json, undefined);
+  assert.strictEqual(debtSql.net_remaining_debt, 1200);
+
+  const villageSql = mapVillageToSqlRow(
+    { village: 'محلة أبو علي', localUnits: ['أبو علي'] },
+    'branch-mahalla'
+  );
+  assert.strictEqual((villageSql as any).village_name, undefined);
+  assert.strictEqual(villageSql.village, 'محلة أبو علي');
+  assert.deepStrictEqual(mapSqlRowToVillage(villageSql)?.localUnits, ['أبو علي']);
+
+  const userSql = mapUserToSqlRow(
+    {
+      id: 'u-norm-1',
+      username: 'auditor_1',
+      fullName: 'مراجع مالي',
+      password: 'secret',
+      role: 'auditor',
+      createdAt: '2026-11-15',
+    } as any,
+    'branch-mahalla'
+  );
+  assert.strictEqual(userSql.id, 'u-norm-1');
+  assert.strictEqual(userSql.password_hash, 'secret');
+  assert.strictEqual((userSql as any).data_json, undefined);
+  assert.strictEqual(mapSqlRowToUser(userSql)?.password, 'secret');
+
+  const taskSql = mapTaskToSqlRow(
+    {
+      id: 't-norm-1',
+      title: 'حملة تفتيش',
+      description: 'مراجعة يومية',
+      assignedTo: 'ALL',
+      priority: 'high',
+      status: 'pending',
+      dueDate: '2026-11-16',
+      createdAt: '2026-11-15',
+      createdBy: 'admin',
+    },
+    'branch-mahalla'
+  );
+  assert.strictEqual(taskSql.assigned_to, 'ALL');
+  assert.strictEqual(mapSqlRowToTask(taskSql)?.title, 'حملة تفتيش');
+
+  const inboxSql = mapInboxToSqlRow(
+    {
+      id: 'msg-norm-1',
+      senderId: 'u-1',
+      senderName: 'مدير',
+      senderRole: 'admin',
+      recipientTarget: 'ALL',
+      recipientLabel: 'الجميع',
+      messageType: 'instruction',
+      content: 'تنبيه',
+      timestamp: '2026-11-15',
+      readBy: ['admin'],
+    },
+    'branch-mahalla'
+  );
+  assert.strictEqual(inboxSql.sender_name, 'مدير');
+  assert.strictEqual(mapSqlRowToInbox(inboxSql)?.content, 'تنبيه');
+
+  const branchSql = mapBranchToSqlRow({
+    id: 'branch-mahalla',
+    name: 'إدارة تموين مركز المحلة الكبرى',
+    governorateTitle: 'الغربية',
+    directorateTitle: 'التموين',
+    createdAt: '2026-01-01',
+    isDefault: true,
+  });
+  assert.strictEqual(branchSql.is_default, true);
+  assert.strictEqual(mapSqlRowToBranch(branchSql)?.name, 'إدارة تموين مركز المحلة الكبرى');
+
+  const sysCfgSql = mapSystemConfigToSqlRow(
+    {
+      branchId: 'branch-mahalla',
+      systemConfig: { administrationTitle: 'إدارة المحلة' },
+      columnTitles: { owner: 'صاحب المخبز' },
+      activityStatuses: ['شغال'],
+    },
+    'branch-mahalla'
+  );
+  assert.strictEqual(sysCfgSql.branch_id, 'branch-mahalla');
+  assert.strictEqual(mapSqlRowToSystemConfig(sysCfgSql)?.systemConfig.administrationTitle, 'إدارة المحلة');
+
+  const ddSql = mapDropdownListToSqlRow('branch-mahalla', 'fuelTypes', ['غاز طبيعي', 'سولار']);
+  assert.strictEqual(ddSql.id, 'branch-mahalla__fuelTypes');
+  assert.strictEqual(ddSql.list_key, 'fuelTypes');
+
+  const routeSys = mapRowToSqlByTable(
+    'system_config',
+    {
+      branchId: 'branch-mahalla',
+      systemConfig: { debtAlertThreshold: 40000 },
+    },
+    'branch-mahalla'
+  );
+  assert.strictEqual(routeSys?.onConflict, 'branch_id');
+
+  const routeBakery = mapRowToSqlByTable('bakeries', { id: 'b-1', bakeryOwnerName: 'نور' }, 'branch-mahalla');
+  assert.strictEqual(routeBakery?.onConflict, 'id');
+
+  // Deterministic Storage file key generation prevents duplicate files
+  const key1 = normalizeStorageFileKey('branch-mahalla', 'tamween_branch_snapshot.json');
+  const key2 = normalizeStorageFileKey('branch-mahalla', '/tamween_branch_snapshot.json');
+  assert.strictEqual(key1.id, 'storage__branch-mahalla__tamween_branch_snapshot.json');
+  assert.deepStrictEqual(key1, key2);
+});
+
 
 
 

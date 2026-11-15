@@ -30,9 +30,15 @@ interface UsersManagerModalProps {
   branchName?: string;
   users: AppUser[];
   currentUser: AppUser | null;
-  onAddUser: (user: AppUser) => void;
-  onUpdateUser?: (user: AppUser) => void;
-  onDeleteUser: (userId: string) => void;
+  onAddUser: (
+    user: AppUser
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
+  onUpdateUser?: (
+    user: AppUser
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
+  onDeleteUser: (
+    userId: string
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
 }
 
 const ROLE_DEFINITIONS: {
@@ -116,6 +122,7 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [pendingDeleteUser, setPendingDeleteUser] = useState<AppUser | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Escape key closing is intentionally disabled per user preference
 
@@ -165,9 +172,9 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
     );
   };
 
-  const handleSaveEditedUser = (e: React.FormEvent) => {
+  const handleSaveEditedUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingUserId || !onUpdateUser) return;
+    if (!editingUserId || !onUpdateUser || isSubmitting) return;
 
     const cleanFullName = editFullName.trim();
     const cleanUsername = editUsername.trim();
@@ -204,13 +211,26 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       customPermissions: editRole === 'admin' ? ALL_PERMISSIONS_LIST.map((p) => p.id) : editPermissions,
     };
 
-    onUpdateUser(updatedUser);
-    setEditingUserId(null);
-    showToast(`تم حفظ تعديلات بيانات الحساب والاسم بالكامل (${updatedUser.fullName}) والصلاحيات بنجاح!`);
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const res = await onUpdateUser(updatedUser);
+      if (res && res.success === false && !res.queuedOffline) {
+        setError(res.error || 'تعذر حفظ تعديلات المستخدم في قاعدة البيانات.');
+        return;
+      }
+      setEditingUserId(null);
+      showToast(`تم حفظ تعديلات بيانات الحساب والاسم بالكامل (${updatedUser.fullName}) والصلاحيات بنجاح!`);
+    } catch (err: any) {
+      setError(err?.message || 'حدث خطأ أثناء حفظ تعديلات المستخدم.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleAdd = (e: React.FormEvent) => {
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError('');
 
     const cleanUser = username.trim();
@@ -227,24 +247,35 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       return;
     }
 
-    onAddUser({
-      id: `u-${Date.now()}`,
-      username: cleanUser,
-      fullName: cleanName,
-      password: cleanPass,
-      role,
-      jobTitle: jobTitle.trim(),
-      department: department.trim(),
-      phone: phone.trim(),
-      customPermissions: role === 'admin' ? ALL_PERMISSIONS_LIST.map((p) => p.id) : customPermissions,
-      createdAt: new Date().toISOString().split('T')[0],
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await onAddUser({
+        id: `u-${Date.now()}`,
+        username: cleanUser,
+        fullName: cleanName,
+        password: cleanPass,
+        role,
+        jobTitle: jobTitle.trim(),
+        department: department.trim(),
+        phone: phone.trim(),
+        customPermissions: role === 'admin' ? ALL_PERMISSIONS_LIST.map((p) => p.id) : customPermissions,
+        createdAt: new Date().toISOString().split('T')[0],
+      });
+      if (res && res.success === false && !res.queuedOffline) {
+        setError(res.error || 'تعذر حفظ الحساب الجديد في قاعدة البيانات.');
+        return;
+      }
 
-    setUsername('');
-    setFullName('');
-    setPassword('');
-    setPhone('');
-    showToast(`تم إنشاء حساب (${cleanName}) وتفعيل صلاحياته بنجاح!`);
+      setUsername('');
+      setFullName('');
+      setPassword('');
+      setPhone('');
+      showToast(`تم إنشاء حساب (${cleanName}) وحفظه في قاعدة البيانات بنجاح!`);
+    } catch (err: any) {
+      setError(err?.message || 'حدث خطأ أثناء إنشاء الحساب.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -681,10 +712,11 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                           </button>
                           <button
                             type="submit"
-                            className="inline-flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white rounded-xl text-xs font-black shadow-md cursor-pointer"
+                            disabled={isSubmitting}
+                            className="inline-flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black shadow-md cursor-pointer"
                           >
                             <Save className="w-4 h-4" />
-                            <span>حفظ تعديل الاسم بالكامل والبيانات والصلاحيات ✓</span>
+                            <span>{isSubmitting ? 'جاري الحفظ...' : 'حفظ تعديل الاسم بالكامل والبيانات والصلاحيات ✓'}</span>
                           </button>
                         </div>
                       </form>
@@ -844,10 +876,11 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black shadow-md cursor-pointer flex items-center justify-center gap-2"
+              disabled={isSubmitting}
+              className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black shadow-md cursor-pointer flex items-center justify-center gap-2"
             >
               <UserPlus className="w-4 h-4" />
-              <span>إنشاء وحفظ الحساب وتفعيل الصلاحيات</span>
+              <span>{isSubmitting ? 'جاري الحفظ في قاعدة البيانات...' : 'إنشاء وحفظ الحساب وتفعيل الصلاحيات'}</span>
             </button>
           </form>
         </div>
@@ -893,13 +926,23 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  onDeleteUser(pendingDeleteUser.id);
-                  setPendingDeleteUser(null);
+                disabled={isSubmitting}
+                onClick={async () => {
+                  if (isSubmitting || !pendingDeleteUser) return;
+                  setIsSubmitting(true);
+                  try {
+                    const res = await onDeleteUser(pendingDeleteUser.id);
+                    if (res && res.success === false && !res.queuedOffline) {
+                      setError(res.error || 'تعذر حذف المستخدم من قاعدة البيانات.');
+                    }
+                    setPendingDeleteUser(null);
+                  } finally {
+                    setIsSubmitting(false);
+                  }
                 }}
-                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-black cursor-pointer"
+                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-black cursor-pointer"
               >
-                حذف الحساب نهائياً
+                {isSubmitting ? 'جاري الحذف...' : 'حذف الحساب نهائياً'}
               </button>
             </div>
           </div>

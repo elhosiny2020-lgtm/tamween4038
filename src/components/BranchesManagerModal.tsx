@@ -26,7 +26,10 @@ interface BranchesManagerModalProps {
   branches: SupplyBranch[];
   activeBranchId: string;
   onSelectBranch: (branchId: string) => void;
-  onBranchesChange: (updatedBranches: SupplyBranch[], nextActiveBranchId: string) => void;
+  onBranchesChange: (
+    updatedBranches: SupplyBranch[],
+    nextActiveBranchId: string
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
 }
 
 const QUICK_SUGGESTED_BRANCHES = [
@@ -56,11 +59,13 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   const [newDescription, setNewDescription] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [statusBanner, setStatusBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleAddBranch = (e: React.FormEvent) => {
+  const handleAddBranch = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const trimmed = newBranchName.trim();
     if (!trimmed) {
       setStatusBanner({ type: 'error', text: 'يرجى إدخال اسم الإدارة التموينية / الفرع الجديد.' });
@@ -72,26 +77,48 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
       return;
     }
 
-    const created = addSupplyBranch(trimmed, newDirectorate, newGovernorate, newDescription);
-    const updatedList = sanitizeAndDeduplicateBranches([...branches, created]);
-    onBranchesChange(updatedList, activeBranchId);
-    setNewBranchName('');
-    setNewDescription('');
-    setStatusBanner({
-      type: 'success',
-      text: `تمت إضافة "${created.name}" بقاعدة بيانات مستقلة ومنفصلة تماماً عن باقي الإدارات.`,
-    });
+    setIsSubmitting(true);
+    try {
+      const created = addSupplyBranch(trimmed, newDirectorate, newGovernorate, newDescription);
+      const updatedList = sanitizeAndDeduplicateBranches([...branches, created]);
+      const res = await onBranchesChange(updatedList, activeBranchId);
+      if (res && res.success === false && !res.queuedOffline) {
+        setStatusBanner({
+          type: 'error',
+          text: res.error || 'تعذر حفظ الإدارة التموينية الجديدة في قاعدة البيانات.',
+        });
+        return;
+      }
+      setNewBranchName('');
+      setNewDescription('');
+      setStatusBanner({
+        type: 'success',
+        text: `تمت إضافة وحفظ "${created.name}" بقاعدة بيانات مستقلة ومنفصلة تماماً عن باقي الإدارات.`,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleConfirmDelete = (branchId: string) => {
-    const res = deleteSupplyBranch(branchId);
-    setConfirmDeleteId(null);
-    if (!res.success) {
-      setStatusBanner({ type: 'error', text: res.message });
-      return;
+  const handleConfirmDelete = async (branchId: string) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const res = deleteSupplyBranch(branchId);
+      setConfirmDeleteId(null);
+      if (!res.success) {
+        setStatusBanner({ type: 'error', text: res.message });
+        return;
+      }
+      const dbRes = await onBranchesChange(res.branches, res.nextActiveBranchId);
+      if (dbRes && dbRes.success === false && !dbRes.queuedOffline) {
+        setStatusBanner({ type: 'error', text: dbRes.error || 'تعذر حذف الفرع من قاعدة البيانات.' });
+        return;
+      }
+      setStatusBanner({ type: 'success', text: res.message });
+    } finally {
+      setIsSubmitting(false);
     }
-    onBranchesChange(res.branches, res.nextActiveBranchId);
-    setStatusBanner({ type: 'success', text: res.message });
   };
 
   return (
@@ -250,10 +277,11 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
               </div>
               <button
                 type="submit"
-                className="w-full py-2.5 px-4 bg-gradient-to-l from-indigo-700 to-indigo-600 hover:from-indigo-800 hover:to-indigo-700 text-white font-black text-sm rounded-xl shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
+                disabled={isSubmitting}
+                className="w-full py-2.5 px-4 bg-gradient-to-l from-indigo-700 to-indigo-600 hover:from-indigo-800 hover:to-indigo-700 disabled:opacity-60 text-white font-black text-sm rounded-xl shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                إضافة الإدارة التموينية الآن
+                {isSubmitting ? 'جاري حفظ الإدارة...' : 'إضافة الإدارة التموينية الآن'}
               </button>
             </div>
           </form>

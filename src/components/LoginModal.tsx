@@ -14,7 +14,9 @@ interface LoginModalProps {
   onSelectBranch?: (branchId: string) => void;
   onOpenBranchesManager?: () => void;
   onLoginSuccess: (user: AppUser) => void;
-  onRegisterUser: (newUser: AppUser) => void;
+  onRegisterUser: (
+    newUser: AppUser
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
   logoutReason?: string | null;
 }
 
@@ -35,6 +37,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [role, setRole] = useState<'admin' | 'inspector' | 'auditor'>('inspector');
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Always clear username & password when the login screen mounts, on logout, or when switching branches so user types it manually every time
   useEffect(() => {
@@ -81,8 +84,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMsg('');
     setSuccessMsg('');
 
@@ -113,15 +117,26 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       createdAt: new Date().toISOString().split('T')[0],
     };
 
-    onRegisterUser(newUser);
-    setSuccessMsg('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول مباشرة.');
-    setTimeout(() => {
-      setIsRegistering(false);
-      setUsername('');
-      setPassword('');
-      setFullName('');
-      setSuccessMsg('');
-    }, 500);
+    setIsSubmitting(true);
+    try {
+      const res = await onRegisterUser(newUser);
+      if (res && res.success === false && !res.queuedOffline) {
+        setErrorMsg(res.error || 'تعذر حفظ الحساب الجديد في قاعدة البيانات. يرجى المحاولة مجدداً.');
+        return;
+      }
+      setSuccessMsg('تم إنشاء وحفظ الحساب في قاعدة البيانات بنجاح! يمكنك الآن تسجيل الدخول مباشرة.');
+      setTimeout(() => {
+        setIsRegistering(false);
+        setUsername('');
+        setPassword('');
+        setFullName('');
+        setSuccessMsg('');
+      }, 500);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'حدث خطأ أثناء تسجيل الحساب في قاعدة البيانات.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -422,10 +437,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
                 <button
                   type="submit"
-                  className="w-full mt-2 py-2.5 px-4 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
+                  disabled={isSubmitting}
+                  className="w-full mt-2 py-2.5 px-4 bg-amber-700 hover:bg-amber-800 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
                 >
                   <UserPlus className="w-4 h-4 text-amber-200" />
-                  تأكيد تسجيل الحساب الجديد
+                  {isSubmitting ? 'جاري حفظ الحساب في قاعدة البيانات...' : 'تأكيد تسجيل الحساب الجديد'}
                 </button>
               </form>
             )}

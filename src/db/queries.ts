@@ -1530,3 +1530,140 @@ export async function recordAuditLog(userEmail: string, action: string, details:
     console.error('Failed to record audit log:', error);
   }
 }
+
+export interface StoredFileEntry {
+  id: string;
+  fileName: string;
+  branchId: string;
+  contentType: string;
+  sizeBytes: number;
+  updatedAt: string;
+  content?: string;
+}
+
+export function normalizeStorageFileKey(branchId: string, fileName: string): {
+  id: string;
+  cleanFileName: string;
+  effectiveBranchId: string;
+} {
+  const effectiveBranchId = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const cleanFileName = String(fileName || 'tamween-backup.json')
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/[^a-zA-Z0-9._\-\u0600-\u06FF]/g, '_')
+    .slice(0, 120) || 'tamween-backup.json';
+  return {
+    id: `storage__${effectiveBranchId}__${cleanFileName}`,
+    cleanFileName,
+    effectiveBranchId,
+  };
+}
+
+export async function upsertStorageFileInPostgres(params: {
+  branchId?: string;
+  fileName: string;
+  content: string;
+  contentType?: string;
+  clientId?: string;
+}): Promise<StoredFileEntry> {
+  await ensurePostgresSchema();
+  const { id, cleanFileName, effectiveBranchId } = normalizeStorageFileKey(
+    params.branchId || DEFAULT_BRANCH_ID,
+    params.fileName
+  );
+  const contentStr = String(params.content ?? '');
+  const contentType = String(params.contentType || 'application/json');
+  const sizeBytes = Buffer.byteLength(contentStr, 'utf-8');
+  const payload = {
+    kind: 'storage_file',
+    fileName: cleanFileName,
+    contentType,
+    sizeBytes,
+    content: contentStr,
+  };
+  const res = await pool.query(
+    `INSERT INTO public.backup_snapshots (id, branch_id, payload, client_id, updated_at)
+     VALUES ($1, $2, $3::jsonb, $4, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       branch_id = EXCLUDED.branch_id,
+       payload = EXCLUDED.payload,
+       client_id = EXCLUDED.client_id,
+       updated_at = NOW()
+     RETURNING id, branch_id, updated_at`,
+    [id, effectiveBranchId, JSON.stringify(payload), String(params.clientId || '')]
+  );
+  return {
+    id: res.rows[0].id,
+    fileName: cleanFileName,
+    branchId: res.rows[0].branch_id || effectiveBranchId,
+    contentType,
+    sizeBytes,
+    updatedAt: res.rows[0].updated_at ? new Date(res.rows[0].updated_at).toISOString() : new Date().toISOString(),
+  };
+}
+
+export async function listStorageFilesInPostgres(branchId?: string): Promise<StoredFileEntry[]> {
+  await ensurePostgresSchema();
+  const effectiveBranchId = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const res = await pool.query(
+    `SELECT id, branch_id, payload->>'fileName' AS file_name,
+            COALESCE(payload->>'contentType', 'application/json') AS content_type,
+            COALESCE((payload->>'sizeBytes')::int, 0) AS size_bytes,
+            updated_at
+     FROM public.backup_snapshots
+     WHERE id LIKE 'storage__%' AND branch_id = $1
+     ORDER BY updated_at DESC`,
+    [effectiveBranchId]
+  );
+  return res.rows.map((r) => ({
+    id: String(r.id),
+    fileName: String(r.file_name || r.id),
+    branchId: String(r.branch_id || effectiveBranchId),
+    contentType: String(r.content_type || 'application/json'),
+    sizeBytes: Number(r.size_bytes || 0),
+    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString(),
+  }));
+}
+
+export async function getStorageFileFromPostgres(
+  fileNameOrId: string,
+  branchId?: string
+): Promise<StoredFileEntry | null> {
+  await ensurePostgresSchema();
+  const effectiveBranchId = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const candidateId = fileNameOrId.startsWith('storage__')
+    ? fileNameOrId
+    : normalizeStorageFileKey(effectiveBranchId, fileNameOrId).id;
+  const res = await pool.query(
+    `SELECT id, branch_id, payload, updated_at
+     FROM public.backup_snapshots
+     WHERE id = $1`,
+    [candidateId]
+  );
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  const p = row.payload || {};
+  return {
+    id: String(row.id),
+    fileName: String(p.fileName || row.id),
+    branchId: String(row.branch_id || effectiveBranchId),
+    contentType: String(p.contentType || 'application/json'),
+    sizeBytes: Number(p.sizeBytes || 0),
+    content: typeof p.content === 'string' ? p.content : JSON.stringify(p.content ?? ''),
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+  };
+}
+
+export async function deleteStorageFileInPostgres(
+  fileNameOrId: string,
+  branchId?: string
+): Promise<boolean> {
+  await ensurePostgresSchema();
+  const effectiveBranchId = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const candidateId = fileNameOrId.startsWith('storage__')
+    ? fileNameOrId
+    : normalizeStorageFileKey(effectiveBranchId, fileNameOrId).id;
+  const res = await pool.query(`DELETE FROM public.backup_snapshots WHERE id = $1 RETURNING id`, [candidateId]);
+  return res.rows.length > 0;
+}
+

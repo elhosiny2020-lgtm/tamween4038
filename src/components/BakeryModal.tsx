@@ -47,7 +47,9 @@ interface BakeryModalProps {
   leaseContractTypes?: string[];
   responsibleManagerOptions?: string[];
   currentUser?: AppUser | null;
-  onSave: (bakery: Bakery) => void;
+  onSave: (
+    bakery: Bakery
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
   onAddActivityStatus?: (status: string) => void;
   onAddLocalUnit?: (village: string, unit: string) => void;
   onUpdateDropdownList?: (
@@ -176,6 +178,8 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   };
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [lastAutoSaveTime, setLastAutoSaveTime] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   // Merge official hierarchy villages with any active villages/localUnits in existingBakeries
   const mergedVillages: VillageHierarchy[] = React.useMemo(() => {
@@ -469,6 +473,8 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       setNotes('');
     }
     setErrors({});
+    setSubmitError('');
+    setIsSubmitting(false);
   }, [bakeryToEdit, isOpen]);
 
   const [calcFeedback, setCalcFeedback] = useState<string | null>(null);
@@ -667,9 +673,10 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isReadOnly) return;
+    if (isReadOnly || isSubmitting) return;
+    setSubmitError('');
     if (!validate()) return;
 
     const userInfo = currentUser || { username: 'مفتش التموين', fullName: 'مفتش التموين', role: 'inspector' };
@@ -742,8 +749,19 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
     };
 
     const bakery = normalizeBakeryCalculations(rawBakery);
-    onSave(bakery);
-    onClose();
+    setIsSubmitting(true);
+    try {
+      const res = await onSave(bakery);
+      if (res && res.success === false && !res.queuedOffline) {
+        setSubmitError(res.error || 'تعذر حفظ بيانات المخبز في قاعدة البيانات. تم إبقاء البيانات مفتوحة للمراجعة.');
+        return;
+      }
+      onClose();
+    } catch (err: any) {
+      setSubmitError(err?.message || 'حدث خطأ أثناء حفظ بيانات المخبز في قاعدة البيانات.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Helper for inline dropdown list management inside BakeryModal
@@ -904,6 +922,19 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
 
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="overflow-y-auto p-5 space-y-5 flex-1">
+          {/* Database Save Error Banner */}
+          {submitError && (
+            <div className="bg-red-950/90 border-2 border-red-500 p-3.5 rounded-xl text-white shadow-lg flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-black text-red-200">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{submitError}</span>
+              </div>
+              <button type="button" onClick={() => setSubmitError('')} className="text-red-300 hover:text-white cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Top Validation Error Banner */}
           {Object.values(errors).some((msg) => !!msg?.trim()) && (
             <div className="bg-red-950/90 border-2 border-red-500 p-4 rounded-xl text-white shadow-2xl space-y-2 animate-in fade-in">
@@ -2701,10 +2732,15 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
               ) : (
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-amber-700 to-amber-900 hover:from-amber-800 hover:to-amber-950 text-white rounded-lg text-xs font-black shadow-lg shadow-amber-800/30 transition cursor-pointer"
+                  disabled={isSubmitting}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-amber-700 to-amber-900 hover:from-amber-800 hover:to-amber-950 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg text-xs font-black shadow-lg shadow-amber-800/30 transition cursor-pointer"
                 >
                   <Save className="w-4 h-4 text-amber-200" />
-                  {bakeryToEdit ? 'حفظ وتحديث بيانات المخبز' : 'تسجيل المخبز الجديد'}
+                  {isSubmitting
+                    ? 'جاري الحفظ في قاعدة البيانات...'
+                    : bakeryToEdit
+                    ? 'حفظ وتحديث بيانات المخبز'
+                    : 'تسجيل المخبز الجديد'}
                 </button>
               )}
             </div>

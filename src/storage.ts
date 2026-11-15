@@ -1281,6 +1281,9 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
   };
 
   try {
+    // 0. Read pre-existing local & legacy payloads BEFORE overwriting local cache from bootstrap
+    const preSyncLocalPartition = readBranchPartitionFromLocal(activeBranchId);
+
     // 1. Fetch authoritative state for activeBranchId directly from PostgreSQL / Supabase API first
     let cloudHasData = false;
     let pgAuthoritativeData: any = null;
@@ -1298,30 +1301,126 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
         ).catch(() => null);
         if (bootResp && bootResp.ok) {
           const bootJson = await bootResp.json().catch(() => null);
-          if (bootJson?.success && (bootJson.hasAnyRows || (Array.isArray(bootJson.branches) && bootJson.branches.length > 0))) {
-            pgAuthoritativeData = bootJson;
-            if (bootJson.hasAnyRows) {
-              cloudHasData = true;
+          if (bootJson?.success) {
+            // Safe Pre-Cleanup Migration Gate:
+            // Inspect any legacy localStorage JSON keys or unmigrated local records BEFORE retiring them
+            const legacyKeysToCheck = ['TAMWEEN_CUSTOM_BACKUP_PAYLOAD', 'TAMWEEN_GMAIL_DRIVE_SYNC_PAYLOAD'];
+            for (const legacyKey of legacyKeysToCheck) {
+              const rawLegacy = localStorage.getItem(legacyKey);
+              if (rawLegacy && rawLegacy.trim().startsWith('{')) {
+                try {
+                  const parsedLegacy = JSON.parse(rawLegacy);
+                  const legacyData = parsedLegacy?.data || parsedLegacy;
+                  // 1. Archive raw payload in PostgreSQL fixed-path storage first
+                  const archResp = await fetch(
+                    `${window.location.protocol}//${window.location.host}/api/storage/files`,
+                    {
+                      method: 'POST',
+                      credentials: 'same-origin',
+                      headers: getSecurityShieldHeaders(true),
+                      body: JSON.stringify({
+                        branchId: activeBranchId,
+                        fileName: `legacy_localstorage__${legacyKey.toLowerCase()}.json`,
+                        content: rawLegacy,
+                        contentType: 'application/json',
+                      }),
+                    }
+                  ).catch(() => null);
+                  // 2. Migrate any bakeries/debts/users/villages additively (pruneRemoved: false)
+                  const migResp = await fetch(
+                    `${window.location.protocol}//${window.location.host}/api/db/batch`,
+                    {
+                      method: 'POST',
+                      credentials: 'same-origin',
+                      headers: getSecurityShieldHeaders(true),
+                      body: JSON.stringify({
+                        branchId: legacyData?.activeBranchId || activeBranchId,
+                        pruneRemoved: false,
+                        sqlOperation: 'UPSERT',
+                        affectedTable: 'bakeries',
+                        data: legacyData,
+                      }),
+                    }
+                  ).catch(() => null);
+                  const migJson = migResp ? await migResp.json().catch(() => null) : null;
+                  // 3. ONLY remove redundant legacy key after both archive and DB migration succeed
+                  if (archResp?.ok && migResp?.ok && migJson?.success) {
+                    localStorage.removeItem(legacyKey);
+                    if (Array.isArray(migJson?.data?.bakeries) && migJson.data.bakeries.length > (bootJson.bakeries?.length || 0)) {
+                      bootJson.bakeries = migJson.data.bakeries;
+                      bootJson.debts = migJson.data.debts || bootJson.debts;
+                      bootJson.hasAnyRows = true;
+                    }
+                  }
+                } catch {}
+              }
             }
-            const bootPayload: any = {
-              activeBranchId,
-              branches: bootJson.branches,
-              villages: bootJson.villages?.length ? bootJson.villages : undefined,
-              bakeries: bootJson.bakeries,
-              debts: bootJson.debts,
-              users: bootJson.users?.length ? bootJson.users : undefined,
-              dailyTasks: bootJson.dailyTasks,
-              inboxMessages: bootJson.inboxMessages,
-              ...(bootJson.systemConfig ? { systemConfig: bootJson.systemConfig } : {}),
-              ...(bootJson.columnTitles && Object.keys(bootJson.columnTitles).length > 0
-                ? { columnTitles: bootJson.columnTitles }
-                : {}),
-              ...(bootJson.activityStatuses?.length ? { activityStatuses: bootJson.activityStatuses } : {}),
-              ...(bootJson.dropdownLists || {}),
-            };
-            syncAllBranchesFromCloudPayload(bootPayload, bootJson.timestamp || new Date().toISOString(), {
-              forceRealtimePush: true,
-            });
+
+            // Also rescue preSyncLocalPartition if PostgreSQL had 0 bakeries/debts while local browser had unmigrated data
+            const pgEmptyBakeries = !Array.isArray(bootJson.bakeries) || bootJson.bakeries.length === 0;
+            const localHasBakeries =
+              Array.isArray(preSyncLocalPartition.bakeries) && preSyncLocalPartition.bakeries.length > 0;
+            const pgEmptyDebts = !Array.isArray(bootJson.debts) || bootJson.debts.length === 0;
+            const localHasDebts =
+              Array.isArray(preSyncLocalPartition.debts) && preSyncLocalPartition.debts.length > 0;
+
+            if ((pgEmptyBakeries && localHasBakeries) || (pgEmptyDebts && localHasDebts)) {
+              const rescueResp = await fetch(
+                `${window.location.protocol}//${window.location.host}/api/db/batch`,
+                {
+                  method: 'POST',
+                  credentials: 'same-origin',
+                  headers: getSecurityShieldHeaders(true),
+                  body: JSON.stringify({
+                    branchId: activeBranchId,
+                    pruneRemoved: false,
+                    sqlOperation: 'UPSERT',
+                    affectedTable: 'bakeries',
+                    data: {
+                      activeBranchId,
+                      bakeries: preSyncLocalPartition.bakeries || [],
+                      debts: preSyncLocalPartition.debts || [],
+                      villages: preSyncLocalPartition.villages || [],
+                      users: preSyncLocalPartition.users || [],
+                      dailyTasks: preSyncLocalPartition.dailyTasks || [],
+                      inboxMessages: preSyncLocalPartition.inboxMessages || [],
+                    },
+                  }),
+                }
+              ).catch(() => null);
+              const rescueJson = rescueResp ? await rescueResp.json().catch(() => null) : null;
+              if (rescueResp?.ok && rescueJson?.success && rescueJson?.data) {
+                bootJson.bakeries = rescueJson.data.bakeries || preSyncLocalPartition.bakeries;
+                bootJson.debts = rescueJson.data.debts || preSyncLocalPartition.debts;
+                bootJson.hasAnyRows = true;
+              }
+            }
+
+            if (bootJson.hasAnyRows || (Array.isArray(bootJson.branches) && bootJson.branches.length > 0)) {
+              pgAuthoritativeData = bootJson;
+              if (bootJson.hasAnyRows) {
+                cloudHasData = true;
+              }
+              const bootPayload: any = {
+                activeBranchId,
+                branches: bootJson.branches,
+                villages: bootJson.villages?.length ? bootJson.villages : undefined,
+                bakeries: bootJson.bakeries,
+                debts: bootJson.debts,
+                users: bootJson.users?.length ? bootJson.users : undefined,
+                dailyTasks: bootJson.dailyTasks,
+                inboxMessages: bootJson.inboxMessages,
+                ...(bootJson.systemConfig ? { systemConfig: bootJson.systemConfig } : {}),
+                ...(bootJson.columnTitles && Object.keys(bootJson.columnTitles).length > 0
+                  ? { columnTitles: bootJson.columnTitles }
+                  : {}),
+                ...(bootJson.activityStatuses?.length ? { activityStatuses: bootJson.activityStatuses } : {}),
+                ...(bootJson.dropdownLists || {}),
+              };
+              syncAllBranchesFromCloudPayload(bootPayload, bootJson.timestamp || new Date().toISOString(), {
+                forceRealtimePush: true,
+              });
+            }
           }
         }
       }
@@ -1773,42 +1872,11 @@ export async function persistFullState(
     }
   }
 
-  // Defer secondary local Drive/snapshot JSON serialization off the main UI thread
+  // Keep only the single branch-scoped fallback cache; never duplicate JSON blobs on every save
   setTimeout(() => {
     try {
       const serializedSnapshot = JSON.stringify(backupSnapshot);
       localStorage.setItem(scopedKeys.AUTOSAVE_BACKUP, serializedSnapshot);
-
-      if (!options?.skipCloudSync) {
-        const driveAutoSync =
-          lockedConfig.googleDriveAutoSync !== false &&
-          localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false';
-        if (driveAutoSync) {
-          const cloudStatePayload = buildFullCloudMultiBranchPayload(
-            backupSnapshot.state,
-            backupSnapshot.timestamp
-          );
-          const gmailKey = (
-            lockedConfig.gmailEmail ||
-            localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL') ||
-            'ELHOSINY2020@gmail.com'
-          )
-            .trim()
-            .toLowerCase();
-          const drivePayloadStr = JSON.stringify({
-            version: '3.0-google-drive-autosync',
-            timestamp: backupSnapshot.timestamp,
-            gmailEmail: gmailKey,
-            destinationType: 'GOOGLE_DRIVE',
-            targetPath: localStorage.getItem('TAMWEEN_CUSTOM_BACKUP_PATH') || 'G:\\My Drive\\Tamween_Backups\\',
-            bakeriesCount: cloudStatePayload.bakeries.length,
-            debtsCount: cloudStatePayload.debts.length,
-            data: cloudStatePayload,
-          });
-          localStorage.setItem('TAMWEEN_CUSTOM_BACKUP_PAYLOAD', drivePayloadStr);
-          localStorage.setItem(`TAMWEEN_GMAIL_DRIVE_SYNC_${gmailKey}`, drivePayloadStr);
-        }
-      }
     } catch {
       // Graceful fallback
     }
@@ -1823,59 +1891,25 @@ export async function persistFullState(
   };
 }
 
-export const OFFICIAL_CLOUD_API_URL =
-  'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/backup/snapshot';
-
 /**
- * إرسال ومزامنة أحدث بيانات المنظومة إلى الخادم السحابي المشترك لمشاركتها مع جميع الأجهزة
+ * مزامنة حالة المنظومة مع الخادم الرئيسي (PostgreSQL / Supabase)
  */
 export async function syncStateToServer(state: Partial<AppState>): Promise<boolean> {
   try {
-    const isCloudHost =
-      typeof window !== 'undefined' &&
-      (window.location.hostname.includes('run.app') || window.location.hostname === 'localhost');
-    const targetUrl = isCloudHost ? '/api/backup/snapshot' : OFFICIAL_CLOUD_API_URL;
-
-    const resp = await fetch(targetUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state),
-    });
-    return resp.ok;
-  } catch (err) {
-    console.warn('syncStateToServer background failure (non-critical):', err);
+    const res = await autoSyncToSupabaseDetailed(state as AppState, true);
+    return res.success;
+  } catch {
     return false;
   }
 }
 
-/**
- * جلب أحدث نسخة احتياطية محفوظة من الخادم السحابي المشترك (لتحديث الأجهزة الأخرى فوراً)
- */
 export async function fetchLatestServerState(): Promise<{
   savedAt: string;
   data: Partial<AppState>;
   bakeriesCount: number;
   debtsCount: number;
 } | null> {
-  try {
-    const isCloudHost =
-      typeof window !== 'undefined' &&
-      (window.location.hostname.includes('run.app') || window.location.hostname === 'localhost');
-    const targetUrl = isCloudHost ? '/api/backup/snapshot' : OFFICIAL_CLOUD_API_URL;
-
-    const resp = await fetch(targetUrl, {
-      headers: { Accept: 'application/json' },
-    });
-    if (!resp.ok) return null;
-    const json = await resp.json();
-    if (json.success && json.exists && json.snapshot?.data) {
-      return json.snapshot;
-    }
-    return null;
-  } catch (err) {
-    console.warn('fetchLatestServerState failure:', err);
-    return null;
-  }
+  return null;
 }
 
 export function getLatestAutoSaveInfo(): { timestamp: string | null; bakeryCount?: number; debtCount?: number } | null {

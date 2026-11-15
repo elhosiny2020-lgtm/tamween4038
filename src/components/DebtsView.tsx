@@ -67,7 +67,9 @@ interface DebtsViewProps {
   violationTypes: string[];
   systemConfig: SystemConfig;
   currentUser?: AppUser | null;
-  onSaveDebt: (debt: DebtRecord) => void;
+  onSaveDebt: (
+    debt: DebtRecord
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
   onDeleteDebt: (debtId: string) => void;
   onUpdateEntities: (entities: string[]) => void;
   onUpdateViolations: (violations: string[]) => void;
@@ -2104,10 +2106,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           violationTypes={violationTypes}
           onOpenManageEntities={() => setIsEntitiesModalOpen(true)}
           onOpenManageViolations={() => setIsViolationsModalOpen(true)}
-          onSave={(saved) => {
-            onSaveDebt(saved);
-            setIsDebtModalOpen(false);
-            setFocusScheduleInModal(false);
+          onSave={async (saved) => {
+            const res = await onSaveDebt(saved);
+            if (!res || res.success !== false || res.queuedOffline) {
+              setIsDebtModalOpen(false);
+              setFocusScheduleInModal(false);
+            }
+            return res;
           }}
         />
       )}
@@ -2834,7 +2839,9 @@ interface DebtModalFormProps {
   violationTypes: string[];
   onOpenManageEntities?: () => void;
   onOpenManageViolations?: () => void;
-  onSave: (debt: DebtRecord) => void;
+  onSave: (
+    debt: DebtRecord
+  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
 }
 
 const DebtModalForm: React.FC<DebtModalFormProps> = ({
@@ -2853,6 +2860,7 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   const [selectedBakeryId, setSelectedBakeryId] = useState(
     debtToEdit?.bakeryId || bakeries[0]?.id || ''
   );
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Violations
   const [violationDate, setViolationDate] = useState(
@@ -3079,8 +3087,9 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
 
   const currentBakery = bakeries.find((b) => b.id === selectedBakeryId) || bakeries[0];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!currentBakery) {
       setFormError('يرجى اختيار مخبز مسجل أولاً');
       return;
@@ -3144,7 +3153,17 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
       notes: notes.trim(),
     };
 
-    onSave(record);
+    setIsSubmitting(true);
+    try {
+      const res = await onSave(record);
+      if (res && res.success === false && !res.queuedOffline) {
+        setFormError(res.error || 'تعذر حفظ قيد المديونية في قاعدة البيانات.');
+      }
+    } catch (err: any) {
+      setFormError(err?.message || 'حدث خطأ أثناء حفظ قيد المديونية.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Escape key closing intentionally disabled per user preference so windows only close via explicit buttons
@@ -4006,10 +4025,11 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
 
             <button
               type="submit"
-              className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-red-700 to-rose-900 hover:from-red-800 hover:to-rose-950 text-white rounded-lg text-xs font-black shadow-md transition cursor-pointer"
+              disabled={isSubmitting}
+              className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-red-700 to-rose-900 hover:from-red-800 hover:to-rose-950 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg text-xs font-black shadow-md transition cursor-pointer"
             >
               <Save className="w-4 h-4 text-amber-200" />
-              حفظ قيد المديونية
+              {isSubmitting ? 'جاري الحفظ في قاعدة البيانات...' : 'حفظ قيد المديونية'}
             </button>
           </div>
         </form>
