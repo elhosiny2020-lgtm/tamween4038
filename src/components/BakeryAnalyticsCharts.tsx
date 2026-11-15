@@ -43,9 +43,7 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
     debts.forEach((d) => {
       const bId = String(d.bakeryId || '');
       if (!bId) return;
-      const total = Number(d.totalDebt || 0);
-      const paid = Number(d.paidDebt || 0);
-      const net = Math.max(0, total - paid);
+      const net = Number(d.netRemainingDebt || 0);
       map[bId] = (map[bId] || 0) + net;
     });
     return map;
@@ -202,9 +200,10 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
                     name="عدد المخابز"
                     fill="#0D9488"
                     radius={[8, 8, 0, 0]}
-                    onClick={(data) => {
-                      if (onNavigateToBakeries && data?.village) {
-                        onNavigateToBakeries({ village: data.village });
+                    onClick={(data: any) => {
+                      const v = data?.village || data?.payload?.village;
+                      if (onNavigateToBakeries && v) {
+                        onNavigateToBakeries({ village: v });
                       }
                     }}
                     cursor="pointer"
@@ -290,7 +289,7 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
                       fontWeight: 'bold',
                       direction: 'rtl',
                     }}
-                    formatter={(value: any, name: string) => [
+                    formatter={(value: any, name: any) => [
                       `${Number(value).toLocaleString()} ${name === 'loavesCount' ? 'رغيف' : 'شيكارة'}`,
                       name === 'loavesCount' ? 'إنتاج الأرغفة' : 'الحصة الفعلية',
                     ]}
