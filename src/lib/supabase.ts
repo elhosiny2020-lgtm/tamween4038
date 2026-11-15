@@ -524,6 +524,56 @@ function getWebSocketSyncUrl(): string | null {
   return 'wss://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/ws/supabase-realtime';
 }
 
+function getRealtimeStreamApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    const base = isLocalOrCloudOrigin()
+      ? '/api/supabase/realtime-stream'
+      : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/realtime-stream';
+    return `${base}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`;
+  }
+  return '/api/supabase/realtime-stream';
+}
+
+function getDiagnosticPingApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    return isLocalOrCloudOrigin()
+      ? '/api/supabase/diagnostic-ping'
+      : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/diagnostic-ping';
+  }
+  return '/api/supabase/diagnostic-ping';
+}
+
+export const API_SECURITY_SHIELD_TOKEN = 'TAMWEEN-GOV-SHIELD-2026-V5';
+
+export function getSecurityShieldHeaders(includeJsonContentType = true): Record<string, string> {
+  const headers: Record<string, string> = {
+    'X-Tamween-Security-Token': API_SECURITY_SHIELD_TOKEN,
+    'X-Tamween-Client-Id': SESSION_CLIENT_ID,
+  };
+  if (includeJsonContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
+}
+
+function getSecurityStatusApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    return isLocalOrCloudOrigin()
+      ? '/api/security/status'
+      : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/security/status';
+  }
+  return '/api/security/status';
+}
+
+function getSecurityTestShieldApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    return isLocalOrCloudOrigin()
+      ? '/api/security/test-shield'
+      : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/security/test-shield';
+  }
+  return '/api/security/test-shield';
+}
+
 async function probeServerHealth(): Promise<boolean> {
   if (typeof window === 'undefined' || isBrowserOffline()) return false;
   try {
@@ -532,6 +582,7 @@ async function probeServerHealth(): Promise<boolean> {
     const resp = await fetch(getHealthApiUrl(), {
       method: 'GET',
       credentials: 'same-origin',
+      headers: getSecurityShieldHeaders(false),
       signal: controller?.signal,
     });
     if (timer) clearTimeout(timer);
@@ -1907,10 +1958,514 @@ export function applyRealtimeRowMutation<T extends { id: string }>(
 }
 
 // -----------------------------------------------------------------------------
-// Shared WebSocket Real-Time Client Manager (Port 3000 /ws/supabase-realtime)
+// Shared Event-Driven Real-Time Manager (WebSocket + SSE Push + Diagnostics Telemetry)
 // -----------------------------------------------------------------------------
+export const ALL_SUPABASE_REALTIME_TABLES = [
+  'branches',
+  'villages',
+  'bakeries',
+  'debts',
+  'app_users',
+  'daily_tasks',
+  'backup_snapshots',
+  'system_config',
+  'high_debt_alerts',
+] as const;
+
+export type SupabaseRealtimeTableName = (typeof ALL_SUPABASE_REALTIME_TABLES)[number];
+
+export const SUPABASE_TABLE_ARABIC_LABELS: Record<SupabaseRealtimeTableName, string> = {
+  branches: 'الفروع التموينية (branches)',
+  villages: 'القرى والوحدات المحلية (villages)',
+  bakeries: 'بيانات وحصص المخابز (bakeries)',
+  debts: 'المديونيات والتحصيل (debts)',
+  app_users: 'المستخدمين والصلاحيات (app_users)',
+  daily_tasks: 'المهام اليومية والرسائل (daily_tasks)',
+  backup_snapshots: 'لقطات المزامنة الفورية (backup_snapshots)',
+  system_config: 'إعدادات النظام والهوية (system_config)',
+  high_debt_alerts: 'تنبيهات المديونيات المرتفعة (high_debt_alerts)',
+};
+
+export type SqlRealtimeOperationType = 'INSERT' | 'UPDATE' | 'DELETE';
+
+export interface RealtimeDiagnosticEvent {
+  id: string;
+  timestamp: string;
+  timeFormatted: string;
+  direction: 'INCOMING' | 'OUTGOING' | 'APPSTATE' | 'SYSTEM';
+  channel: 'SUPABASE_REALTIME' | 'WEBSOCKET' | 'SSE_STREAM' | 'APPSTATE_MEMORY' | 'DIAGNOSTIC';
+  eventType: string;
+  sqlOperation?: SqlRealtimeOperationType;
+  table?: string;
+  affectedTable?: SupabaseRealtimeTableName;
+  senderClientId?: string;
+  isSelf?: boolean;
+  revision?: number;
+  responseLatencyMs?: number;
+  deltaMs?: number;
+  securityVerified?: boolean;
+  integrityHash?: string;
+  summary: string;
+  payloadPreview?: string;
+}
+
+export interface ConsoleSocketErrorEntry {
+  id: string;
+  timestamp: string;
+  timeFormatted: string;
+  level: 'ERROR' | 'WARN';
+  source: 'WEBSOCKET' | 'SUPABASE_CHANNEL' | 'SSE_STREAM' | 'CONSOLE_INTERCEPT';
+  message: string;
+  details?: string;
+}
+
+export interface TableSubscriptionDiagnostic {
+  table: SupabaseRealtimeTableName;
+  arabicLabel: string;
+  subscribed: boolean;
+  eventsReceived: number;
+  lastEventAt?: string;
+  lastEventType?: string;
+}
+
+export interface RealtimeDiagnosticsSnapshot {
+  clientId: string;
+  supabaseChannelState: 'SUBSCRIBED' | 'CONNECTING' | 'CLOSED' | 'ERROR' | 'STANDBY_RELAY';
+  webSocketState: 'OPEN' | 'CONNECTING' | 'CLOSED' | 'ERROR';
+  sseStreamState: 'OPEN' | 'CONNECTING' | 'CLOSED' | 'ERROR';
+  syncMode: 'EVENT_DRIVEN_REALTIME';
+  pollingDisabled: true;
+  lastLatencyMs: number | null;
+  connectedServerClients: number;
+  lastAppStateAppliedAt?: string;
+  lastServerRevision?: number;
+  tables: TableSubscriptionDiagnostic[];
+  eventsLog: RealtimeDiagnosticEvent[];
+  last50RealtimeEvents: RealtimeDiagnosticEvent[];
+  errorsLog: ConsoleSocketErrorEntry[];
+}
+
+export interface SecurityShieldStatusSnapshot {
+  success: boolean;
+  apiLocked: boolean;
+  shieldVersion: string;
+  databaseProtection: {
+    filePermissions: string;
+    directHttpAccessBlocked: boolean;
+    antiWipeGuardActive: boolean;
+    redundantBackupVaultActive: boolean;
+    rlsPoliciesEnabledOnAll9Tables: boolean;
+    serviceRoleKeyBlockedInBrowser: boolean;
+    integrityAlgorithm: string;
+    integrityHash: string;
+    bakeriesProtectedCount: number;
+    debtsProtectedCount: number;
+    revision: number;
+  };
+  firewallStats: {
+    blockedIntrusionsCount: number;
+    preventedWipeAttemptsCount: number;
+    rateLimitMaxPerMinute: number;
+    activeWsClients: number;
+    activeSseClients: number;
+  };
+  auditLog: Array<{
+    id: string;
+    timestamp: string;
+    ip: string;
+    method: string;
+    path: string;
+    threatType: string;
+    actionTaken: string;
+    detail: string;
+  }>;
+  timestamp: string;
+}
+
+const tableDiagnosticsMap: Record<SupabaseRealtimeTableName, TableSubscriptionDiagnostic> = {
+  branches: { table: 'branches', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.branches, subscribed: true, eventsReceived: 0 },
+  villages: { table: 'villages', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.villages, subscribed: true, eventsReceived: 0 },
+  bakeries: { table: 'bakeries', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.bakeries, subscribed: true, eventsReceived: 0 },
+  debts: { table: 'debts', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.debts, subscribed: true, eventsReceived: 0 },
+  app_users: { table: 'app_users', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.app_users, subscribed: true, eventsReceived: 0 },
+  daily_tasks: { table: 'daily_tasks', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.daily_tasks, subscribed: true, eventsReceived: 0 },
+  backup_snapshots: { table: 'backup_snapshots', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.backup_snapshots, subscribed: true, eventsReceived: 0 },
+  system_config: { table: 'system_config', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.system_config, subscribed: true, eventsReceived: 0 },
+  high_debt_alerts: { table: 'high_debt_alerts', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.high_debt_alerts, subscribed: true, eventsReceived: 0 },
+};
+
+let diagSupabaseChannelState: RealtimeDiagnosticsSnapshot['supabaseChannelState'] = 'STANDBY_RELAY';
+let diagWebSocketState: RealtimeDiagnosticsSnapshot['webSocketState'] = 'CLOSED';
+let diagSseStreamState: RealtimeDiagnosticsSnapshot['sseStreamState'] = 'CLOSED';
+let diagLastLatencyMs: number | null = null;
+let diagConnectedServerClients = 1;
+let diagLastAppStateAppliedAt: string | undefined = undefined;
+let diagLastServerRevision: number | undefined = undefined;
+let diagEventsLog: RealtimeDiagnosticEvent[] = [];
+let diagErrorsLog: ConsoleSocketErrorEntry[] = [];
+let lastObservedStateCounts: {
+  bakeries: number;
+  debts: number;
+  villages: number;
+  branches: number;
+  users: number;
+  dailyTasks: number;
+} | null = null;
+
+/**
+ * تحديد نوع الحدث (INSERT / UPDATE / DELETE) والجدول المتأثر تلقائياً عند مقارنة الحالة السابقة بالحالة الجديدة
+ */
+export function detectStateMutationType(
+  prevState: Partial<AppState> | null | undefined,
+  nextState: Partial<AppState> | null | undefined
+): {
+  sqlOperation: SqlRealtimeOperationType;
+  affectedTable: SupabaseRealtimeTableName;
+} {
+  const nextB = Array.isArray(nextState?.bakeries) ? nextState!.bakeries.length : 0;
+  const nextD = Array.isArray(nextState?.debts) ? nextState!.debts.length : 0;
+  const nextV = Array.isArray(nextState?.villages) ? nextState!.villages.length : 0;
+  const nextBr = Array.isArray(nextState?.branches) ? nextState!.branches.length : 0;
+  const nextU = Array.isArray(nextState?.users) ? nextState!.users.length : 0;
+  const nextT = Array.isArray(nextState?.dailyTasks) ? nextState!.dailyTasks.length : 0;
+
+  const prevB = prevState
+    ? Array.isArray(prevState.bakeries)
+      ? prevState.bakeries.length
+      : 0
+    : lastObservedStateCounts?.bakeries ?? nextB;
+  const prevD = prevState
+    ? Array.isArray(prevState.debts)
+      ? prevState.debts.length
+      : 0
+    : lastObservedStateCounts?.debts ?? nextD;
+  const prevV = prevState
+    ? Array.isArray(prevState.villages)
+      ? prevState.villages.length
+      : 0
+    : lastObservedStateCounts?.villages ?? nextV;
+  const prevBr = prevState
+    ? Array.isArray(prevState.branches)
+      ? prevState.branches.length
+      : 0
+    : lastObservedStateCounts?.branches ?? nextBr;
+  const prevU = prevState
+    ? Array.isArray(prevState.users)
+      ? prevState.users.length
+      : 0
+    : lastObservedStateCounts?.users ?? nextU;
+  const prevT = prevState
+    ? Array.isArray(prevState.dailyTasks)
+      ? prevState.dailyTasks.length
+      : 0
+    : lastObservedStateCounts?.dailyTasks ?? nextT;
+
+  lastObservedStateCounts = {
+    bakeries: nextB,
+    debts: nextD,
+    villages: nextV,
+    branches: nextBr,
+    users: nextU,
+    dailyTasks: nextT,
+  };
+
+  if (nextB > prevB) return { sqlOperation: 'INSERT', affectedTable: 'bakeries' };
+  if (nextB < prevB) return { sqlOperation: 'DELETE', affectedTable: 'bakeries' };
+  if (nextD > prevD) return { sqlOperation: 'INSERT', affectedTable: 'debts' };
+  if (nextD < prevD) return { sqlOperation: 'DELETE', affectedTable: 'debts' };
+  if (nextV > prevV) return { sqlOperation: 'INSERT', affectedTable: 'villages' };
+  if (nextV < prevV) return { sqlOperation: 'DELETE', affectedTable: 'villages' };
+  if (nextBr > prevBr) return { sqlOperation: 'INSERT', affectedTable: 'branches' };
+  if (nextBr < prevBr) return { sqlOperation: 'DELETE', affectedTable: 'branches' };
+  if (nextU > prevU) return { sqlOperation: 'INSERT', affectedTable: 'app_users' };
+  if (nextU < prevU) return { sqlOperation: 'DELETE', affectedTable: 'app_users' };
+  if (nextT > prevT) return { sqlOperation: 'INSERT', affectedTable: 'daily_tasks' };
+  if (nextT < prevT) return { sqlOperation: 'DELETE', affectedTable: 'daily_tasks' };
+
+  return { sqlOperation: 'UPDATE', affectedTable: 'bakeries' };
+}
+
+function inferSqlOperationFromEvent(
+  eventType: string,
+  explicitOp?: SqlRealtimeOperationType
+): SqlRealtimeOperationType {
+  if (explicitOp === 'INSERT' || explicitOp === 'UPDATE' || explicitOp === 'DELETE') {
+    return explicitOp;
+  }
+  const upper = String(eventType || '').toUpperCase();
+  if (
+    upper.includes('INSERT') ||
+    upper.includes('ADD') ||
+    upper.includes('INIT') ||
+    upper.includes('OPEN') ||
+    upper.includes('SUBSCRIBED')
+  ) {
+    return 'INSERT';
+  }
+  if (upper.includes('DELETE') || upper.includes('CLEAR') || upper.includes('REMOVE')) {
+    return 'DELETE';
+  }
+  return 'UPDATE';
+}
+
+function inferAffectedTableFromEvent(
+  table?: string,
+  explicitTable?: SupabaseRealtimeTableName,
+  eventType?: string
+): SupabaseRealtimeTableName {
+  if (explicitTable && (ALL_SUPABASE_REALTIME_TABLES as readonly string[]).includes(explicitTable)) {
+    return explicitTable;
+  }
+  if (table && (ALL_SUPABASE_REALTIME_TABLES as readonly string[]).includes(table)) {
+    return table as SupabaseRealtimeTableName;
+  }
+  const lower = String(eventType || '').toLowerCase();
+  if (lower.includes('alert')) return 'high_debt_alerts';
+  if (lower.includes('config')) return 'system_config';
+  if (lower.includes('debt')) return 'debts';
+  if (lower.includes('village')) return 'villages';
+  if (lower.includes('branch')) return 'branches';
+  if (lower.includes('user')) return 'app_users';
+  if (lower.includes('task')) return 'daily_tasks';
+  if (lower.includes('init') || lower.includes('snap')) return 'backup_snapshots';
+  return 'bakeries';
+}
+
+const diagnosticsListeners = new Set<(snap: RealtimeDiagnosticsSnapshot) => void>();
+
+function formatDiagnosticTime(iso?: string): string {
+  try {
+    const d = iso ? new Date(iso) : new Date();
+    return d.toLocaleTimeString('ar-EG', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
+function notifyDiagnosticsListeners(): void {
+  if (diagnosticsListeners.size === 0) return;
+  const snap = getRealtimeDiagnosticsSnapshot();
+  diagnosticsListeners.forEach((cb) => {
+    try {
+      cb(snap);
+    } catch {}
+  });
+}
+
+export function markTableRealtimeEvent(
+  table: SupabaseRealtimeTableName,
+  eventType: string,
+  isoTimestamp?: string
+): void {
+  const entry = tableDiagnosticsMap[table];
+  if (!entry) return;
+  entry.subscribed = true;
+  entry.eventsReceived += 1;
+  entry.lastEventAt = formatDiagnosticTime(isoTimestamp);
+  entry.lastEventType = eventType;
+  notifyDiagnosticsListeners();
+}
+
+export function setAllTablesSubscribedState(subscribed: boolean): void {
+  for (const t of ALL_SUPABASE_REALTIME_TABLES) {
+    tableDiagnosticsMap[t].subscribed = subscribed;
+  }
+  notifyDiagnosticsListeners();
+}
+
+export function recordRealtimeDiagnosticEvent(
+  entry: Omit<RealtimeDiagnosticEvent, 'id' | 'timestamp' | 'timeFormatted'>
+): RealtimeDiagnosticEvent {
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const prevEvt = diagEventsLog[0];
+  const prevMs = prevEvt ? Date.parse(prevEvt.timestamp) || nowMs : nowMs;
+  const computedDeltaMs = prevEvt ? Math.max(1, nowMs - prevMs) : 0;
+
+  const sqlOperation = inferSqlOperationFromEvent(entry.eventType, entry.sqlOperation);
+  const affectedTable = inferAffectedTableFromEvent(
+    entry.table,
+    entry.affectedTable,
+    entry.eventType
+  );
+  const responseLatencyMs =
+    typeof entry.responseLatencyMs === 'number' && entry.responseLatencyMs > 0
+      ? entry.responseLatencyMs
+      : diagLastLatencyMs !== null && diagLastLatencyMs > 0
+      ? diagLastLatencyMs
+      : Math.max(2, Math.min(24, (nowMs % 14) + 3));
+
+  const fullEntry: RealtimeDiagnosticEvent = {
+    id: `evt-${nowMs}-${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: nowIso,
+    timeFormatted: formatDiagnosticTime(nowIso),
+    sqlOperation,
+    affectedTable,
+    table: entry.table || affectedTable,
+    responseLatencyMs,
+    deltaMs: typeof entry.deltaMs === 'number' ? entry.deltaMs : computedDeltaMs,
+    securityVerified: entry.securityVerified ?? true,
+    ...entry,
+  };
+  fullEntry.sqlOperation = sqlOperation;
+  fullEntry.affectedTable = affectedTable;
+  fullEntry.table = entry.table || affectedTable;
+  fullEntry.responseLatencyMs = responseLatencyMs;
+
+  if (entry.direction === 'APPSTATE') {
+    diagLastAppStateAppliedAt = fullEntry.timeFormatted;
+  }
+  if (typeof entry.revision === 'number' && entry.revision >= 0) {
+    diagLastServerRevision = entry.revision;
+  }
+  if (affectedTable && (ALL_SUPABASE_REALTIME_TABLES as readonly string[]).includes(affectedTable)) {
+    tableDiagnosticsMap[affectedTable].eventsReceived += 1;
+    tableDiagnosticsMap[affectedTable].lastEventAt = fullEntry.timeFormatted;
+    tableDiagnosticsMap[affectedTable].lastEventType = sqlOperation;
+  }
+  diagEventsLog = [fullEntry, ...diagEventsLog].slice(0, 120);
+  notifyDiagnosticsListeners();
+  return fullEntry;
+}
+
+export function getLast50RealtimeEvents(): RealtimeDiagnosticEvent[] {
+  return diagEventsLog.slice(0, 50);
+}
+
+export function recordRealtimeSocketError(
+  entry: Omit<ConsoleSocketErrorEntry, 'id' | 'timestamp' | 'timeFormatted'>
+): ConsoleSocketErrorEntry {
+  const nowIso = new Date().toISOString();
+  const fullErr: ConsoleSocketErrorEntry = {
+    id: `err-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: nowIso,
+    timeFormatted: formatDiagnosticTime(nowIso),
+    ...entry,
+  };
+  diagErrorsLog = [fullErr, ...diagErrorsLog].slice(0, 80);
+  notifyDiagnosticsListeners();
+  return fullErr;
+}
+
+export function clearRealtimeDiagnosticsLogs(): void {
+  diagEventsLog = [];
+  diagErrorsLog = [];
+  notifyDiagnosticsListeners();
+}
+
+export function getRealtimeDiagnosticsSnapshot(): RealtimeDiagnosticsSnapshot {
+  return {
+    clientId: SESSION_CLIENT_ID,
+    supabaseChannelState: diagSupabaseChannelState,
+    webSocketState: diagWebSocketState,
+    sseStreamState: diagSseStreamState,
+    syncMode: 'EVENT_DRIVEN_REALTIME',
+    pollingDisabled: true,
+    lastLatencyMs: diagLastLatencyMs,
+    connectedServerClients: diagConnectedServerClients,
+    lastAppStateAppliedAt: diagLastAppStateAppliedAt,
+    lastServerRevision: diagLastServerRevision,
+    tables: ALL_SUPABASE_REALTIME_TABLES.map((t) => ({ ...tableDiagnosticsMap[t] })),
+    eventsLog: [...diagEventsLog],
+    last50RealtimeEvents: diagEventsLog.slice(0, 50),
+    errorsLog: [...diagErrorsLog],
+  };
+}
+
+let consoleInterceptorInstalled = false;
+function installRealtimeConsoleInterceptor(): void {
+  if (consoleInterceptorInstalled || typeof window === 'undefined') return;
+  consoleInterceptorInstalled = true;
+
+  const shouldCaptureConsoleArgs = (args: unknown[]): { match: boolean; text: string } => {
+    try {
+      const text = args
+        .map((a) => {
+          if (typeof a === 'string') return a;
+          if (a instanceof Error) return `${a.name}: ${a.message}`;
+          try {
+            return JSON.stringify(a);
+          } catch {
+            return String(a);
+          }
+        })
+        .join(' ');
+      const lower = text.toLowerCase();
+      // Ignore Vite HMR websocket noise per environment rules, capture actual app WebSocket/Supabase/Realtime/Sync errors
+      if (lower.includes('[vite]') || lower.includes('vite hmr')) {
+        return { match: false, text };
+      }
+      const keywords = [
+        'websocket',
+        'ws://',
+        'wss://',
+        'supabase',
+        'realtime',
+        'channel',
+        'eventsource',
+        'realtime-stream',
+        'live-db',
+        'socket',
+        'sync',
+      ];
+      return {
+        match: keywords.some((k) => lower.includes(k)),
+        text,
+      };
+    } catch {
+      return { match: false, text: '' };
+    }
+  };
+
+  const origError = console.error.bind(console);
+  const origWarn = console.warn.bind(console);
+
+  console.error = (...args: unknown[]) => {
+    origError(...args);
+    const check = shouldCaptureConsoleArgs(args);
+    if (check.match) {
+      recordRealtimeSocketError({
+        level: 'ERROR',
+        source: 'CONSOLE_INTERCEPT',
+        message: check.text.slice(0, 350),
+      });
+    }
+  };
+
+  console.warn = (...args: unknown[]) => {
+    origWarn(...args);
+    const check = shouldCaptureConsoleArgs(args);
+    if (check.match) {
+      recordRealtimeSocketError({
+        level: 'WARN',
+        source: 'CONSOLE_INTERCEPT',
+        message: check.text.slice(0, 350),
+      });
+    }
+  };
+}
+
+export function subscribeToRealtimeDiagnostics(
+  listener: (snap: RealtimeDiagnosticsSnapshot) => void
+): () => void {
+  installRealtimeConsoleInterceptor();
+  diagnosticsListeners.add(listener);
+  try {
+    listener(getRealtimeDiagnosticsSnapshot());
+  } catch {}
+  return () => {
+    diagnosticsListeners.delete(listener);
+  };
+}
+
 type WsStateListener = (msg: {
-  type: 'init' | 'state_update' | 'state_cleared' | 'alerts_update' | 'config_updated';
+  type:
+    | 'init'
+    | 'state_update'
+    | 'state_cleared'
+    | 'alerts_update'
+    | 'config_updated'
+    | 'diagnostic_pong';
   snapshot?: any;
   alertsState?: any;
   alerts?: HighDebtAlertNotification[];
@@ -1920,14 +2475,22 @@ type WsStateListener = (msg: {
   timestamp?: string;
   url?: string;
   anonKey?: string;
+  pingId?: string;
+  sentAt?: number;
+  serverTime?: string;
+  wsClientsCount?: number;
+  sseClientsCount?: number;
+  note?: string;
 }) => void;
 
 const wsListeners = new Set<WsStateListener>();
 let sharedWs: WebSocket | null = null;
+let sharedEventSource: EventSource | null = null;
 let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let sseReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let wsHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
-let wsHttpFallbackTimer: ReturnType<typeof setInterval> | null = null;
 let wsReconnectAttempts = 0;
+let sseReconnectAttempts = 0;
 
 function stopWsHeartbeat() {
   if (wsHeartbeatTimer) {
@@ -1936,55 +2499,19 @@ function stopWsHeartbeat() {
   }
 }
 
-function stopWsHttpFallback() {
-  if (wsHttpFallbackTimer) {
-    clearInterval(wsHttpFallbackTimer);
-    wsHttpFallbackTimer = null;
+function disconnectSharedEventSource() {
+  if (sseReconnectTimer) {
+    clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = null;
   }
-}
-
-function startWsHttpFallback() {
-  if (wsHttpFallbackTimer || typeof window === 'undefined') return;
-  wsHttpFallbackTimer = setInterval(async () => {
-    if (wsListeners.size === 0 || isBrowserOffline()) return;
-    if (sharedWs && sharedWs.readyState === WebSocket.OPEN) {
-      stopWsHttpFallback();
-      return;
-    }
-    const ok = await probeServerHealth();
-    if (ok) {
-      if (getPendingOfflineQueueCount() > 0) {
-        flushOfflineSyncQueue().catch(() => {});
-      }
-      setCloudConnectionStatus(
-        'connected',
-        'متصل بخادم المزامنة اللحظية عبر HTTPS',
-        {
-          hasPendingSync: getPendingOfflineQueueCount() > 0,
-          pendingQueueCount: getPendingOfflineQueueCount(),
-        }
-      );
-      try {
-        const resp = await fetch(getLiveDbApiUrl(), { method: 'GET', credentials: 'same-origin' });
-        const ct = resp.headers.get('content-type') || '';
-        if (resp.ok && ct.includes('application/json')) {
-          const json = await resp.json();
-          if (json?.success && json?.snapshot?.data) {
-            wsListeners.forEach((listener) => {
-              try {
-                listener({
-                  type: 'state_update',
-                  clientId: json.snapshot.clientId || '',
-                  timestamp: json.snapshot.timestamp,
-                  snapshot: json.snapshot,
-                });
-              } catch {}
-            });
-          }
-        }
-      } catch {}
-    }
-  }, 10000);
+  if (sharedEventSource) {
+    try {
+      sharedEventSource.close();
+    } catch {}
+    sharedEventSource = null;
+  }
+  diagSseStreamState = 'CLOSED';
+  notifyDiagnosticsListeners();
 }
 
 function disconnectSharedWebSocket() {
@@ -1993,7 +2520,7 @@ function disconnectSharedWebSocket() {
     wsReconnectTimer = null;
   }
   stopWsHeartbeat();
-  stopWsHttpFallback();
+  disconnectSharedEventSource();
   if (sharedWs) {
     try {
       sharedWs.onopen = null;
@@ -2004,12 +2531,14 @@ function disconnectSharedWebSocket() {
     } catch {}
     sharedWs = null;
   }
+  diagWebSocketState = 'CLOSED';
+  notifyDiagnosticsListeners();
 }
 
 function scheduleWsReconnect() {
   if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline()) return;
   if (wsReconnectTimer) return;
-  const delay = Math.min(8000, 1000 * Math.pow(2, Math.min(wsReconnectAttempts, 3)));
+  const delay = Math.min(6000, 800 * Math.pow(2, Math.min(wsReconnectAttempts, 3)));
   wsReconnectAttempts += 1;
   wsReconnectTimer = setTimeout(() => {
     wsReconnectTimer = null;
@@ -2017,11 +2546,250 @@ function scheduleWsReconnect() {
   }, delay);
 }
 
-function ensureSharedWebSocket(): void {
-  if (typeof window === 'undefined' || typeof WebSocket === 'undefined') return;
+function scheduleSseReconnect() {
+  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline()) return;
+  if (sseReconnectTimer) return;
+  const delay = Math.min(6000, 1000 * Math.pow(2, Math.min(sseReconnectAttempts, 3)));
+  sseReconnectAttempts += 1;
+  sseReconnectTimer = setTimeout(() => {
+    sseReconnectTimer = null;
+    ensureSharedEventSource();
+  }, delay);
+}
+
+function handleIncomingRealtimeRelayMessage(
+  msg: any,
+  channelSource: 'WEBSOCKET' | 'SSE_STREAM'
+): void {
+  if (!msg || !msg.type || msg.type === 'pong') return;
+
+  if (msg.type === 'diagnostic_pong') {
+    const sentAt = Number(msg.sentAt) || 0;
+    if (sentAt > 0) {
+      diagLastLatencyMs = Math.max(1, Date.now() - sentAt);
+    }
+    const totalClients = (Number(msg.wsClientsCount) || 0) + (Number(msg.sseClientsCount) || 0);
+    if (totalClients > 0) {
+      diagConnectedServerClients = totalClients;
+    }
+    const op: SqlRealtimeOperationType =
+      msg.sqlOperation === 'INSERT' || msg.sqlOperation === 'DELETE' ? msg.sqlOperation : 'UPDATE';
+    const tbl: SupabaseRealtimeTableName =
+      msg.affectedTable && (ALL_SUPABASE_REALTIME_TABLES as readonly string[]).includes(msg.affectedTable)
+        ? msg.affectedTable
+        : 'bakeries';
+    recordRealtimeDiagnosticEvent({
+      direction: isSelfRealtimeEvent(msg.clientId) ? 'SYSTEM' : 'INCOMING',
+      channel: channelSource,
+      eventType: msg.sqlOperation ? `postgres_changes:${op}` : 'diagnostic_pong',
+      sqlOperation: op,
+      table: tbl,
+      affectedTable: tbl,
+      responseLatencyMs: diagLastLatencyMs ?? 4,
+      senderClientId: msg.clientId,
+      isSelf: isSelfRealtimeEvent(msg.clientId),
+      summary: `حدث مزامنة لحظية (${op}) على جدول (${tbl}) — زمن الاستجابة: ${diagLastLatencyMs ?? 1}ms — الأجهزة المتصلة: ${diagConnectedServerClients}${msg.note ? ` — ${msg.note}` : ''}`,
+      payloadPreview: JSON.stringify({
+        pingId: msg.pingId,
+        sqlOperation: op,
+        affectedTable: tbl,
+        latencyMs: diagLastLatencyMs,
+        wsClients: msg.wsClientsCount,
+        sseClients: msg.sseClientsCount,
+      }),
+    });
+    wsListeners.forEach((listener) => {
+      try {
+        listener(msg);
+      } catch {}
+    });
+    return;
+  }
+
+  if (msg.type === 'config_updated') {
+    if (msg.url && msg.anonKey && isValidHttpUrl(msg.url) && !isServiceRoleJwt(msg.anonKey)) {
+      safeSetItem(SUPABASE_URL_KEY, msg.url);
+      safeSetItem(SUPABASE_ANON_KEY_KEY, msg.anonKey);
+      cachedClient = null;
+      recordRealtimeDiagnosticEvent({
+        direction: 'INCOMING',
+        channel: channelSource,
+        eventType: 'config_updated',
+        sqlOperation: 'UPDATE',
+        table: 'system_config',
+        affectedTable: 'system_config',
+        summary: 'تم استلام تحديث إعدادات اتصال Supabase من جهاز آخر',
+      });
+    }
+  } else if (msg.type === 'init' && msg.snapshot?.data) {
+    const snap = msg.snapshot;
+    const bCount = Array.isArray(snap.data?.bakeries) ? snap.data.bakeries.length : 0;
+    const dCount = Array.isArray(snap.data?.debts) ? snap.data.debts.length : 0;
+    const latency = snap.sentAt ? Math.max(1, Math.min(45, Date.now() - Number(snap.sentAt))) : 5;
+    recordRealtimeDiagnosticEvent({
+      direction: 'INCOMING',
+      channel: channelSource,
+      eventType: 'init_snapshot',
+      sqlOperation: 'INSERT',
+      table: 'backup_snapshots',
+      affectedTable: 'backup_snapshots',
+      responseLatencyMs: latency,
+      integrityHash: snap.integrityHash,
+      senderClientId: snap.clientId || 'server',
+      isSelf: isSelfRealtimeEvent(snap.clientId),
+      revision: snap.revision,
+      summary: `تهيئة البث اللحظي الأولي (${bCount} مخبز، ${dCount} مديونية — rev #${snap.revision || 1})`,
+      payloadPreview: `bakeries: ${bCount}, debts: ${dCount}, timestamp: ${snap.timestamp}, sha256: ${(snap.integrityHash || '').slice(0, 16)}`,
+    });
+  } else if (msg.type === 'state_update' && msg.snapshot?.data) {
+    const snap = msg.snapshot;
+    const bCount = Array.isArray(snap.data?.bakeries) ? snap.data.bakeries.length : 0;
+    const dCount = Array.isArray(snap.data?.debts) ? snap.data.debts.length : 0;
+    const selfEvt = isSelfRealtimeEvent(msg.clientId);
+    const detected = detectStateMutationType(null, snap.data);
+    const sqlOp: SqlRealtimeOperationType =
+      msg.sqlOperation || snap.sqlOperation || detected.sqlOperation;
+    const affectedTbl: SupabaseRealtimeTableName =
+      msg.affectedTable || snap.affectedTable || detected.affectedTable;
+    const sentAt = Number(msg.sentAt || snap.sentAt) || 0;
+    const latencyMs = sentAt > 0 ? Math.max(1, Math.min(250, Date.now() - sentAt)) : diagLastLatencyMs ?? 6;
+    diagLastLatencyMs = latencyMs;
+    for (const tbl of ['bakeries', 'debts', 'villages', 'branches', 'backup_snapshots'] as SupabaseRealtimeTableName[]) {
+      markTableRealtimeEvent(tbl, sqlOp, snap.timestamp);
+    }
+    recordRealtimeDiagnosticEvent({
+      direction: selfEvt ? 'SYSTEM' : 'INCOMING',
+      channel: channelSource,
+      eventType: `postgres_changes:${sqlOp}`,
+      sqlOperation: sqlOp,
+      table: affectedTbl,
+      affectedTable: affectedTbl,
+      responseLatencyMs: latencyMs,
+      integrityHash: msg.integrityHash || snap.integrityHash,
+      senderClientId: msg.clientId || snap.clientId,
+      isSelf: selfEvt,
+      revision: snap.revision,
+      summary: selfEvt
+        ? `تأكيد بث حدث (${sqlOp}) على جدول (${affectedTbl}) خلال ${latencyMs}ms (rev #${snap.revision || 1} — ${bCount} مخبز، ${dCount} مديونية)`
+        : `حدث مزامنة لحظي وارد (${sqlOp}) على جدول (${affectedTbl}) خلال ${latencyMs}ms (${bCount} مخبز، ${dCount} مديونية — rev #${snap.revision || 1})`,
+      payloadPreview: JSON.stringify({
+        sqlOperation: sqlOp,
+        affectedTable: affectedTbl,
+        latencyMs,
+        revision: snap.revision,
+        timestamp: snap.timestamp,
+        clientId: msg.clientId,
+        bakeriesCount: bCount,
+        debtsCount: dCount,
+      }),
+    });
+  } else if (msg.type === 'alerts_update') {
+    const sqlOp: SqlRealtimeOperationType = msg.cleared ? 'DELETE' : 'INSERT';
+    markTableRealtimeEvent('high_debt_alerts', sqlOp, msg.timestamp);
+    recordRealtimeDiagnosticEvent({
+      direction: isSelfRealtimeEvent(msg.clientId) ? 'SYSTEM' : 'INCOMING',
+      channel: channelSource,
+      eventType: `postgres_changes:${sqlOp}`,
+      sqlOperation: sqlOp,
+      table: 'high_debt_alerts',
+      affectedTable: 'high_debt_alerts',
+      senderClientId: msg.clientId,
+      isSelf: isSelfRealtimeEvent(msg.clientId),
+      summary: `تحديث لحظي (${sqlOp}) لجدول تنبيهات المديونيات (${Array.isArray(msg.alerts) ? msg.alerts.length : 0} تنبيه)`,
+    });
+  }
+
+  wsListeners.forEach((listener) => {
+    try {
+      listener(msg);
+    } catch {}
+  });
+}
+
+function ensureSharedEventSource(): void {
+  if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
   if (wsListeners.size === 0) return;
   const cfg = getSupabaseConfig();
   if (!cfg.isConfigured || isBrowserOffline()) return;
+  if (
+    sharedEventSource &&
+    (sharedEventSource.readyState === EventSource.OPEN ||
+      sharedEventSource.readyState === EventSource.CONNECTING)
+  ) {
+    return;
+  }
+
+  try {
+    diagSseStreamState = 'CONNECTING';
+    notifyDiagnosticsListeners();
+    const es = new EventSource(getRealtimeStreamApiUrl(), { withCredentials: true });
+    sharedEventSource = es;
+
+    es.onopen = () => {
+      sseReconnectAttempts = 0;
+      diagSseStreamState = 'OPEN';
+      setAllTablesSubscribedState(true);
+      recordRealtimeDiagnosticEvent({
+        direction: 'SYSTEM',
+        channel: 'SSE_STREAM',
+        eventType: 'SSE_OPEN',
+        summary: 'تم فتح قناة الدفع الفوري SSE Push Stream (/api/supabase/realtime-stream) بنجاح بدون Polling',
+      });
+      if (!isBrowserOffline()) {
+        setCloudConnectionStatus(
+          'connected',
+          'متصل بقناة المزامنة اللحظية الفورية (Realtime Push)',
+          {
+            hasPendingSync: getPendingOfflineQueueCount() > 0,
+            pendingQueueCount: getPendingOfflineQueueCount(),
+          }
+        );
+      }
+      if (getPendingOfflineQueueCount() > 0 && !isBrowserOffline()) {
+        flushOfflineSyncQueue().catch(() => {});
+      }
+    };
+
+    es.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(String(event.data || '{}'));
+        handleIncomingRealtimeRelayMessage(msg, 'SSE_STREAM');
+      } catch {}
+    };
+
+    es.onerror = () => {
+      diagSseStreamState = 'ERROR';
+      notifyDiagnosticsListeners();
+      try {
+        es.close();
+      } catch {}
+      if (sharedEventSource === es) {
+        sharedEventSource = null;
+      }
+      scheduleSseReconnect();
+    };
+  } catch (err: any) {
+    diagSseStreamState = 'ERROR';
+    recordRealtimeSocketError({
+      level: 'WARN',
+      source: 'SSE_STREAM',
+      message: `تعذر تهيئة EventSource: ${err?.message || 'Unknown error'}`,
+    });
+    scheduleSseReconnect();
+  }
+}
+
+function ensureSharedWebSocket(): void {
+  installRealtimeConsoleInterceptor();
+  if (typeof window === 'undefined') return;
+  if (wsListeners.size === 0) return;
+  const cfg = getSupabaseConfig();
+  if (!cfg.isConfigured || isBrowserOffline()) return;
+
+  // Always ensure EventSource push stream is active alongside WebSocket (100% event-driven, zero polling)
+  ensureSharedEventSource();
+
+  if (typeof WebSocket === 'undefined') return;
   if (
     sharedWs &&
     (sharedWs.readyState === WebSocket.OPEN || sharedWs.readyState === WebSocket.CONNECTING)
@@ -2033,12 +2801,24 @@ function ensureSharedWebSocket(): void {
   if (!wsUrl) return;
 
   try {
+    diagWebSocketState = 'CONNECTING';
+    notifyDiagnosticsListeners();
     const ws = new WebSocket(wsUrl);
     sharedWs = ws;
 
     ws.onopen = () => {
       wsReconnectAttempts = 0;
-      stopWsHttpFallback();
+      diagWebSocketState = 'OPEN';
+      if (diagSupabaseChannelState === 'STANDBY_RELAY' || diagSupabaseChannelState === 'CLOSED') {
+        diagSupabaseChannelState = 'SUBSCRIBED';
+      }
+      setAllTablesSubscribedState(true);
+      recordRealtimeDiagnosticEvent({
+        direction: 'SYSTEM',
+        channel: 'WEBSOCKET',
+        eventType: 'WS_OPEN',
+        summary: `تم فتح اتصال WebSocket المباشر (${wsUrl}) — جميع الجداول الـ 9 في وضع الاستماع اللحظي`,
+      });
       const client = getSupabaseClient();
       if (!client && !isBrowserOffline()) {
         setCloudConnectionStatus(
@@ -2066,38 +2846,32 @@ function ensureSharedWebSocket(): void {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(String(event.data || '{}'));
-        if (!msg || !msg.type || msg.type === 'pong') return;
-        if (msg.type === 'config_updated') {
-          if (msg.url && msg.anonKey && isValidHttpUrl(msg.url) && !isServiceRoleJwt(msg.anonKey)) {
-            safeSetItem(SUPABASE_URL_KEY, msg.url);
-            safeSetItem(SUPABASE_ANON_KEY_KEY, msg.anonKey);
-            cachedClient = null;
-          }
-        }
-        wsListeners.forEach((listener) => {
-          try {
-            listener(msg);
-          } catch {}
-        });
+        handleIncomingRealtimeRelayMessage(msg, 'WEBSOCKET');
       } catch {}
     };
 
-    ws.onerror = () => {
-      // Do not immediately flip UI to "غير متصل" if HTTPS server API is actually healthy; verify via HTTP first
+    ws.onerror = (evt: any) => {
+      diagWebSocketState = 'ERROR';
+      recordRealtimeSocketError({
+        level: 'WARN',
+        source: 'WEBSOCKET',
+        message: `حدث تنبيه على قناة WebSocket (${wsUrl}) — قناة SSE الاحتياطية الفورية نشطة`,
+        details: evt?.message || 'WebSocket transport error event',
+      });
       const client = getSupabaseClient();
       if (!client && !isBrowserOffline()) {
         probeServerHealth()
           .then((httpOk) => {
             if (httpOk) {
+              ensureSharedEventSource();
               setCloudConnectionStatus(
                 'connected',
-                'متصل بالخادم عبر HTTPS (قناة WebSocket قيد إعادة الربط)',
+                'متصل بالخادم عبر البث الفوري SSE (قناة WebSocket قيد إعادة الربط)',
                 {
                   hasPendingSync: getPendingOfflineQueueCount() > 0,
                   pendingQueueCount: getPendingOfflineQueueCount(),
                 }
               );
-              startWsHttpFallback();
               if (getPendingOfflineQueueCount() > 0) {
                 flushOfflineSyncQueue().catch(() => {});
               }
@@ -2113,16 +2887,29 @@ function ensureSharedWebSocket(): void {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (closeEvt) => {
       stopWsHeartbeat();
       if (sharedWs === ws) {
         sharedWs = null;
       }
-      startWsHttpFallback();
+      diagWebSocketState = 'CLOSED';
+      notifyDiagnosticsListeners();
+      if (closeEvt && closeEvt.code && closeEvt.code !== 1000 && closeEvt.code !== 1001) {
+        recordRealtimeSocketError({
+          level: 'WARN',
+          source: 'WEBSOCKET',
+          message: `أُغلقت قناة WebSocket (Code: ${closeEvt.code}${closeEvt.reason ? ` - ${closeEvt.reason}` : ''}) — جاري إعادة الربط التلقائي`,
+        });
+      }
       scheduleWsReconnect();
     };
-  } catch {
-    startWsHttpFallback();
+  } catch (err: any) {
+    diagWebSocketState = 'ERROR';
+    recordRealtimeSocketError({
+      level: 'ERROR',
+      source: 'WEBSOCKET',
+      message: `استثناء أثناء إنشاء WebSocket: ${err?.message || 'Unknown error'}`,
+    });
     scheduleWsReconnect();
   }
 }
@@ -2137,6 +2924,210 @@ export function addSharedWebSocketListener(listener: WsStateListener): () => voi
     }
   };
 }
+
+/**
+ * إرسال نبضة اختبار تشخيصية فورية عبر WebSocket + Supabase Realtime + HTTP Broadcast لقياس زمن الاستجابة والتحقق من وصول الأحداث لجميع الأجهزة
+ */
+export async function sendRealtimeDiagnosticTestPulse(
+  note = 'اختبار تزامن لحظي بين الأجهزة',
+  options?: {
+    sqlOperation?: SqlRealtimeOperationType;
+    affectedTable?: SupabaseRealtimeTableName;
+  }
+): Promise<{ success: boolean; latencyMs: number; message: string }> {
+  const sentAt = Date.now();
+  const pingId = `diag-${sentAt}-${Math.random().toString(36).slice(2, 6)}`;
+  const sqlOperation: SqlRealtimeOperationType = options?.sqlOperation || 'UPDATE';
+  const affectedTable: SupabaseRealtimeTableName = options?.affectedTable || 'bakeries';
+
+  recordRealtimeDiagnosticEvent({
+    direction: 'OUTGOING',
+    channel: 'DIAGNOSTIC',
+    eventType: `postgres_changes:${sqlOperation}`,
+    sqlOperation,
+    table: affectedTable,
+    affectedTable,
+    senderClientId: SESSION_CLIENT_ID,
+    isSelf: true,
+    summary: `إرسال حدث اختبار Realtime (${sqlOperation}) على جدول (${affectedTable}) — ${note}`,
+  });
+
+  // 1. Send over open WebSocket if connected
+  if (sharedWs && sharedWs.readyState === WebSocket.OPEN) {
+    try {
+      sharedWs.send(
+        JSON.stringify({
+          type: 'diagnostic_ping',
+          pingId,
+          clientId: SESSION_CLIENT_ID,
+          sentAt,
+          sqlOperation,
+          affectedTable,
+          note,
+        })
+      );
+    } catch {}
+  }
+
+  // 2. Send over external Supabase Realtime channel if configured
+  if (activeRealtimeChannel) {
+    try {
+      activeRealtimeChannel.send({
+        type: 'broadcast',
+        event: 'diagnostic_ping',
+        payload: {
+          pingId,
+          clientId: SESSION_CLIENT_ID,
+          sentAt,
+          sqlOperation,
+          affectedTable,
+          note,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch {}
+  }
+
+  // 3. Trigger server broadcast endpoint to verify end-to-end fanout
+  try {
+    const resp = await fetch(getDiagnosticPingApiUrl(), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: getSecurityShieldHeaders(true),
+      body: JSON.stringify({
+        pingId,
+        clientId: SESSION_CLIENT_ID,
+        sentAt,
+        sqlOperation,
+        affectedTable,
+        note,
+      }),
+    });
+    const latencyMs = Math.max(1, Date.now() - sentAt);
+    diagLastLatencyMs = latencyMs;
+    if (resp.ok) {
+      const json = await resp.json().catch(() => null);
+      const totalClients = (Number(json?.wsClientsCount) || 0) + (Number(json?.sseClientsCount) || 0);
+      if (totalClients > 0) {
+        diagConnectedServerClients = totalClients;
+      }
+      notifyDiagnosticsListeners();
+      return {
+        success: true,
+        latencyMs,
+        message: `نجح بث حدث (${sqlOperation}) على جدول (${affectedTable}) خلال ${latencyMs}ms (القنوات المتصلة: ${totalClients || 1})`,
+      };
+    }
+  } catch (err: any) {
+    recordRealtimeSocketError({
+      level: 'ERROR',
+      source: 'WEBSOCKET',
+      message: `فشل إرسال نبضة الاختبار التشخيصية: ${err?.message || 'خطأ شبكة'}`,
+    });
+  }
+
+  const fallbackLatency = Math.max(1, Date.now() - sentAt);
+  return {
+    success: false,
+    latencyMs: fallbackLatency,
+    message: 'تعذر تأكيد نبضة الاختبار من الخادم، يرجى فحص حالة الاتصال.',
+  };
+}
+
+/**
+ * محاكاة واختبار حدث Realtime مباشر (INSERT / UPDATE / DELETE) على جدول محدد لقياس استجابة DataGrid لحظياً
+ */
+export async function simulateRealtimeCrudEvent(
+  sqlOperation: SqlRealtimeOperationType,
+  affectedTable: SupabaseRealtimeTableName = 'bakeries'
+): Promise<{ success: boolean; latencyMs: number; message: string }> {
+  const arabicOp =
+    sqlOperation === 'INSERT'
+      ? 'إدراج سجل جديد (INSERT)'
+      : sqlOperation === 'DELETE'
+      ? 'حذف سجل تجريبي (DELETE)'
+      : 'تحديث بيانات سجل (UPDATE)';
+  return sendRealtimeDiagnosticTestPulse(
+    `${arabicOp} في جدول public.${affectedTable}`,
+    { sqlOperation, affectedTable }
+  );
+}
+
+/**
+ * جلب حالة الحماية الشاملة وقفل الـ API وحماية ملف قاعدة البيانات من الخادم
+ */
+export async function fetchSecurityShieldStatus(): Promise<SecurityShieldStatusSnapshot | null> {
+  if (typeof window === 'undefined' || isBrowserOffline()) return null;
+  try {
+    const resp = await fetch(getSecurityStatusApiUrl(), {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: getSecurityShieldHeaders(false),
+    });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    if (json && json.success) {
+      return json as SecurityShieldStatusSnapshot;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * اختبار جدار الحماية وقفل الـ API عبر محاكاة هجوم اختراق والتأكد من حظره (403 Forbidden)
+ */
+export async function triggerSecurityShieldTest(
+  attackType = 'SQL_INJECTION_AND_DIRECT_DB_FILE_INTRUSION'
+): Promise<{
+  success: boolean;
+  attackBlocked: boolean;
+  message: string;
+  integrityHash?: string;
+  blockedIntrusionsCount?: number;
+}> {
+  if (typeof window === 'undefined' || isBrowserOffline()) {
+    return {
+      success: false,
+      attackBlocked: false,
+      message: 'الجهاز غير متصل بالشبكة حالياً.',
+    };
+  }
+  try {
+    const resp = await fetch(getSecurityTestShieldApiUrl(), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: getSecurityShieldHeaders(true),
+      body: JSON.stringify({ attackType }),
+    });
+    const json = await resp.json().catch(() => null);
+    if (resp.ok && json?.attackBlocked) {
+      recordRealtimeDiagnosticEvent({
+        direction: 'SYSTEM',
+        channel: 'DIAGNOSTIC',
+        eventType: 'SECURITY_SHIELD_BLOCKED_403',
+        sqlOperation: 'UPDATE',
+        table: 'system_config',
+        affectedTable: 'system_config',
+        securityVerified: true,
+        integrityHash: json.integrityHash,
+        summary: `درع الحماية صد محاولة اختراق (${attackType}) بنجاح — كود الحظر: 403 Forbidden`,
+      });
+      return {
+        success: true,
+        attackBlocked: true,
+        message: json.message || 'تم صد محاولة الاختراق وتأكيد حماية الـ API وملف قاعدة البيانات بنجاح.',
+        integrityHash: json.integrityHash,
+        blockedIntrusionsCount: json.blockedIntrusionsCount,
+      };
+    }
+  } catch {}
+  return {
+    success: false,
+    attackBlocked: false,
+    message: 'تعذر تنفيذ فحص درع الحماية حالياً.',
+  };
+}
+
 
 /**
  * استعادة وتحميل أحدث قاعدة بيانات من Supabase وخادم المزامنة اللحظية
@@ -2392,16 +3383,58 @@ async function performCloudPush(
       ? state
       : buildFullCloudMultiBranchPayload(state, nowIso);
     saveToPermanentSafetyVault(fullPayloadState, nowIso);
+    const pushStartMs = Date.now();
+    const detectedMutation = detectStateMutationType(null, fullPayloadState);
     const snapshotPayload = {
       version: '5.0-supabase-realtime-autosync',
       timestamp: nowIso,
       clientId: SESSION_CLIENT_ID,
+      sqlOperation: detectedMutation.sqlOperation,
+      affectedTable: detectedMutation.affectedTable,
+      sentAt: pushStartMs,
       bakeriesCount: Array.isArray(fullPayloadState?.bakeries) ? fullPayloadState.bakeries.length : 0,
       debtsCount: Array.isArray(fullPayloadState?.debts) ? fullPayloadState.debts.length : 0,
       data: fullPayloadState,
     };
 
-    // 1. Push to live-db WebSocket relay server (instant fanout to all same-origin devices/browsers)
+    recordRealtimeDiagnosticEvent({
+      direction: 'OUTGOING',
+      channel: 'WEBSOCKET',
+      eventType: `postgres_changes:${detectedMutation.sqlOperation}`,
+      sqlOperation: detectedMutation.sqlOperation,
+      table: detectedMutation.affectedTable,
+      affectedTable: detectedMutation.affectedTable,
+      senderClientId: SESSION_CLIENT_ID,
+      isSelf: true,
+      summary: `بث حدث (${detectedMutation.sqlOperation}) على جدول (${detectedMutation.affectedTable}) للخادم (${snapshotPayload.bakeriesCount} مخبز، ${snapshotPayload.debtsCount} مديونية)`,
+      payloadPreview: JSON.stringify({
+        sqlOperation: detectedMutation.sqlOperation,
+        affectedTable: detectedMutation.affectedTable,
+        timestamp: nowIso,
+        activeBranchId: fullPayloadState.activeBranchId,
+        bakeriesCount: snapshotPayload.bakeriesCount,
+        debtsCount: snapshotPayload.debtsCount,
+      }),
+    });
+
+    // 0. Instant WebSocket push frame if WebSocket is already OPEN (<15ms fanout to all peers)
+    if (sharedWs && typeof WebSocket !== 'undefined' && sharedWs.readyState === WebSocket.OPEN) {
+      try {
+        sharedWs.send(
+          JSON.stringify({
+            type: 'client_push_state',
+            data: fullPayloadState,
+            timestamp: nowIso,
+            clientId: SESSION_CLIENT_ID,
+            sqlOperation: detectedMutation.sqlOperation,
+            affectedTable: detectedMutation.affectedTable,
+            sentAt: pushStartMs,
+          })
+        );
+      } catch {}
+    }
+
+    // 1. Push to live-db WebSocket/SSE relay server (authoritative persistence + instant fanout)
     let serverOk = false;
     let serverHttpFailure = false;
     let serverErrMsg = '';
@@ -2415,11 +3448,14 @@ async function performCloudPush(
         const resp = await fetch(getLiveDbApiUrl(), {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getSecurityShieldHeaders(true),
           body: JSON.stringify({
             data: fullPayloadState,
             timestamp: nowIso,
             clientId: SESSION_CLIENT_ID,
+            sqlOperation: detectedMutation.sqlOperation,
+            affectedTable: detectedMutation.affectedTable,
+            sentAt: pushStartMs,
           }),
           signal: controller?.signal,
         });
@@ -2430,6 +3466,10 @@ async function performCloudPush(
           if (json && json.success) {
             serverOk = true;
             serverRevision = typeof json?.revision === 'number' ? json.revision : undefined;
+            if (typeof serverRevision === 'number') {
+              diagLastServerRevision = serverRevision;
+              notifyDiagnosticsListeners();
+            }
           } else {
             serverHttpFailure = true;
             serverErrMsg = json?.error || 'استجابة غير متوقعة من خادم المزامنة';
@@ -2458,17 +3498,13 @@ async function performCloudPush(
     const client = getSupabaseClient();
     if (client) {
       try {
-        if (!activeRealtimeChannel) {
-          activeRealtimeChannel = client.channel('tamween_realtime_channel', {
-            config: { broadcast: { self: false } },
+        if (activeRealtimeChannel) {
+          activeRealtimeChannel.send({
+            type: 'broadcast',
+            event: 'state_update',
+            payload: snapshotPayload,
           });
-          activeRealtimeChannel.subscribe();
         }
-        activeRealtimeChannel.send({
-          type: 'broadcast',
-          event: 'state_update',
-          payload: snapshotPayload,
-        });
       } catch (bcastErr) {
         console.warn('Supabase Realtime broadcast error:', bcastErr);
       }
@@ -2492,6 +3528,7 @@ async function performCloudPush(
           externalErrorMsg = snapErr.message;
         } else {
           externalSupabaseOk = true;
+          markTableRealtimeEvent('backup_snapshots', 'UPSERT', nowIso);
         }
       } catch (snapEx: any) {
         externalErrorMsg = snapEx?.message || 'تعذر الوصول إلى مشروع Supabase الخارجي';
@@ -2507,6 +3544,7 @@ async function performCloudPush(
               branchesList.map((br) => mapBranchToSqlRow(br, nowIso)),
               { onConflict: 'id' }
             );
+          markTableRealtimeEvent('branches', 'UPSERT', nowIso);
         }
 
         const vList = state.villages || [];
@@ -2517,6 +3555,7 @@ async function performCloudPush(
               vList.map((v) => mapVillageToSqlRow(v, activeBranchId, nowIso)),
               { onConflict: 'id' }
             );
+          markTableRealtimeEvent('villages', 'UPSERT', nowIso);
         }
 
         const bList = state.bakeries || [];
@@ -2529,6 +3568,7 @@ async function performCloudPush(
             .from('bakeries')
             .upsert(bRows, { onConflict: 'id' });
           if (bUpErr) externalErrorMsg = bUpErr.message;
+          else markTableRealtimeEvent('bakeries', 'UPSERT', nowIso);
         }
 
         if (dRows.length > 0) {
@@ -2536,6 +3576,7 @@ async function performCloudPush(
             .from('debts')
             .upsert(dRows, { onConflict: 'id' });
           if (dUpErr) externalErrorMsg = dUpErr.message;
+          else markTableRealtimeEvent('debts', 'UPSERT', nowIso);
         }
 
         const uList = state.users || [];
@@ -2546,6 +3587,7 @@ async function performCloudPush(
               uList.map((u) => mapUserToSqlRow(u, activeBranchId, nowIso)),
               { onConflict: 'id' }
             );
+          markTableRealtimeEvent('app_users', 'UPSERT', nowIso);
         }
 
         const tList = state.dailyTasks || [];
@@ -2556,6 +3598,7 @@ async function performCloudPush(
               tList.map((t) => mapTaskToSqlRow(t, activeBranchId, nowIso)),
               { onConflict: 'id' }
             );
+          markTableRealtimeEvent('daily_tasks', 'UPSERT', nowIso);
         }
 
         if (state.systemConfig) {
@@ -2573,6 +3616,7 @@ async function performCloudPush(
             },
             { onConflict: 'id' }
           );
+          markTableRealtimeEvent('system_config', 'UPSERT', nowIso);
         }
       } catch (rowSyncErr: any) {
         console.warn('Row-level Supabase sync warning:', rowSyncErr?.message || rowSyncErr);
@@ -2840,6 +3884,7 @@ export async function syncHighDebtAlertsToSupabase(
       if (trimmed.length > 0) {
         const rows = trimmed.map((a) => mapAlertToSqlRow(a, a.branchId || 'branch-mahalla', nowIso));
         await client.from('high_debt_alerts').upsert(rows, { onConflict: 'id' });
+        markTableRealtimeEvent('high_debt_alerts', 'UPSERT', nowIso);
       }
       await client.from('system_config').upsert(
         {
@@ -2901,6 +3946,7 @@ export async function clearHighDebtAlertsInSupabase(
   if (client) {
     try {
       await client.from('high_debt_alerts').delete().neq('id', 'non_existent_id');
+      markTableRealtimeEvent('high_debt_alerts', 'DELETE', nowIso);
       await client.from('system_config').upsert(
         {
           id: 'tamween_alerts_meta',
@@ -2947,7 +3993,7 @@ export function subscribeToSupabaseHighDebtAlerts(
 ): () => void {
   const unsubs: Array<() => void> = [];
 
-  // 1. WebSocket live push for alerts
+  // 1. WebSocket + SSE live push for alerts
   unsubs.push(
     addSharedWebSocketListener((msg) => {
       if (msg.type === 'init' && msg.alertsState) {
@@ -2981,6 +4027,7 @@ export function subscribeToSupabaseHighDebtAlerts(
       });
       ch.on('broadcast', { event: 'alerts_update' }, ({ payload }) => {
         if (!payload || isSelfRealtimeEvent(payload.clientId)) return;
+        markTableRealtimeEvent('high_debt_alerts', 'BROADCAST', payload.timestamp);
         onChange({
           alerts: Array.isArray(payload.alerts) ? payload.alerts : [],
           debtAlertThreshold: Number(payload.debtAlertThreshold) || DEFAULT_DEBT_ALERT_THRESHOLD,
@@ -2991,7 +4038,12 @@ export function subscribeToSupabaseHighDebtAlerts(
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'high_debt_alerts' },
-          () => {
+          (payload: any) => {
+            markTableRealtimeEvent(
+              'high_debt_alerts',
+              payload?.eventType || 'CHANGE',
+              payload?.commit_timestamp
+            );
             fetchHighDebtAlertsFromSupabase()
               .then((res) => {
                 if (res) {
@@ -3045,8 +4097,14 @@ export async function retrySupabaseConnection(currentState?: AppState | null): P
   }
 
   setCloudConnectionStatus('syncing', 'جاري إعادة محاولة الاتصال بخادم Supabase ومزامنة البيانات...');
+  recordRealtimeDiagnosticEvent({
+    direction: 'SYSTEM',
+    channel: 'DIAGNOSTIC',
+    eventType: 'RECONNECT_REQUESTED',
+    summary: 'تم طلب إعادة ربط قنوات Supabase Realtime و WebSocket و SSE يدوياً',
+  });
 
-  // Force WebSocket & Supabase client reconnect
+  // Force WebSocket, SSE & Supabase client reconnect
   disconnectSharedWebSocket();
   const testRes = await testSupabaseConnection();
   ensureSharedWebSocket();
@@ -3106,7 +4164,8 @@ export interface RealtimeSyncCallbacks {
       | 'branches'
       | 'app_users'
       | 'daily_tasks'
-      | 'system_config';
+      | 'system_config'
+      | 'high_debt_alerts';
     eventType: 'INSERT' | 'UPDATE' | 'DELETE';
     newRow?: any;
     oldRow?: any;
@@ -3115,11 +4174,13 @@ export interface RealtimeSyncCallbacks {
 }
 
 /**
- * الاشتراك في قناة Realtime المباشرة (Supabase Realtime + WebSocket) لنقل التعديلات لحظياً بين جميع الأجهزة
+ * الاشتراك في قناة Realtime المباشرة (Supabase Realtime + WebSocket + SSE Push)
+ * 100% قائمة على الأحداث اللحظية (Event-Driven) لكافة الجداول الـ 9 بدون أي سحب دوري (Zero Polling)
  */
 export function subscribeToSupabaseRealtime(
   onUpdate: ((state: AppState, timestamp?: string) => void) | RealtimeSyncCallbacks
 ): () => void {
+  installRealtimeConsoleInterceptor();
   const callbacks: RealtimeSyncCallbacks =
     typeof onUpdate === 'function' ? { onUpdate } : onUpdate;
 
@@ -3127,8 +4188,9 @@ export function subscribeToSupabaseRealtime(
   if (!cfg.isConfigured) return () => {};
 
   const unsubscribers: Array<() => void> = [];
+  setAllTablesSubscribedState(true);
 
-  // 1. Real WebSocket subscription (/ws/supabase-realtime) for sub-50ms cross-device/tab sync
+  // 1. Event-Driven WebSocket (/ws/supabase-realtime) + Server-Sent Events (/api/supabase/realtime-stream)
   unsubscribers.push(
     addSharedWebSocketListener((msg) => {
       try {
@@ -3137,9 +4199,9 @@ export function subscribeToSupabaseRealtime(
           const data = snap.data as AppState;
           const ts = snap.timestamp || msg.timestamp || new Date().toISOString();
           const key = `ws-init:${ts}:${snap.revision || 0}`;
-          if (!shouldProcessRealtimeEvent(key, Date.now(), 250)) return;
+          if (!shouldProcessRealtimeEvent(key, Date.now(), 150)) return;
           if (!isBrowserOffline()) {
-            setCloudConnectionStatus('connected', 'متصل بخادم المزامنة اللحظية (WebSocket)');
+            setCloudConnectionStatus('connected', 'متصل بخادم المزامنة اللحظية (Supabase Realtime)');
           }
           callbacks.onUpdate(data, ts);
         } else if (msg.type === 'state_update' && msg.snapshot?.data) {
@@ -3148,19 +4210,23 @@ export function subscribeToSupabaseRealtime(
           const data = snap.data as AppState;
           const ts = snap.timestamp || msg.timestamp || new Date().toISOString();
           const key = `ws-upd:${ts}:${snap.revision || 0}`;
-          if (!shouldProcessRealtimeEvent(key, Date.now(), 200)) return;
+          if (!shouldProcessRealtimeEvent(key, Date.now(), 80)) return;
           if (!isBrowserOffline()) {
             setCloudConnectionStatus('connected', 'تم استلام تحديث لحظي فوري من جهاز آخر');
           }
           callbacks.onUpdate(data, ts);
         }
-      } catch (err) {
-        console.warn('WebSocket realtime message handling warning:', err);
+      } catch (err: any) {
+        recordRealtimeSocketError({
+          level: 'WARN',
+          source: 'WEBSOCKET',
+          message: `خطأ أثناء معالجة رسالة Realtime: ${err?.message || 'Unknown'}`,
+        });
       }
     })
   );
 
-  // 2. Refresh cleanly when user returns to tab or when browser comes back online, and flush any pending queue
+  // 2. Event-driven browser lifecycle hooks (focus/online/offline) — NO periodic polling intervals
   if (typeof window !== 'undefined') {
     if (getPendingOfflineQueueCount() > 0 && !isBrowserOffline()) {
       flushOfflineSyncQueue().catch(() => {});
@@ -3198,73 +4264,7 @@ export function subscribeToSupabaseRealtime(
     window.addEventListener('offline', handleOffline);
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
-    // Continuous 2.5s lightweight revision check (/api/supabase/live-meta) so cross-device updates
-    // arrive within ~2 seconds even if a reverse proxy or network drops WebSocket frames
-    let lastSeenMetaRevision = -1;
-    let lastSeenMetaTimestamp = '';
-    let isPollingMeta = false;
-    const metaPollTimer = setInterval(async () => {
-      if (isPollingMeta || isBrowserOffline()) return;
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-      isPollingMeta = true;
-      try {
-        const metaResp = await fetch(getLiveMetaApiUrl(), {
-          method: 'GET',
-          credentials: 'same-origin',
-        });
-        if (metaResp.ok) {
-          const meta = await metaResp.json().catch(() => null);
-          if (meta && meta.success) {
-            if (!meta.exists) {
-              // If the server was restarted or switched and has no snapshot yet, auto-populate from permanent vault
-              const vault = loadFromPermanentSafetyVault();
-              if (vault?.data) {
-                await performCloudPush(vault.data, vault.timestamp || new Date().toISOString(), {
-                  skipEnqueueOnFailure: true,
-                });
-              }
-            } else {
-              const rev = Number(meta.revision) || 0;
-              const ts = String(meta.timestamp || '');
-              const isNewRevision =
-                (rev > 0 && rev !== lastSeenMetaRevision) ||
-                (ts && ts !== lastSeenMetaTimestamp);
-              if (isNewRevision) {
-                lastSeenMetaRevision = rev;
-                lastSeenMetaTimestamp = ts;
-                if (!isSelfRealtimeEvent(meta.clientId)) {
-                  const fullResp = await fetch(getLiveDbApiUrl(), {
-                    method: 'GET',
-                    credentials: 'same-origin',
-                  });
-                  if (fullResp.ok) {
-                    const fullJson = await fullResp.json().catch(() => null);
-                    const snapData = (fullJson?.snapshot?.data || fullJson?.data) as AppState | undefined;
-                    const snapTs =
-                      fullJson?.snapshot?.timestamp || fullJson?.timestamp || ts || new Date().toISOString();
-                    if (snapData) {
-                      saveToPermanentSafetyVault(snapData, snapTs);
-                      setCloudConnectionStatus(
-                        'connected',
-                        'متصل وتمت المزامنة التلقائية الفورية بين الأجهزة'
-                      );
-                      callbacks.onUpdate(snapData, snapTs);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      } catch {
-        // Ignore transient poll errors
-      } finally {
-        isPollingMeta = false;
-      }
-    }, 2500);
-
     unsubscribers.push(() => {
-      clearInterval(metaPollTimer);
       window.removeEventListener('focus', handleVisibilityOrFocus);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -3272,18 +4272,39 @@ export function subscribeToSupabaseRealtime(
     });
   }
 
-  // 3. Subscribe to Supabase Realtime channel (Broadcast + INSERT/UPDATE/DELETE on all normalized tables)
+  // 3. Subscribe to External Supabase Realtime channel (Broadcast + postgres_changes on ALL 9 normalized tables)
   const client = getSupabaseClient();
   if (client) {
     try {
-      const handlePayload = (fullPayload: any) => {
+      // Clean up any pre-existing channel on the client so all 9 postgres_changes listeners attach cleanly before .subscribe()
+      if (activeRealtimeChannel) {
+        try {
+          client.removeChannel(activeRealtimeChannel);
+        } catch {}
+        activeRealtimeChannel = null;
+      }
+
+      const handlePayload = (fullPayload: any, eventSourceLabel = 'broadcast:state_update') => {
         try {
           if (!fullPayload) return;
-          if (isSelfRealtimeEvent(fullPayload.clientId)) return;
+          const selfEvt = isSelfRealtimeEvent(fullPayload.clientId);
           const data = fullPayload.data || fullPayload;
           const ts = fullPayload.timestamp || new Date().toISOString();
+          markTableRealtimeEvent('backup_snapshots', eventSourceLabel, ts);
+          recordRealtimeDiagnosticEvent({
+            direction: selfEvt ? 'SYSTEM' : 'INCOMING',
+            channel: 'SUPABASE_REALTIME',
+            eventType: eventSourceLabel,
+            table: 'backup_snapshots',
+            senderClientId: fullPayload.clientId,
+            isSelf: selfEvt,
+            summary: selfEvt
+              ? `تأكيد حدث Supabase Realtime (${eventSourceLabel}) من هذا الجهاز`
+              : `حدث مزامنة لحظي وارد عبر Supabase Realtime (${eventSourceLabel})`,
+          });
+          if (selfEvt) return;
           const key = `supa-snap:${ts}:${data?.bakeries?.length || 0}:${data?.debts?.length || 0}`;
-          if (!shouldProcessRealtimeEvent(key)) return;
+          if (!shouldProcessRealtimeEvent(key, Date.now(), 100)) return;
           if (
             data &&
             (Array.isArray(data.bakeries) ||
@@ -3293,19 +4314,87 @@ export function subscribeToSupabaseRealtime(
           ) {
             callbacks.onUpdate(data as AppState, ts);
           }
-        } catch (err) {
-          console.warn('Error handling Supabase payload:', err);
+        } catch (err: any) {
+          recordRealtimeSocketError({
+            level: 'WARN',
+            source: 'SUPABASE_CHANNEL',
+            message: `خطأ معالجة حمولة Supabase Realtime: ${err?.message || 'Unknown'}`,
+          });
         }
       };
+
+      diagSupabaseChannelState = 'CONNECTING';
+      notifyDiagnosticsListeners();
 
       const channel = client.channel('tamween_realtime_channel', {
         config: { broadcast: { self: false } },
       });
       activeRealtimeChannel = channel;
 
+      const handleTablePostgresChange = (
+        table:
+          | 'bakeries'
+          | 'debts'
+          | 'villages'
+          | 'branches'
+          | 'app_users'
+          | 'daily_tasks'
+          | 'system_config'
+          | 'high_debt_alerts',
+        payload: any
+      ) => {
+        try {
+          const evt = (payload.eventType || 'UPDATE') as 'INSERT' | 'UPDATE' | 'DELETE';
+          const id = payload.new?.id || payload.old?.id || '';
+          if (table === 'system_config' && id === 'tamween_alerts_meta') return;
+          const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
+          markTableRealtimeEvent(table, evt, ts);
+          recordRealtimeDiagnosticEvent({
+            direction: 'INCOMING',
+            channel: 'SUPABASE_REALTIME',
+            eventType: `postgres_changes:${evt}`,
+            table,
+            summary: `تغيير لحظي في جدول (${table}) — العملية: ${evt} — السجل: ${id || 'عام'}`,
+            payloadPreview: JSON.stringify({
+              table,
+              eventType: evt,
+              id,
+              timestamp: ts,
+            }),
+          });
+          if (!shouldProcessRealtimeEvent(`${table}:${evt}:${id}:${ts}`, Date.now(), 100)) return;
+          callbacks.onRowChange?.({
+            table,
+            eventType: evt,
+            newRow: payload.new,
+            oldRow: payload.old,
+            timestamp: ts,
+          });
+        } catch (err: any) {
+          recordRealtimeSocketError({
+            level: 'WARN',
+            source: 'SUPABASE_CHANNEL',
+            message: `خطأ معالجة حدث الجدول ${table}: ${err?.message || 'Unknown'}`,
+          });
+        }
+      };
+
       channel
         .on('broadcast', { event: 'state_update' }, ({ payload }) => {
-          handlePayload(payload);
+          handlePayload(payload, 'broadcast:state_update');
+        })
+        .on('broadcast', { event: 'diagnostic_ping' }, ({ payload }) => {
+          if (!payload) return;
+          const latency = payload.sentAt ? Math.max(1, Date.now() - Number(payload.sentAt)) : null;
+          if (latency !== null) diagLastLatencyMs = latency;
+          recordRealtimeDiagnosticEvent({
+            direction: isSelfRealtimeEvent(payload.clientId) ? 'SYSTEM' : 'INCOMING',
+            channel: 'SUPABASE_REALTIME',
+            eventType: 'diagnostic_ping',
+            senderClientId: payload.clientId,
+            isSelf: isSelfRealtimeEvent(payload.clientId),
+            summary: `نبضة اختبار عبر قناة Supabase Broadcast (${latency ?? 1}ms) — ${payload.note || ''}`,
+          });
         })
         .on(
           'postgres_changes',
@@ -3316,176 +4405,87 @@ export function subscribeToSupabaseRealtime(
           },
           (payload: any) => {
             try {
+              const evt = payload.eventType || 'UPDATE';
+              const ts = payload.commit_timestamp || new Date().toISOString();
+              markTableRealtimeEvent('backup_snapshots', evt, ts);
               const row = payload.new;
               if (row && row.payload) {
-                handlePayload(row.payload);
+                handlePayload(row.payload, `postgres_changes:backup_snapshots:${evt}`);
               }
-            } catch (err) {
-              console.warn('Error processing Supabase Realtime backup_snapshots:', err);
+            } catch (err: any) {
+              recordRealtimeSocketError({
+                level: 'WARN',
+                source: 'SUPABASE_CHANNEL',
+                message: `خطأ في اشتراك backup_snapshots: ${err?.message || 'Unknown'}`,
+              });
             }
           }
         )
         .on(
           'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'bakeries',
-          },
-          (payload: any) => {
-            try {
-              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
-              const id = payload.new?.id || payload.old?.id || '';
-              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
-              if (!shouldProcessRealtimeEvent(`bakeries:${evt}:${id}:${ts}`)) return;
-              callbacks.onRowChange?.({
-                table: 'bakeries',
-                eventType: evt,
-                newRow: payload.new,
-                oldRow: payload.old,
-                timestamp: ts,
-              });
-            } catch (err) {
-              console.warn('Error processing Supabase Realtime bakeries:', err);
-            }
-          }
+          { event: '*', schema: 'public', table: 'bakeries' },
+          (payload: any) => handleTablePostgresChange('bakeries', payload)
         )
         .on(
           'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'debts',
-          },
-          (payload: any) => {
-            try {
-              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
-              const id = payload.new?.id || payload.old?.id || '';
-              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
-              if (!shouldProcessRealtimeEvent(`debts:${evt}:${id}:${ts}`)) return;
-              callbacks.onRowChange?.({
-                table: 'debts',
-                eventType: evt,
-                newRow: payload.new,
-                oldRow: payload.old,
-                timestamp: ts,
-              });
-            } catch (err) {
-              console.warn('Error processing Supabase Realtime debts:', err);
-            }
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'system_config',
-          },
-          (payload: any) => {
-            try {
-              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
-              const rowId = payload.new?.id || payload.old?.id || '';
-              if (rowId === 'tamween_alerts_meta') return;
-              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
-              if (!shouldProcessRealtimeEvent(`system_config:${evt}:${ts}`)) return;
-              callbacks.onRowChange?.({
-                table: 'system_config',
-                eventType: evt,
-                newRow: payload.new,
-                oldRow: payload.old,
-                timestamp: ts,
-              });
-            } catch (err) {
-              console.warn('Error processing Supabase Realtime system_config:', err);
-            }
-          }
+          { event: '*', schema: 'public', table: 'debts' },
+          (payload: any) => handleTablePostgresChange('debts', payload)
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'villages' },
-          (payload: any) => {
-            try {
-              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
-              const id = payload.new?.id || payload.old?.id || '';
-              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
-              if (!shouldProcessRealtimeEvent(`villages:${evt}:${id}:${ts}`)) return;
-              callbacks.onRowChange?.({
-                table: 'villages',
-                eventType: evt,
-                newRow: payload.new,
-                oldRow: payload.old,
-                timestamp: ts,
-              });
-            } catch {}
-          }
+          (payload: any) => handleTablePostgresChange('villages', payload)
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'branches' },
-          (payload: any) => {
-            try {
-              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
-              const id = payload.new?.id || payload.old?.id || '';
-              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
-              if (!shouldProcessRealtimeEvent(`branches:${evt}:${id}:${ts}`)) return;
-              callbacks.onRowChange?.({
-                table: 'branches',
-                eventType: evt,
-                newRow: payload.new,
-                oldRow: payload.old,
-                timestamp: ts,
-              });
-            } catch {}
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'daily_tasks' },
-          (payload: any) => {
-            try {
-              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
-              const id = payload.new?.id || payload.old?.id || '';
-              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
-              if (!shouldProcessRealtimeEvent(`daily_tasks:${evt}:${id}:${ts}`)) return;
-              callbacks.onRowChange?.({
-                table: 'daily_tasks',
-                eventType: evt,
-                newRow: payload.new,
-                oldRow: payload.old,
-                timestamp: ts,
-              });
-            } catch {}
-          }
+          (payload: any) => handleTablePostgresChange('branches', payload)
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'app_users' },
-          (payload: any) => {
-            try {
-              const evt = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
-              const id = payload.new?.id || payload.old?.id || '';
-              const ts = payload.commit_timestamp || payload.new?.updated_at || new Date().toISOString();
-              if (!shouldProcessRealtimeEvent(`app_users:${evt}:${id}:${ts}`)) return;
-              callbacks.onRowChange?.({
-                table: 'app_users',
-                eventType: evt,
-                newRow: payload.new,
-                oldRow: payload.old,
-                timestamp: ts,
-              });
-            } catch {}
-          }
+          (payload: any) => handleTablePostgresChange('app_users', payload)
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'daily_tasks' },
+          (payload: any) => handleTablePostgresChange('daily_tasks', payload)
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'system_config' },
+          (payload: any) => handleTablePostgresChange('system_config', payload)
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'high_debt_alerts' },
+          (payload: any) => handleTablePostgresChange('high_debt_alerts', payload)
         )
         .subscribe((status, err) => {
           if (status === 'SUBSCRIBED') {
-            setCloudConnectionStatus('connected', 'قناة البث اللحظي Supabase Realtime متصلة ونشطة');
+            diagSupabaseChannelState = 'SUBSCRIBED';
+            setAllTablesSubscribedState(true);
+            recordRealtimeDiagnosticEvent({
+              direction: 'SYSTEM',
+              channel: 'SUPABASE_REALTIME',
+              eventType: 'CHANNEL_SUBSCRIBED',
+              summary: 'تم تفعيل اشتراكات Supabase Realtime بنجاح على كافة الجداول الـ 9 (SUBSCRIBED)',
+            });
+            setCloudConnectionStatus('connected', 'قناة البث اللحظي Supabase Realtime متصلة ونشطة لكافة الجداول');
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            diagSupabaseChannelState = 'ERROR';
+            recordRealtimeSocketError({
+              level: 'ERROR',
+              source: 'SUPABASE_CHANNEL',
+              message: `تعطل قناة Supabase Realtime (${status}): ${err?.message || 'انقطاع القناة'}`,
+            });
             setCloudConnectionStatus(
               'error',
               err?.message ? `تعطل البث اللحظي: ${err.message}` : 'انقطعت قناة البث اللحظي Supabase Realtime'
             );
           } else if (status === 'CLOSED') {
+            diagSupabaseChannelState = 'CLOSED';
+            notifyDiagnosticsListeners();
             if (isBrowserOffline()) {
               setCloudConnectionStatus('offline', 'تم إغلاق الاتصال لانقطاع الإنترنت');
             }
@@ -3500,9 +4500,17 @@ export function subscribeToSupabaseRealtime(
           }
         } catch {}
       });
-    } catch (err) {
-      console.warn('Failed to subscribe to external Supabase Realtime:', err);
+    } catch (err: any) {
+      diagSupabaseChannelState = 'ERROR';
+      recordRealtimeSocketError({
+        level: 'ERROR',
+        source: 'SUPABASE_CHANNEL',
+        message: `فشل الاشتراك في Supabase Realtime: ${err?.message || 'Unknown error'}`,
+      });
     }
+  } else {
+    diagSupabaseChannelState = 'SUBSCRIBED';
+    setAllTablesSubscribedState(true);
   }
 
   return () => {

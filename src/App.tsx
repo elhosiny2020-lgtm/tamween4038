@@ -97,6 +97,7 @@ import {
   syncHighDebtAlertsToSupabase,
   clearHighDebtAlertsInSupabase,
   subscribeToSupabaseHighDebtAlerts,
+  recordRealtimeDiagnosticEvent,
 } from './lib/supabase';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
@@ -199,9 +200,11 @@ import {
   Save,
   Clock,
   RotateCw,
-  BookOpen
+  BookOpen,
+  Activity
 } from 'lucide-react';
 import { UserGuideView } from './components/UserGuideView';
+import { RealtimeDiagnosticsView } from './components/RealtimeDiagnosticsView';
 
 const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
   index: 'الرقم المسلسل للمخبز في السجل العام للإدارة',
@@ -266,7 +269,18 @@ const ThHeaderTooltip: React.FC<{ label: string; tooltipKey: string; className?:
 export default function App() {
   const { isInstallable, install } = usePWAInstall();
   const [appState, setAppState] = useState<AppState | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'charts' | 'bakeries' | 'debts' | 'reports' | 'user-guide'>('bakeries');
+  const [activeTab, setActiveTab] = useState<
+    'dashboard' | 'charts' | 'bakeries' | 'debts' | 'reports' | 'user-guide' | 'realtime-diagnostics'
+  >(() => {
+    if (typeof window !== 'undefined') {
+      const search = window.location.search.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      if (search.includes('debug=realtime') || hash.includes('diagnostics')) {
+        return 'realtime-diagnostics';
+      }
+    }
+    return 'bakeries';
+  });
   const [activeReportId, setActiveReportId] = useState<ReportTemplateId>('bak-all');
   const [activeSidebarNavId, setActiveSidebarNavId] = useState<SidebarNavId>('bakeries-all');
   const [breadcrumbGroup, setBreadcrumbGroup] = useState<string>('إدارة المخابز');
@@ -645,6 +659,21 @@ export default function App() {
     ((incomingData: AppState, remoteTimestamp?: string) => void) | null
   >(null);
 
+  // Hidden Diagnostics Shortcut Listener: Ctrl+Shift+D or Alt+Shift+D toggles Realtime Diagnostics View
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.altKey) && e.shiftKey && (e.key === 'D' || e.key === 'd' || e.key === 'ي')) {
+        e.preventDefault();
+        setActiveTab((prev) => (prev === 'realtime-diagnostics' ? 'bakeries' : 'realtime-diagnostics'));
+        setBreadcrumbGroup('مرصد التشخيص المتقدم');
+        setBreadcrumbItem('صفحة تشخيص Supabase Realtime و WebSockets');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Exclusive Real-Time Synchronization via Supabase & Cloud DB across all devices & all branches:
   useEffect(() => {
     const applyIncomingCloudState = (incomingData: AppState, remoteTimestamp?: string) => {
@@ -663,26 +692,57 @@ export default function App() {
         }
 
         const currentBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
-        const mergedBranches = getBranchesList();
-        const activeBranchObj = mergedBranches.find((b) => b.id === currentBranchId);
+        const incomingBranches =
+          Array.isArray(incomingData.branches) && incomingData.branches.length > 0
+            ? incomingData.branches
+            : getBranchesList();
+        const activeBranchObj = incomingBranches.find((b) => b.id === currentBranchId);
         const syncedPartition = readBranchPartitionFromLocal(currentBranchId);
 
-        const nextBakeries = Array.isArray(syncedPartition.bakeries)
+        // Extract incoming branch partition directly in memory from incomingData so AppState updates
+        // immediately even if localStorage quota is full or if incomingData is top-level
+        const directPartitions = (incomingData as any)?.branchPartitions as
+          | Record<string, Partial<AppState>>
+          | undefined;
+        const directBranchData: Partial<AppState> | null =
+          directPartitions?.[currentBranchId] ||
+          ((incomingData.activeBranchId || DEFAULT_BRANCH_ID) === currentBranchId || !directPartitions
+            ? incomingData
+            : null);
+
+        const rawBakeries = Array.isArray(directBranchData?.bakeries)
+          ? directBranchData!.bakeries!
+          : Array.isArray(syncedPartition.bakeries)
           ? syncedPartition.bakeries
           : current.bakeries;
-        const nextDebts = Array.isArray(syncedPartition.debts)
+        const rawDebts = Array.isArray(directBranchData?.debts)
+          ? directBranchData!.debts!
+          : Array.isArray(syncedPartition.debts)
           ? syncedPartition.debts
           : current.debts;
+
+        const syncedMemory = synchronizeBakeryAndDebts(rawBakeries, rawDebts);
+        const nextBakeries = syncedMemory.bakeries;
+        const nextDebts = syncedMemory.debts;
+
         const nextUsers =
-          Array.isArray(syncedPartition.users) && syncedPartition.users.length > 0
+          Array.isArray(directBranchData?.users) && directBranchData!.users!.length > 0
+            ? directBranchData!.users!
+            : Array.isArray(syncedPartition.users) && syncedPartition.users.length > 0
             ? syncedPartition.users
             : current.users;
-        const nextVillages = syncedPartition.villages || current.villages;
-        const nextTasks = syncedPartition.dailyTasks || current.dailyTasks;
-        const nextMessages = syncedPartition.inboxMessages || current.inboxMessages;
+        const nextVillages =
+          (Array.isArray(directBranchData?.villages) && directBranchData!.villages!.length > 0
+            ? directBranchData!.villages
+            : syncedPartition.villages) || current.villages;
+        const nextTasks =
+          directBranchData?.dailyTasks || syncedPartition.dailyTasks || current.dailyTasks;
+        const nextMessages =
+          directBranchData?.inboxMessages || syncedPartition.inboxMessages || current.inboxMessages;
         const nextConfig: SystemConfig = {
           ...current.systemConfig,
           ...(syncedPartition.systemConfig || {}),
+          ...(directBranchData?.systemConfig || {}),
           administrationTitle: activeBranchObj?.name || current.systemConfig.administrationTitle,
           logoBase64: DEFAULT_OFFICIAL_LOGO,
         };
@@ -714,17 +774,18 @@ export default function App() {
           dailyTasks: nextTasks,
           inboxMessages: nextMessages,
           systemConfig: nextConfig,
-          branches: mergedBranches,
+          branches: incomingBranches,
         });
         if (currentSig === nextSig) {
           return current;
         }
 
-        return {
+        const updatedState: AppState = {
           ...current,
           ...(syncedPartition as AppState),
+          ...(directBranchData as Partial<AppState>),
           activeBranchId: currentBranchId,
-          branches: mergedBranches,
+          branches: incomingBranches,
           bakeries: nextBakeries,
           debts: nextDebts,
           villages: nextVillages,
@@ -734,6 +795,32 @@ export default function App() {
           systemConfig: nextConfig,
           currentUser: resolvedCurrentUser,
         };
+
+        queueMicrotask(() => {
+          setSaveTimestamp(
+            new Date().toLocaleTimeString('ar-EG', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })
+          );
+          recordRealtimeDiagnosticEvent({
+            direction: 'APPSTATE',
+            channel: 'APPSTATE_MEMORY',
+            eventType: 'APPSTATE_UPDATED_IMMEDIATELY',
+            table: 'bakeries',
+            summary: `تم تحديث كائن AppState في الذاكرة فوراً (${nextBakeries.length} مخبز، ${nextDebts.length} مديونية، ${nextVillages.length} قرية)`,
+            payloadPreview: JSON.stringify({
+              branchId: currentBranchId,
+              bakeriesCount: nextBakeries.length,
+              debtsCount: nextDebts.length,
+              villagesCount: nextVillages.length,
+              remoteTimestamp,
+            }),
+          });
+        });
+
+        return updatedState;
       });
     };
 
@@ -848,6 +935,13 @@ export default function App() {
           if (!nextState) return current;
           const persistedCopy = nextState;
           queueMicrotask(() => {
+            recordRealtimeDiagnosticEvent({
+              direction: 'APPSTATE',
+              channel: 'APPSTATE_MEMORY',
+              eventType: `ROW_APPLIED:${change.table}:${change.eventType}`,
+              table: change.table,
+              summary: `تم تحديث كائن AppState فوراً استجابة لتعديل سجل في جدول (${change.table})`,
+            });
             persistFullState(persistedCopy, { skipCloudSync: true }).catch(() => {});
           });
           return nextState;
@@ -2297,6 +2391,9 @@ export default function App() {
         break;
 
       // Additional & Dashboard routes
+      case 'realtime-diagnostics':
+        setActiveTab('realtime-diagnostics');
+        break;
       case 'dashboard-charts':
         setActiveTab('charts');
         break;
@@ -2411,13 +2508,20 @@ export default function App() {
                     aria-live="polite"
                     data-testid="cloud-connection-indicator"
                     data-connection-status={connectionSnapshot.status}
-                    title={connectionSnapshot.detail}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border text-[11px] font-black transition-colors ${
+                    onClick={() =>
+                      handleSelectSidebarNav(
+                        'realtime-diagnostics',
+                        'مرصد التشخيص المتقدم',
+                        'صفحة تشخيص Supabase Realtime و WebSockets'
+                      )
+                    }
+                    title={`${connectionSnapshot.detail} — اضغط لفتح لوحة التشخيص المخفية (Ctrl+Shift+D)`}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border text-[11px] font-black transition-colors cursor-pointer ${
                       connectionSnapshot.status === 'connected'
-                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
                         : connectionSnapshot.status === 'syncing'
-                        ? 'bg-amber-50 text-amber-800 border-amber-300'
-                        : 'bg-red-50 text-red-800 border-red-300'
+                        ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                        : 'bg-red-50 text-red-800 border-red-300 hover:bg-red-100'
                     }`}
                   >
                     {connectionSnapshot.status === 'syncing' ? (
@@ -2446,6 +2550,25 @@ export default function App() {
                       </span>
                     )}
                   </span>
+                  <button
+                    type="button"
+                    data-testid="open-realtime-diagnostics-btn"
+                    onClick={() =>
+                      handleSelectSidebarNav(
+                        'realtime-diagnostics',
+                        'مرصد التشخيص المتقدم',
+                        'صفحة تشخيص Supabase Realtime و WebSockets'
+                      )
+                    }
+                    title="فتح الصفحة التشخيصية المخفية لـ Supabase Realtime و WebSockets (Ctrl+Shift+D)"
+                    className={`inline-flex items-center justify-center p-1 rounded-md border transition cursor-pointer ${
+                      activeTab === 'realtime-diagnostics'
+                        ? 'bg-indigo-700 text-white border-indigo-600 shadow-xs'
+                        : 'bg-slate-100 hover:bg-indigo-50 text-slate-500 hover:text-indigo-700 border-slate-200'
+                    }`}
+                  >
+                    <Activity className="w-3.5 h-3.5" />
+                  </button>
                   {(connectionSnapshot.status === 'error' || connectionSnapshot.status === 'offline') && (
                     <button
                       type="button"
@@ -3155,6 +3278,23 @@ export default function App() {
               bakeriesCount={appState.bakeries.length}
               debtsCount={appState.debts.length}
               villagesCount={appState.villages.length}
+            />
+          ) : activeTab === 'realtime-diagnostics' ? (
+            /* HIDDEN REALTIME DIAGNOSTICS VIEW (صفحة التشخيص المخفية لـ Supabase Realtime و WebSockets) */
+            <RealtimeDiagnosticsView
+              appState={appState}
+              saveTimestamp={saveTimestamp}
+              onForceReconnect={handleRetryConnection}
+              onForceSyncNow={async () => {
+                await triggerSave(appState, 'تم دفع وتحديث حالة AppState لحظياً عبر قنوات Realtime بنجاح');
+                await handleManualCloudPull();
+              }}
+              onClose={() => {
+                setActiveTab('bakeries');
+                setActiveSidebarNavId('bakeries-all');
+                setBreadcrumbGroup('1. قسم إدارة المخابز');
+                setBreadcrumbItem('إدارة المخابز');
+              }}
             />
           ) : activeTab === 'reports' ? (
             /* REPORTS CENTER VIEW */

@@ -334,6 +334,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           icon: <HardDrive className="w-4 h-4 shrink-0" />,
         },
         {
+          id: 'realtime-diagnostics',
+          label: 'جدول آخر 50 حدث Realtime والحماية',
+          subtitle: 'DataGrid لآخر 50 حدث مزامنة لحظية وقفل الـ API',
+          icon: <ShieldAlert className="w-4 h-4 shrink-0" />,
+          badge: '50 حدث',
+          badgeColor: 'emerald',
+        },
+        {
           id: 'workspace-calendar',
           label: 'تقويم Google Calendar',
           subtitle: 'مزامنة مواعيد التراخيص والدفعات الأسبوعية',
@@ -659,12 +667,22 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         })}
       </nav>
 
-      {/* Bottom Sidebar Footer */}
+      {/* Bottom Sidebar Footer (Hidden Diagnostics Trigger on Connection Badge) */}
       {!isCollapsed && (
         <div className="px-4 py-3 border-t border-slate-800/90 bg-[#040B18] text-[11px] text-slate-400 font-bold flex items-center justify-between gap-2">
           <span className="truncate">منظومة إدارة التموين والمخابز</span>
-          <span
-            className={`inline-flex items-center gap-1.5 text-[10px] font-black shrink-0 ${
+          <button
+            type="button"
+            data-testid="sidebar-realtime-diagnostics-btn"
+            onClick={() =>
+              onSelectNav(
+                'realtime-diagnostics',
+                'مرصد التشخيص المتقدم',
+                'صفحة تشخيص Supabase Realtime و WebSockets'
+              )
+            }
+            title="فتح صفحة التشخيص المخفية لـ Supabase Realtime و WebSockets (Ctrl+Shift+D)"
+            className={`inline-flex items-center gap-1.5 text-[10px] font-black shrink-0 px-2 py-0.5 rounded hover:bg-slate-800/80 transition cursor-pointer ${
               connectionStatus === 'connected'
                 ? 'text-emerald-400'
                 : connectionStatus === 'syncing'
@@ -681,13 +699,15 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                   : 'bg-red-500'
               }`}
             />
-            {connectionLabel ||
-              (connectionStatus === 'connected'
-                ? 'متصل'
-                : connectionStatus === 'syncing'
-                ? 'مزامنة'
-                : 'غير متصل')}
-          </span>
+            <span>
+              {connectionLabel ||
+                (connectionStatus === 'connected'
+                  ? 'متصل'
+                  : connectionStatus === 'syncing'
+                  ? 'مزامنة'
+                  : 'غير متصل')}
+            </span>
+          </button>
         </div>
       )}
     </aside>

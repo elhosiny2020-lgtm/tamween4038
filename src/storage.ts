@@ -890,16 +890,13 @@ export function shouldApplyIncomingPartitionTimestamp(
   isLocalUntouched: boolean,
   forceRealtimePush: boolean = false
 ): boolean {
+  if (forceRealtimePush) return true;
   if (isLocalUntouched) return true;
   if (!localTs) return true;
-  if (!remoteTs) return forceRealtimePush;
+  if (!remoteTs) return false;
   const localMs = Date.parse(localTs) || 0;
   const remoteMs = Date.parse(remoteTs) || 0;
   if (!localMs || !remoteMs) return true;
-  if (forceRealtimePush) {
-    // Allow 10s clock-skew tolerance on live push events while still blocking genuinely stale old snapshots
-    return remoteMs >= localMs - 10_000;
-  }
   return remoteMs >= localMs;
 }
 

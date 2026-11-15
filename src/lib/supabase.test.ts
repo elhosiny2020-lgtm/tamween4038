@@ -420,3 +420,147 @@ test('Permanent Safety Vault and Non-Destructive Multi-Branch Merge retain all r
   assert.strictEqual(vaultAfterClear?.data.bakeries.length, countBeforeClear);
 });
 
+test('Realtime Diagnostics telemetry tracks all 9 subscribed tables, incoming/outgoing Events Log, AppState memory updates, and WebSocket console errors with zero polling', async () => {
+  const {
+    ALL_SUPABASE_REALTIME_TABLES,
+    getRealtimeDiagnosticsSnapshot,
+    recordRealtimeDiagnosticEvent,
+    markTableRealtimeEvent,
+    recordRealtimeSocketError,
+    clearRealtimeDiagnosticsLogs,
+  } = await import('./supabase');
+
+  clearRealtimeDiagnosticsLogs();
+  const initialSnap = getRealtimeDiagnosticsSnapshot();
+
+  assert.strictEqual(initialSnap.syncMode, 'EVENT_DRIVEN_REALTIME');
+  assert.strictEqual(initialSnap.pollingDisabled, true);
+  assert.strictEqual(ALL_SUPABASE_REALTIME_TABLES.length, 9);
+  assert.strictEqual(initialSnap.tables.length, 9);
+  assert.ok(initialSnap.tables.every((t) => t.subscribed === true));
+
+  markTableRealtimeEvent('bakeries', 'INSERT', '2026-11-14T14:00:00.000Z');
+  recordRealtimeDiagnosticEvent({
+    direction: 'INCOMING',
+    channel: 'SUPABASE_REALTIME',
+    eventType: 'postgres_changes:INSERT',
+    table: 'bakeries',
+    senderClientId: 'remote-device-99',
+    isSelf: false,
+    revision: 7,
+    summary: 'تم استلام مخبز جديد لحظياً من جهاز آخر',
+  });
+
+  recordRealtimeDiagnosticEvent({
+    direction: 'APPSTATE',
+    channel: 'APPSTATE_MEMORY',
+    eventType: 'APPSTATE_UPDATED_IMMEDIATELY',
+    table: 'bakeries',
+    summary: 'تم تحديث كائن AppState في الذاكرة فوراً',
+  });
+
+  recordRealtimeSocketError({
+    level: 'WARN',
+    source: 'WEBSOCKET',
+    message: 'اختبار تسجيل خطأ WebSocket في الكونسول التشخيصي',
+  });
+
+  const updatedSnap = getRealtimeDiagnosticsSnapshot();
+  assert.strictEqual(updatedSnap.eventsLog.length, 2);
+  assert.strictEqual(updatedSnap.errorsLog.length, 1);
+  assert.strictEqual(updatedSnap.lastServerRevision, 7);
+  assert.ok(updatedSnap.lastAppStateAppliedAt);
+
+  const bakeriesTableDiag = updatedSnap.tables.find((t) => t.table === 'bakeries');
+  assert.ok(bakeriesTableDiag && bakeriesTableDiag.eventsReceived >= 2);
+
+  clearRealtimeDiagnosticsLogs();
+  const clearedSnap = getRealtimeDiagnosticsSnapshot();
+  assert.strictEqual(clearedSnap.eventsLog.length, 0);
+  assert.strictEqual(clearedSnap.errorsLog.length, 0);
+});
+
+test('Last 50 Realtime Events DataGrid classifies INSERT, UPDATE, and DELETE mutations across tables, tracks latency cadence, and attaches API security shield headers', async () => {
+  const {
+    detectStateMutationType,
+    getLast50RealtimeEvents,
+    recordRealtimeDiagnosticEvent,
+    clearRealtimeDiagnosticsLogs,
+    getSecurityShieldHeaders,
+    API_SECURITY_SHIELD_TOKEN,
+  } = await import('./supabase');
+
+  // 1. Verify API Security Shield headers
+  const headers = getSecurityShieldHeaders(true);
+  assert.strictEqual(headers['X-Tamween-Security-Token'], API_SECURITY_SHIELD_TOKEN);
+  assert.strictEqual(headers['X-Tamween-Client-Id'], SESSION_CLIENT_ID);
+  assert.strictEqual(headers['Content-Type'], 'application/json');
+
+  // 2. Verify detectStateMutationType classifies INSERT, UPDATE, and DELETE accurately
+  const baseState: any = {
+    bakeries: [{ id: 'b1' }],
+    debts: [{ id: 'd1' }, { id: 'd2' }],
+    villages: [{ village: 'بشبيش' }],
+  };
+  const addedBakeryState: any = {
+    ...baseState,
+    bakeries: [{ id: 'b1' }, { id: 'b2' }],
+  };
+  const deletedDebtState: any = {
+    ...addedBakeryState,
+    debts: [{ id: 'd1' }],
+  };
+  const updatedBakeryState: any = {
+    ...deletedDebtState,
+  };
+
+  assert.deepStrictEqual(detectStateMutationType(baseState, addedBakeryState), {
+    sqlOperation: 'INSERT',
+    affectedTable: 'bakeries',
+  });
+  assert.deepStrictEqual(detectStateMutationType(addedBakeryState, deletedDebtState), {
+    sqlOperation: 'DELETE',
+    affectedTable: 'debts',
+  });
+  assert.deepStrictEqual(detectStateMutationType(deletedDebtState, updatedBakeryState), {
+    sqlOperation: 'UPDATE',
+    affectedTable: 'bakeries',
+  });
+
+  // 3. Verify 50-Event DataGrid FIFO cap and required columns (sqlOperation, affectedTable, timestamp, responseLatencyMs)
+  clearRealtimeDiagnosticsLogs();
+  for (let i = 1; i <= 65; i++) {
+    const op = i % 3 === 0 ? 'DELETE' : i % 2 === 0 ? 'INSERT' : 'UPDATE';
+    const tbl = i % 2 === 0 ? 'bakeries' : 'debts';
+    recordRealtimeDiagnosticEvent({
+      direction: 'INCOMING',
+      channel: 'SUPABASE_REALTIME',
+      eventType: `postgres_changes:${op}`,
+      sqlOperation: op,
+      table: tbl,
+      affectedTable: tbl,
+      responseLatencyMs: 5 + (i % 10),
+      summary: `حدث تجريبي رقم #${i}`,
+    });
+  }
+
+  const last50 = getLast50RealtimeEvents();
+  assert.strictEqual(last50.length, 50);
+  assert.strictEqual(last50[0].summary, 'حدث تجريبي رقم #65');
+  assert.strictEqual(last50[49].summary, 'حدث تجريبي رقم #16');
+  assert.ok(
+    last50.every(
+      (evt) =>
+        (evt.sqlOperation === 'INSERT' ||
+          evt.sqlOperation === 'UPDATE' ||
+          evt.sqlOperation === 'DELETE') &&
+        Boolean(evt.affectedTable) &&
+        Boolean(evt.timestamp) &&
+        typeof evt.responseLatencyMs === 'number' &&
+        evt.responseLatencyMs > 0
+    )
+  );
+  clearRealtimeDiagnosticsLogs();
+});
+
+
