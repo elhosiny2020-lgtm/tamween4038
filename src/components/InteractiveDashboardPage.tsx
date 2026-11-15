@@ -61,16 +61,16 @@ export interface InteractiveDashboardPageProps {
 }
 
 const STATUS_COLOR_MAP: Record<string, string> = {
-  شغال: '#059669',
-  يعمل: '#059669',
-  'متوقف جزئي': '#D97706',
-  'متوقف كلي': '#DC2626',
-  متوقف: '#DC2626',
-  'مغلق بقرار': '#991B1B',
+  شغال: '#10B981',
+  يعمل: '#10B981',
+  'متوقف جزئي': '#D4AF37',
+  'متوقف كلي': '#F43F5E',
+  متوقف: '#F43F5E',
+  'مغلق بقرار': '#BE123C',
   ملغى: '#64748B',
 };
 
-const FALLBACK_PIE_COLORS = ['#1D4ED8', '#059669', '#D97706', '#DC2626', '#0284C7', '#64748B'];
+const FALLBACK_PIE_COLORS = ['#0D9488', '#D4AF37', '#10B981', '#F43F5E', '#0A1628', '#64748B'];
 
 export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> = ({
   bakeries,

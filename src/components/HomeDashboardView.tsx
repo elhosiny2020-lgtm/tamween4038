@@ -418,56 +418,57 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
       {/* 8 Primary Executive KPI Cards (تعتمد على البيانات الحقيقية في القاعدة مع الانتقال السريع) */}
       <div className="space-y-4">
         {/* Executive Home Header Strip */}
-        <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+        <div className="bg-gradient-to-l from-[#0A1628] via-[#0F1E36] to-[#0D9488] border border-[#D4AF37]/40 rounded-3xl px-6 py-5 shadow-xl flex flex-wrap items-center justify-between gap-4 text-white">
           <div>
-            <div className="text-[11px] font-bold text-[#1D4ED8] tracking-wide">
-              نظرة تنفيذية عامة · {stats.totalBakeries} مخبز مسجل
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-black text-[#D4AF37] bg-[#D4AF37]/15 px-3 py-0.5 rounded-full border border-[#D4AF37]/30 tracking-wide mb-1">
+              نظرة تنفيذية شاملة · {stats.totalBakeries} مخبز مسجل
             </div>
-            <h2 className="text-base sm:text-lg font-black text-[#0F2342] mt-0.5">
-              المؤشرات الإحصائية الرئيسية للمنظومة
+            <h2 className="text-lg sm:text-xl font-black text-white mt-0.5">
+              المؤشرات الإحصائية الرئيسية للمنظومة التموينية
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              بيانات حية ومباشرة من قاعدة البيانات — اضغط على أي بطاقة للانتقال إلى السجلات المرتبطة بها
+            <p className="text-xs text-slate-300 mt-0.5 font-bold">
+              بيانات حية ومباشرة من قاعدة البيانات السحابية الموحدة — اضغط على أي بطاقة للانتقال إلى السجلات المرتبطة بها
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
               onClick={onOpenLocalUnitsModal}
-              className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-[#0F2342] border border-slate-300 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer"
+              className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-[#D4AF37]/40 rounded-2xl text-xs font-black inline-flex items-center gap-1.5 transition cursor-pointer"
             >
-              <Layers className="w-3.5 h-3.5 text-[#1D4ED8]" />
+              <Layers className="w-4 h-4 text-[#D4AF37]" />
               <span>الوحدات المحلية</span>
             </button>
             <button
               type="button"
               onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
-              className="px-3.5 py-2 bg-[#0B1B36] hover:bg-[#1E3A8A] text-white rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+              className="px-4 py-2.5 bg-[#D4AF37] hover:bg-amber-400 text-[#0A1628] rounded-2xl text-xs font-black inline-flex items-center gap-1.5 transition cursor-pointer shadow-lg"
             >
               <span>عرض جدول المخابز الكامل</span>
-              <ArrowLeft className="w-3.5 h-3.5" />
+              <ArrowLeft className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1: Total Bakeries */}
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'ALL' })}
-            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-[#1D4ED8] rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
+            className="executive-card rounded-2xl p-5 text-right flex flex-col justify-between cursor-pointer group relative overflow-hidden"
           >
-            <div className="flex items-start justify-between gap-2 w-full">
-              <span className="text-xs font-bold text-slate-600">1. إجمالي عدد المخابز</span>
-              <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1D4ED8] border border-blue-100 flex items-center justify-center shrink-0 group-hover:bg-[#0B1B36] group-hover:text-white transition">
-                <Store className="w-4 h-4" />
+            <div className="h-1.5 w-full bg-gradient-to-l from-[#0A1628] to-[#0D9488] absolute top-0 right-0 left-0" />
+            <div className="flex items-start justify-between gap-2 w-full pt-1">
+              <span className="text-xs font-black text-[#0A1628]">1. إجمالي عدد المخابز</span>
+              <span className="w-10 h-10 rounded-2xl bg-[#0A1628] text-[#D4AF37] border border-[#D4AF37]/40 flex items-center justify-center shrink-0 group-hover:bg-[#0D9488] group-hover:text-white transition shadow-sm">
+                <Store className="w-5 h-5" />
               </span>
             </div>
-            <span className="text-2xl font-black text-[#0F2342] mt-2 block font-mono tabular-nums">
+            <span className="text-3xl font-black text-[#0A1628] mt-3 block font-mono tabular-nums">
               {stats.totalBakeries.toLocaleString()}
             </span>
-            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] font-bold text-emerald-700 w-full">
-              {stats.activeBakeries} شغال · <span className="text-amber-700">{stats.stoppedBakeries} متوقف</span>
+            <div className="mt-3 pt-2.5 border-t border-slate-200/80 text-[11px] font-black text-[#10B981] w-full">
+              {stats.activeBakeries} شغال · <span className="text-[#F43F5E]">{stats.stoppedBakeries} متوقف</span>
             </div>
           </button>
 
@@ -475,20 +476,21 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'QUOTAS' })}
-            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-[#1D4ED8] rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
+            className="executive-card rounded-2xl p-5 text-right flex flex-col justify-between cursor-pointer group relative overflow-hidden"
           >
-            <div className="flex items-start justify-between gap-2 w-full">
-              <span className="text-xs font-bold text-slate-600">2. إجمالي الحصص الفعلية</span>
-              <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1D4ED8] border border-blue-100 flex items-center justify-center shrink-0 group-hover:bg-[#0B1B36] group-hover:text-white transition">
-                <Layers className="w-4 h-4" />
+            <div className="h-1.5 w-full bg-gradient-to-l from-[#0D9488] to-[#10B981] absolute top-0 right-0 left-0" />
+            <div className="flex items-start justify-between gap-2 w-full pt-1">
+              <span className="text-xs font-black text-[#0A1628]">2. إجمالي الحصص الفعلية</span>
+              <span className="w-10 h-10 rounded-2xl bg-[#0D9488]/15 text-[#0D9488] border border-[#0D9488]/30 flex items-center justify-center shrink-0 group-hover:bg-[#0D9488] group-hover:text-white transition shadow-sm">
+                <Layers className="w-5 h-5" />
               </span>
             </div>
-            <span className="text-2xl font-black text-[#0F2342] mt-2 block font-mono tabular-nums">
+            <span className="text-3xl font-black text-[#0D9488] mt-3 block font-mono tabular-nums">
               {stats.totalActualQuota.toLocaleString()}
             </span>
-            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+            <div className="mt-3 pt-2.5 border-t border-slate-200/80 text-[11px] text-slate-600 font-bold w-full">
               شكارة/يوم · التأمينية:{' '}
-              <span className="font-mono tabular-nums font-bold text-[#0F2342]">
+              <span className="font-mono tabular-nums font-black text-[#0A1628]">
                 {stats.totalInsuranceQuota}
               </span>
             </div>
@@ -498,18 +500,19 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'QUOTAS' })}
-            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-emerald-600 rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
+            className="executive-card rounded-2xl p-5 text-right flex flex-col justify-between cursor-pointer group relative overflow-hidden"
           >
-            <div className="flex items-start justify-between gap-2 w-full">
-              <span className="text-xs font-bold text-slate-600">3. إجمالي عدد الأرغفة</span>
-              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center justify-center shrink-0 group-hover:bg-emerald-700 group-hover:text-white transition">
-                <Wheat className="w-4 h-4" />
+            <div className="h-1.5 w-full bg-gradient-to-l from-[#10B981] to-[#0D9488] absolute top-0 right-0 left-0" />
+            <div className="flex items-start justify-between gap-2 w-full pt-1">
+              <span className="text-xs font-black text-[#0A1628]">3. إجمالي عدد الأرغفة</span>
+              <span className="w-10 h-10 rounded-2xl bg-[#10B981]/15 text-[#10B981] border border-[#10B981]/30 flex items-center justify-center shrink-0 group-hover:bg-[#10B981] group-hover:text-white transition shadow-sm">
+                <Wheat className="w-5 h-5" />
               </span>
             </div>
-            <span className="text-2xl font-black text-emerald-700 mt-2 block font-mono tabular-nums">
+            <span className="text-3xl font-black text-[#10B981] mt-3 block font-mono tabular-nums">
               {stats.totalLoaves.toLocaleString()}
             </span>
-            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+            <div className="mt-3 pt-2.5 border-t border-slate-200/80 text-[11px] text-slate-600 font-bold w-full">
               رغيف بلدي مدعم يومياً (× 660 / 725)
             </div>
           </button>
@@ -518,18 +521,19 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateToBakeries({ columnFocus: 'INSURANCE' })}
-            className="bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-amber-600 rounded-xl p-4 text-right shadow-2xs transition flex flex-col justify-between cursor-pointer group"
+            className="executive-card rounded-2xl p-5 text-right flex flex-col justify-between cursor-pointer group relative overflow-hidden"
           >
-            <div className="flex items-start justify-between gap-2 w-full">
-              <span className="text-xs font-bold text-slate-600">4. إجمالي المبالغ التأمينية</span>
-              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 border border-amber-100 flex items-center justify-center shrink-0 group-hover:bg-amber-600 group-hover:text-white transition">
-                <Coins className="w-4 h-4" />
+            <div className="h-1.5 w-full bg-gradient-to-l from-[#D4AF37] to-amber-500 absolute top-0 right-0 left-0" />
+            <div className="flex items-start justify-between gap-2 w-full pt-1">
+              <span className="text-xs font-black text-[#0A1628]">4. إجمالي المبالغ التأمينية</span>
+              <span className="w-10 h-10 rounded-2xl bg-[#D4AF37]/20 text-amber-800 border border-[#D4AF37]/40 flex items-center justify-center shrink-0 group-hover:bg-[#D4AF37] group-hover:text-[#0A1628] transition shadow-sm">
+                <Coins className="w-5 h-5" />
               </span>
             </div>
-            <span className="text-2xl font-black text-[#0F2342] mt-2 block font-mono tabular-nums">
+            <span className="text-3xl font-black text-[#0A1628] mt-3 block font-mono tabular-nums">
               {stats.totalInsuranceValue.toLocaleString()}
             </span>
-            <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold w-full">
+            <div className="mt-3 pt-2.5 border-t border-slate-200/80 text-[11px] text-slate-600 font-bold w-full">
               جنيه مصري · مربوط بالحصة التأمينية
             </div>
           </button>

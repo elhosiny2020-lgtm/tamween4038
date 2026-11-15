@@ -41,9 +41,9 @@ interface BakeryAnalyticsChartsProps {
 }
 
 const COLORS = [
-  '#d97706', '#2563eb', '#10b981', '#ef4444', '#8b5cf6',
-  '#06b6d4', '#f59e0b', '#3b82f6', '#10b981', '#ec4899',
-  '#6366f1', '#14b8a6', '#f97316', '#84cc16', '#a855f7'
+  '#0D9488', '#D4AF37', '#10B981', '#F43F5E', '#0A1628',
+  '#14B8A6', '#F59E0B', '#0F766E', '#059669', '#E11D48',
+  '#334155', '#2DD4BF', '#D97706', '#10B981', '#0D9488'
 ];
 
 export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
@@ -189,18 +189,18 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
   }, [colTotals]);
 
   return (
-    <div className="bg-slate-900 border-2 border-slate-800 rounded-2xl shadow-2xl overflow-hidden no-print mb-5">
+    <div className="bg-[#0A1628] border border-[#D4AF37]/35 rounded-3xl shadow-2xl overflow-hidden no-print mb-5">
       {/* Header Bar */}
-      <div className="bg-gradient-to-r from-black via-slate-950 to-black text-white px-4 py-3 flex items-center justify-between flex-wrap gap-2 border-b border-slate-800">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-inner">
-            <BarChart3 className="w-5 h-5 icon-animated" />
+      <div className="bg-gradient-to-l from-[#0A1628] via-[#0F1E36] to-[#0D9488]/40 text-white px-5 py-3.5 flex items-center justify-between flex-wrap gap-2 border-b border-[#D4AF37]/30">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-[#D4AF37]/20 border border-[#D4AF37]/40 flex items-center justify-center text-[#D4AF37] shadow-inner">
+            <BarChart3 className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-sm font-black text-amber-300">
+            <h3 className="text-sm font-black text-[#FDE68A]">
               الرسوم البيانية والإحصائيات التفاعلية لتوزيع الحصص وتراكم المديونيات
             </h3>
-            <p className="text-[11px] text-slate-400 font-bold">
+            <p className="text-[11px] text-slate-300 font-bold">
               مقارنة الحصص التموينية وتتبع القرى الأكثر تراكماً للمديونيات (Area & Bar Charts)
             </p>
           </div>
@@ -215,16 +215,16 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
               setExeToastMsg(res.message);
               setTimeout(() => setExeToastMsg(null), 5000);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-md transition-transform hover:scale-105 active:scale-95 cursor-pointer border border-amber-300"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-l from-[#D4AF37] to-amber-500 hover:from-amber-400 hover:to-amber-500 text-[#0A1628] rounded-xl text-xs font-black shadow-md transition-transform hover:scale-105 active:scale-95 cursor-pointer border border-[#D4AF37]"
             title="تحميل مشغل ويندوز التنفيذي (EXE) وتثبيت أيقونة سطح المكتب فوراً"
           >
-            <Download className="w-3.5 h-3.5 text-slate-950 icon-animated" />
+            <Download className="w-3.5 h-3.5 text-[#0A1628]" />
             <span>تحميل التطبيق (EXE)</span>
           </button>
 
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-950 hover:bg-slate-800 text-amber-300 rounded-xl text-xs font-black transition-all duration-300 border border-amber-500/30 hover:border-amber-400 cursor-pointer shadow-sm"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-[#0F1E36] hover:bg-[#0D9488] text-[#FDE68A] hover:text-white rounded-xl text-xs font-black transition-all duration-300 border border-[#D4AF37]/40 cursor-pointer shadow-sm"
           >
             {isExpanded ? (
               <>

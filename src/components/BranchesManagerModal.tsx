@@ -1,27 +1,19 @@
 import React, { useState } from 'react';
+import { SupplyBranch } from '../types';
 import {
   Building2,
   Plus,
   Trash2,
   CheckCircle2,
-  ArrowLeftRight,
-  ShieldCheck,
   X,
-  Database,
-  AlertTriangle,
-  Sparkles,
+  ArrowLeftRight,
   MapPin,
+  ShieldCheck,
+  AlertTriangle,
+  Pencil,
+  Check,
   Lock,
-  KeyRound,
 } from 'lucide-react';
-import { SupplyBranch } from '../types';
-import {
-  addSupplyBranch,
-  deleteSupplyBranch,
-  getBranchSummaryStats,
-  sanitizeAndDeduplicateBranches,
-} from '../storage';
-import { normalizeBranchNameKey } from '../utils/branchVaultUtils';
 
 interface BranchesManagerModalProps {
   isOpen: boolean;
@@ -29,328 +21,246 @@ interface BranchesManagerModalProps {
   branches: SupplyBranch[];
   activeBranchId: string;
   onSelectBranch: (branchId: string) => void;
-  onBranchesChange: (
-    updatedBranches: SupplyBranch[],
-    nextActiveBranchId: string
-  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
-  onOpenVaultSecurity?: (targetBranchId?: string | 'ALL') => void;
-  onLockVault?: () => void;
+  onCreateBranch: (name: string, directorate: string, governorate: string, description: string) => void;
+  onRenameBranch: (branchId: string, name: string, directorate: string, governorate: string, description: string) => void;
+  onDeleteBranch: (branchId: string) => void;
+  isVaultUnlocked: boolean;
+  onRequireVaultUnlock: (label: string, onUnlocked: () => void) => void;
 }
-
-const QUICK_SUGGESTED_BRANCHES = [
-  'إدارة تموين مركز المحلة الكبرى',
-  'إدارة تموين سمنود',
-  'إدارة تموين أول المحلة الكبرى',
-  'إدارة تموين ثان المحلة الكبرى',
-  'إدارة تموين زفتى',
-  'إدارة تموين طنطا',
-  'إدارة تموين كفر الزيات',
-  'إدارة تموين السنطة',
-  'إدارة تموين قطور',
-  'إدارة تموين بسيون',
-];
 
 export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   isOpen,
   onClose,
-  branches: rawBranchesProp,
+  branches,
   activeBranchId,
   onSelectBranch,
-  onBranchesChange,
-  onOpenVaultSecurity,
-  onLockVault,
+  onCreateBranch,
+  onRenameBranch,
+  onDeleteBranch,
+  isVaultUnlocked,
+  onRequireVaultUnlock,
 }) => {
-  const branches = React.useMemo(
-    () => sanitizeAndDeduplicateBranches(rawBranchesProp),
-    [rawBranchesProp]
-  );
-  const [newBranchName, setNewBranchName] = useState('');
-  const [newGovernorate, setNewGovernorate] = useState('محافظة الغربية');
+  const [newName, setNewName] = useState('');
   const [newDirectorate, setNewDirectorate] = useState('مديرية التموين والتجارة الداخلية بالغربية');
+  const [newGovernorate, setNewGovernorate] = useState('محافظة الغربية');
   const [newDescription, setNewDescription] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [statusBanner, setStatusBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Inline editing state for renaming/editing branch
+  const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDirectorate, setEditDirectorate] = useState('');
+  const [editGovernorate, setEditGovernorate] = useState('');
+  const [editDescription, setEditDescription] = useState('');
 
   if (!isOpen) return null;
 
-  const handleAddBranch = async (e: React.FormEvent) => {
+  const handleAddBranch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return;
-    const trimmed = newBranchName.trim();
-    if (!trimmed) {
-      setStatusBanner({ type: 'error', text: 'يرجى إدخال اسم الإدارة التموينية / الفرع الجديد.' });
-      return;
-    }
-    const targetNorm = normalizeBranchNameKey(trimmed);
-    if (branches.some((b) => normalizeBranchNameKey(b.name) === targetNorm)) {
-      setStatusBanner({ type: 'error', text: 'هذه الإدارة التموينية مضافة بالفعل في قائمة الفروع (منع التكرار تلقائياً).' });
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const trimmedName = newName.trim();
+    if (!trimmedName) {
+      setErrorMsg('يرجى إدخال اسم الفرع أو الإدارة التموينية الجديدة.');
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const created = addSupplyBranch(trimmed, newDirectorate, newGovernorate, newDescription);
-      const updatedList = sanitizeAndDeduplicateBranches([...branches, created]);
-      const res = await onBranchesChange(updatedList, activeBranchId);
-      if (res && res.success === false && !res.queuedOffline) {
-        setStatusBanner({
-          type: 'error',
-          text: res.error || 'تعذر حفظ الإدارة التموينية الجديدة في قاعدة البيانات.',
-        });
-        return;
-      }
-      setNewBranchName('');
-      setNewDescription('');
-      setStatusBanner({
-        type: 'success',
-        text: `تمت إضافة وحفظ "${created.name}" بقاعدة بيانات مستقلة ومنفصلة تماماً عن باقي الإدارات.`,
-      });
-    } finally {
-      setIsSubmitting(false);
+    const exists = branches.some((b) => b.name.trim() === trimmedName);
+    if (exists) {
+      setErrorMsg('يوجد فرع بنفس هذا الاسم مسجل بالفعل.');
+      return;
     }
+
+    const executeCreate = () => {
+      onCreateBranch(
+        trimmedName,
+        newDirectorate.trim() || 'مديرية التموين والتجارة الداخلية بالغربية',
+        newGovernorate.trim() || 'محافظة الغربية',
+        newDescription.trim() || `قاعدة بيانات مستقلة (${trimmedName})`
+      );
+      setNewName('');
+      setNewDescription('');
+      setSuccessMsg(`تم إنشاء فرع "${trimmedName}" وتخصيص قاعدة بيانات مستقلة له بنجاح.`);
+    };
+
+    if (!isVaultUnlocked) {
+      onRequireVaultUnlock(`إضافة فرع جديد (${trimmedName})`, executeCreate);
+      return;
+    }
+
+    executeCreate();
   };
 
-  const handleConfirmDelete = async (branchId: string) => {
-    if (isSubmitting) return;
-    setIsSubmitting(true);
-    try {
-      const res = deleteSupplyBranch(branchId);
-      setConfirmDeleteId(null);
-      if (!res.success) {
-        setStatusBanner({ type: 'error', text: res.message });
-        return;
-      }
-      const dbRes = await onBranchesChange(res.branches, res.nextActiveBranchId);
-      if (dbRes && dbRes.success === false && !dbRes.queuedOffline) {
-        setStatusBanner({ type: 'error', text: dbRes.error || 'تعذر حذف الفرع من قاعدة البيانات.' });
-        return;
-      }
-      setStatusBanner({ type: 'success', text: res.message });
-    } finally {
-      setIsSubmitting(false);
+  const handleStartEditBranch = (branch: SupplyBranch) => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const openEditor = () => {
+      setEditingBranchId(branch.id);
+      setEditName(branch.name);
+      setEditDirectorate(
+        branch.directorateTitle || branch.directorate || 'مديرية التموين والتجارة الداخلية بالغربية'
+      );
+      setEditGovernorate(branch.governorateTitle || branch.governorate || 'محافظة الغربية');
+      setEditDescription(branch.description || '');
+    };
+
+    if (!isVaultUnlocked) {
+      onRequireVaultUnlock(`تعديل اسم وبيانات فرع (${branch.name})`, openEditor);
+      return;
     }
+
+    openEditor();
+  };
+
+  const handleSaveEditBranch = (branchId: string) => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const trimmedName = editName.trim();
+    if (!trimmedName) {
+      setErrorMsg('اسم الفرع لا يمكن أن يكون فارغاً.');
+      return;
+    }
+
+    const duplicate = branches.some(
+      (b) => b.id !== branchId && b.name.trim() === trimmedName
+    );
+    if (duplicate) {
+      setErrorMsg('يوجد فرع آخر مسجل بنفس هذا الاسم.');
+      return;
+    }
+
+    const executeRename = () => {
+      onRenameBranch(
+        branchId,
+        trimmedName,
+        editDirectorate.trim() || 'مديرية التموين والتجارة الداخلية بالغربية',
+        editGovernorate.trim() || 'محافظة الغربية',
+        editDescription.trim() || `قاعدة بيانات مستقلة (${trimmedName})`
+      );
+      setEditingBranchId(null);
+      setSuccessMsg(`تم تحديث اسم الفرع إلى "${trimmedName}" ومزامنته على جميع الأجهزة بنجاح.`);
+    };
+
+    if (!isVaultUnlocked) {
+      onRequireVaultUnlock(`حفظ تعديل اسم الفرع (${trimmedName})`, executeRename);
+      return;
+    }
+
+    executeRename();
+  };
+
+  const handleRequestDelete = (branch: SupplyBranch) => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const askConfirm = () => {
+      setConfirmDeleteId(branch.id);
+    };
+
+    if (!isVaultUnlocked) {
+      onRequireVaultUnlock(`حذف فرع (${branch.name})`, askConfirm);
+      return;
+    }
+
+    askConfirm();
+  };
+
+  const handleConfirmDelete = (branchId: string) => {
+    const executeDelete = () => {
+      onDeleteBranch(branchId);
+      setConfirmDeleteId(null);
+      setSuccessMsg('تم حذف الفرع من قائمة الفروع بنجاح.');
+    };
+
+    if (!isVaultUnlocked) {
+      onRequireVaultUnlock('تأكيد حذف الفرع التمويني', executeDelete);
+      return;
+    }
+
+    executeDelete();
   };
 
   return (
     <div
-      className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-[120] bg-[#0A1628]/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto"
       dir="rtl"
     >
-      <div className="bg-white rounded-3xl shadow-2xl border-2 border-indigo-200 w-full max-w-4xl overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-200">
-        {/* Header */}
-        <div className="bg-gradient-to-l from-slate-900 via-indigo-950 to-slate-900 text-white px-6 py-5 flex items-center justify-between border-b-4 border-amber-500">
+      <div className="bg-[#FAF8F5] rounded-3xl shadow-2xl border border-[#D4AF37]/30 w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        {/* Luxury Midnight Navy & Champagne Gold Header */}
+        <div className="bg-gradient-to-l from-[#0A1628] via-[#0F1E36] to-[#0D9488] px-6 py-5 text-white flex items-center justify-between border-b border-[#D4AF37]/40">
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-inner">
-              <Building2 className="w-7 h-7" />
+            <div className="w-12 h-12 rounded-2xl bg-[#D4AF37]/20 border border-[#D4AF37]/50 flex items-center justify-center shadow-inner">
+              <Building2 className="w-6 h-6 text-[#D4AF37]" />
             </div>
             <div>
-              <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
-                قسم إدارة الفروع والإدارات التموينية المستقلة
-                <span className="text-xs font-extrabold px-2.5 py-0.5 rounded-md bg-amber-500 text-slate-950">
-                  {branches.length} إدارات مسجلة
+              <h2 className="text-xl font-black tracking-tight flex items-center gap-2 text-white">
+                قسم إدارة الفروع والإدارات التموينية
+                <span className="text-xs font-extrabold bg-[#D4AF37]/20 text-[#FDE68A] px-2.5 py-0.5 rounded-full border border-[#D4AF37]/40">
+                  {branches.length} فروع مسجلة
                 </span>
               </h2>
-              <p className="text-xs text-indigo-200 font-bold mt-0.5">
-                إضافة وحذف الإدارات التموينية والتحكم في الفروع — كل إدارة منفصلة تماماً في البيانات والمخابز والمديونيات
+              <p className="text-xs text-slate-300 font-bold mt-0.5">
+                التنقل بين الفروع متاح مباشرة على الواجهة — الإضافة أو التعديل أو الحذف محمي ببيانات الاعتماد
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {onOpenVaultSecurity && (
-              <button
-                type="button"
-                onClick={() => onOpenVaultSecurity('ALL')}
-                className="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-400/50 text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
-                title="قائمة الباسورد والـ Username لجميع الفروع"
-              >
-                <KeyRound className="w-4 h-4" />
-                <span>تغيير الباسورد على جميع الفروع</span>
-              </button>
-            )}
-            {onLockVault && (
-              <button
-                type="button"
-                onClick={() => {
-                  onLockVault();
-                  onClose();
-                }}
-                className="px-3 py-2 rounded-xl bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
-                title="قفل قسم الفروع والحفظ فوراً"
-              >
-                <Lock className="w-4 h-4" />
-                <span>قفل الفروع فوراً</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 rounded-xl bg-white/10 hover:bg-rose-600 text-white transition cursor-pointer"
-              title="إغلاق"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-10 h-10 rounded-xl bg-white/10 hover:bg-rose-500/30 text-white flex items-center justify-center transition-colors border border-white/15 cursor-pointer"
+            title="إغلاق"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        <div className="p-6 max-h-[82vh] overflow-y-auto space-y-6 bg-slate-50">
-          {/* Strict Isolation Notice */}
-          <div className="bg-emerald-950 text-emerald-100 rounded-2xl p-4 border border-emerald-700/60 flex items-start gap-3 shadow-sm">
-            <ShieldCheck className="w-6 h-6 text-emerald-400 shrink-0 mt-0.5" />
-            <div className="text-xs leading-relaxed font-bold">
-              <span className="text-emerald-300 font-black block text-sm mb-0.5">
-                عزل كامل للبيانات بين جميع الإدارات التموينية (100% Data Isolation):
-              </span>
-              جميع الإدارات منفصلة في المنظومة عن بعضها في بيانات المخابز، الحصص، المديونيات، القرى، والتقارير. لا يظهر أي سجل أو معلومة لأي إدارة أخرى إلا إذا اخترت الدخول على واجهة تلك الإدارة.
-            </div>
-          </div>
-
-          {statusBanner && (
-            <div
-              className={`p-3.5 rounded-xl border text-xs font-black flex items-center justify-between ${
-                statusBanner.type === 'success'
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                  : 'bg-rose-50 border-rose-300 text-rose-900'
-              }`}
-            >
-              <span>{statusBanner.text}</span>
-              <button
-                type="button"
-                onClick={() => setStatusBanner(null)}
-                className="text-slate-500 hover:text-slate-900 font-black px-2"
-              >
-                ✕
-              </button>
+        <div className="p-6 space-y-6 max-h-[82vh] overflow-y-auto">
+          {errorMsg && (
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3 rounded-2xl text-xs font-black flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{errorMsg}</span>
             </div>
           )}
 
-          {/* Add New Branch Section */}
-          <form
-            onSubmit={handleAddBranch}
-            className="bg-white rounded-2xl p-5 border-2 border-indigo-100 shadow-sm space-y-4"
-          >
-            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                <Plus className="w-5 h-5 text-indigo-600" />
-                إضافة إدارة تموينية / فرع جديد للمنظومة
+          {successMsg && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-2xl text-xs font-black flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
+          {/* Active Branches Grid */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-black text-[#0A1628] flex items-center gap-2">
+                <ArrowLeftRight className="w-4 h-4 text-[#0D9488]" />
+                اختر الإدارة أو الفرع للتبديل الفوري (أو اضغط تعديل لتغيير اسم الفرع):
               </h3>
-              <span className="text-[11px] font-bold text-slate-500">
-                يمكنك التحكم في عدد الإدارات في أي وقت بالزيادة أو الحذف
+              <span className="text-[11px] font-bold text-[#0D9488] bg-[#0D9488]/10 px-3 py-1 rounded-xl border border-[#0D9488]/20 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-[#D4AF37]" />
+                الإضافة والتعديل والحذف محمية بـ Username & Password
               </span>
             </div>
 
-            {/* Quick suggestions */}
-            <div>
-              <label className="block text-[11px] font-black text-slate-600 mb-1.5 flex items-center gap-1">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                اختيار سريع لاسم إدارة مقترحة (أو اكتب أي اسم إدارة بالأسفل):
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {QUICK_SUGGESTED_BRANCHES.map((suggestion) => {
-                  const alreadyExists = branches.some(
-                    (b) => normalizeBranchNameKey(b.name) === normalizeBranchNameKey(suggestion)
-                  );
-                  return (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      disabled={alreadyExists}
-                      onClick={() => setNewBranchName(suggestion)}
-                      className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border transition ${
-                        alreadyExists
-                          ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed line-through'
-                          : newBranchName === suggestion
-                          ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm cursor-pointer'
-                          : 'bg-indigo-50/70 hover:bg-indigo-100 text-indigo-900 border-indigo-200 cursor-pointer'
-                      }`}
-                    >
-                      {suggestion} {alreadyExists ? '(مضافة)' : '+'}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-black text-slate-700 mb-1">
-                  اسم الإدارة التموينية / الفرع الجديد <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={newBranchName}
-                  onChange={(e) => setNewBranchName(e.target.value)}
-                  placeholder="مثال: إدارة تموين سمنود / إدارة تموين زفتى / إدارة تموين طنطا..."
-                  className="w-full px-3.5 py-2.5 rounded-xl border-2 border-slate-200 focus:border-indigo-600 focus:outline-none text-sm font-black text-slate-900"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">المحافظة</label>
-                <input
-                  type="text"
-                  value={newGovernorate}
-                  onChange={(e) => setNewGovernorate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border-2 border-slate-200 focus:border-indigo-600 focus:outline-none text-xs font-bold text-slate-800"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">المديرية التموينية</label>
-                <input
-                  type="text"
-                  value={newDirectorate}
-                  onChange={(e) => setNewDirectorate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border-2 border-slate-200 focus:border-indigo-600 focus:outline-none text-xs font-bold text-slate-800"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">وصف / ملاحظة للفرع (اختياري)</label>
-                <input
-                  type="text"
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder="وصف مختصر للإدارة..."
-                  className="w-full px-3.5 py-2.5 rounded-xl border-2 border-slate-200 focus:border-indigo-600 focus:outline-none text-xs font-bold text-slate-800"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full py-2.5 px-4 bg-gradient-to-l from-indigo-700 to-indigo-600 hover:from-indigo-800 hover:to-indigo-700 disabled:opacity-60 text-white font-black text-sm rounded-xl shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                {isSubmitting ? 'جاري حفظ الإدارة...' : 'إضافة الإدارة التموينية الآن'}
-              </button>
-            </div>
-          </form>
-
-          {/* List of Existing Branches */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-black text-slate-900 flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-indigo-700" />
-                الإدارات التموينية والفروع المتاحة في المنظومة ({branches.length})
-              </span>
-              <span className="text-xs font-bold text-indigo-700">
-                اضغط «الدخول على واجهة الإدارة» لفتح بياناتها المستقلة
-              </span>
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {branches.map((branch) => {
                 const isActive = branch.id === activeBranchId;
-                const stats = getBranchSummaryStats(branch.id);
-                const isConfirmingDelete = confirmDeleteId === branch.id;
+                const isEditing = editingBranchId === branch.id;
 
                 return (
                   <div
                     key={branch.id}
-                    className={`rounded-2xl p-4 border-2 transition flex flex-col justify-between gap-3 ${
+                    data-testid={`branch-card-${branch.id}`}
+                    className={`rounded-2xl border-2 p-4 transition-all flex flex-col justify-between ${
                       isActive
-                        ? 'bg-indigo-950 text-white border-amber-400 shadow-lg ring-2 ring-amber-400/30'
-                        : 'bg-white text-slate-900 border-slate-200 hover:border-indigo-300 shadow-sm'
+                        ? 'border-[#0D9488] bg-gradient-to-br from-[#0D9488]/10 via-white to-[#D4AF37]/10 shadow-lg ring-2 ring-[#0D9488]/20'
+                        : 'border-slate-200/90 bg-white hover:border-[#0D9488]/50 hover:shadow-md'
                     }`}
                   >
                     <div>
@@ -359,179 +269,258 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                           <div
                             className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black ${
                               isActive
-                                ? 'bg-amber-400 text-slate-950'
-                                : 'bg-indigo-100 text-indigo-800'
+                                ? 'bg-[#0A1628] text-[#D4AF37] shadow-md border border-[#D4AF37]/40'
+                                : 'bg-[#F1F5F9] text-[#0A1628]'
                             }`}
                           >
-                            <MapPin className="w-5 h-5" />
+                            <Building2 className="w-5 h-5" />
                           </div>
                           <div>
-                            <h4 className="font-black text-base leading-snug">{branch.name}</h4>
-                            <p
-                              className={`text-[11px] font-bold ${
-                                isActive ? 'text-indigo-200' : 'text-slate-500'
-                              }`}
-                            >
-                              {branch.directorateTitle} — {branch.governorateTitle}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-black text-[#0A1628] text-sm">{branch.name}</h4>
+                              {isActive && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-[#10B981] text-white shadow-xs">
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  الفرع النشط حالياً
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1 mt-0.5">
+                              <MapPin className="w-3 h-3 text-[#0D9488]" />
+                              {branch.governorateTitle || branch.governorate || 'محافظة الغربية'} -{' '}
+                              {branch.directorateTitle ||
+                                branch.directorate ||
+                                'مديرية التموين والتجارة الداخلية بالغربية'}
                             </p>
                           </div>
                         </div>
 
-                        {isActive && (
-                          <span className="px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-black text-[11px] flex items-center gap-1 shrink-0">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            الواجهة النشطة حالياً
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Isolated Stats */}
-                      <div
-                        className={`mt-3 grid grid-cols-3 gap-2 p-2.5 rounded-xl text-center border ${
-                          isActive
-                            ? 'bg-slate-900/90 border-indigo-800 text-white'
-                            : 'bg-slate-50 border-slate-200/80 text-slate-800'
-                        }`}
-                      >
-                        <div>
-                          <div
-                            className={`text-[10px] font-bold ${
-                              isActive ? 'text-indigo-300' : 'text-slate-500'
-                            }`}
-                          >
-                            المخابز المسجلة
-                          </div>
-                          <div className="text-sm font-black mt-0.5">{stats.bakeriesCount} مخبز</div>
-                        </div>
-                        <div className="border-x border-slate-500/20">
-                          <div
-                            className={`text-[10px] font-bold ${
-                              isActive ? 'text-indigo-300' : 'text-slate-500'
-                            }`}
-                          >
-                            قيود المديونيات
-                          </div>
-                          <div className="text-sm font-black mt-0.5">{stats.debtsCount} قيد</div>
-                        </div>
-                        <div>
-                          <div
-                            className={`text-[10px] font-bold ${
-                              isActive ? 'text-indigo-300' : 'text-slate-500'
-                            }`}
-                          >
-                            القرى والوحدات
-                          </div>
-                          <div className="text-sm font-black mt-0.5">{stats.villagesCount} قطاع</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    {isConfirmingDelete ? (
-                      <div className="bg-rose-950 text-white p-3 rounded-xl border border-rose-500 space-y-2">
-                        <div className="flex items-center gap-1.5 text-xs font-black text-rose-200">
-                          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                          هل أنت متأكد من حذف «{branch.name}» وكافة بياناته المستقلة نهائياً؟
-                        </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={() => handleConfirmDelete(branch.id)}
-                            className="flex-1 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-black cursor-pointer"
+                            onClick={() => handleStartEditBranch(branch)}
+                            data-testid={`rename-branch-btn-${branch.id}`}
+                            className="text-slate-500 hover:text-[#0D9488] p-1.5 rounded-lg hover:bg-[#0D9488]/10 transition-colors cursor-pointer"
+                            title="تعديل اسم الفرع (يتطلب Username & Password)"
                           >
-                            نعم، احذف الفرع نهائياً
+                            <Pencil className="w-4 h-4" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteId(null)}
-                            className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-bold cursor-pointer"
-                          >
-                            إلغاء
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-2 pt-1">
-                        {onOpenVaultSecurity && (
-                          <div
-                            className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-[11px] font-bold ${
-                              isActive
-                                ? 'bg-slate-900/90 border-amber-400/40 text-amber-200'
-                                : 'bg-amber-50/70 border-amber-200 text-slate-800'
-                            }`}
-                          >
-                            <div className="flex items-center gap-1.5 truncate">
-                              <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                              <span className="truncate">
-                                حماية الحفظ والنسخ: <strong>Username & Password (••••••••)</strong>
-                              </span>
-                            </div>
+
+                          {!branch.isDefault && branch.id !== 'branch_mahalla_center' && (
                             <button
                               type="button"
-                              onClick={() => onOpenVaultSecurity(branch.id)}
-                              className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] shrink-0 cursor-pointer transition"
-                            >
-                              تخصيص باسورد الفرع
-                            </button>
-                          </div>
-                        )}
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onSelectBranch(branch.id);
-                              onClose();
-                            }}
-                            className={`flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                              isActive
-                                ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm'
-                                : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
-                            }`}
-                          >
-                            <ArrowLeftRight className="w-4 h-4" />
-                            {isActive ? 'مفتوحة حالياً (تأكيد الدخول)' : 'الدخول على واجهة هذه الإدارة'}
-                          </button>
-
-                          {branches.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(branch.id)}
-                              className={`p-2 rounded-xl border transition cursor-pointer ${
-                                isActive
-                                  ? 'bg-rose-500/20 border-rose-400/40 text-rose-200 hover:bg-rose-600 hover:text-white'
-                                  : 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-600 hover:text-white'
-                              }`}
-                              title="حذف هذه الإدارة التموينية"
+                              onClick={() => handleRequestDelete(branch)}
+                              data-testid={`delete-branch-btn-${branch.id}`}
+                              className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="حذف الفرع (يتطلب Username & Password)"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>
                       </div>
-                    )}
+
+                      {isEditing ? (
+                        <div className="mt-3 p-3 rounded-xl bg-[#F1F5F9] border border-[#0D9488]/30 space-y-2.5">
+                          <div>
+                            <label className="block text-[10px] font-black text-[#0A1628] mb-1">
+                              اسم الفرع / الإدارة التموينية
+                            </label>
+                            <input
+                              type="text"
+                              data-testid={`rename-branch-input-${branch.id}`}
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              className="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-black text-[#0A1628] mb-1">
+                                المحافظة
+                              </label>
+                              <input
+                                type="text"
+                                value={editGovernorate}
+                                onChange={(e) => setEditGovernorate(e.target.value)}
+                                className="w-full px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-[11px] font-bold text-[#0A1628]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-black text-[#0A1628] mb-1">
+                                المديرية التموينية
+                              </label>
+                              <input
+                                type="text"
+                                value={editDirectorate}
+                                onChange={(e) => setEditDirectorate(e.target.value)}
+                                className="w-full px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-[11px] font-bold text-[#0A1628]"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditingBranchId(null)}
+                              className="px-3 py-1 rounded-lg bg-white border border-slate-300 text-slate-600 text-xs font-bold hover:bg-slate-100 cursor-pointer"
+                            >
+                              إلغاء
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`save-rename-branch-btn-${branch.id}`}
+                              onClick={() => handleSaveEditBranch(branch.id)}
+                              className="px-3.5 py-1 rounded-lg bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-black flex items-center gap-1 shadow-xs cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              حفظ التعديل
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        branch.description && (
+                          <p className="text-xs text-slate-600 font-medium mt-2.5 bg-[#F1F5F9] px-3 py-1.5 rounded-xl border border-slate-200/80">
+                            {branch.description}
+                          </p>
+                        )
+                      )}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-200/70 flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-500 flex items-center gap-1">
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#0D9488]" />
+                        قاعدة بيانات مستقلة ومزامنة لحظية
+                      </span>
+
+                      {confirmDeleteId === branch.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleConfirmDelete(branch.id)}
+                            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-black cursor-pointer"
+                          >
+                            تأكيد الحذف
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold cursor-pointer"
+                          >
+                            إلغاء
+                          </button>
+                        </div>
+                      ) : isActive ? (
+                        <span className="text-xs font-black text-[#0D9488] px-3 py-1.5 rounded-xl bg-[#0D9488]/10 border border-[#0D9488]/30">
+                          أنت تعمل على هذا الفرع الآن
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid={`switch-to-branch-${branch.id}`}
+                          onClick={() => {
+                            onSelectBranch(branch.id);
+                            onClose();
+                          }}
+                          className="px-3.5 py-1.5 rounded-xl bg-[#0A1628] hover:bg-[#0D9488] text-white text-xs font-black shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <ArrowLeftRight className="w-3.5 h-3.5 text-[#D4AF37]" />
+                          الدخول على واجهة هذه الإدارة
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="bg-slate-100 px-6 py-3.5 border-t border-slate-200 flex items-center justify-between">
-          <div className="text-xs font-bold text-slate-600">
-            الإدارة المختارة حالياً:{' '}
-            <span className="font-black text-indigo-900">
-              {branches.find((b) => b.id === activeBranchId)?.name || ''}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl transition cursor-pointer"
+          {/* Add New Branch Form */}
+          <form
+            onSubmit={handleAddBranch}
+            className="bg-white rounded-2xl border border-[#D4AF37]/40 p-5 space-y-4 shadow-sm"
           >
-            إغلاق نافذة الفروع
-          </button>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-[#0A1628] text-[#D4AF37] flex items-center justify-center">
+                  <Plus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-[#0A1628]">
+                    إضافة فرع أو إدارة تموينية جديدة بنسخة مستقلة
+                  </h3>
+                  <p className="text-[11px] font-bold text-slate-500">
+                    يتطلب إدخال Username & Password عند الضغط على زر الإنشاء
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-black text-[#0A1628] mb-1">
+                  اسم الإدارة / الفرع الجديد *
+                </label>
+                <input
+                  type="text"
+                  data-testid="new-branch-name-input"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="مثال: إدارة تموين سمنود"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-[#0A1628] mb-1">
+                  المديرية التابع لها
+                </label>
+                <input
+                  type="text"
+                  value={newDirectorate}
+                  onChange={(e) => setNewDirectorate(e.target.value)}
+                  placeholder="مديرية التموين والتجارة الداخلية بالغربية"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-[#0A1628] mb-1">
+                  المحافظة
+                </label>
+                <input
+                  type="text"
+                  value={newGovernorate}
+                  onChange={(e) => setNewGovernorate(e.target.value)}
+                  placeholder="محافظة الغربية"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+              <div className="flex-1">
+                <label className="block text-xs font-black text-[#0A1628] mb-1">
+                  وصف أو ملاحظات عن نطاق الفرع (اختياري)
+                </label>
+                <input
+                  type="text"
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="مثال: قاعدة بيانات مخبز بلدي ومديونيات وسجل المستخدمين الخاصة بهذا الفرع"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                data-testid="create-branch-submit-btn"
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-l from-[#0A1628] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] text-white font-black text-sm shadow-md transition-all flex items-center justify-center gap-2 shrink-0 border border-[#D4AF37]/30 cursor-pointer"
+              >
+                <Plus className="w-4 h-4 text-[#D4AF37]" />
+                إنشاء الفرع وتفعيل نسخته المستقلة
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>

@@ -4085,11 +4085,55 @@ export async function fetchDatabaseFromSupabase(): Promise<{
     }
   }
 
-  // 2. Same-Origin / Shared Live-DB WebSocket Relay (handles multi-device sync seamlessly out-of-the-box)
+  // 2. Authoritative PostgreSQL Relational Bootstrap + Shared Live-DB Relay
   if (typeof window !== 'undefined') {
     const activeBranchId = getStoredActiveBranchId();
-    const liveDbUrl = `${getLiveDbApiUrl()}?branchId=${encodeURIComponent(activeBranchId)}`;
+    const pgBootstrapUrl = `${window.location.protocol}//${window.location.host}/api/db/bootstrap?branchId=${encodeURIComponent(
+      activeBranchId
+    )}&_t=${Date.now()}`;
+    const pgBootSnap = await fetch(pgBootstrapUrl, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: getSecurityShieldHeaders(false),
+    })
+      .then(async (r) => {
+        if (r.ok) {
+          serverReachable = true;
+          return await r.json();
+        }
+        return null;
+      })
+      .catch(() => null);
+
+    if (pgBootSnap && pgBootSnap.success) {
+      const pgStatePayload: any = {
+        activeBranchId,
+        branches: pgBootSnap.branches,
+        villages: pgBootSnap.villages,
+        bakeries: Array.isArray(pgBootSnap.bakeries) ? pgBootSnap.bakeries : [],
+        debts: Array.isArray(pgBootSnap.debts) ? pgBootSnap.debts : [],
+        users: pgBootSnap.users,
+        dailyTasks: pgBootSnap.dailyTasks,
+        inboxMessages: pgBootSnap.inboxMessages,
+        ...(pgBootSnap.systemConfig ? { systemConfig: pgBootSnap.systemConfig } : {}),
+        ...(pgBootSnap.columnTitles && Object.keys(pgBootSnap.columnTitles).length > 0
+          ? { columnTitles: pgBootSnap.columnTitles }
+          : {}),
+        ...(pgBootSnap.activityStatuses?.length ? { activityStatuses: pgBootSnap.activityStatuses } : {}),
+        ...(pgBootSnap.dropdownLists || {}),
+      };
+      // Give authoritative PostgreSQL relational tables the highest priority timestamp
+      candidates.push({
+        data: pgStatePayload as AppState,
+        timestamp: new Date(Date.now() + 5000).toISOString(),
+        source: 'قاعدة البيانات السحابية الموحدة (PostgreSQL / Supabase)',
+      });
+    }
+
+    const liveDbUrl = `${getLiveDbApiUrl()}?branchId=${encodeURIComponent(activeBranchId)}&_t=${Date.now()}`;
     const serverSnap = await fetch(liveDbUrl, {
+      cache: 'no-store',
       headers: getSecurityShieldHeaders(false),
     })
       .then(async (r) => {

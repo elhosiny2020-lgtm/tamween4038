@@ -27,6 +27,9 @@ import {
   mergeStates,
   mergeUsersList,
   saveBranchesList,
+  createSupplyBranch,
+  renameSupplyBranch,
+  deleteSupplyBranch,
   syncAllBranchesFromCloudPayload,
   readBranchPartitionFromLocal,
   isDefaultSeedState
@@ -958,8 +961,56 @@ export default function App() {
       } catch {}
     }
 
+    // 4. Continuous 2.5-second Authoritative PostgreSQL Bootstrap Poll across devices:
+    // Guarantees instant multi-device & cross-browser sync even if WebSockets/SSE are buffered by proxies
+    const livePgPollTimer = setInterval(async () => {
+      try {
+        if (typeof window === 'undefined' || typeof navigator === 'undefined' || navigator.onLine === false) {
+          return;
+        }
+        // Skip polling while a local mutation is actively being committed
+        const current = latestAppStateRef.current;
+        if (!current) return;
+        const activeBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+        const resp = await fetch(
+          `${window.location.protocol}//${window.location.host}/api/db/bootstrap?branchId=${encodeURIComponent(
+            activeBranchId
+          )}&_t=${Date.now()}`,
+          {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'same-origin',
+          }
+        ).catch(() => null);
+        if (!resp || !resp.ok) return;
+        const bootJson = await resp.json().catch(() => null);
+        if (!bootJson?.success) return;
+
+        const bootPayload: any = {
+          activeBranchId,
+          branches: bootJson.branches,
+          villages: bootJson.villages?.length ? bootJson.villages : undefined,
+          bakeries: Array.isArray(bootJson.bakeries) ? bootJson.bakeries : [],
+          debts: Array.isArray(bootJson.debts) ? bootJson.debts : [],
+          users: bootJson.users?.length ? bootJson.users : undefined,
+          dailyTasks: bootJson.dailyTasks,
+          inboxMessages: bootJson.inboxMessages,
+          ...(bootJson.systemConfig ? { systemConfig: bootJson.systemConfig } : {}),
+          ...(bootJson.columnTitles && Object.keys(bootJson.columnTitles).length > 0
+            ? { columnTitles: bootJson.columnTitles }
+            : {}),
+          ...(bootJson.activityStatuses?.length ? { activityStatuses: bootJson.activityStatuses } : {}),
+          ...(bootJson.dropdownLists || {}),
+        };
+        applyIncomingCloudState(bootPayload as AppState, bootJson.timestamp, {
+          forceRealtimePush: true,
+        });
+      } catch {}
+    }, 2500);
+
     return () => {
       clearTimeout(bootSupaTimer);
+      clearInterval(livePgPollTimer);
       unsubscribeSupabase();
       if (bc) {
         try {
@@ -2686,11 +2737,9 @@ export default function App() {
         setIsWeeklyInstallmentsModalOpen(true);
         break;
 
-      // 4. قسم الحفظ والنسخ والفروع (محمي ببوابة الرقم السري الخاص)
+      // 4. قسم الفروع مفتوح لاختيار الفرع على الواجهة (والإضافة/التعديل/الحذف داخل النافذة محمي بالباسورد)
       case 'branches-manage':
-        requireVaultAccess('branches', 'قسم الفروع وجميع الإدارات التموينية', () => {
-          setIsBranchesModalOpen(true);
-        });
+        setIsBranchesModalOpen(true);
         break;
       case 'ops-save-data':
         requireVaultAccess('backup', 'قسم الحفظ والنسخ — حفظ البيانات', () => {
@@ -2942,32 +2991,34 @@ export default function App() {
   return (
     <div
       dir="rtl"
-      className="min-h-screen flex flex-col bg-gradient-to-br from-[#EEF2FF] via-[#F4F7FB] to-[#ECFDF5] text-slate-800 font-sans selection:bg-[#1E3A8A] selection:text-white"
+      className="min-h-screen flex flex-col bg-[#FAF8F5] text-[#0A1628] font-sans selection:bg-[#0D9488] selection:text-white"
     >
-      {/* 1. Streamlined Official Governmental Top Header (ترويسة علوية ملكية متحركة) */}
-      <header className="bg-white/95 backdrop-blur-md border-b-2 border-indigo-200/80 text-slate-800 shadow-md sticky top-0 z-30 no-print">
-        <div className="h-1 w-full bg-gradient-to-r from-[#0F2342] via-amber-500 to-emerald-600" />
-        <div className="max-w-[1920px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-4">
+      {/* 1. Executive Midnight Navy, Royal Teal & Champagne Gold Top Header */}
+      <header className="bg-[#0A1628] border-b border-[#D4AF37]/35 text-white shadow-xl sticky top-0 z-30 no-print">
+        <div className="h-1.5 w-full bg-gradient-to-r from-[#D4AF37] via-[#0D9488] to-[#D4AF37]" />
+        <div className="max-w-[1920px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
           {/* Right Zone: Emblem, Directorate & Administration Name, System Name */}
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-3.5 min-w-0">
             <button
               type="button"
               onClick={() => setIsHeaderModalOpen(true)}
               title="تخصيص بيانات الترويسة والشعار"
-              className="w-11 h-11 rounded-full bg-slate-50 p-1 border border-slate-300 hover:border-[#1E3A8A] flex items-center justify-center shrink-0 cursor-pointer transition"
+              className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#D4AF37] via-amber-400 to-[#0D9488] p-0.5 shadow-lg shadow-[#D4AF37]/20 flex items-center justify-center shrink-0 cursor-pointer transition hover:scale-105"
             >
-              <img
-                src={appState.systemConfig.logoBase64}
-                alt="شعار المنظومة"
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-contain"
-              />
+              <div className="w-full h-full rounded-[14px] bg-white p-1 flex items-center justify-center">
+                <img
+                  src={appState.systemConfig.logoBase64}
+                  alt="شعار المنظومة"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-contain"
+                />
+              </div>
             </button>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#1E3A8A] flex-wrap">
+              <div className="flex items-center gap-2 text-xs font-black text-[#D4AF37] flex-wrap">
                 <span>{appState.systemConfig.directorateTitle}</span>
-                <span aria-hidden="true">·</span>
-                <span>{appState.systemConfig.administrationTitle}</span>
+                <span aria-hidden="true" className="text-slate-500">·</span>
+                <span className="text-[#5EEAD4]">{appState.systemConfig.administrationTitle}</span>
                 {/* Smart Connection Status Indicator & Retry Button */}
                 <div className="inline-flex items-center gap-1.5 flex-wrap">
                   <span
@@ -2983,22 +3034,22 @@ export default function App() {
                       )
                     }
                     title={`${connectionSnapshot.detail} — اضغط لفتح لوحة التشخيص المخفية (Ctrl+Shift+D)`}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border text-[11px] font-black transition-colors cursor-pointer ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[11px] font-black transition-colors cursor-pointer ${
                       connectionSnapshot.status === 'connected'
-                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                        ? 'bg-[#10B981]/15 text-emerald-300 border-[#10B981]/40 hover:bg-[#10B981]/25'
                         : connectionSnapshot.status === 'syncing'
-                        ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                        : 'bg-red-50 text-red-800 border-red-300 hover:bg-red-100'
+                        ? 'bg-[#D4AF37]/15 text-amber-200 border-[#D4AF37]/40 hover:bg-[#D4AF37]/25'
+                        : 'bg-[#F43F5E]/20 text-rose-200 border-[#F43F5E]/40 hover:bg-[#F43F5E]/30'
                     }`}
                   >
                     {connectionSnapshot.status === 'syncing' ? (
-                      <RotateCw className="w-3 h-3 text-amber-600 animate-spin" />
+                      <RotateCw className="w-3 h-3 text-[#D4AF37] animate-spin" />
                     ) : (
                       <span
                         className={`w-2 h-2 rounded-full ${
                           connectionSnapshot.status === 'connected'
-                            ? 'bg-emerald-500 animate-pulse'
-                            : 'bg-red-600'
+                            ? 'bg-[#10B981] animate-pulse'
+                            : 'bg-[#F43F5E]'
                         }`}
                       />
                     )}
@@ -3012,7 +3063,7 @@ export default function App() {
                       </span>
                     )}
                     {connectionSnapshot.lastSyncAt && connectionSnapshot.status === 'connected' && (
-                      <span className="hidden xl:inline text-[10px] text-emerald-700 font-semibold">
+                      <span className="hidden xl:inline text-[10px] text-emerald-300 font-semibold">
                         ({connectionSnapshot.lastSyncAt})
                       </span>
                     )}
@@ -3028,10 +3079,10 @@ export default function App() {
                       )
                     }
                     title="فتح الصفحة التشخيصية المخفية لـ Supabase Realtime و WebSockets (Ctrl+Shift+D)"
-                    className={`inline-flex items-center justify-center p-1 rounded-md border transition cursor-pointer ${
+                    className={`inline-flex items-center justify-center p-1 rounded-lg border transition cursor-pointer ${
                       activeTab === 'realtime-diagnostics'
-                        ? 'bg-indigo-700 text-white border-indigo-600 shadow-xs'
-                        : 'bg-slate-100 hover:bg-indigo-50 text-slate-500 hover:text-indigo-700 border-slate-200'
+                        ? 'bg-[#0D9488] text-white border-[#D4AF37] shadow-xs'
+                        : 'bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border-white/10'
                     }`}
                   >
                     <Activity className="w-3.5 h-3.5" />
@@ -3043,7 +3094,7 @@ export default function App() {
                       onClick={handleRetryConnection}
                       disabled={isRetryingConnection}
                       title={connectionSnapshot.detail || 'إعادة محاولة الاتصال بخادم Supabase'}
-                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-[11px] font-black shadow-2xs transition cursor-pointer"
+                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#F43F5E] hover:bg-rose-600 disabled:opacity-60 text-white text-[11px] font-black shadow-2xs transition cursor-pointer"
                     >
                       <RefreshCw className={`w-3 h-3 ${isRetryingConnection ? 'animate-spin' : ''}`} />
                       <span>{isRetryingConnection ? 'جاري المحاولة...' : 'إعادة محاولة الاتصال'}</span>
@@ -3051,22 +3102,22 @@ export default function App() {
                   )}
                 </div>
               </div>
-              <h1 className="text-sm sm:text-base font-extrabold text-[#0F2342] truncate">
+              <h1 className="text-sm sm:text-base font-black text-white truncate mt-0.5">
                 منظومة إدارة بيانات المخابز والتموين والمديونيات
               </h1>
             </div>
           </div>
 
-          {/* Left Zone: Date & Time, Notifications, Current User, Account Settings */}
-          <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Left Zone: Date & Time, Open Branch Switcher, Notifications, User, Actions */}
+          <div className="flex items-center gap-2 flex-wrap">
             {/* Date & Time + Autosave */}
-            <div className="hidden md:flex items-center gap-2 text-xs text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200/80">
-              <Clock className="w-3.5 h-3.5 text-[#1E3A8A]" />
+            <div className="hidden md:flex items-center gap-2 text-xs text-slate-200 bg-[#0F1E36] px-3 py-1.5 rounded-xl border border-white/10">
+              <Clock className="w-3.5 h-3.5 text-[#D4AF37]" />
               <span>{currentDateTimeStr}</span>
               {saveTimestamp && (
                 <>
-                  <span aria-hidden="true">·</span>
-                  <span className="text-emerald-700 font-bold">حُفظ {saveTimestamp}</span>
+                  <span aria-hidden="true" className="text-slate-500">·</span>
+                  <span className="text-[#10B981] font-bold">حُفظ {saveTimestamp}</span>
                 </>
               )}
             </div>
@@ -3076,19 +3127,19 @@ export default function App() {
               type="button"
               data-testid="header-alerts-drawer-btn"
               onClick={() => setIsAdminDrawerOpen(true)}
-              className={`relative px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+              className={`relative px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
                 highDebtNotifications.filter((n) => !n.isRead).length > 0
-                  ? 'bg-red-50 hover:bg-red-100 text-red-800 border-red-300'
-                  : 'bg-slate-100 hover:bg-slate-200/80 text-slate-800 border-slate-200'
+                  ? 'bg-[#F43F5E]/20 hover:bg-[#F43F5E]/30 text-rose-200 border-[#F43F5E]/50'
+                  : 'bg-[#0F1E36] hover:bg-white/10 text-slate-200 border-white/10'
               }`}
               title="فتح سجل تنبيهات المديونيات المتجاوزة للحد وضبط قيمة التنبيه"
             >
-              <AlertTriangle className="w-4 h-4 text-red-600" />
+              <AlertTriangle className="w-4 h-4 text-[#F43F5E]" />
               <span>سجل التنبيهات</span>
               {highDebtNotifications.filter((n) => !n.isRead).length > 0 && (
                 <span
                   data-testid="alerts-unread-badge"
-                  className="px-1.5 py-0.2 bg-red-600 text-white rounded-full text-[10px] font-mono font-bold tabular-nums"
+                  className="px-1.5 py-0.2 bg-[#F43F5E] text-white rounded-full text-[10px] font-mono font-bold tabular-nums"
                 >
                   {highDebtNotifications.filter((n) => !n.isRead).length}
                 </span>
@@ -3099,28 +3150,62 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsDailyBriefingModalOpen(true)}
-              className="relative px-3 py-1.5 bg-slate-100 hover:bg-slate-200/80 text-slate-800 border border-slate-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+              className="relative px-3 py-1.5 bg-[#0F1E36] hover:bg-white/10 text-slate-200 border border-white/10 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
               title="الإشعارات والتنبيهات اليومية للمديونيات والتراخيص"
             >
-              <Bell className="w-4 h-4 text-[#1E3A8A]" />
+              <Bell className="w-4 h-4 text-[#D4AF37]" />
               <span>الإشعارات</span>
               {totalNotificationsCount > 0 && (
-                <span className="px-1.5 py-0.2 bg-red-600 text-white rounded-full text-[10px] font-mono font-bold tabular-nums">
+                <span className="px-1.5 py-0.2 bg-[#F43F5E] text-white rounded-full text-[10px] font-mono font-bold tabular-nums">
                   {totalNotificationsCount}
                 </span>
               )}
             </button>
 
             {/* Current User Profile */}
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#EFF6FF] border border-blue-200 rounded-lg text-xs">
-              <span className="font-extrabold text-[#0F2342]">{appState.currentUser.fullName}</span>
-              <span aria-hidden="true" className="text-slate-400">·</span>
-              <span className="text-[#1E40AF] font-semibold">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#0F1E36] border border-[#0D9488]/40 rounded-xl text-xs">
+              <span className="font-extrabold text-white">{appState.currentUser.fullName}</span>
+              <span aria-hidden="true" className="text-slate-500">·</span>
+              <span className="text-[#5EEAD4] font-bold">
                 {getRoleNameArabic(appState.currentUser.role, appState.systemConfig)}
               </span>
             </div>
 
-            {/* Master Secret Passcode Gate Button in Header (خانة الدخول بالرقم السري للحفظ والفروع) */}
+            {/* Header Direct Branch Dropdown Switcher — ALWAYS OPEN ON THE INTERFACE */}
+            <div className="flex items-center gap-1.5 bg-[#0F1E36] text-[#FDE68A] px-3 py-1.5 rounded-xl border border-[#D4AF37]/50 shadow-sm">
+              <Building2 className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
+              <label htmlFor="header-branch-select" className="text-[11px] font-black text-[#D4AF37] hidden md:inline">
+                الفرع / الإدارة:
+              </label>
+              <select
+                id="header-branch-select"
+                data-testid="header-branch-select"
+                value={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                onChange={(e) => handleSwitchBranch(e.target.value, cleanBranchesList)}
+                className="bg-[#0F1E36] text-white font-black text-xs cursor-pointer focus:outline-none pr-1"
+                title="اختيار الإدارة التموينية أو الفرع مباشرة من الواجهة"
+              >
+                {cleanBranchesList.map((branch) => (
+                  <option key={branch.id} value={branch.id} className="bg-[#0A1628] text-white font-bold">
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Branches Manager Button — Opens directly to view/switch branches; Add/Edit/Delete inside requires password */}
+            <button
+              type="button"
+              data-testid="header-branches-manager-btn"
+              onClick={() => setIsBranchesModalOpen(true)}
+              className="px-3 py-1.5 bg-gradient-to-l from-[#D4AF37] to-amber-500 hover:from-amber-400 hover:to-amber-500 text-[#0A1628] rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-[#D4AF37]"
+              title="فتح قسم الفروع للتنقل بين الإدارات (الإضافة أو التعديل أو الحذف محمي بالباسورد)"
+            >
+              <Building2 className="w-3.5 h-3.5 text-[#0A1628]" />
+              <span>قسم الفروع ({cleanBranchesList.length})</span>
+            </button>
+
+            {/* Secret Vault Gate Button for Backup & Branch Modifications */}
             <button
               type="button"
               data-testid="header-vault-gate-btn"
@@ -3128,85 +3213,22 @@ export default function App() {
                 setVaultGateModal({
                   isOpen: true,
                   section: 'both',
-                  label: 'بوابة الحماية السرية لقسم الحفظ والنسخ وجميع الفروع',
+                  label: 'بوابة الحماية السرية لقسم الحفظ والنسخ وتعديلات الفروع',
                 })
               }
-              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-md border ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border ${
                 isVaultUnlocked
-                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-400'
-                  : 'bg-gradient-to-r from-slate-900 via-red-950 to-slate-900 text-amber-300 border-amber-400/80 pulse-gold-glow'
+                  ? 'bg-[#10B981] text-white border-emerald-400'
+                  : 'bg-[#0F1E36] hover:bg-[#0D9488] text-[#FDE68A] hover:text-white border-[#D4AF37]/40'
               }`}
-              title="خانة الدخول بالرقم السري لقسم الحفظ والنسخ وجميع الفروع وتغيير الرقم السري في أي وقت"
+              title="بوابة الحماية السرية (Username & Password) لقسم الحفظ والنسخ وتعديل/إضافة الفروع"
             >
               {isVaultUnlocked ? (
                 <Unlock className="w-3.5 h-3.5 text-white" />
               ) : (
-                <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                <KeyRound className="w-3.5 h-3.5 text-[#D4AF37]" />
               )}
-              <span>
-                {isVaultUnlocked ? 'الحفظ والفروع (مفتوح - تغيير/قفل)' : 'خانة الرقم السري (للحفظ والفروع) 🔒'}
-              </span>
-            </button>
-
-            {/* Header Direct Branch Dropdown Switcher (محمي بالرقم السري - ممنوع التبديل أو الرؤية بدون الرقم السري) */}
-            {isVaultUnlocked ? (
-              <div className="flex items-center gap-1.5 bg-slate-900 text-amber-300 px-2.5 py-1.5 rounded-xl border-2 border-amber-400/90 shadow-2xs">
-                <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <label htmlFor="header-branch-select" className="text-[11px] font-black text-amber-300 hidden md:inline">
-                  الفرع / الإدارة:
-                </label>
-                <select
-                  id="header-branch-select"
-                  value={appState.activeBranchId || DEFAULT_BRANCH_ID}
-                  onChange={(e) => handleSwitchBranch(e.target.value, cleanBranchesList)}
-                  className="bg-slate-900 text-amber-300 font-black text-xs cursor-pointer focus:outline-none pr-1"
-                  title="اختيار الإدارة التموينية أو الفرع مباشرة"
-                >
-                  {cleanBranchesList.map((branch) => (
-                    <option key={branch.id} value={branch.id} className="bg-slate-900 text-white font-bold">
-                      {branch.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <button
-                type="button"
-                data-testid="header-branch-locked-btn"
-                onClick={() =>
-                  requireVaultAccess('branches', 'فتح وتبديل جميع الفروع التموينية', () => {
-                    setIsBranchesModalOpen(true);
-                  })
-                }
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-amber-300 px-3 py-1.5 rounded-xl border-2 border-red-500/60 shadow-sm text-xs font-black cursor-pointer"
-                title="جميع الفروع محمية برقم سري — اضغط لإدخال الرقم السري"
-              >
-                <Lock className="w-3.5 h-3.5 text-red-400" />
-                <span>{appState.systemConfig.administrationTitle}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/40">
-                  الفروع مقفلة 🔒
-                </span>
-              </button>
-            )}
-
-            {/* Branches / Supply Departments Manager & Switcher Button */}
-            <button
-              type="button"
-              data-testid="header-branches-manager-btn"
-              onClick={() =>
-                requireVaultAccess('branches', 'قسم الفروع والإدارات التموينية', () => {
-                  setIsBranchesModalOpen(true);
-                })
-              }
-              className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-amber-400"
-              title="قسم الفروع والإدارات التموينية (محمي بالرقم السري)"
-            >
-              {isVaultUnlocked ? (
-                <Building2 className="w-3.5 h-3.5 text-slate-950" />
-              ) : (
-                <Lock className="w-3.5 h-3.5 text-slate-950" />
-              )}
-              <span>قسم الفروع ({cleanBranchesList.length})</span>
+              <span>{isVaultUnlocked ? 'الحماية السرية (مفتوح)' : 'الحماية السرية 🔒'}</span>
             </button>
 
             {/* Account Settings Button */}
@@ -3403,25 +3425,25 @@ export default function App() {
         {/* Main Workspace Canvas (Matte Off-White) */}
         <main className="flex-1 min-w-0 p-4 sm:p-5 space-y-4">
           {/* 3.1 Breadcrumbs & Quick View Switcher Bar */}
-          <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-2xs no-print">
+          <div className="bg-white border border-[#D4AF37]/30 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-sm no-print">
             {/* Breadcrumb Path */}
             <nav aria-label="مسار التنقل" className="flex items-center gap-1.5 text-xs">
               <button
                 type="button"
                 onClick={() => handleSelectSidebarNav('dashboard-home', 'لوحة التحكم', 'الصفحة الرئيسية')}
-                className="text-slate-500 hover:text-[#1E3A8A] font-semibold flex items-center gap-1 cursor-pointer"
+                className="text-slate-500 hover:text-[#0D9488] font-bold flex items-center gap-1 cursor-pointer"
               >
-                <Home className="w-3.5 h-3.5" />
+                <Home className="w-3.5 h-3.5 text-[#0D9488]" />
                 <span>الرئيسية</span>
               </button>
               <ChevronLeft className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-slate-600 font-semibold">{breadcrumbGroup}</span>
+              <span className="text-slate-600 font-bold">{breadcrumbGroup}</span>
               <ChevronLeft className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-[#0F2342] font-extrabold">{breadcrumbItem}</span>
+              <span className="text-[#0A1628] font-black">{breadcrumbItem}</span>
             </nav>
 
             {/* Primary View Mode Segmented Switcher */}
-            <div className="flex items-center flex-wrap gap-1 bg-[#E2E8F0] p-1 rounded-lg border border-slate-300">
+            <div className="flex items-center flex-wrap gap-1.5 bg-[#F1F5F9] p-1.5 rounded-xl border border-slate-200">
               <button
                 type="button"
                 data-testid="nav-dashboard-charts-tab"
@@ -3432,83 +3454,82 @@ export default function App() {
                     'لوحة التحكم والرسوم البيانية'
                   )
                 }
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'charts'
-                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
-                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
+                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                    : 'text-[#0A1628] hover:bg-white'
                 }`}
               >
-                <BarChart3 className="w-3.5 h-3.5" />
+                <BarChart3 className="w-3.5 h-3.5 text-[#D4AF37]" />
                 <span>لوحة التحكم والرسوم</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleSelectSidebarNav('dashboard-home', 'لوحة التحكم', 'الصفحة الرئيسية')}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'dashboard'
-                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
-                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
+                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                    : 'text-[#0A1628] hover:bg-white'
                 }`}
               >
-                <LayoutDashboard className="w-3.5 h-3.5" />
+                <LayoutDashboard className="w-3.5 h-3.5 text-[#D4AF37]" />
                 <span>الصفحة الرئيسية</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleSelectSidebarNav('bakeries-all', 'إدارة المخابز', 'قاعدة بيانات المخابز')}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'bakeries'
-                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
-                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
+                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                    : 'text-[#0A1628] hover:bg-white'
                 }`}
               >
-                <Store className="w-3.5 h-3.5" />
+                <Store className="w-3.5 h-3.5 text-[#D4AF37]" />
                 <span>قاعدة بيانات المخابز ({appState.bakeries.length})</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleSelectSidebarNav('debts-records', 'إدارة المخابز', 'سجل مديونيات المخابز')}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'debts'
-                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
-                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
+                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                    : 'text-[#0A1628] hover:bg-white'
                 }`}
               >
-                <Scale className="w-3.5 h-3.5" />
+                <Scale className="w-3.5 h-3.5 text-[#D4AF37]" />
                 <span>سجل المديونيات ({appState.debts.length})</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleSelectSidebarNav('reports-center', 'مركز التقارير والطباعة', 'شاشة التقارير والطباعة المتقدمة')}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'reports'
-                    ? 'bg-[#0F2342] text-amber-300 shadow-2xs'
-                    : 'text-[#0F2342] hover:bg-[#1E3A8A] hover:text-amber-300'
+                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                    : 'text-[#0A1628] hover:bg-white'
                 }`}
               >
-                <Printer className="w-3.5 h-3.5" />
+                <Printer className="w-3.5 h-3.5 text-[#D4AF37]" />
                 <span>مركز التقارير والطباعة</span>
               </button>
               <button
                 type="button"
                 data-testid="nav-user-guide-tab"
                 onClick={() => handleSelectSidebarNav('user-guide', '1. قسم إدارة المخابز', 'دليل المستخدم (صور وفيديو)')}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'user-guide'
-                    ? 'bg-emerald-700 text-white shadow-2xs'
-                    : 'text-emerald-900 bg-emerald-50 hover:bg-emerald-700 hover:text-white border border-emerald-300'
+                    ? 'bg-[#10B981] text-white shadow-sm'
+                    : 'text-[#0D9488] bg-[#0D9488]/10 hover:bg-[#0D9488] hover:text-white border border-[#0D9488]/30'
                 }`}
               >
                 <BookOpen className="w-3.5 h-3.5" />
-                <span>دليل المستخدم (صور وفيديو)</span>
+                <span>دليل المستخدم</span>
               </button>
             </div>
           </div>
 
-          {/* 3.2 Unified Command Toolbar (شريط الأدوات الموحد للأوامر الرئيسية - البند 7) */}
-          <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2 no-print">
-            <div className="flex items-center flex-wrap gap-1.5">
-              {/* 0. Direct Dashboard & Alerts Drawer Shortcuts in Toolbar */}
+          {/* 3.2 Unified Command Toolbar */}
+          <div className="bg-white border border-[#D4AF37]/30 rounded-2xl px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2 no-print">
+            <div className="flex items-center flex-wrap gap-2">
               <button
                 type="button"
                 data-testid="toolbar-dashboard-btn"
@@ -3519,25 +3540,25 @@ export default function App() {
                     'لوحة التحكم والرسوم البيانية'
                   )
                 }
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer border ${
                   activeTab === 'charts'
-                    ? 'bg-[#0F2342] text-amber-300 border-[#0F2342] shadow-2xs'
-                    : 'bg-[#EFF6FF] hover:bg-[#1E40AF] text-[#1E3A8A] hover:text-white border-blue-200'
+                    ? 'bg-[#0A1628] text-[#D4AF37] border-[#D4AF37]/50 shadow-sm'
+                    : 'bg-[#F1F5F9] hover:bg-[#0A1628] text-[#0A1628] hover:text-white border-slate-200'
                 }`}
               >
-                <BarChart3 className="w-3.5 h-3.5" />
+                <BarChart3 className="w-3.5 h-3.5 text-[#0D9488]" />
                 <span>لوحة التحكم</span>
               </button>
               <button
                 type="button"
                 data-testid="toolbar-alerts-drawer-btn"
                 onClick={() => setIsAdminDrawerOpen(true)}
-                className="px-2.5 py-1.5 bg-red-50 hover:bg-red-600 text-red-800 hover:text-white border border-red-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                className="px-3 py-2 bg-rose-50 hover:bg-[#F43F5E] text-rose-800 hover:text-white border border-rose-200 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
               >
                 <Bell className="w-3.5 h-3.5" />
                 <span>سجل التنبيهات</span>
                 {highDebtNotifications.filter((n) => !n.isRead).length > 0 && (
-                  <span className="px-1.5 py-0.2 bg-red-600 text-white rounded-full text-[10px] font-mono tabular-nums font-black">
+                  <span className="px-1.5 py-0.2 bg-[#F43F5E] text-white rounded-full text-[10px] font-mono tabular-nums font-black">
                     {highDebtNotifications.filter((n) => !n.isRead).length}
                   </span>
                 )}
@@ -3552,9 +3573,9 @@ export default function App() {
                       setIsBakeryModalOpen(true);
                     })
                   }
-                  className="px-3 py-1.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                  className="px-3.5 py-2 bg-gradient-to-l from-[#0A1628] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] text-white rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-[#D4AF37]/30"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-3.5 h-3.5 text-[#D4AF37]" />
                   <span>إضافة مخبز</span>
                 </button>
               )}
@@ -4004,52 +4025,52 @@ export default function App() {
           ) : (
             /* BAKERIES DATABASE VIEW (تصميم احترافي متحرك لقاعدة بيانات المخابز بدون المساس بالمعادلات) */
             <div className="space-y-4 animate-fade-in">
-              {/* Summary Strip Above Bakeries Table (Animated Elevated Royal Cards) */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                <div className="bg-gradient-to-br from-white via-indigo-50/50 to-white border-2 border-indigo-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
-                  <div className="h-1 w-full bg-gradient-to-r from-indigo-600 to-blue-500 absolute top-0 right-0 left-0" />
+              {/* Summary Strip Above Bakeries Table (Luxury Midnight Navy / Royal Teal / Champagne Gold Cards) */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+                <div className="executive-card rounded-2xl p-4 text-center relative overflow-hidden">
+                  <div className="h-1.5 w-full bg-gradient-to-r from-[#0A1628] to-[#0D9488] absolute top-0 right-0 left-0" />
                   <span className="text-[11px] font-black text-slate-600 block">إجمالي المخابز</span>
-                  <span className="stat-num text-[#0F2342] block mt-0.5">{bakeryStats.count}</span>
-                  <span className="text-[10px] font-bold text-indigo-700">مخبز مسجل بالقاعدة</span>
+                  <span className="text-2xl font-black font-mono tabular-nums text-[#0A1628] block mt-1">{bakeryStats.count}</span>
+                  <span className="text-[10px] font-bold text-[#0D9488]">مخبز مسجل بالقاعدة</span>
                 </div>
-                <div className="bg-gradient-to-br from-white via-amber-50/50 to-white border-2 border-amber-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
-                  <div className="h-1 w-full bg-gradient-to-r from-amber-500 to-orange-500 absolute top-0 right-0 left-0" />
+                <div className="executive-card rounded-2xl p-4 text-center relative overflow-hidden">
+                  <div className="h-1.5 w-full bg-gradient-to-r from-[#D4AF37] to-amber-500 absolute top-0 right-0 left-0" />
                   <span className="text-[11px] font-black text-slate-600 block">إجمالي الحصة التأمينية</span>
-                  <span className="stat-num text-amber-700 block mt-0.5">
+                  <span className="text-2xl font-black font-mono tabular-nums text-amber-700 block mt-1">
                     {Number(bakeryStats.totalInsurance.toFixed(2)).toLocaleString()}
                   </span>
                   <span className="text-[10px] font-bold text-amber-800">شيكارة (حساب تلقائي ∑)</span>
                 </div>
-                <div className="bg-gradient-to-br from-white via-sky-50/50 to-white border-2 border-sky-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
-                  <div className="h-1 w-full bg-gradient-to-r from-sky-500 to-blue-600 absolute top-0 right-0 left-0" />
+                <div className="executive-card rounded-2xl p-4 text-center relative overflow-hidden">
+                  <div className="h-1.5 w-full bg-gradient-to-r from-[#0D9488] to-teal-500 absolute top-0 right-0 left-0" />
                   <span className="text-[11px] font-black text-slate-600 block">إجمالي الحصة الفعلية</span>
-                  <span className="stat-num text-[#1E3A8A] block mt-0.5">{bakeryStats.totalActual.toLocaleString()}</span>
-                  <span className="text-[10px] font-bold text-sky-800">شيكارة يومياً</span>
+                  <span className="text-2xl font-black font-mono tabular-nums text-[#0D9488] block mt-1">{bakeryStats.totalActual.toLocaleString()}</span>
+                  <span className="text-[10px] font-bold text-teal-800">شيكارة يومياً</span>
                 </div>
-                <div className="bg-gradient-to-br from-white via-emerald-50/50 to-white border-2 border-emerald-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
-                  <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-teal-600 absolute top-0 right-0 left-0" />
+                <div className="executive-card rounded-2xl p-4 text-center relative overflow-hidden">
+                  <div className="h-1.5 w-full bg-gradient-to-r from-[#10B981] to-emerald-600 absolute top-0 right-0 left-0" />
                   <span className="text-[11px] font-black text-slate-600 block">إجمالي الأرغفة اليومية</span>
-                  <span className="stat-num text-emerald-700 block mt-0.5">{bakeryStats.totalLoaves.toLocaleString()}</span>
+                  <span className="text-2xl font-black font-mono tabular-nums text-[#10B981] block mt-1">{bakeryStats.totalLoaves.toLocaleString()}</span>
                   <span className="text-[10px] font-bold text-emerald-800">رغيف بلدي مدعم</span>
                 </div>
-                <div className="bg-gradient-to-br from-white via-purple-50/40 to-white border-2 border-purple-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
-                  <div className="h-1 w-full bg-gradient-to-r from-purple-600 to-indigo-600 absolute top-0 right-0 left-0" />
+                <div className="executive-card rounded-2xl p-4 text-center relative overflow-hidden">
+                  <div className="h-1.5 w-full bg-gradient-to-r from-[#0A1628] to-[#D4AF37] absolute top-0 right-0 left-0" />
                   <span className="text-[11px] font-black text-slate-600 block">متوسط نصيب الفرد (2025)</span>
-                  <span className="stat-num text-[#1E40AF] block mt-0.5">
+                  <span className="text-2xl font-black font-mono tabular-nums text-[#0A1628] block mt-1">
                     {annualWeightedSummary?.weightedGeneralAvg2025 || '0.00'}
                   </span>
-                  <span className="text-[10px] font-bold text-purple-800">رغيف / مستفيد</span>
+                  <span className="text-[10px] font-bold text-[#0D9488]">رغيف / مستفيد</span>
                 </div>
-                <div className="bg-gradient-to-br from-white via-rose-50/50 to-white border-2 border-rose-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift col-span-2 sm:col-span-1 relative overflow-hidden">
-                  <div className="h-1 w-full bg-gradient-to-r from-rose-600 to-red-600 absolute top-0 right-0 left-0" />
+                <div className="executive-card rounded-2xl p-4 text-center col-span-2 sm:col-span-1 relative overflow-hidden">
+                  <div className="h-1.5 w-full bg-gradient-to-r from-[#F43F5E] to-rose-600 absolute top-0 right-0 left-0" />
                   <span className="text-[11px] font-black text-slate-600 block">إجمالي المديونيات المتبقية</span>
-                  <span className="stat-num text-rose-600 block mt-0.5">{bakeryStats.totalDebts.toLocaleString()}</span>
+                  <span className="text-2xl font-black font-mono tabular-nums text-[#F43F5E] block mt-1">{bakeryStats.totalDebts.toLocaleString()}</span>
                   <span className="text-[10px] font-bold text-rose-800">جنيه مصري</span>
                 </div>
               </div>
 
               {/* Advanced Filters & Column View Selector Card */}
-              <div className="bg-white/95 border-2 border-indigo-100 rounded-2xl p-4 shadow-md space-y-3 no-print">
+              <div className="bg-white border border-[#D4AF37]/30 rounded-2xl p-4 shadow-sm space-y-3 no-print">
                 {/* Column Group View Tabs (لتسهيل قراءة البيانات وعدم ازدحام الشاشة) */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -6460,99 +6481,91 @@ export default function App() {
         onClose={() => setIsBranchesModalOpen(false)}
         branches={cleanBranchesList}
         activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+        isVaultUnlocked={isVaultUnlocked}
+        onRequireVaultUnlock={(label, onUnlocked) => {
+          requireVaultAccess('branches', label, onUnlocked);
+        }}
         onSelectBranch={(branchId) => {
           handleSwitchBranch(branchId, cleanBranchesList);
         }}
-        onOpenVaultSecurity={(targetBrId) => {
-          setIsBranchesModalOpen(false);
-          setVaultGateModal({
-            isOpen: true,
-            section: 'both',
-            initialMode: 'change',
-            initialTargetBranchId: targetBrId || 'ALL',
-            label: 'قائمة الفروع وتغيير الـ Username والـ Password على جميع الفروع',
+        onCreateBranch={async (name, directorate, governorate, description) => {
+          const created = createSupplyBranch(name, directorate, governorate, description);
+          if (!created.success || !created.newBranch) return;
+          const deduplicatedNext = deduplicateSupplyBranches(created.branches);
+          saveBranchesList(deduplicatedNext);
+          await saveRowToDb({
+            table: 'branches',
+            branchId: created.newBranch.id,
+            row: created.newBranch,
+            operation: 'INSERT',
           });
+          handleSwitchBranch(created.newBranch.id, deduplicatedNext);
         }}
-        onLockVault={() => setIsVaultUnlocked(false)}
-        onBranchesChange={async (updatedBranches, nextBranchId) => {
-          const deduplicatedNext = deduplicateSupplyBranches(updatedBranches);
-          const prevBranches = cleanBranchesList;
-          const nextIds = new Set(deduplicatedNext.map((b) => b.id));
-          const removedBranches = prevBranches.filter((b) => !nextIds.has(b.id));
+        onRenameBranch={async (branchId, name, directorate, governorate, description) => {
+          const renamed = renameSupplyBranch(branchId, name, directorate, governorate, description);
+          if (!renamed.success || !renamed.updatedBranch) return;
+          const deduplicatedNext = deduplicateSupplyBranches(renamed.branches);
           saveBranchesList(deduplicatedNext);
           const currentBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
-          const targetBranchId = nextBranchId || currentBranchId;
-          const activeObj = deduplicatedNext.find((b) => b.id === targetBranchId) || deduplicatedNext[0];
-
-          const syncBranchesToPg = async () => {
-            let lastRes: DbMutationResult = { success: true };
-            for (const rem of removedBranches) {
-              lastRes = await deleteRowFromDb({
-                table: 'branches',
-                id: rem.id,
-                branchId: rem.id,
-              });
-              if (!lastRes.success) return lastRes;
-            }
-            for (const br of deduplicatedNext) {
-              const isNew = !prevBranches.some((p) => p.id === br.id);
-              lastRes = await saveRowToDb({
-                table: 'branches',
-                branchId: br.id,
-                row: br,
-                operation: isNew ? 'INSERT' : 'UPDATE',
-              });
-              if (!lastRes.success) return lastRes;
-            }
-            return lastRes;
+          const nextState: AppState = {
+            ...appState,
+            branches: deduplicatedNext,
+            systemConfig:
+              branchId === currentBranchId
+                ? {
+                    ...appState.systemConfig,
+                    administrationTitle: renamed.updatedBranch.name,
+                    directorateTitle:
+                      renamed.updatedBranch.directorateTitle ||
+                      renamed.updatedBranch.directorate ||
+                      appState.systemConfig.directorateTitle,
+                    governorateTitle:
+                      renamed.updatedBranch.governorateTitle ||
+                      renamed.updatedBranch.governorate ||
+                      appState.systemConfig.governorateTitle,
+                  }
+                : appState.systemConfig,
           };
-
-          if (targetBranchId !== currentBranchId) {
-            const res = await syncBranchesToPg();
-            handleSwitchBranch(targetBranchId, deduplicatedNext);
-            return res;
-          } else {
-            const nextState: AppState = {
-              ...appState,
-              branches: deduplicatedNext,
-              activeBranchId: targetBranchId,
-              systemConfig: {
-                ...appState.systemConfig,
-                administrationTitle: activeObj?.name || appState.systemConfig.administrationTitle,
-              },
-            };
-            return commitRowMutation({
-              nextState,
-              table: 'branches',
-              branchId: targetBranchId,
-              toastMessage: `تم حفظ وتحديث قائمة الفروع والإدارات التموينية (${deduplicatedNext.length} إدارة) بدون أي تكرار ومزامنتها لجميع الأجهزة`,
-              executeDb: syncBranchesToPg,
-            });
-          }
+          await commitRowMutation({
+            nextState,
+            table: 'branches',
+            branchId,
+            toastMessage: `تم تعديل اسم الفرع إلى "${renamed.updatedBranch.name}" ومزامنته لجميع الأجهزة`,
+            executeDb: () =>
+              saveRowToDb({
+                table: 'branches',
+                branchId,
+                row: renamed.updatedBranch!,
+                operation: 'UPDATE',
+              }),
+          });
+        }}
+        onDeleteBranch={async (branchId) => {
+          const deleted = deleteSupplyBranch(branchId);
+          if (!deleted.success) return;
+          const deduplicatedNext = deduplicateSupplyBranches(deleted.branches);
+          saveBranchesList(deduplicatedNext);
+          await deleteRowFromDb({
+            table: 'branches',
+            id: branchId,
+            branchId,
+          });
+          handleSwitchBranch(deleted.nextActiveBranchId || DEFAULT_BRANCH_ID, deduplicatedNext);
         }}
       />
 
-      {/* Master Secret Passcode Gate Modal for Backup & Copy and All Branches */}
+      {/* Master Secret Passcode Gate Modal for Backup & Copy and Branch Modifications */}
       <VaultSecurityGateModal
         isOpen={vaultGateModal.isOpen}
         onClose={() => setVaultGateModal((prev) => ({ ...prev, isOpen: false }))}
-        targetSection={vaultGateModal.section}
-        targetLabel={vaultGateModal.label}
-        initialMode={vaultGateModal.initialMode}
-        initialTargetBranchId={vaultGateModal.initialTargetBranchId}
+        mode={vaultGateModal.initialMode === 'change' ? 'change_passcode' : 'unlock'}
+        targetLabel={vaultGateModal.label || 'بوابة الحماية السرية'}
         activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
         branches={cleanBranchesList}
-        branchVaultCredentials={configuredBranchCredentialsMap}
-        configuredUsername={configuredVaultUsername}
-        configuredPasscode={configuredVaultPasscode}
-        isVaultUnlocked={isVaultUnlocked}
-        onUnlockSuccess={(unlockedBranchId) => {
-          if (
-            unlockedBranchId &&
-            unlockedBranchId !== (appState.activeBranchId || DEFAULT_BRANCH_ID)
-          ) {
-            handleSwitchBranch(unlockedBranchId, cleanBranchesList);
-          }
+        branchCredentialsMap={configuredBranchCredentialsMap}
+        globalUsername={configuredVaultUsername}
+        currentPasscode={configuredVaultPasscode}
+        onUnlockSuccess={() => {
           setIsVaultUnlocked(true);
           const pendingFn = vaultGateModal.onAfterUnlock;
           setVaultGateModal((prev) => ({ ...prev, isOpen: false, onAfterUnlock: undefined }));
@@ -6560,12 +6573,13 @@ export default function App() {
             pendingFn();
           }
         }}
-        onLockVault={() => {
-          setIsVaultUnlocked(false);
-          setIsBranchesModalOpen(false);
-          setIsBackupModalOpen(false);
+        onChangeCredentials={async ({ targetScope, newUsername, newPasscode }) => {
+          await handleUpdateVaultPasscode(
+            newPasscode,
+            newUsername,
+            targetScope === 'all' ? 'ALL' : targetScope
+          );
         }}
-        onChangePasscode={handleUpdateVaultPasscode}
       />
 
       {/* In-App Accessible Confirmation Modal (Replaces window.confirm) */}

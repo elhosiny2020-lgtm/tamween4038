@@ -24,6 +24,14 @@ import {
   upsertStorageFileInPostgres,
   type NormalizedTableName,
 } from './src/db/queries.ts';
+import {
+  INITIAL_BAKERIES,
+  INITIAL_DEBTS,
+  DEFAULT_VILLAGES_HIERARCHY,
+  INITIAL_USERS,
+  INITIAL_DAILY_TASKS,
+  INITIAL_INBOX_MESSAGES,
+} from './src/defaultData.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -578,11 +586,46 @@ async function startServer() {
   try {
     await ensurePostgresSchema();
     await migrateAndVerifyLegacyJsonFilesToPostgres();
-    const { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
+    let { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
       clientId: 'postgres-boot',
       sqlOperation: 'SELECT',
       affectedTable: 'bakeries',
     });
+    if (pgBoot.bakeries.length === 0) {
+      const seededBakeries = INITIAL_BAKERIES.map((b) => ({
+        ...b,
+        id: b.id.replace(/^b-/, 'bk-'),
+      }));
+      const seededDebts = INITIAL_DEBTS.map((d) => ({
+        ...d,
+        id: d.id.replace(/^d-/, 'dt-'),
+        bakeryId: d.bakeryId.replace(/^b-/, 'bk-'),
+      }));
+      const seededTasks = INITIAL_DAILY_TASKS.map((t) => ({
+        ...t,
+        bakeryId: t.bakeryId ? t.bakeryId.replace(/^b-/, 'bk-') : undefined,
+      }));
+      await syncFullBranchStateToPostgres(
+        DEFAULT_BRANCH_ID,
+        {
+          activeBranchId: DEFAULT_BRANCH_ID,
+          bakeries: seededBakeries,
+          debts: seededDebts,
+          villages: DEFAULT_VILLAGES_HIERARCHY,
+          users: INITIAL_USERS,
+          dailyTasks: seededTasks,
+          inboxMessages: INITIAL_INBOX_MESSAGES,
+        },
+        { pruneRemoved: false }
+      );
+      const refreshed = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
+        clientId: 'postgres-boot-seed',
+        sqlOperation: 'SELECT',
+        affectedTable: 'bakeries',
+      });
+      pgBoot = refreshed.pgBoot;
+      snapshot = refreshed.snapshot;
+    }
     if (pgBoot.hasAnyRows) {
       liveRevision = Math.max(liveRevision, 1);
       snapshot.revision = liveRevision;
@@ -1080,14 +1123,21 @@ async function startServer() {
       const pruneRemoved = Boolean(body.pruneRemoved);
       const stateData = body.data || body;
 
-      // Sync multi-branch partitions if present, otherwise active branch
+      // Sync multi-branch partitions additively ONLY for branches with actual records, and sync active branch authoritatively
       if (stateData?.branchPartitions && typeof stateData.branchPartitions === 'object') {
         for (const [partBranchId, partData] of Object.entries(stateData.branchPartitions)) {
-          await syncFullBranchStateToPostgres(
-            partBranchId,
-            { ...(partData as any), branches: stateData.branches },
-            { pruneRemoved }
-          );
+          if (partBranchId === branchId) continue;
+          const pData = partData as any;
+          if (
+            (Array.isArray(pData?.bakeries) && pData.bakeries.length > 0) ||
+            (Array.isArray(pData?.debts) && pData.debts.length > 0)
+          ) {
+            await syncFullBranchStateToPostgres(
+              partBranchId,
+              { ...pData, branches: stateData.branches },
+              { pruneRemoved: false }
+            );
+          }
         }
       }
       const syncRes = await syncFullBranchStateToPostgres(branchId, stateData, { pruneRemoved });
@@ -1462,11 +1512,18 @@ async function startServer() {
       const targetBranchId = String(safeData?.activeBranchId || DEFAULT_BRANCH_ID);
       if (safeData?.branchPartitions && typeof safeData.branchPartitions === 'object') {
         for (const [partBranchId, partData] of Object.entries(safeData.branchPartitions)) {
-          await syncFullBranchStateToPostgres(
-            partBranchId,
-            { ...(partData as any), branches: safeData.branches },
-            { pruneRemoved: hasSecurityToken }
-          );
+          if (partBranchId === targetBranchId) continue;
+          const pData = partData as any;
+          if (
+            (Array.isArray(pData?.bakeries) && pData.bakeries.length > 0) ||
+            (Array.isArray(pData?.debts) && pData.debts.length > 0)
+          ) {
+            await syncFullBranchStateToPostgres(
+              partBranchId,
+              { ...pData, branches: safeData.branches },
+              { pruneRemoved: false }
+            );
+          }
         }
       }
       await syncFullBranchStateToPostgres(targetBranchId, safeData, { pruneRemoved: hasSecurityToken });

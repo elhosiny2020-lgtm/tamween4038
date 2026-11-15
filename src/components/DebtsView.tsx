@@ -806,16 +806,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         {/* Card 1: إجمالي عدد المخابز */}
         <div
           onClick={() => setSelectedStatus('ALL')}
-          className="bg-white hover:bg-blue-50/40 border-2 border-slate-200 hover:border-blue-400 rounded-2xl p-4 shadow-sm flex items-center justify-between cursor-pointer transition"
+          className="executive-card rounded-2xl p-4 flex items-center justify-between cursor-pointer transition relative overflow-hidden"
         >
+          <div className="h-1 w-full bg-gradient-to-l from-[#0A1628] to-[#0D9488] absolute top-0 right-0 left-0" />
           <div>
             <span className="text-xs font-extrabold text-slate-500 block">1. إجمالي عدد المخابز</span>
-            <span className="text-2xl font-black text-[#0F2342] font-mono tabular-nums mt-1 block">
+            <span className="text-2xl font-black text-[#0A1628] font-mono tabular-nums mt-1 block">
               {stats.totalBakeriesCount.toLocaleString()}
             </span>
-            <span className="text-[11px] font-bold text-slate-500 mt-0.5 block">مخبز مسجل بالمنظومة</span>
+            <span className="text-[11px] font-bold text-[#0D9488] mt-0.5 block">مخبز مسجل بالمنظومة</span>
           </div>
-          <div className="p-3 bg-blue-50 text-[#1E3A8A] rounded-2xl border border-blue-200">
+          <div className="p-3 bg-[#0A1628] text-[#D4AF37] rounded-2xl border border-[#D4AF37]/40">
             <Store className="w-6 h-6" />
           </div>
         </div>
@@ -823,8 +824,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         {/* Card 2: إجمالي عدد المخابز المدينة */}
         <div
           onClick={() => setSelectedStatus('UNPAID')}
-          className="bg-white hover:bg-amber-50/40 border-2 border-slate-200 hover:border-amber-400 rounded-2xl p-4 shadow-sm flex items-center justify-between cursor-pointer transition"
+          className="executive-card rounded-2xl p-4 flex items-center justify-between cursor-pointer transition relative overflow-hidden"
         >
+          <div className="h-1 w-full bg-gradient-to-l from-[#D4AF37] to-amber-500 absolute top-0 right-0 left-0" />
           <div>
             <span className="text-xs font-extrabold text-slate-500 block">2. إجمالي عدد المخابز المدينة</span>
             <span className="text-2xl font-black text-amber-700 font-mono tabular-nums mt-1 block">
@@ -834,23 +836,24 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               من إجمالي {enrichedDebts.length} قيد مديونية
             </span>
           </div>
-          <div className="p-3 bg-amber-50 text-amber-700 rounded-2xl border border-amber-200">
+          <div className="p-3 bg-[#D4AF37]/20 text-amber-800 rounded-2xl border border-[#D4AF37]/40">
             <AlertTriangle className="w-6 h-6" />
           </div>
         </div>
 
         {/* Card 3: إجمالي قيمة المديونيات */}
-        <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
+        <div className="executive-card rounded-2xl p-4 flex items-center justify-between relative overflow-hidden">
+          <div className="h-1 w-full bg-gradient-to-l from-[#0D9488] to-teal-500 absolute top-0 right-0 left-0" />
           <div>
             <span className="text-xs font-extrabold text-slate-500 block">3. إجمالي قيمة المديونيات</span>
-            <span className="text-2xl font-black text-[#1E3A8A] font-mono tabular-nums mt-1 block">
+            <span className="text-2xl font-black text-[#0D9488] font-mono tabular-nums mt-1 block">
               {stats.totalOriginalDebt.toLocaleString()}
             </span>
             <span className="text-[11px] font-bold text-slate-500 mt-0.5 block">
               جنيه مصري (مخالفات + مضاف + تصرف)
             </span>
           </div>
-          <div className="p-3 bg-blue-50 text-[#1E40AF] rounded-2xl border border-blue-200">
+          <div className="p-3 bg-[#0D9488]/15 text-[#0D9488] rounded-2xl border border-[#0D9488]/30">
             <Scale className="w-6 h-6" />
           </div>
         </div>
@@ -858,16 +861,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         {/* Card 4: إجمالي المبالغ المسددة */}
         <div
           onClick={() => setSelectedStatus('PAID')}
-          className="bg-white hover:bg-emerald-50/40 border-2 border-slate-200 hover:border-emerald-400 rounded-2xl p-4 shadow-sm flex items-center justify-between cursor-pointer transition"
+          className="executive-card rounded-2xl p-4 flex items-center justify-between cursor-pointer transition relative overflow-hidden"
         >
+          <div className="h-1 w-full bg-gradient-to-l from-[#10B981] to-emerald-600 absolute top-0 right-0 left-0" />
           <div>
             <span className="text-xs font-extrabold text-slate-500 block">4. إجمالي المبالغ المسددة</span>
-            <span className="text-2xl font-black text-emerald-700 font-mono tabular-nums mt-1 block">
+            <span className="text-2xl font-black text-[#10B981] font-mono tabular-nums mt-1 block">
               {stats.totalPaidAmount.toLocaleString()}
             </span>
-            <span className="text-[11px] font-bold text-emerald-700 mt-0.5 block">جنيه مصري محصل</span>
+            <span className="text-[11px] font-bold text-[#10B981] mt-0.5 block">جنيه مصري محصل</span>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-700 rounded-2xl border border-emerald-200">
+          <div className="p-3 bg-[#10B981]/15 text-[#10B981] rounded-2xl border border-[#10B981]/30">
             <CheckCircle2 className="w-6 h-6" />
           </div>
         </div>
@@ -875,18 +879,18 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         {/* Card 5: إجمالي المبالغ المتبقية */}
         <div
           onClick={() => setSelectedStatus('UNPAID')}
-          className="bg-gradient-to-br from-[#0F2342] via-[#1E3A8A] to-[#172554] text-white rounded-2xl p-4 shadow-md border-2 border-amber-400/50 flex items-center justify-between cursor-pointer transition hover:shadow-lg"
+          className="bg-gradient-to-br from-[#0A1628] via-[#0F1E36] to-[#0D9488] text-white rounded-2xl p-4 shadow-lg border border-[#D4AF37]/50 flex items-center justify-between cursor-pointer transition hover:shadow-xl"
         >
           <div>
-            <span className="text-xs font-bold text-amber-300 block">5. صافي المبالغ المتبقية</span>
+            <span className="text-xs font-black text-[#D4AF37] block">5. صافي المبالغ المتبقية</span>
             <span className="text-2xl font-black text-white font-mono tabular-nums mt-1 block">
               {stats.netRemainingTotal.toLocaleString()}
             </span>
-            <span className="text-[11px] font-bold text-blue-200 mt-0.5 block">
+            <span className="text-[11px] font-bold text-[#5EEAD4] mt-0.5 block">
               جنيه مصري مستحق التحصيل
             </span>
           </div>
-          <div className="p-3 bg-amber-400/20 text-amber-300 rounded-2xl border border-amber-400/40">
+          <div className="p-3 bg-[#D4AF37]/20 text-[#D4AF37] rounded-2xl border border-[#D4AF37]/40">
             <DollarSign className="w-6 h-6" />
           </div>
         </div>
@@ -894,7 +898,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
       {/* 3. Streamlined ERP Command Toolbar & Filter Bar Above Debts Table
           (Removed زر الجهات المحررة للمحضر & زر أنواع المخالفات from top of table as requested) */}
-      <div className="bg-white border-2 border-slate-200/90 rounded-2xl p-4 shadow-sm space-y-3.5 no-print">
+      <div className="bg-white border border-[#D4AF37]/30 rounded-2xl p-4 shadow-sm space-y-3.5 no-print">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2.5">
@@ -906,9 +910,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   setFocusScheduleInModal(false);
                   setIsDebtModalOpen(true);
                 }}
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-l from-[#0F2342] to-[#1E3A8A] hover:from-[#1E3A8A] hover:to-[#2563EB] text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-l from-[#0A1628] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] text-white rounded-xl text-xs font-black shadow-md border border-[#D4AF37]/30 transition cursor-pointer"
               >
-                <Plus className="w-4 h-4 text-amber-300" />
+                <Plus className="w-4 h-4 text-[#D4AF37]" />
                 <span>إضافة قيد مديونية / مخالفة جديدة</span>
               </button>
             )}
@@ -926,9 +930,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   setFocusScheduleInModal(true);
                   setIsDebtModalOpen(true);
                 }}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer border border-emerald-400/50"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-[#10B981] to-[#0D9488] hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer border border-emerald-400/50"
               >
-                <Calendar className="w-4 h-4 text-amber-300" />
+                <Calendar className="w-4 h-4 text-[#FDE68A]" />
                 <span>إضافة جدولة مديونيات</span>
               </button>
             )}

@@ -1,86 +1,136 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
+  LayoutDashboard,
   Store,
-  Calculator,
-  Percent,
-  FileText,
-  Search,
-  Database,
-  PlusCircle,
+  Plus,
   Edit3,
-  Upload,
-  Download,
-  HardDrive,
-  Sliders,
-  ChevronDown,
-  PanelRightClose,
-  PanelRightOpen,
+  Search,
+  Calculator,
   Scale,
+  AlertTriangle,
+  FileText,
+  Printer,
+  Database,
   Save,
-  Bell,
-  Eye,
-  ListChecks,
-  Layers,
-  ShieldAlert,
-  Calendar,
+  Download,
+  Upload,
+  Settings,
+  Users,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Sliders,
   CheckSquare,
-  CalendarClock,
+  LogOut,
+  Eye,
   BarChart3,
+  Bell,
+  Calendar,
   BookOpen,
+  Building2,
   Lock,
-  KeyRound,
-  Unlock,
+  Award,
+  Sparkles,
 } from 'lucide-react';
+import { CloudConnectionStatus } from '../lib/supabase';
 
-export type SidebarNavId = string;
+export type SidebarNavId =
+  // 1. قسم إدارة المخابز
+  | 'user-guide'
+  | 'bakeries-all'
+  | 'data-add-bakery'
+  | 'search-by-name'
+  | 'search-by-machine'
+  | 'search-by-area'
+  | 'search-by-bread'
+  | 'search-advanced'
+  | 'calc-equations-view'
+  | 'calc-insurance-quota'
+  | 'calc-loaves'
+  | 'calc-avg-2023'
+  | 'calc-avg-2024'
+  | 'calc-avg-2025'
+  | 'calc-per-bakery'
+  | 'calc-cum-diff'
+  | 'calc-recalculate-all'
+  | 'report-per-capita'
+  | 'settings-alerts'
+  // 2. قسم التعديلات
+  | 'data-edit-bakery'
+  | 'data-edit-master'
+  | 'settings-view-mode'
+  | 'settings-display'
+  // 3. قسم سجل المديونيات
+  | 'debts-records'
+  | 'debts-add-schedule'
+  | 'debts-alerts-key'
+  | 'debts-installments'
+  // 4. قسم الحفظ والنسخ
+  | 'branches-manage'
+  | 'ops-save-data'
+  | 'data-import'
+  | 'data-export'
+  | 'data-backup'
+  | 'workspace-calendar'
+  | 'workspace-tasks'
+  | 'workspace-forms'
+  // Additional & Dashboard routes
+  | 'realtime-diagnostics'
+  | 'dashboard-charts'
+  | 'alerts-drawer-log'
+  | 'dashboard-home'
+  | 'dashboard-kpis'
+  | 'dashboard-updates'
+  | 'reports-center'
+  | 'report-detailed'
+  | 'report-summary'
+  | 'report-years-comparison'
+  | 'report-insurance-quotas'
+  | 'report-differences'
+  | 'data-integrity'
+  | 'settings-system'
+  | 'settings-users'
+  | 'settings-logs'
+  | 'settings-daily-tasks'
+  | 'settings-logout';
 
-export interface SidebarSubItem {
+interface SidebarSubItem {
   id: SidebarNavId;
   label: string;
-  subtitle?: string;
   icon: React.ReactNode;
   badge?: number | string;
-  badgeColor?: 'blue' | 'amber' | 'red' | 'emerald';
+  badgeVariant?: 'info' | 'warning' | 'danger' | 'gold' | 'teal';
 }
 
-export interface SidebarGroup {
+interface SidebarGroup {
   id: string;
   title: string;
   subtitle: string;
+  accentGradient: string;
   icon: React.ReactNode;
-  accentColor: string;
-  iconBg: string;
-  activeBorder: string;
+  requiresVaultSecret?: boolean;
   items: SidebarSubItem[];
 }
 
-export interface RightSidebarProps {
+interface RightSidebarProps {
   activeNavId: SidebarNavId;
   onSelectNav: (navId: SidebarNavId, groupTitle: string, itemLabel: string) => void;
-  bakeriesCount?: number;
-  debtsCount?: number;
-  alertsCount?: number;
+  bakeriesCount: number;
+  debtsCount: number;
+  alertsCount: number;
   unreadInboxCount?: number;
   pendingTasksCount?: number;
-  largeDebtsCount?: number;
+  largeDebtsCount: number;
   logoBase64?: string;
   administrationTitle?: string;
   directorateTitle?: string;
-  totalBakeriesCount?: number;
-  totalDebtsCount?: number;
-  expiredLicensesCount?: number;
-  over20kBakeriesCount?: number;
-  uncompletedTasksCount?: number;
-  customLogoBase64?: string;
-  connectionStatus?: 'connected' | 'syncing' | 'error' | 'offline';
+  connectionStatus?: CloudConnectionStatus;
   connectionLabel?: string;
   isVaultUnlocked?: boolean;
-  onOpenVaultGate?: (section: 'backup' | 'branches' | 'both', label?: string) => void;
+  onOpenVaultGate?: (section: 'backup' | 'branches' | 'both', label: string) => void;
   onLockVault?: () => void;
 }
-
-const SIDEBAR_STORAGE_KEY = 'tamween_sidebar_erp_groups_v4';
-const SIDEBAR_COLLAPSED_KEY = 'tamween_sidebar_collapsed_v4';
 
 export const RightSidebar: React.FC<RightSidebarProps> = ({
   activeNavId,
@@ -88,643 +138,452 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   bakeriesCount,
   debtsCount,
   alertsCount,
+  unreadInboxCount = 0,
+  pendingTasksCount = 0,
   largeDebtsCount,
-  administrationTitle,
-  totalBakeriesCount,
-  totalDebtsCount,
-  expiredLicensesCount,
-  over20kBakeriesCount,
-  customLogoBase64,
+  logoBase64,
+  administrationTitle = 'إدارة تموين مركز المحلة الكبرى',
+  directorateTitle = 'مديرية التموين والتجارة الداخلية بالغربية',
   connectionStatus = 'connected',
-  connectionLabel,
+  connectionLabel = 'متصل بقاعدة البيانات',
   isVaultUnlocked = false,
   onOpenVaultGate,
-  onLockVault,
 }) => {
-  const bakeriesTotal = bakeriesCount ?? totalBakeriesCount ?? 0;
-  const debtsTotal = debtsCount ?? totalDebtsCount ?? 0;
-  const alertsTotal = alertsCount ?? expiredLicensesCount ?? 0;
-  const largeDebtsTotal = largeDebtsCount ?? over20kBakeriesCount ?? 0;
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
-    } catch {
-      return false;
-    }
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+    'group-1': true,
+    'group-2': true,
+    'group-3': true,
+    'group-4': false,
+    'group-5': true,
   });
 
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
-    try {
-      const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return {
-      'section-bakeries': true,
-      'section-edits': true,
-      'section-debts': true,
-      'section-backup': true,
-    };
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(openGroups));
-    } catch {
-      // ignore
-    }
-  }, [openGroups]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isCollapsed));
-    } catch {
-      // ignore
-    }
-  }, [isCollapsed]);
-
-  const toggleGroup = (groupId: string) => {
-    if (groupId === 'section-backup' && !isVaultUnlocked && onOpenVaultGate) {
-      setOpenGroups((prev) => ({ ...prev, [groupId]: true }));
-      onOpenVaultGate('backup', '4. قسم الحفظ والنسخ الاحتياطي (يطلب Username & Password)');
+  const toggleGroup = (group: SidebarGroup) => {
+    if (group.requiresVaultSecret && !isVaultUnlocked) {
+      onOpenVaultGate?.('backup', 'قسم الحفظ والنسخ (محمي بـ Username & Password)');
       return;
     }
-    if (isCollapsed) {
-      setIsCollapsed(false);
-      setOpenGroups((prev) => ({ ...prev, [groupId]: true }));
-      return;
-    }
-    setOpenGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
+    setExpandedGroups((prev) => ({ ...prev, [group.id]: !prev[group.id] }));
   };
 
   const groups: SidebarGroup[] = [
     {
-      id: 'section-bakeries',
+      id: 'group-1',
       title: '1. قسم إدارة المخابز',
-      subtitle: 'البيانات الأساسية والحسابات والتقارير',
-      icon: <Store className="w-4 h-4 shrink-0" />,
-      accentColor: 'from-blue-600 to-indigo-700',
-      iconBg: 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm shadow-blue-950',
-      activeBorder: 'border-blue-500/60',
+      subtitle: 'البيانات والحصص والمعادلات',
+      accentGradient: 'from-[#0D9488] to-[#0F766E]',
+      icon: <Store className="w-4 h-4" />,
       items: [
         {
           id: 'user-guide',
           label: 'دليل المستخدم (صور وفيديو)',
-          subtitle: 'تعليمات مصورة وفيديو لكافة مميزات المنظومة',
-          icon: <BookOpen className="w-4 h-4 shrink-0" />,
-          badge: 'فيديو',
-          badgeColor: 'emerald',
-        },
-        {
-          id: 'dashboard-charts',
-          label: 'لوحة التحكم والرسوم البيانية',
-          subtitle: 'رسوم تفاعلية للمديونيات والمخابز وحصص الدقيق',
-          icon: <BarChart3 className="w-4 h-4 shrink-0" />,
-          badge: 'لوحة',
-          badgeColor: 'amber',
+          icon: <BookOpen className="w-3.5 h-3.5 text-[#5EEAD4]" />,
+          badge: 'شرح',
+          badgeVariant: 'teal',
         },
         {
           id: 'bakeries-all',
-          label: 'إدارة المخابز',
-          subtitle: 'السجل الرسمي الشامل لبيانات المخابز',
-          icon: <Database className="w-4 h-4 shrink-0" />,
-          badge: bakeriesTotal > 0 ? bakeriesTotal : undefined,
-          badgeColor: 'blue',
+          label: 'سجل بيانات المخابز',
+          icon: <Store className="w-3.5 h-3.5" />,
+          badge: bakeriesCount,
+          badgeVariant: 'teal',
         },
         {
           id: 'data-add-bakery',
-          label: 'إضافات بيانات جديدة',
-          subtitle: 'إدراج مخبز جديد في قاعدة البيانات',
-          icon: <PlusCircle className="w-4 h-4 shrink-0" />,
-          badgeColor: 'emerald',
+          label: 'إضافة مخبز جديد',
+          icon: <Plus className="w-3.5 h-3.5" />,
         },
         {
           id: 'search-advanced',
-          label: 'البحث والاستعلام',
-          subtitle: 'استعلام فوري بالاسم أو الماكينة أو القرية',
-          icon: <Search className="w-4 h-4 shrink-0" />,
+          label: 'البحث والفلترة والفرز',
+          icon: <Search className="w-3.5 h-3.5" />,
         },
         {
           id: 'calc-equations-view',
-          label: 'الحسابات والمعادلات',
-          subtitle: 'مراجعة الحصص والأرغفة والفروق التراكمية',
-          icon: <Calculator className="w-4 h-4 shrink-0" />,
+          label: 'الحصص والمعادلات السبع ∑',
+          icon: <Calculator className="w-3.5 h-3.5" />,
+          badge: '∑',
+          badgeVariant: 'gold',
         },
         {
           id: 'report-per-capita',
-          label: 'تقرير متوسط نصيب الفرد السنوية',
-          subtitle: 'معدلات 2023 و2024 و2025 والفرق التراكمي',
-          icon: <Percent className="w-4 h-4 shrink-0" />,
+          label: 'المتوسطات السنوية (2023-2025)',
+          icon: <FileText className="w-3.5 h-3.5" />,
         },
         {
           id: 'settings-alerts',
-          label: 'مفتاح التنبيهات',
-          subtitle: 'التراخيص المنتهية والمخابز الموقوفة',
-          icon: <Bell className="w-4 h-4 shrink-0" />,
-          badge: alertsTotal > 0 ? alertsTotal : undefined,
-          badgeColor: 'amber',
+          label: 'التراخيص والعقود المنتهية',
+          icon: <AlertTriangle className="w-3.5 h-3.5" />,
+          badge: alertsCount > 0 ? alertsCount : undefined,
+          badgeVariant: 'warning',
         },
       ],
     },
     {
-      id: 'section-edits',
-      title: '2. قسم التعديلات',
-      subtitle: 'تحديث السجلات والقوائم وإعدادات الجداول',
-      icon: <Edit3 className="w-4 h-4 shrink-0" />,
-      accentColor: 'from-amber-500 to-orange-600',
-      iconBg: 'bg-gradient-to-br from-amber-400 to-orange-600 text-slate-950 shadow-sm shadow-amber-950',
-      activeBorder: 'border-amber-500/60',
+      id: 'group-2',
+      title: '2. قسم التعديلات والعرض',
+      subtitle: 'إدارة القوائم والأعمدة والقرى',
+      accentGradient: 'from-[#D4AF37] to-amber-600',
+      icon: <Edit3 className="w-4 h-4" />,
       items: [
         {
           id: 'branches-manage',
           label: 'قسم الفروع والإدارات التموينية',
-          subtitle: isVaultUnlocked
-            ? 'إضافة وحذف الإدارات وتبديل واجهة الفرع (مفتوح)'
-            : '🔒 محمي برقم سري خاص — ممنوع الدخول لغير المصرح لهم',
-          icon: isVaultUnlocked ? <Layers className="w-4 h-4 shrink-0" /> : <Lock className="w-4 h-4 shrink-0 text-amber-300" />,
-          badge: isVaultUnlocked ? 'مفتوح' : '🔒 سري',
-          badgeColor: isVaultUnlocked ? 'emerald' : 'red',
+          icon: <Building2 className="w-3.5 h-3.5 text-[#D4AF37]" />,
+          badge: 'تبديل',
+          badgeVariant: 'gold',
         },
         {
           id: 'data-edit-bakery',
-          label: 'تعديل البيانات',
-          subtitle: 'تعديل مباشر لبيانات وحصص المخابز',
-          icon: <Edit3 className="w-4 h-4 shrink-0" />,
+          label: 'تعديل بيانات مخبز محدد',
+          icon: <Edit3 className="w-3.5 h-3.5" />,
         },
         {
           id: 'data-edit-master',
-          label: 'القوائم',
-          subtitle: 'إدارة القرى والوحدات والجهات والمخالفات',
-          icon: <ListChecks className="w-4 h-4 shrink-0" />,
+          label: 'إدارة القوائم المنسدلة والقرى',
+          icon: <Sliders className="w-3.5 h-3.5" />,
         },
         {
           id: 'settings-view-mode',
-          label: 'إعدادات العرض',
-          subtitle: 'التحكم في نمط العرض والتجميع والصفحات',
-          icon: <Eye className="w-4 h-4 shrink-0" />,
+          label: 'إعدادات العرض وتنظيم الجداول',
+          icon: <Eye className="w-3.5 h-3.5" />,
         },
         {
           id: 'settings-display',
-          label: 'إعدادات الأعمدة',
-          subtitle: 'تخصيص وإظهار/إخفاء ومسميات الأعمدة',
-          icon: <Sliders className="w-4 h-4 shrink-0" />,
+          label: 'تعديل مسميات أعمدة الجداول',
+          icon: <Settings className="w-3.5 h-3.5" />,
         },
       ],
     },
     {
-      id: 'section-debts',
+      id: 'group-3',
       title: '3. قسم سجل المديونيات',
-      subtitle: 'متابعة المخالفات والتحصيل المالي للمخابز',
-      icon: <Scale className="w-4 h-4 shrink-0" />,
-      accentColor: 'from-rose-600 to-red-700',
-      iconBg: 'bg-gradient-to-br from-rose-500 to-red-700 text-white shadow-sm shadow-rose-950',
-      activeBorder: 'border-rose-500/60',
+      subtitle: 'المخالفات والسداد والجدولة',
+      accentGradient: 'from-[#10B981] to-[#0D9488]',
+      icon: <Scale className="w-4 h-4" />,
       items: [
         {
           id: 'debts-records',
-          label: 'سجل المديونيات',
-          subtitle: 'الجدول المالي الموحد لمديونيات المخابز',
-          icon: <FileText className="w-4 h-4 shrink-0" />,
-          badge: debtsTotal > 0 ? debtsTotal : undefined,
-          badgeColor: 'red',
+          label: 'جدول سجل المديونيات',
+          icon: <Scale className="w-3.5 h-3.5" />,
+          badge: debtsCount,
+          badgeVariant: 'teal',
         },
         {
           id: 'debts-add-schedule',
-          label: 'إضافة جدولة مديونيات',
-          subtitle: 'جدولة المديونيات والمخالفات على صاحب المخبز',
-          icon: <CalendarClock className="w-4 h-4 shrink-0" />,
-          badge: 'جديد',
-          badgeColor: 'emerald',
+          label: 'إضافة مديونية أو جدولة سداد',
+          icon: <Plus className="w-3.5 h-3.5" />,
         },
         {
           id: 'debts-alerts-key',
-          label: 'مفتاح التنبيهات الخاص بسجل المديونيات',
-          subtitle: 'المديونيات الحرجة (>20 ألف) والمتأخرات',
-          icon: <ShieldAlert className="w-4 h-4 shrink-0" />,
-          badge: largeDebtsTotal > 0 ? largeDebtsTotal : undefined,
-          badgeColor: 'amber',
+          label: 'مفتاح ألوان وإنذارات التأخير',
+          icon: <Clock className="w-3.5 h-3.5" />,
         },
         {
-          id: 'alerts-drawer-log',
-          label: 'سجل تنبيهات تجاوز الحد',
-          subtitle: 'لوحة جانبية لمتابعة المديونيات المتجاوزة للحد',
-          icon: <Bell className="w-4 h-4 shrink-0" />,
-          badgeColor: 'red',
+          id: 'debts-installments',
+          label: 'الدفعات الأسبوعية (> 20 ألف)',
+          icon: <AlertTriangle className="w-3.5 h-3.5" />,
+          badge: largeDebtsCount > 0 ? largeDebtsCount : undefined,
+          badgeVariant: 'danger',
         },
       ],
     },
     {
-      id: 'section-backup',
+      id: 'group-4',
       title: '4. قسم الحفظ والنسخ',
-      subtitle: 'حفظ التعديلات وتبادل الملفات والنسخ الآمن',
-      icon: <HardDrive className="w-4 h-4 shrink-0" />,
-      accentColor: 'from-emerald-600 to-teal-700',
-      iconBg: 'bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-950',
-      activeBorder: 'border-emerald-500/60',
+      subtitle: 'النسخ الاحتياطي وتصدير البيانات',
+      accentGradient: 'from-[#0D9488] to-[#D4AF37]',
+      icon: <Database className="w-4 h-4" />,
+      requiresVaultSecret: true,
       items: [
         {
           id: 'ops-save-data',
-          label: 'حفظ البيانات',
-          subtitle: 'تثبيت وحفظ كافة التعديلات الحالية فوراً',
-          icon: <Save className="w-4 h-4 shrink-0" />,
-          badgeColor: 'emerald',
+          label: 'حفظ البيانات وتثبيت التغييرات',
+          icon: <Save className="w-3.5 h-3.5" />,
         },
         {
           id: 'data-import',
-          label: 'استيراد البيانات',
-          subtitle: 'استيراد ملفات Excel أو قواعد البيانات',
-          icon: <Upload className="w-4 h-4 shrink-0" />,
+          label: 'استيراد بيانات (Excel / JSON)',
+          icon: <Upload className="w-3.5 h-3.5" />,
         },
         {
           id: 'data-export',
-          label: 'تصدير البيانات',
-          subtitle: 'تصدير الجداول إلى Excel أو التقرير المطبوع',
-          icon: <Download className="w-4 h-4 shrink-0" />,
+          label: 'تصدير قاعدة البيانات (CSV)',
+          icon: <Download className="w-3.5 h-3.5" />,
         },
         {
           id: 'data-backup',
-          label: 'النسخ الاحتياطي',
-          subtitle: 'إنشاء أو استعادة نسخة احتياطية كاملة',
-          icon: <HardDrive className="w-4 h-4 shrink-0" />,
-        },
-        {
-          id: 'realtime-diagnostics',
-          label: 'جدول آخر 50 حدث Realtime والحماية',
-          subtitle: 'DataGrid لآخر 50 حدث مزامنة لحظية وقفل الـ API',
-          icon: <ShieldAlert className="w-4 h-4 shrink-0" />,
-          badge: '50 حدث',
-          badgeColor: 'emerald',
+          label: 'النسخ الاحتياطي والاستعادة',
+          icon: <Database className="w-3.5 h-3.5" />,
         },
         {
           id: 'workspace-calendar',
-          label: 'تقويم Google Calendar',
-          subtitle: 'مزامنة مواعيد التراخيص والدفعات الأسبوعية',
-          icon: <Calendar className="w-4 h-4 shrink-0" />,
+          label: 'تقويم ومهام Google Workspace',
+          icon: <Calendar className="w-3.5 h-3.5 text-[#5EEAD4]" />,
+        },
+      ],
+    },
+    {
+      id: 'group-5',
+      title: '5. التقارير والإدارة والأمان',
+      subtitle: 'الطباعة والصلاحيات والخروج',
+      accentGradient: 'from-[#F43F5E] to-rose-700',
+      icon: <Printer className="w-4 h-4" />,
+      items: [
+        {
+          id: 'reports-center',
+          label: 'مركز التقارير والطباعة الرسمية',
+          icon: <Printer className="w-3.5 h-3.5" />,
         },
         {
-          id: 'workspace-tasks',
-          label: 'مهام Google Tasks',
-          subtitle: 'إدارة ومزامنة المهام اليومية للمخابز',
-          icon: <CheckSquare className="w-4 h-4 shrink-0" />,
+          id: 'settings-users',
+          label: 'المستخدمون والصلاحيات',
+          icon: <Users className="w-3.5 h-3.5" />,
         },
         {
-          id: 'workspace-forms',
-          label: 'نماذج Google Forms',
-          subtitle: 'إنشاء نماذج التفتيش التمويني وقراءة الردود',
-          icon: <FileText className="w-4 h-4 shrink-0" />,
+          id: 'settings-daily-tasks',
+          label: 'المهام اليومية للموظفين',
+          icon: <CheckSquare className="w-3.5 h-3.5" />,
+          badge: pendingTasksCount > 0 ? pendingTasksCount : undefined,
+          badgeVariant: 'warning',
+        },
+        {
+          id: 'settings-logs',
+          label: 'صندوق الوارد والتعليمات',
+          icon: <FileText className="w-3.5 h-3.5" />,
+          badge: unreadInboxCount > 0 ? unreadInboxCount : undefined,
+          badgeVariant: 'danger',
+        },
+        {
+          id: 'settings-logout',
+          label: 'حفظ آمن وتسجيل الخروج',
+          icon: <LogOut className="w-3.5 h-3.5 text-rose-400" />,
         },
       ],
     },
   ];
 
-  let activeGroupId = 'section-bakeries';
-  let activeItemLabel = 'إدارة المخابز';
-  for (const grp of groups) {
-    const found = grp.items.find((it) => it.id === activeNavId);
-    if (found) {
-      activeGroupId = grp.id;
-      activeItemLabel = found.label;
-      break;
+  const getBadgeClasses = (variant?: SidebarSubItem['badgeVariant']) => {
+    switch (variant) {
+      case 'danger':
+        return 'bg-[#F43F5E] text-white font-black';
+      case 'warning':
+        return 'bg-amber-500 text-[#0A1628] font-black';
+      case 'gold':
+        return 'bg-[#D4AF37]/25 text-[#FDE68A] border border-[#D4AF37]/40 font-black';
+      case 'teal':
+      default:
+        return 'bg-[#0D9488]/25 text-[#5EEAD4] border border-[#0D9488]/40 font-black';
     }
-  }
+  };
 
   return (
     <aside
-      aria-label="القائمة الجانبية الرئيسية لمنظومة ERP"
-      className={`bg-gradient-to-b from-[#061022] via-[#091730] to-[#050C1A] text-slate-100 border-l border-slate-800/90 flex flex-col shrink-0 transition-all duration-300 ease-in-out select-none no-print shadow-2xl ${
-        isCollapsed ? 'w-full lg:w-[74px]' : 'w-full lg:w-[295px]'
+      dir="rtl"
+      aria-label="القائمة الجانبية الرئيسية"
+      className={`bg-[#0A1628] text-slate-100 border-l border-[#D4AF37]/25 flex flex-col shrink-0 select-none transition-all duration-300 no-print shadow-[0_0_50px_rgba(10,22,40,0.35)] ${
+        isCollapsed ? 'w-20' : 'w-80'
       }`}
     >
-      {/* Top Sidebar Identity & Collapse Button */}
-      <div className="px-3.5 py-3.5 border-b border-slate-800/80 flex items-center justify-between gap-2.5 bg-[#040B18]/90">
-        {!isCollapsed && (
-          <div className="flex items-center gap-3 min-w-0">
-            {customLogoBase64 ? (
-              <img
-                src={customLogoBase64}
-                alt="شعار المنظومة"
-                className="w-10 h-10 rounded-xl object-contain bg-white p-0.5 shrink-0 border-2 border-amber-400/70 shadow-md"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shrink-0 border border-amber-200 shadow-md">
-                <Layers className="w-5 h-5 text-slate-950" />
-              </div>
-            )}
-            <div className="truncate">
-              <div className="text-[13px] font-black text-white truncate tracking-tight leading-tight">
-                {administrationTitle || 'إدارة تموين مركز المحلة الكبرى'}
-              </div>
-              <div className="text-[10px] text-amber-300/90 font-bold truncate mt-0.5">
-                منظومة الرقابة التموينية الذكية
+      {/* Top Executive Identity Card */}
+      <div className="p-4 border-b border-[#D4AF37]/20 bg-gradient-to-b from-[#0F1E36] to-[#0A1628]">
+        <div className="flex items-center justify-between gap-2">
+          {!isCollapsed && (
+            <div className="flex items-center gap-3 min-w-0">
+              {logoBase64 ? (
+                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#D4AF37] via-amber-400 to-[#0D9488] p-0.5 shadow-lg shadow-[#D4AF37]/20 shrink-0">
+                  <div className="w-full h-full rounded-[14px] bg-white p-1 flex items-center justify-center">
+                    <img
+                      src={logoBase64}
+                      alt="شعار التموين"
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="w-11 h-11 rounded-2xl bg-[#D4AF37]/20 border border-[#D4AF37]/40 flex items-center justify-center shrink-0">
+                  <Award className="w-6 h-6 text-[#D4AF37]" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <span className="inline-block text-[10px] font-black text-[#D4AF37] bg-[#D4AF37]/10 px-2 py-0.5 rounded-md border border-[#D4AF37]/30 mb-0.5">
+                  محافظة الغربية
+                </span>
+                <p className="text-[11px] font-bold text-slate-300 truncate">{directorateTitle}</p>
+                <h2 className="text-xs font-black text-[#5EEAD4] truncate">{administrationTitle}</h2>
               </div>
             </div>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={() => setIsCollapsed((prev) => !prev)}
-          title={isCollapsed ? 'توسيع القائمة الجانبية' : 'تصغير القائمة الجانبية'}
-          className="p-2 rounded-xl bg-slate-800/90 hover:bg-amber-500 text-slate-200 hover:text-slate-950 transition-all duration-200 cursor-pointer border border-slate-700 hover:border-amber-300 shadow-sm"
-        >
-          {isCollapsed ? (
-            <PanelRightOpen className="w-4 h-4" />
-          ) : (
-            <PanelRightClose className="w-4 h-4" />
           )}
-        </button>
-      </div>
 
-      {/* Active Section Indicator Pill */}
-      {!isCollapsed && (
-        <div className="px-3.5 py-2.5 border-b border-slate-800/80 flex items-center justify-between text-[11px] bg-[#0B1B38]/75">
-          <span className="text-slate-300 font-bold flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            <span>القسم النشط:</span>
-          </span>
-          <span className="text-amber-300 font-black bg-amber-500/15 px-2.5 py-0.5 rounded-lg border border-amber-400/40 truncate max-w-[165px]">
-            {activeItemLabel}
-          </span>
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((prev) => !prev)}
+            title={isCollapsed ? 'توسيع القائمة الجانبية' : 'طي القائمة الجانبية'}
+            className="w-9 h-9 rounded-xl bg-white/5 hover:bg-[#0D9488]/25 border border-[#D4AF37]/25 flex items-center justify-center text-[#D4AF37] hover:text-white transition-all shrink-0 mx-auto cursor-pointer"
+          >
+            {isCollapsed ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
         </div>
-      )}
 
-      {/* Prominent User Guide Quick Access Button in Sidebar */}
-      <div className="px-2.5 pt-2.5">
-        <button
-          type="button"
-          onClick={() =>
-            onSelectNav(
-              'user-guide',
-              '1. قسم إدارة المخابز',
-              'دليل المستخدم (صور وفيديو)'
-            )
-          }
-          title="دليل المستخدم — تعليمات مصورة وفيديو حول كيفية استخدام كافة الميزات"
-          className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl border transition-all duration-200 cursor-pointer ${
-            activeNavId === 'user-guide'
-              ? 'bg-emerald-500 text-slate-950 border-emerald-300 font-black shadow-md'
-              : 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-200 border-emerald-700/70 font-bold'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span
-              className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                activeNavId === 'user-guide'
-                  ? 'bg-slate-950 text-emerald-400'
-                  : 'bg-emerald-600 text-white'
-              }`}
-            >
-              <BookOpen className="w-4 h-4" />
-            </span>
-            {!isCollapsed && (
-              <div className="text-right min-w-0">
-                <div className="text-[12.5px] font-black truncate">
-                  دليل المستخدم (صور وفيديو)
-                </div>
-                <div
-                  className={`text-[10px] truncate ${
-                    activeNavId === 'user-guide' ? 'text-slate-800 font-bold' : 'text-emerald-300/90'
-                  }`}
-                >
-                  شرح مصور وفيديو لكافة الميزات
-                </div>
-              </div>
+        {/* Quick Executive Shortcuts */}
+        <div className="mt-3.5 space-y-1.5">
+          <button
+            type="button"
+            onClick={() => onSelectNav('dashboard-home', 'لوحة التحكم', 'الصفحة الرئيسية')}
+            title="الصفحة الرئيسية"
+            className={`w-full flex items-center ${
+              isCollapsed ? 'justify-center px-2' : 'justify-between px-3.5'
+            } py-2.5 rounded-2xl text-xs font-black transition-all cursor-pointer border ${
+              activeNavId === 'dashboard-home'
+                ? 'bg-gradient-to-l from-[#0D9488] to-[#0F766E] text-white border-[#D4AF37]/50 shadow-lg shadow-[#0D9488]/25'
+                : 'bg-[#0F1E36] text-slate-200 border-white/10 hover:bg-white/10'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <LayoutDashboard className="w-4 h-4 shrink-0 text-[#D4AF37]" />
+              {!isCollapsed && <span>الشاشة الرئيسية للمنظومة</span>}
+            </div>
+            {!isCollapsed && <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />}
+          </button>
+
+          <button
+            type="button"
+            data-testid="sidebar-interactive-dashboard-btn"
+            onClick={() =>
+              onSelectNav('dashboard-charts', 'لوحة التحكم', 'لوحة القيادة والرسوم البيانية التفاعلية')
+            }
+            title="لوحة التحكم والرسوم البيانية التفاعلية"
+            className={`w-full flex items-center ${
+              isCollapsed ? 'justify-center px-2' : 'justify-between px-3.5'
+            } py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+              activeNavId === 'dashboard-charts'
+                ? 'bg-gradient-to-l from-[#D4AF37] to-amber-500 text-[#0A1628] border-[#D4AF37] shadow-md'
+                : 'bg-[#0F1E36]/80 text-[#FDE68A] border-[#D4AF37]/30 hover:bg-[#D4AF37]/15'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              {!isCollapsed && <span>لوحة المؤشرات والرسوم البيانية</span>}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            data-testid="sidebar-alerts-drawer-btn"
+            onClick={() =>
+              onSelectNav('alerts-drawer-log', 'سجل التنبيهات', 'سجل تنبيهات المديونيات المتجاوزة للحد')
+            }
+            title="سجل تنبيهات المديونيات"
+            className={`w-full flex items-center ${
+              isCollapsed ? 'justify-center px-2' : 'justify-between px-3.5'
+            } py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border bg-[#F43F5E]/10 hover:bg-[#F43F5E]/20 text-rose-200 border-[#F43F5E]/30`}
+          >
+            <div className="flex items-center gap-2">
+              <Bell className="w-4 h-4 shrink-0 text-[#F43F5E]" />
+              {!isCollapsed && <span>سجل تنبيهات المديونيات</span>}
+            </div>
+            {!isCollapsed && largeDebtsCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#F43F5E] text-white">
+                {largeDebtsCount}
+              </span>
             )}
-          </div>
-          {!isCollapsed && (
-            <span
-              className={`text-[10px] font-black px-2 py-0.5 rounded-md shrink-0 ${
-                activeNavId === 'user-guide'
-                  ? 'bg-slate-950 text-emerald-300'
-                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-              }`}
-            >
-              دليل شامل
-            </span>
-          )}
-        </button>
+          </button>
+        </div>
       </div>
 
-      {/* Scrollable Navigation Groups — Executive Smooth Card Buttons */}
-      <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-3 custom-scrollbar">
+      {/* Collapsible Navigation Sections */}
+      <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
         {groups.map((group) => {
-          const isOpen = !!openGroups[group.id];
-          const isGroupActive = activeGroupId === group.id;
+          const isExpanded = expandedGroups[group.id];
+          const hasActiveChild = group.items.some((i) => i.id === activeNavId);
 
           return (
             <div
               key={group.id}
-              className={`rounded-2xl transition-all duration-200 overflow-hidden border ${
-                isGroupActive
-                  ? `bg-[#0B1933]/95 ${group.activeBorder} shadow-lg`
-                  : 'bg-[#071124]/90 border-slate-800/90 hover:border-slate-700'
+              className={`rounded-2xl border transition-all overflow-hidden ${
+                hasActiveChild
+                  ? 'bg-[#0F1E36] border-[#0D9488]/50 shadow-md'
+                  : 'bg-[#0F1E36]/75 border-white/[0.08]'
               }`}
             >
-              {/* Group Header Button */}
+              {/* Group Header */}
               <button
                 type="button"
-                onClick={() => toggleGroup(group.id)}
+                data-testid={`sidebar-${group.id}-toggle`}
+                onClick={() => toggleGroup(group)}
                 title={group.title}
-                className={`w-full flex items-center justify-between px-3 py-2.5 text-right transition-all duration-200 cursor-pointer ${
-                  isGroupActive
-                    ? 'bg-gradient-to-l from-[#122852] via-[#0E2042] to-[#09152B] text-white'
-                    : 'text-slate-200 hover:bg-[#0D1E3A]/80 hover:text-white'
-                }`}
+                className={`w-full flex items-center ${
+                  isCollapsed ? 'justify-center px-2' : 'justify-between px-3'
+                } py-2.5 text-right transition-colors cursor-pointer hover:bg-white/[0.04]`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <span className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${group.iconBg}`}>
+                  <span
+                    className={`w-8 h-8 rounded-xl bg-gradient-to-br ${group.accentGradient} flex items-center justify-center text-white shadow-sm shrink-0`}
+                  >
                     {group.icon}
                   </span>
                   {!isCollapsed && (
-                    <div className="min-w-0 text-right">
-                      <div className="text-[13px] font-black text-white truncate tracking-tight">
-                        {group.title}
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-white truncate flex items-center gap-1.5">
+                        <span className="truncate">{group.title}</span>
+                        {group.requiresVaultSecret && !isVaultUnlocked && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-[#F43F5E]/20 text-rose-300 border border-[#F43F5E]/40 shrink-0">
+                            <Lock className="w-2.5 h-2.5" /> محمي
+                          </span>
+                        )}
                       </div>
-                      <div className="text-[10px] text-slate-400 font-bold truncate">
+                      <div className="text-[10px] font-bold text-slate-400 truncate">
                         {group.subtitle}
                       </div>
                     </div>
                   )}
                 </div>
                 {!isCollapsed && (
-                  <span
-                    className={`w-6 h-6 rounded-lg flex items-center justify-center bg-slate-800/80 border border-slate-700/80 text-slate-300 transition-transform duration-200 ${
-                      isOpen ? 'rotate-0 text-amber-300 border-amber-500/40' : '-rotate-90'
+                  <ChevronDown
+                    className={`w-4 h-4 text-[#D4AF37] shrink-0 transition-transform duration-200 ${
+                      isExpanded ? 'rotate-180' : ''
                     }`}
-                  >
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  </span>
+                  />
                 )}
               </button>
 
-              {/* Group Sub-Items Menu Tree */}
-              {isOpen && !isCollapsed && (
-                <div className="p-2 space-y-1.5 border-t border-slate-800/80 bg-[#050D1D]/90">
-                  {group.id === 'section-backup' && !isVaultUnlocked ? (
-                    <div
-                      data-testid="sidebar-backup-locked-card"
-                      className="p-3.5 rounded-2xl bg-gradient-to-b from-red-950/90 to-slate-950 border-2 border-red-500/50 text-right space-y-2.5 shadow-lg"
-                    >
-                      <div className="flex items-center gap-2 text-red-300 font-black text-xs">
-                        <Lock className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
-                        <span>قسم الحفظ والنسخ محمي بـ Username & Password</span>
-                      </div>
-                      <p className="text-[11px] text-slate-300 font-bold leading-relaxed">
-                        ممنوع فتح أو تشغيل قسم الحفظ والنسخ في هذا الفرع أو أي فرع آخر إلا بعد إدخال اسم المستخدم (Username) والباسورد (Password).
-                      </p>
-                      <button
-                        type="button"
-                        data-testid="sidebar-unlock-backup-btn"
-                        onClick={() =>
-                          onOpenVaultGate
-                            ? onOpenVaultGate('backup', 'قسم الحفظ والنسخ الاحتياطي وجميع الفروع')
-                            : onSelectNav('data-backup', 'قسم الحفظ والنسخ', 'النسخ الاحتياطي')
-                        }
-                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition cursor-pointer"
-                      >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>دخول (Username & Password) / قائمة الفروع</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      {group.id === 'section-backup' && isVaultUnlocked && (
-                        <div className="flex items-center gap-1.5 pb-1">
-                          <button
-                            type="button"
-                            onClick={() => onOpenVaultGate && onOpenVaultGate('both', 'قائمة الفروع وتغيير الباسورد على جميع الفروع')}
-                            className="flex-1 py-1.5 px-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer"
-                          >
-                            <KeyRound className="w-3 h-3" />
-                            <span>قائمة الباسورد للفروع</span>
-                          </button>
-                          {onLockVault && (
-                            <button
-                              type="button"
-                              onClick={onLockVault}
-                              className="py-1.5 px-2.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer"
-                            >
-                              <Lock className="w-3 h-3" />
-                              <span>قفل فوراً</span>
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      {group.items.map((item) => {
-                        const isItemActive = activeNavId === item.id;
-                        const isScheduleItem = item.id === 'debts-add-schedule';
-                        return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() =>
-                          onSelectNav(
-                            item.id,
-                            group.title.replace(/^\d+\.\s*/, ''),
-                            item.label
-                          )
-                        }
-                        className={`w-full relative flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl text-right cursor-pointer group transition-all duration-200 border ${
-                          isItemActive
-                            ? 'bg-gradient-to-l from-amber-500/20 via-blue-900/50 to-slate-900 text-white font-black border-amber-400/70 shadow-md'
-                            : isScheduleItem
-                            ? 'bg-gradient-to-l from-emerald-950/70 to-slate-900/90 hover:from-emerald-900/80 hover:to-slate-800 text-emerald-200 hover:text-white border-emerald-500/40 hover:border-emerald-400 shadow-sm'
-                            : 'bg-[#09152B]/70 hover:bg-[#112448] text-slate-300 hover:text-white border-slate-800/80 hover:border-blue-500/40'
-                        }`}
-                      >
-                        {/* Right Active Indicator Bar */}
-                        <span
-                          className={`w-1 self-stretch rounded-full transition-all duration-200 shrink-0 ${
-                            isItemActive
-                              ? 'bg-amber-400'
-                              : isScheduleItem
-                              ? 'bg-emerald-400 group-hover:bg-emerald-300'
-                              : 'bg-transparent group-hover:bg-blue-400/70'
-                          }`}
-                        />
-
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <span
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all duration-200 border ${
-                              isItemActive
-                                ? 'bg-amber-400 text-slate-950 border-amber-200 shadow-sm'
-                                : isScheduleItem
-                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 group-hover:bg-emerald-500 group-hover:text-slate-950'
-                                : 'bg-slate-900/90 text-blue-300 border-slate-700/80 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-400'
-                            }`}
-                          >
-                            {item.icon}
-                          </span>
-
-                          <div className="min-w-0 flex-1 text-right">
-                            <div
-                              className={`text-[12.5px] leading-snug truncate ${
-                                isItemActive
-                                  ? 'font-black text-amber-200'
-                                  : isScheduleItem
-                                  ? 'font-black text-emerald-200 group-hover:text-white'
-                                  : 'font-extrabold text-slate-100 group-hover:text-white'
-                              }`}
-                            >
-                              {item.label}
-                            </div>
-                            {item.subtitle && (
-                              <div className="text-[10px] text-slate-400 group-hover:text-slate-300 font-semibold truncate mt-0.5">
-                                {item.subtitle}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {item.badge !== undefined && (
-                          <span
-                            className={`px-2 py-0.5 text-[10px] font-black rounded-lg shrink-0 font-mono border ${
-                              item.badgeColor === 'red'
-                                ? 'bg-red-500/20 text-red-200 border-red-500/40'
-                                : item.badgeColor === 'amber'
-                                ? 'bg-amber-500/20 text-amber-200 border-amber-500/40'
-                                : item.badgeColor === 'emerald'
-                                ? 'bg-emerald-500/25 text-emerald-200 border-emerald-400/50'
-                                : 'bg-blue-500/20 text-blue-200 border-blue-500/40'
-                            }`}
-                          >
-                            {item.badge}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Collapsed Icon-Only Sub-Items */}
-              {isCollapsed && (
-                <div className="p-1.5 space-y-1.5 border-t border-slate-800 bg-[#050D1D] flex flex-col items-center">
+              {/* Group Sub-Items */}
+              {isExpanded && (!group.requiresVaultSecret || isVaultUnlocked) && (
+                <div className="px-2.5 pb-2.5 pt-1 space-y-1">
                   {group.items.map((item) => {
-                    const isItemActive = activeNavId === item.id;
+                    const isActive = activeNavId === item.id;
                     return (
                       <button
                         key={item.id}
                         type="button"
-                        title={`${group.title} — ${item.label}`}
-                        onClick={() =>
-                          onSelectNav(
-                            item.id,
-                            group.title.replace(/^\d+\.\s*/, ''),
-                            item.label
-                          )
-                        }
-                        className={`p-2 rounded-xl transition-all cursor-pointer relative border ${
-                          isItemActive
-                            ? 'bg-amber-400 text-slate-950 border-amber-200 shadow-md'
-                            : 'bg-slate-900/90 text-slate-300 border-slate-800 hover:bg-blue-600 hover:text-white hover:border-blue-400'
+                        data-testid={`sidebar-item-${item.id}`}
+                        onClick={() => onSelectNav(item.id, group.title, item.label)}
+                        title={item.label}
+                        className={`w-full flex items-center ${
+                          isCollapsed ? 'justify-center px-1.5' : 'justify-between px-3'
+                        } py-2 rounded-xl text-xs transition-all cursor-pointer border ${
+                          isActive
+                            ? 'bg-gradient-to-l from-[#0D9488] to-[#0F766E] text-white font-black border-[#D4AF37]/50 shadow-sm'
+                            : 'text-slate-300 font-bold border-transparent hover:bg-white/[0.06] hover:text-white'
                         }`}
                       >
-                        {item.icon}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={isActive ? 'text-[#D4AF37]' : 'text-[#5EEAD4]'}>
+                            {item.icon}
+                          </span>
+                          {!isCollapsed && <span className="truncate">{item.label}</span>}
+                        </div>
+                        {!isCollapsed && item.badge !== undefined && (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-mono tabular-nums ${getBadgeClasses(
+                              item.badgeVariant
+                            )}`}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -735,47 +594,22 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         })}
       </nav>
 
-      {/* Bottom Sidebar Footer (Hidden Diagnostics Trigger on Connection Badge) */}
+      {/* Bottom Live Cloud Connection Footer */}
       {!isCollapsed && (
-        <div className="px-4 py-3 border-t border-slate-800/90 bg-[#040B18] text-[11px] text-slate-400 font-bold flex items-center justify-between gap-2">
-          <span className="truncate">منظومة إدارة التموين والمخابز</span>
-          <button
-            type="button"
-            data-testid="sidebar-realtime-diagnostics-btn"
-            onClick={() =>
-              onSelectNav(
-                'realtime-diagnostics',
-                'مرصد التشخيص المتقدم',
-                'صفحة تشخيص Supabase Realtime و WebSockets'
-              )
-            }
-            title="فتح صفحة التشخيص المخفية لـ Supabase Realtime و WebSockets (Ctrl+Shift+D)"
-            className={`inline-flex items-center gap-1.5 text-[10px] font-black shrink-0 px-2 py-0.5 rounded hover:bg-slate-800/80 transition cursor-pointer ${
-              connectionStatus === 'connected'
-                ? 'text-emerald-400'
-                : connectionStatus === 'syncing'
-                ? 'text-amber-400'
-                : 'text-red-400'
-            }`}
-          >
+        <div className="p-3 border-t border-[#D4AF37]/20 bg-[#060E1A] flex items-center justify-between text-[11px] font-bold">
+          <div className="flex items-center gap-2 truncate">
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                 connectionStatus === 'connected'
-                  ? 'bg-emerald-400 animate-pulse'
+                  ? 'bg-[#10B981] animate-pulse'
                   : connectionStatus === 'syncing'
-                  ? 'bg-amber-400 animate-ping'
-                  : 'bg-red-500'
+                  ? 'bg-[#D4AF37] animate-ping'
+                  : 'bg-[#F43F5E]'
               }`}
             />
-            <span>
-              {connectionLabel ||
-                (connectionStatus === 'connected'
-                  ? 'متصل'
-                  : connectionStatus === 'syncing'
-                  ? 'مزامنة'
-                  : 'غير متصل')}
-            </span>
-          </button>
+            <span className="text-slate-300 truncate">{connectionLabel}</span>
+          </div>
+          <span className="text-[#D4AF37] font-black shrink-0">Supabase</span>
         </div>
       )}
     </aside>

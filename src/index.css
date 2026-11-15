@@ -1,247 +1,137 @@
 @import "tailwindcss";
 
 @layer base {
-  * {
-    font-family: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  :root {
+    --color-midnight-navy: #0A1628;
+    --color-midnight-Light: #0F1E36;
+    --color-royal-teal: #0D9488;
+    --color-champagne-gold: #D4AF37;
+    --color-soft-ivory: #FAF8F5;
+    --color-emerald-green: #10B981;
+    --color-coral-red: #F43F5E;
+    --color-light-slate: #F1F5F9;
   }
 
   body {
-    font-weight: 700;
-    color: #0f172a;
-    background-color: #f1f5f9;
+    font-family: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
+    background-color: #FAF8F5;
+    color: #0A1628;
     overflow-x: hidden;
   }
-
-  input, select, textarea, button {
-    font-weight: 700;
-  }
-
-  table {
-    font-weight: 700;
-  }
-
-  th {
-    font-weight: 900;
-  }
-
-  td {
-    font-weight: 700;
-  }
 }
 
-/* =========================================================
-   ANIMATED BUTTONS, CARDS & ENTERPRISE ERP VISUAL SYSTEM
-   ========================================================= */
-@keyframes fadeInSlideUp {
-  0% {
-    opacity: 0;
-    transform: translateY(10px) scale(0.99);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+/* Custom Scrollbar - Midnight Navy & Royal Teal */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
 }
 
-@keyframes floatSubtle {
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #0A1628 0%, #0D9488 100%);
+  border-radius: 8px;
+  border: 2px solid #F1F5F9;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #0D9488 0%, #D4AF37 100%);
+}
+
+/* Keyframe Animations */
+@keyframes floatSlow {
   0%, 100% {
     transform: translateY(0px);
   }
   50% {
-    transform: translateY(-3px);
+    transform: translateY(-4px);
   }
 }
 
-@keyframes pulseGlowGold {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35);
-  }
-  50% {
-    box-shadow: 0 0 18px 3px rgba(245, 158, 11, 0.45);
-  }
-}
-
-@keyframes gradientFlow {
+@keyframes shimmerGlow {
   0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
+    background-position: -200% 0;
   }
   100% {
-    background-position: 0% 50%;
+    background-position: 200% 0;
   }
 }
 
-.animate-fade-in {
-  animation: fadeInSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.animate-float-slow {
+  animation: floatSlow 4s ease-in-out infinite;
 }
 
-.icon-animated {
-  animation: floatSubtle 2.8s ease-in-out infinite;
+/* Executive Glass & Card Surfaces */
+.executive-card {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(212, 175, 55, 0.25);
+  box-shadow: 0 12px 32px -8px rgba(10, 22, 40, 0.08);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.pulse-gold-glow {
-  animation: pulseGlowGold 2.6s ease-in-out infinite;
+.executive-card:hover {
+  box-shadow: 0 20px 40px -12px rgba(13, 148, 136, 0.16);
+  border-color: rgba(13, 148, 136, 0.4);
 }
 
-.animated-royal-gradient {
-  background: linear-gradient(125deg, #071329, #0f2547, #1e3a8a, #0b2239, #064e3b);
-  background-size: 240% 240%;
-  animation: gradientFlow 10s ease infinite;
-}
-
-.card-hover-lift {
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
-}
-
-.card-hover-lift:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 16px 32px -10px rgba(15, 35, 66, 0.18);
-}
-
-button,
-a[role="button"],
-.btn-interactive {
-  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
-}
-
-button:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.sidebar-btn-erp {
-  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
-}
-
-/* Enlarged bold numbers with tabular alignment */
-.num-enlarged {
-  font-size: 0.94rem !important;
-  font-weight: 800 !important;
+/* Tabular Numbers for Financial & Audit Precision */
+.tabular-nums {
   font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-  letter-spacing: -0.01em;
 }
 
-/* Stat card large numbers */
-.stat-num {
-  font-size: 1.55rem !important;
-  font-weight: 900 !important;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+/* Table Sticky Header & Row Styling */
+table th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
-/* Enterprise ERP Total Summary Row */
-tr.total-summary-row,
-tfoot tr.total-summary-row,
-tr.total-summary-row:hover,
-tfoot tr.total-summary-row:hover {
-  background: linear-gradient(90deg, #091931 0%, #172554 50%, #091931 100%) !important;
-  color: #fde68a !important;
-  font-weight: 900 !important;
-  border-top: 3px solid #f59e0b !important;
-}
-
-tr.total-summary-row td,
-tfoot tr.total-summary-row td,
-tr.total-summary-row:hover td,
-tfoot tr.total-summary-row:hover td {
-  color: #fde68a !important;
-  font-weight: 900 !important;
-}
-
-/* Subtotal rows for Local Units and Villages */
-tr.local-unit-total-row,
-tr.local-unit-total-row:hover {
-  background: linear-gradient(90deg, #1e3a8a 0%, #1d4ed8 50%, #1e3a8a 100%) !important;
-  color: #fde68a !important;
-  font-weight: 900 !important;
-}
-
-tr.local-unit-total-row td,
-tr.local-unit-total-row:hover td {
-  background-color: transparent !important;
-  color: #fde68a !important;
-}
-
-tr.village-total-row,
-tr.village-total-row:hover {
-  background: linear-gradient(90deg, #dbeafe 0%, #e0f2fe 50%, #dbeafe 100%) !important;
-  color: #0f2342 !important;
-  font-weight: 900 !important;
-}
-
-tr.village-total-row td,
-tr.village-total-row:hover td {
-  background-color: transparent !important;
-  color: #0f2342 !important;
-}
-
-/* Solid black redacted cells from نوع المخابز to end of row in Local Unit & Total Summary rows */
-tr.village-total-row td.blackout-summary-cell,
-tr.village-total-row:hover td.blackout-summary-cell,
-tr.total-summary-row td.blackout-summary-cell,
-tfoot tr.total-summary-row td.blackout-summary-cell,
-tr.total-summary-row:hover td.blackout-summary-cell,
-tfoot tr.total-summary-row:hover td.blackout-summary-cell,
-.report-table-compact td.blackout-summary-cell {
-  background: #000000 !important;
-  background-color: #000000 !important;
-  border-color: #111827 !important;
-  color: transparent !important;
-}
-
-/* Professional Navy/Royal-Blue row highlight for selected and hovered rows */
-tr.row-selected {
-  background-color: #bfdbfe !important;
-  font-weight: 800 !important;
-}
-
-tr.row-selected td {
-  background-color: #bfdbfe !important;
-  color: #0f2342 !important;
-}
-
-/* Smooth Interactive Table Row Hover */
 tbody tr {
-  transition: background-color 0.14s ease;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+tbody tr:nth-child(even) {
+  background-color: #F1F5F9;
 }
 
 tbody tr:hover {
-  background-color: #e0f2fe;
+  background-color: rgba(13, 148, 136, 0.08) !important;
 }
 
-select:hover,
-select:focus {
-  background-color: #dbeafe !important;
-  color: #0f2342 !important;
-  border-color: #1e3a8a !important;
+/* Summary / Totals Row Styling */
+tr.summary-row,
+tfoot tr {
+  background: linear-gradient(90deg, #0A1628 0%, #0F1E36 60%, #0D9488 100%) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
 }
 
-/* Print Styles for A4 Landscape & Full Print Isolation */
+tr.summary-row td,
+tfoot tr td {
+  color: #ffffff !important;
+  border-color: rgba(212, 175, 55, 0.3) !important;
+}
+
+/* Official Print Styles */
 @media print {
   @page {
-    size: A4 landscape !important;
-    margin: 4mm !important;
+    size: A4 landscape;
+    margin: 6mm;
   }
 
   html, body {
-    width: 100% !important;
-    height: auto !important;
-    margin: 0 !important;
-    padding: 0 !important;
     background: #ffffff !important;
     color: #000000 !important;
-    overflow: visible !important;
-    print-color-adjust: exact !important;
+    font-size: 9pt !important;
     -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
-  .no-print,
-  body.has-print-modal #root > div > header,
-  body.has-print-modal #root > div > main,
-  body.has-print-modal #root > div > footer,
-  body.has-print-modal #root > div > .no-print {
+  .no-print {
     display: none !important;
   }
 
@@ -249,107 +139,10 @@ select:focus {
     display: block !important;
   }
 
-  /* When printing from ReportModal */
-  body.has-print-modal .report-modal-overlay {
-    position: static !important;
-    inset: auto !important;
-    width: 100% !important;
-    height: auto !important;
-    background: #ffffff !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    overflow: visible !important;
-    display: block !important;
-    backdrop-filter: none !important;
-  }
-
-  body.has-print-modal .report-modal-dialog {
-    max-width: 100% !important;
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: none !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
-    overflow: visible !important;
-  }
-
-  body.has-print-modal .report-scroll-wrapper {
-    overflow: visible !important;
-    max-height: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    background: #ffffff !important;
-  }
-
-  body.has-print-modal .report-zoom-wrapper {
-    zoom: 1 !important;
-    min-width: 100% !important;
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
-  .print-container,
-  .print-container * {
-    color: #000000 !important;
-    -webkit-text-fill-color: #000000 !important;
-  }
-
-  .print-container {
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    background: #ffffff !important;
-    border: none !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
-    overflow: visible !important;
-  }
-
-  /* High-density landscape table printing across full A4 sheet with high-contrast legibility */
-  .report-table-compact {
-    width: 100% !important;
-    max-width: 100% !important;
-    font-size: 8.5pt !important;
-    border-collapse: collapse !important;
-    table-layout: fixed !important;
-    margin: 0 !important;
-  }
-
-  .report-font-compact {
-    font-size: 7.5pt !important;
-  }
-  .report-font-standard {
-    font-size: 8.5pt !important;
-  }
-  .report-font-large {
-    font-size: 9.5pt !important;
-  }
-
-  .report-table-compact th,
-  .report-table-compact td {
-    border: 1px solid #000000 !important;
-    color: #000000 !important;
-    padding: 3px 2px !important;
-    word-break: break-word !important;
-    overflow-wrap: break-word !important;
-    line-height: 1.25 !important;
-    white-space: normal !important;
-    text-align: center !important;
-    vertical-align: middle !important;
-  }
-
-  .report-table-compact th {
-    background-color: #e2e8f0 !important;
-    color: #000000 !important;
-    font-weight: 900 !important;
-  }
-
   table {
-    page-break-inside: auto;
     width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto;
   }
 
   tr {
@@ -364,23 +157,10 @@ select:focus {
   tfoot {
     display: table-footer-group;
   }
-}
 
-/* Custom scrollbars - Enlarged and Prominent */
-::-webkit-scrollbar {
-  width: 14px;
-  height: 14px;
+  th, td {
+    border: 1px solid #334155 !important;
+    padding: 3px 5px !important;
+    font-size: 8.5pt !important;
+  }
 }
-::-webkit-scrollbar-track {
-  background: #0f172a;
-  border-left: 1px solid #1e293b;
-}
-::-webkit-scrollbar-thumb {
-  background: #3b82f6;
-  border-radius: 7px;
-  border: 3px solid #0f172a;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #60a5fa;
-}
-

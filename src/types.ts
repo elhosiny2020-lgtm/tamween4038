@@ -232,6 +232,7 @@ export interface AppUser {
   customPermissions?: string[];
   branchId?: string;
   createdAt?: string;
+  isActive?: boolean;
 }
 
 export interface InboxChatMessage {
@@ -330,6 +331,8 @@ export interface SupplyBranch {
   name: string; // مثال: إدارة تموين مركز المحلة الكبرى / إدارة تموين سمنود
   governorateTitle: string;
   directorateTitle: string;
+  governorate?: string;
+  directorate?: string;
   description?: string;
   createdAt: string;
   isDefault?: boolean;

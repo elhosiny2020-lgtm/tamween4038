@@ -1,542 +1,371 @@
-import React, { useState, useEffect } from 'react';
-import { AppUser, SystemConfig, SupplyBranch } from '../types';
-import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
-import { ParticleCanvas } from './ParticleCanvas';
-import { CartoonBakeryScene } from './CartoonBakeryScene';
-import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Building2, KeyRound, Download, ChevronDown, Unlock } from 'lucide-react';
-import { downloadWindowsExeLauncher } from '../utils/htmlExporter';
+import React, { useState } from 'react';
+import { AppUser, SupplyBranch, SystemConfig } from '../types';
 import {
-  deduplicateSupplyBranches,
-  verifyVaultPasscode,
-  getStoredVaultPasscode,
-} from '../utils/branchVaultUtils';
+  ShieldCheck,
+  Lock,
+  User,
+  LogIn,
+  AlertCircle,
+  Sparkles,
+  CheckCircle2,
+  Building2,
+  Award,
+  Layers,
+  UserPlus,
+} from 'lucide-react';
 
 interface LoginModalProps {
-  systemConfig: SystemConfig;
+  systemConfig?: SystemConfig;
   users: AppUser[];
+  logoutReason?: string | null;
   branches?: SupplyBranch[];
   activeBranchId?: string;
   onSelectBranch?: (branchId: string) => void;
-  onOpenBranchesManager?: () => void;
-  onLoginSuccess: (user: AppUser) => void;
-  onRegisterUser: (
-    newUser: AppUser
-  ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
-  logoutReason?: string | null;
+  onLoginSuccess?: (user: AppUser) => void;
+  onLogin?: (user: AppUser) => void;
+  onRegisterUser?: (newUser: AppUser) => Promise<any> | void;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
   systemConfig,
   users,
+  logoutReason,
   branches = [],
-  activeBranchId = 'branch-mahalla',
+  activeBranchId = 'branch_mahalla_center',
   onSelectBranch,
   onLoginSuccess,
+  onLogin,
   onRegisterUser,
-  logoutReason,
 }) => {
-  const [isRegistering, setIsRegistering] = useState(false);
+  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState<'admin' | 'inspector' | 'auditor'>('inspector');
-  const [errorMsg, setErrorMsg] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const cleanBranches = React.useMemo(() => deduplicateSupplyBranches(branches), [branches]);
-  const [branchGateUnlocked, setBranchGateUnlocked] = useState(false);
-  const [showBranchPinPrompt, setShowBranchPinPrompt] = useState(false);
-  const [branchPinInput, setBranchPinInput] = useState('');
-  const [branchPinError, setBranchPinError] = useState('');
+  const activeBranch = branches.find((b) => b.id === activeBranchId);
+  const triggerLogin = onLoginSuccess || onLogin;
 
-  // Always clear username & password when the login screen mounts, on logout, or when switching branches so user types it manually every time
-  useEffect(() => {
-    setUsername('');
-    setPassword('');
-    setErrorMsg('');
-    try {
-      localStorage.removeItem('TAMWEEN_LAST_USERNAME');
-      sessionStorage.removeItem('TAMWEEN_LAST_USERNAME');
-    } catch {}
-  }, [logoutReason, activeBranchId]);
-
-  const activeBranchObj = cleanBranches.find((b) => b.id === activeBranchId);
-  const activeBranchTitle = activeBranchObj?.name || systemConfig.administrationTitle;
-
-  const handleLogin = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMsg('');
-    setSuccessMsg('');
+    setError(null);
+    setSuccessMsg(null);
 
-    const trimmedUser = username.trim();
-    if (!trimmedUser || !password) {
-      setErrorMsg('يرجى إدخال اسم المستخدم وكلمة المرور');
-      return;
-    }
+    const trimmedUser = username.trim().toLowerCase();
+    const trimmedPass = password.trim();
 
-    const found = users.find(
-      (u) =>
-        (u.username.toLowerCase() === trimmedUser.toLowerCase() ||
-          (u.gmailEmail && u.gmailEmail.toLowerCase() === trimmedUser.toLowerCase())) &&
-        u.password === password
-    );
-
-    if (found) {
-      setSuccessMsg(`تم تسجيل الدخول بنجاح، جاري فتح واجهة (${activeBranchTitle})...`);
-      const authenticatedUser = { ...found };
-      setUsername('');
-      setPassword('');
-      setTimeout(() => {
-        onLoginSuccess(authenticatedUser);
-      }, 150);
-    } else {
-      setErrorMsg('بيانات الدخول غير صحيحة، يرجى التحقق من اسم المستخدم وكلمة المرور');
-    }
-  };
-
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isSubmitting) return;
-    setErrorMsg('');
-    setSuccessMsg('');
-
-    const trimmedUser = username.trim();
-    const trimmedName = fullName.trim();
-
-    if (!trimmedUser || !password || !trimmedName) {
-      setErrorMsg('يرجى استيفاء كافة الحقول المطلوبة للتسجيل');
-      return;
-    }
-
-    if (trimmedUser.length < 3) {
-      setErrorMsg('اسم المستخدم يجب ألا يقل عن 3 أحرف');
-      return;
-    }
-
-    if (users.some((u) => u.username.toLowerCase() === trimmedUser.toLowerCase())) {
-      setErrorMsg('اسم المستخدم مسجل مسبقاً، يرجى اختيار اسم آخر');
-      return;
-    }
-
-    const newUser: AppUser = {
-      id: `u-${Date.now()}`,
-      username: trimmedUser,
-      fullName: trimmedName,
-      password,
-      role,
-      createdAt: new Date().toISOString().split('T')[0],
-    };
-
-    setIsSubmitting(true);
-    try {
-      const res = await onRegisterUser(newUser);
-      if (res && res.success === false && !res.queuedOffline) {
-        setErrorMsg(res.error || 'تعذر حفظ الحساب الجديد في قاعدة البيانات. يرجى المحاولة مجدداً.');
+    if (mode === 'register') {
+      if (!fullName.trim() || !trimmedUser || !trimmedPass) {
+        setError('يرجى إدخال الاسم بالكامل واسم المستخدم وكلمة المرور');
         return;
       }
-      setSuccessMsg('تم إنشاء وحفظ الحساب في قاعدة البيانات بنجاح! يمكنك الآن تسجيل الدخول مباشرة.');
-      setTimeout(() => {
-        setIsRegistering(false);
-        setUsername('');
-        setPassword('');
-        setFullName('');
-        setSuccessMsg('');
-      }, 500);
-    } catch (err: any) {
-      setErrorMsg(err?.message || 'حدث خطأ أثناء تسجيل الحساب في قاعدة البيانات.');
-    } finally {
-      setIsSubmitting(false);
+      const exists = users.some((u) => u.username.toLowerCase() === trimmedUser);
+      if (exists) {
+        setError('اسم المستخدم مسجل بالفعل، اختر اسماً آخر.');
+        return;
+      }
+      const newUser: AppUser = {
+        id: `user-${Date.now()}`,
+        username: username.trim(),
+        password: trimmedPass,
+        fullName: fullName.trim(),
+        role: 'data_entry',
+        department: activeBranch?.name || systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى',
+        isActive: true,
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+      if (onRegisterUser) {
+        await onRegisterUser(newUser);
+      }
+      setSuccessMsg('تم إنشاء الحساب بنجاح! يمكنك تسجيل الدخول الآن.');
+      setMode('login');
+      return;
     }
+
+    if (!trimmedUser || !trimmedPass) {
+      setError('يرجى إدخال اسم المستخدم وكلمة المرور');
+      return;
+    }
+
+    const matched = users.find(
+      (u) =>
+        (u.username.toLowerCase() === trimmedUser || u.fullName.toLowerCase() === trimmedUser) &&
+        u.password === trimmedPass
+    );
+
+    if (!matched) {
+      setError('اسم المستخدم أو كلمة المرور غير صحيحة');
+      return;
+    }
+
+    if (!matched.isActive) {
+      setError('هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.');
+      return;
+    }
+
+    triggerLogin?.(matched);
   };
 
   return (
-    <div className="relative min-h-screen w-full flex items-center justify-center p-4 bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950 overflow-hidden font-sans">
-      {/* Particle Canvas */}
-      <ParticleCanvas />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto bg-[#0A1628]"
+      dir="rtl"
+    >
+      {/* Luxury Animated Mesh Backdrop (Midnight Navy + Royal Teal + Champagne Gold) */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute -top-32 -right-32 w-[520px] h-[520px] rounded-full bg-[#0D9488]/25 blur-[130px]" />
+        <div className="absolute top-1/3 -left-32 w-[480px] h-[480px] rounded-full bg-[#D4AF37]/20 blur-[140px]" />
+        <div className="absolute -bottom-40 right-1/4 w-[560px] h-[560px] rounded-full bg-[#10B981]/15 blur-[150px]" />
+        <div
+          className="absolute inset-0 opacity-[0.06]"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle at 2px 2px, rgba(212,175,55,0.8) 1px, transparent 0)',
+            backgroundSize: '32px 32px',
+          }}
+        />
+      </div>
 
-      {/* Modern Ambient Glow Accents */}
-      <div className="absolute top-1/6 left-1/5 w-96 h-96 bg-amber-500/15 rounded-full blur-3xl pointer-events-none animate-pulse" />
-      <div className="absolute bottom-1/6 right-1/5 w-[28rem] h-[28rem] bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
+      {/* Main Executive Glass Container */}
+      <div className="relative z-10 w-full max-w-5xl rounded-[32px] border border-[#D4AF37]/35 bg-[#0F1E36]/85 backdrop-blur-2xl shadow-[0_32px_90px_-15px_rgba(0,0,0,0.85)] overflow-hidden grid grid-cols-1 lg:grid-cols-12 my-auto">
+        {/* Right Column: Official Emblem & Hierarchy */}
+        <div className="lg:col-span-6 p-8 sm:p-10 bg-gradient-to-br from-[#0A1628] via-[#0F1E36] to-[#0D9488]/30 border-b lg:border-b-0 lg:border-l border-[#D4AF37]/25 flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute -top-20 -left-20 w-56 h-56 rounded-full bg-[#D4AF37]/10 blur-2xl pointer-events-none" />
 
-      {/* Main Container */}
-      <div className="relative z-10 w-full max-w-5xl mx-auto flex flex-col lg:flex-row items-center justify-center gap-6 lg:gap-10 my-4">
-        {/* Official Ministry Emblem Shield Section */}
-        <div className="w-full lg:w-1/2 flex flex-col items-center justify-center">
-          <CartoonBakeryScene />
-        </div>
+          <div>
+            {/* Official Top Pill */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#FDE68A] text-xs font-black mb-6 shadow-sm">
+              <Award className="w-4 h-4 text-[#D4AF37]" />
+              <span>جمهورية مصر العربية • وزارة التموين والتجارة الداخلية</span>
+            </div>
 
-        {/* Login & Register Card */}
-        <div className="w-full lg:w-1/2 max-w-md bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border-2 border-amber-500/30 overflow-hidden transform transition-all duration-300">
-          {/* Top Header with Emblem */}
-          <div className="bg-gradient-to-b from-slate-950 via-slate-900 to-amber-950 p-5 text-center text-white relative border-b border-amber-500/40">
-            <div className="flex justify-center mb-2.5">
-              <div className="relative">
-                <div className="w-16 h-16 rounded-2xl bg-white p-2 shadow-xl border-2 border-amber-400 flex items-center justify-center transform hover:scale-105 transition-transform duration-300">
-                  <img
-                    src={systemConfig.logoBase64 || DEFAULT_OFFICIAL_LOGO}
-                    alt="شعار وزارة التموين والتجارة الداخلية"
-                    className="w-full h-full object-contain"
-                  />
+            {/* Official Golden Eagle / Emblem Card */}
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-[#D4AF37] via-amber-400 to-[#0D9488] p-0.5 shadow-xl shadow-[#D4AF37]/20 shrink-0">
+                <div className="w-full h-full rounded-[22px] bg-[#0A1628] flex flex-col items-center justify-center text-center p-2">
+                  {systemConfig?.logoBase64 ? (
+                    <img
+                      src={systemConfig.logoBase64}
+                      alt="شعار التموين"
+                      referrerPolicy="no-referrer"
+                      className="w-12 h-12 object-contain"
+                    />
+                  ) : (
+                    <Building2 className="w-8 h-8 text-[#D4AF37]" />
+                  )}
+                  <span className="text-[9px] font-black text-[#FDE68A] mt-0.5 tracking-tighter">
+                    تموين الغربية
+                  </span>
                 </div>
-                <div className="absolute -bottom-1 -right-1 p-1 bg-amber-500 rounded-lg text-slate-950">
-                  <Building2 className="w-3.5 h-3.5" />
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-sm font-black text-[#D4AF37] tracking-wide">
+                  {activeBranch?.governorate || systemConfig?.governorateTitle || 'محافظة الغربية'}
+                </div>
+                <h1 className="text-lg sm:text-xl font-black text-white leading-snug">
+                  {activeBranch?.directorate ||
+                    systemConfig?.directorateTitle ||
+                    'مديرية التموين والتجارة الداخلية بالغربية'}
+                </h1>
+                <div className="text-base sm:text-lg font-black text-[#5EEAD4]">
+                  {activeBranch?.name ||
+                    systemConfig?.administrationTitle ||
+                    'إدارة تموين مركز المحلة الكبرى'}
                 </div>
               </div>
             </div>
 
-            <div className="inline-block bg-amber-400 px-3 py-0.5 rounded-full shadow-sm mb-1 border border-amber-300">
-              <h2 className="text-[11px] font-black text-black tracking-wider">
-                جمهورية مصر العربية • وزارة التموين والتجارة الداخلية
-              </h2>
+            {/* English Subtitle Banner */}
+            <div className="px-4 py-2.5 rounded-2xl bg-white/[0.04] border border-[#D4AF37]/25 mb-6">
+              <p className="text-[11px] font-black tracking-[0.18em] text-[#D4AF37] text-center uppercase">
+                MINISTRY OF SUPPLY AND INTERNAL TRADE
+              </p>
             </div>
-            <h1 className="text-sm font-black text-white leading-snug">
-              {activeBranchObj?.governorateTitle || systemConfig.governorateTitle} — {activeBranchObj?.directorateTitle || systemConfig.directorateTitle}
-            </h1>
-            <div className="inline-block mt-1.5 px-3.5 py-1 bg-amber-400 border border-amber-300 rounded-full text-xs font-black text-black shadow-sm">
-              {activeBranchTitle}
-            </div>
+
+            <p className="text-xs sm:text-sm text-slate-300 font-bold leading-relaxed">
+              المنظومة الرقمية المتكاملة لإدارة ومراجعة المخابز البلدية، حصص الدقيق، المطاحن، الرقابة التموينية، وسجل المديونيات والتحصيل اللحظي عبر السحابة الموحدة.
+            </p>
           </div>
 
-          {/* Branch Dropdown Selection on Login Interface (Protected by Master Secret Passcode) */}
-          <div className="bg-indigo-950/95 text-white p-4 border-b-2 border-amber-400/70" dir="rtl">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <label
-                htmlFor="login-branch-select"
-                className="text-xs font-black text-amber-300 flex items-center gap-1.5"
-              >
-                <Building2 className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>الإدارة التموينية / الفرع:</span>
+          {/* Live Security & Cloud Features */}
+          <div className="mt-8 pt-6 border-t border-white/10 grid grid-cols-2 gap-3">
+            <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center gap-2.5">
+              <CheckCircle2 className="w-5 h-5 text-[#10B981] shrink-0" />
+              <div>
+                <div className="text-xs font-black text-white">مزامنة سحابية فورية</div>
+                <div className="text-[10px] font-bold text-slate-400">تحديث لحظي لجميع الأجهزة</div>
+              </div>
+            </div>
+            <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center gap-2.5">
+              <ShieldCheck className="w-5 h-5 text-[#D4AF37] shrink-0" />
+              <div>
+                <div className="text-xs font-black text-white">حماية وصلاحيات دقيقة</div>
+                <div className="text-[10px] font-bold text-slate-400">تأمين كامل لقواعد البيانات</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Left Column: Open Branch Selector & Login Form */}
+        <div className="lg:col-span-6 p-8 sm:p-10 bg-[#FAF8F5] text-[#0A1628] flex flex-col justify-center">
+          <div className="mb-5">
+            <span className="inline-flex items-center gap-1.5 text-xs font-black text-[#0D9488] bg-[#0D9488]/10 px-3 py-1 rounded-full border border-[#0D9488]/25 mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
+              بوابة الدخول الرسمية للمنظومة
+            </span>
+            <h2 className="text-2xl font-black text-[#0A1628]">
+              {mode === 'login' ? 'تسجيل الدخول إلى النظام' : 'تسجيل حساب مستخدم جديد'}
+            </h2>
+            <p className="text-xs font-bold text-slate-500 mt-1">
+              اختر الإدارة التموينية أو الفرع مباشرة من القائمة ثم سجل الدخول
+            </p>
+          </div>
+
+          {logoutReason && (
+            <div className="mb-4 p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>{logoutReason}</span>
+            </div>
+          )}
+
+          {successMsg && (
+            <div className="mb-4 p-3 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Open Branch Selector on the Interface (No Password Required to Switch Branch) */}
+            {branches.length > 0 && onSelectBranch && (
+              <div className="p-3.5 rounded-2xl bg-white border-2 border-[#0D9488]/30 shadow-xs">
+                <label
+                  htmlFor="login-branch-select"
+                  className="block text-xs font-black text-[#0A1628] mb-1.5 flex items-center justify-between"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-[#0D9488]" />
+                    الإدارة التموينية / الفرع (متاح للاختيار المباشر)
+                  </span>
+                  <span className="text-[10px] font-black text-[#0D9488] bg-[#0D9488]/10 px-2 py-0.5 rounded-full">
+                    {branches.length} فروع
+                  </span>
+                </label>
+                <select
+                  id="login-branch-select"
+                  data-testid="login-branch-select"
+                  value={activeBranchId}
+                  onChange={(e) => onSelectBranch(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#FAF8F5] border border-slate-300 text-[#0A1628] font-black text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488] cursor-pointer"
+                >
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name} — ({branch.governorate})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {error && (
+              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-black flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {mode === 'register' && (
+              <div>
+                <label className="block text-xs font-black text-[#0A1628] mb-1.5">
+                  الاسم الرباعي للموظف
+                </label>
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="أدخل الاسم بالكامل"
+                  className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-black text-[#0A1628] mb-1.5">
+                اسم المستخدم
               </label>
-              {branchGateUnlocked ? (
+              <div className="relative">
+                <User className="w-4 h-4 text-[#0D9488] absolute right-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  data-testid="login-username-input"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="أدخل اسم المستخدم"
+                  autoComplete="username"
+                  className="w-full pr-10 pl-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488] focus:border-[#0D9488] transition-all"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-[#0A1628] mb-1.5">
+                كلمة المرور
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-[#D4AF37] absolute right-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="password"
+                  data-testid="login-password-input"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  className="w-full pr-10 pl-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488] focus:border-[#0D9488] transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-[#0D9488] focus:ring-[#0D9488]"
+                />
+                <span className="text-xs font-bold text-slate-600">
+                  الاحتفاظ بجلسة الدخول على هذا الجهاز
+                </span>
+              </label>
+
+              {onRegisterUser && (
                 <button
                   type="button"
                   onClick={() => {
-                    setBranchGateUnlocked(false);
-                    setShowBranchPinPrompt(false);
-                    setBranchPinInput('');
+                    setMode(mode === 'login' ? 'register' : 'login');
+                    setError(null);
+                    setSuccessMsg(null);
                   }}
-                  className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white flex items-center gap-1 cursor-pointer"
+                  className="text-xs font-black text-[#0D9488] hover:underline flex items-center gap-1 cursor-pointer"
                 >
-                  <Lock className="w-3 h-3" />
-                  <span>قفل الفروع</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowBranchPinPrompt((p) => !p);
-                    setBranchPinError('');
-                  }}
-                  className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-400/50 flex items-center gap-1 transition cursor-pointer"
-                >
-                  <KeyRound className="w-3 h-3" />
-                  <span>دخول جميع الفروع بالرقم السري</span>
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>{mode === 'login' ? 'تسجيل مستخدم جديد' : 'العودة لتسجيل الدخول'}</span>
                 </button>
               )}
             </div>
 
-            {!branchGateUnlocked ? (
-              <div className="space-y-2">
-                <div className="w-full bg-slate-900/90 text-amber-300 font-black text-xs sm:text-sm rounded-xl px-3.5 py-2.5 border border-slate-700 flex items-center justify-between">
-                  <span className="truncate">{activeBranchTitle}</span>
-                  <span className="text-[10px] bg-red-500/20 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-md shrink-0">
-                    🔒 الفروع مقفلة برقم سري
-                  </span>
-                </div>
-                {showBranchPinPrompt && (
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-amber-400/50 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="password"
-                        value={branchPinInput}
-                        onChange={(e) => setBranchPinInput(e.target.value)}
-                        placeholder="أدخل الرقم السري لفتح جميع الفروع..."
-                        className="flex-1 bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-lg px-3 py-1.5 text-xs font-black text-white outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const targetPin = getStoredVaultPasscode(systemConfig.vaultPasscode);
-                          if (verifyVaultPasscode(branchPinInput, targetPin)) {
-                            setBranchGateUnlocked(true);
-                            setShowBranchPinPrompt(false);
-                            setBranchPinInput('');
-                            setBranchPinError('');
-                          } else {
-                            setBranchPinError('الرقم السري غير صحيح! ممنوع فتح قائمة الفروع.');
-                          }
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1 cursor-pointer"
-                      >
-                        <Unlock className="w-3.5 h-3.5" />
-                        <span>فتح</span>
-                      </button>
-                    </div>
-                    {branchPinError && (
-                      <div className="text-[11px] font-black text-red-300">{branchPinError}</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="relative">
-                <select
-                  id="login-branch-select"
-                  value={activeBranchId}
-                  onChange={(e) => onSelectBranch && onSelectBranch(e.target.value)}
-                  className="w-full appearance-none bg-slate-900 hover:bg-slate-800 text-amber-300 font-black text-xs sm:text-sm rounded-xl px-3.5 py-2.5 pl-9 border-2 border-amber-400/80 shadow-md focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer transition"
-                >
-                  {cleanBranches.map((branch) => (
-                    <option key={branch.id} value={branch.id} className="bg-slate-900 text-white font-bold">
-                      {branch.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-amber-400">
-                  <ChevronDown className="w-4 h-4 stroke-[2.5]" />
-                </div>
-              </div>
-            )}
-
-            <p className="text-[10px] font-bold text-indigo-200 mt-2 text-center">
-              🔒 ممنوع الدخول على جميع الفروع أو الحفظ والنسخ إلا بالرقم السري الخاص
-            </p>
-          </div>
-
-          {/* Tab Selector (تسجيل الدخول / حساب جديد) */}
-          <div className="flex border-b border-slate-200 bg-slate-100/90 p-1.5 gap-1.5">
             <button
-              type="button"
-              onClick={() => {
-                setIsRegistering(false);
-                setUsername('');
-                setPassword('');
-                setErrorMsg('');
-                setSuccessMsg('');
-              }}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                !isRegistering
-                  ? 'bg-amber-400 text-black font-black shadow-md border border-amber-300'
-                  : 'text-black hover:text-black hover:bg-slate-200/80'
-              }`}
+              type="submit"
+              data-testid="login-submit-btn"
+              className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-l from-[#0A1628] via-[#0F1E36] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] text-white font-black text-sm shadow-xl shadow-[#0A1628]/20 border border-[#D4AF37]/40 transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
-              <LogIn className="w-4 h-4 text-black" />
-              <span className="text-black font-black">تسجيل الدخول</span>
+              <LogIn className="w-5 h-5 text-[#D4AF37]" />
+              <span>{mode === 'login' ? 'دخول إلى المنظومة' : 'إنشاء الحساب وحفظه بالسحابة'}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsRegistering(true);
-                setUsername('');
-                setPassword('');
-                setFullName('');
-                setErrorMsg('');
-                setSuccessMsg('');
-              }}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                isRegistering
-                  ? 'bg-amber-600 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-              }`}
-            >
-              <UserPlus className="w-4 h-4" />
-              حساب جديد
-            </button>
-          </div>
-
-          {/* Form Body */}
-          <div className="p-6">
-            {logoutReason && (
-              <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-950 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs">
-                <Lock className="w-4 h-4 flex-shrink-0 text-amber-700 icon-float" />
-                <span>{logoutReason}</span>
-              </div>
-            )}
-
-            {errorMsg && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-300 text-red-800 rounded-xl text-xs font-bold flex items-center gap-2 animate-shake shadow-xs">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-600" />
-                <span>{errorMsg}</span>
-              </div>
-            )}
-
-            {successMsg && (
-              <div className="mb-4 p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs">
-                <ShieldCheck className="w-4 h-4 flex-shrink-0 text-emerald-600" />
-                <span>{successMsg}</span>
-              </div>
-            )}
-
-            {!isRegistering ? (
-              <form onSubmit={handleLogin} className="space-y-4" autoComplete="off" noValidate>
-                {/* Fake inputs to prevent browser autofill heuristics */}
-                <input type="text" name="prevent_autofill_user" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
-                <input type="password" name="prevent_autofill_pass" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
-
-                <div>
-                  <label htmlFor="manual_auth_user_input" className="block text-xs font-black text-slate-700 mb-1.5">
-                    اسم المستخدم أو كود المفتش
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
-                      <User className="w-4 h-4" />
-                    </div>
-                    <input
-                      type="text"
-                      name="manual_auth_user_input"
-                      id="manual_auth_user_input"
-                      required
-                      autoComplete="off"
-                      autoCorrect="off"
-                      autoCapitalize="off"
-                      spellCheck="false"
-                      data-lpignore="true"
-                      data-form-type="other"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder="أدخل اسم المستخدم يدوياً"
-                      className="w-full pr-10 pl-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-right shadow-inner"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label htmlFor="manual_auth_pass_input" className="block text-xs font-black text-slate-700 mb-1.5">
-                    كلمة المرور
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
-                      <Lock className="w-4 h-4" />
-                    </div>
-                    <input
-                      type="password"
-                      name="manual_auth_pass_input"
-                      id="manual_auth_pass_input"
-                      required
-                      autoComplete="new-password"
-                      autoCorrect="off"
-                      autoCapitalize="off"
-                      spellCheck="false"
-                      data-lpignore="true"
-                      data-form-type="other"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="أدخل كلمة المرور"
-                      className="w-full pr-10 pl-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-right shadow-inner"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-500 text-black rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-amber-300"
-                >
-                  <KeyRound className="w-4 h-4 text-black stroke-[2.5]" />
-                  <span className="text-black font-black text-sm">تسجيل الدخول والبدء في العمل</span>
-                </button>
-
-                {/* Direct Download EXE Application Button (تحميل المنظومة بالكامل على ملف EXE للويندوز) */}
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await downloadWindowsExeLauncher();
-                    }}
-                    className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 via-rose-700 to-red-600 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98] border border-red-400/80 group"
-                    title="انقر لتحميل ملف تشغيل الويندوز المباشر (EXE) للعمل على الكمبيوتر بدون إنترنت"
-                  >
-                    <Download className="w-4 h-4 text-amber-300 stroke-[2.5] transition-transform duration-300 group-hover:translate-y-0.5" />
-                    <span className="text-white font-black text-xs">تحميل المنظومة بالكامل على ملف (EXE)</span>
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <form onSubmit={handleRegister} className="space-y-3" autoComplete="off" noValidate>
-                <input type="text" name="prevent_autofill_reg_user" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
-                <input type="password" name="prevent_autofill_reg_pass" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" />
-
-                <div>
-                  <label className="block text-xs font-black text-slate-700 mb-1">
-                    الاسم الكامل والصفة الوظيفية
-                  </label>
-                  <input
-                    type="text"
-                    name="reg_fullname"
-                    required
-                    autoComplete="off"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="مثال: أحمد عبد الله - رئيس مكتب تموين"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white text-right"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black text-slate-700 mb-1">
-                    اسم المستخدم للدخول
-                  </label>
-                  <input
-                    type="text"
-                    name="reg_username"
-                    required
-                    autoComplete="off"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="اسم المستخدم بالإنجليزية أو العربية"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white text-right"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black text-slate-700 mb-1">
-                    كلمة المرور
-                  </label>
-                  <input
-                    type="password"
-                    name="reg_credential_new"
-                    required
-                    autoComplete="new-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="كلمة المرور"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white text-right"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black text-slate-700 mb-1">
-                    المستوى الوظيفي / الصلاحية
-                  </label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value as 'admin' | 'inspector' | 'auditor')}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  >
-                    <option value="inspector">مفتش تموين / رقابة ميدانية</option>
-                    <option value="auditor">مراجع حسابات تموينية ومديونيات</option>
-                    <option value="admin">مدير إدارة / صلاحية إدارية كاملة</option>
-                  </select>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full mt-2 py-2.5 px-4 bg-amber-700 hover:bg-amber-800 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
-                >
-                  <UserPlus className="w-4 h-4 text-amber-200" />
-                  {isSubmitting ? 'جاري حفظ الحساب في قاعدة البيانات...' : 'تأكيد تسجيل الحساب الجديد'}
-                </button>
-              </form>
-            )}
-
-            {/* Attribution Watermark */}
-            <div className="mt-5 pt-3.5 border-t border-slate-200 text-center">
-              <p className="text-[11px] font-black text-slate-600 bg-amber-50/70 border border-amber-200/60 rounded-lg py-1.5 px-2">
-                تنفيذ وتصميم م/ أحمد الحسيني - تليفون: 01004414038
-              </p>
-            </div>
-          </div>
+          </form>
         </div>
       </div>
     </div>

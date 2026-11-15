@@ -370,6 +370,27 @@ export function addSupplyBranch(
   return newBranch;
 }
 
+export function createSupplyBranch(
+  name: string,
+  directorateTitle = 'مديرية التموين والتجارة الداخلية بالغربية',
+  governorateTitle = 'محافظة الغربية',
+  description = ''
+): {
+  success: boolean;
+  message: string;
+  branches: SupplyBranch[];
+  newBranch: SupplyBranch;
+} {
+  const newBranch = addSupplyBranch(name, directorateTitle, governorateTitle, description);
+  const branches = getBranchesList();
+  return {
+    success: true,
+    message: 'تم إنشاء الفرع بنجاح',
+    branches,
+    newBranch,
+  };
+}
+
 export function deleteSupplyBranch(branchId: string): {
   success: boolean;
   message: string;
@@ -431,6 +452,56 @@ export function deleteSupplyBranch(branchId: string): {
     message: `تم حذف "${target.name}" وجميع بياناته المنفصلة بنجاح.`,
     branches: remaining,
     nextActiveBranchId: nextActive,
+  };
+}
+
+export function renameSupplyBranch(
+  branchId: string,
+  newName: string,
+  newDirectorate?: string,
+  newGovernorate?: string,
+  newDescription?: string
+): {
+  success: boolean;
+  message: string;
+  branches: SupplyBranch[];
+  updatedBranch?: SupplyBranch;
+} {
+  const list = getBranchesList();
+  const trimmedName = newName.trim();
+  if (!trimmedName) {
+    return {
+      success: false,
+      message: 'اسم الفرع لا يمكن أن يكون فارغاً.',
+      branches: list,
+    };
+  }
+
+  const updatedList = list.map((b) => {
+    if (b.id !== branchId) return b;
+    const nextDirectorate =
+      (newDirectorate ?? b.directorateTitle ?? b.directorate ?? '').trim() ||
+      'مديرية التموين والتجارة الداخلية بالغربية';
+    const nextGovernorate =
+      (newGovernorate ?? b.governorateTitle ?? b.governorate ?? '').trim() || 'محافظة الغربية';
+    return {
+      ...b,
+      name: trimmedName,
+      directorateTitle: nextDirectorate,
+      governorateTitle: nextGovernorate,
+      directorate: nextDirectorate,
+      governorate: nextGovernorate,
+      description: (newDescription ?? b.description ?? `قاعدة بيانات مستقلة (${trimmedName})`).trim(),
+    };
+  });
+
+  saveBranchesList(updatedList);
+  const updatedBranch = updatedList.find((b) => b.id === branchId);
+  return {
+    success: true,
+    message: `تم تعديل اسم الفرع إلى "${trimmedName}" بنجاح.`,
+    branches: updatedList,
+    updatedBranch,
   };
 }
 
@@ -1155,8 +1226,12 @@ export function buildFullCloudMultiBranchPayload(
       };
     } else {
       const localPart = readBranchPartitionFromLocal(b.id);
+      const hasLocalBakeries = Array.isArray(localPart.bakeries) && localPart.bakeries.length > 0;
+      const hasLocalDebts = Array.isArray(localPart.debts) && localPart.debts.length > 0;
       branchPartitions[b.id] = {
         ...localPart,
+        bakeries: hasLocalBakeries ? localPart.bakeries : undefined,
+        debts: hasLocalDebts ? localPart.debts : undefined,
         users: vault.users,
         systemConfig: {
           ...DEFAULT_SYSTEM_CONFIG,
@@ -1172,22 +1247,19 @@ export function buildFullCloudMultiBranchPayload(
     }
   });
 
-  const defaultBranchState =
-    targetBranchId === DEFAULT_BRANCH_ID
-      ? branchPartitions[DEFAULT_BRANCH_ID]
-      : branchPartitions[DEFAULT_BRANCH_ID] || readBranchPartitionFromLocal(DEFAULT_BRANCH_ID);
+  const activePartition = branchPartitions[targetBranchId] || activeState;
 
   return {
-    ...(defaultBranchState as AppState),
-    activeBranchId: DEFAULT_BRANCH_ID,
+    ...(activePartition as AppState),
+    activeBranchId: targetBranchId,
     branches: branchesList,
-    bakeries: defaultBranchState.bakeries || [],
-    debts: defaultBranchState.debts || [],
-    villages: defaultBranchState.villages || DEFAULT_VILLAGES_HIERARCHY,
-    users: defaultBranchState.users || INITIAL_USERS,
+    bakeries: activeState.bakeries || [],
+    debts: activeState.debts || [],
+    villages: activeState.villages || (targetBranchId === DEFAULT_BRANCH_ID ? DEFAULT_VILLAGES_HIERARCHY : []),
+    users: activePartition.users || activeState.users || INITIAL_USERS,
     systemConfig: {
       ...DEFAULT_SYSTEM_CONFIG,
-      ...(defaultBranchState.systemConfig || {}),
+      ...(activeState.systemConfig || {}),
       logoBase64: '',
     },
     currentUser: null,
@@ -1263,9 +1335,10 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
         const bootResp = await fetch(
           `${window.location.protocol}//${window.location.host}/api/db/bootstrap?branchId=${encodeURIComponent(
             activeBranchId
-          )}`,
+          )}&_t=${Date.now()}`,
           {
             method: 'GET',
+            cache: 'no-store',
             credentials: 'same-origin',
             headers: getSecurityShieldHeaders(false),
           }
@@ -1367,31 +1440,28 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
               }
             }
 
-            if (bootJson.hasAnyRows || (Array.isArray(bootJson.branches) && bootJson.branches.length > 0)) {
-              pgAuthoritativeData = bootJson;
-              if (bootJson.hasAnyRows) {
-                cloudHasData = true;
-              }
-              const bootPayload: any = {
-                activeBranchId,
-                branches: bootJson.branches,
-                villages: bootJson.villages?.length ? bootJson.villages : undefined,
-                bakeries: bootJson.bakeries,
-                debts: bootJson.debts,
-                users: bootJson.users?.length ? bootJson.users : undefined,
-                dailyTasks: bootJson.dailyTasks,
-                inboxMessages: bootJson.inboxMessages,
-                ...(bootJson.systemConfig ? { systemConfig: bootJson.systemConfig } : {}),
-                ...(bootJson.columnTitles && Object.keys(bootJson.columnTitles).length > 0
-                  ? { columnTitles: bootJson.columnTitles }
-                  : {}),
-                ...(bootJson.activityStatuses?.length ? { activityStatuses: bootJson.activityStatuses } : {}),
-                ...(bootJson.dropdownLists || {}),
-              };
-              syncAllBranchesFromCloudPayload(bootPayload, bootJson.timestamp || new Date().toISOString(), {
-                forceRealtimePush: true,
-              });
-            }
+            // Always treat authoritative PostgreSQL bootstrap response as the live source of truth across all devices
+            pgAuthoritativeData = bootJson;
+            cloudHasData = true;
+            const bootPayload: any = {
+              activeBranchId,
+              branches: bootJson.branches,
+              villages: bootJson.villages?.length ? bootJson.villages : undefined,
+              bakeries: Array.isArray(bootJson.bakeries) ? bootJson.bakeries : [],
+              debts: Array.isArray(bootJson.debts) ? bootJson.debts : [],
+              users: bootJson.users?.length ? bootJson.users : undefined,
+              dailyTasks: bootJson.dailyTasks,
+              inboxMessages: bootJson.inboxMessages,
+              ...(bootJson.systemConfig ? { systemConfig: bootJson.systemConfig } : {}),
+              ...(bootJson.columnTitles && Object.keys(bootJson.columnTitles).length > 0
+                ? { columnTitles: bootJson.columnTitles }
+                : {}),
+              ...(bootJson.activityStatuses?.length ? { activityStatuses: bootJson.activityStatuses } : {}),
+              ...(bootJson.dropdownLists || {}),
+            };
+            syncAllBranchesFromCloudPayload(bootPayload, bootJson.timestamp || new Date().toISOString(), {
+              forceRealtimePush: true,
+            });
           }
         }
       }
