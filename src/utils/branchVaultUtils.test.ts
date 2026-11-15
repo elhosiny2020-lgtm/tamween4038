@@ -6,6 +6,10 @@ import {
   verifyVaultPasscode,
   validateNewVaultPasscode,
   DEFAULT_VAULT_PASSCODE,
+  verifyBranchVaultCredentials,
+  validateNewBranchVaultCredentials,
+  updateBranchVaultCredentialsMap,
+  maskSecretValue,
 } from './branchVaultUtils';
 import type { SupplyBranch } from '../types';
 
@@ -108,3 +112,101 @@ test('validateNewVaultPasscode validates current code, minimum length, and confi
   assert.equal(success.valid, true);
   assert.equal(success.normalizedNew, '8899');
 });
+
+test('per-branch and all-branches username & password vault credentials verify, update, and mask properly', () => {
+  assert.equal(maskSecretValue('secretAdmin'), '••••••••');
+
+  // 1. Default credentials ('admin' / '2025')
+  assert.equal(
+    verifyBranchVaultCredentials({
+      branchId: 'branch-mahalla',
+      enteredUsername: 'admin',
+      enteredPassword: '2025',
+    }),
+    true
+  );
+  assert.equal(
+    verifyBranchVaultCredentials({
+      branchId: 'branch-mahalla',
+      enteredUsername: 'wronguser',
+      enteredPassword: '2025',
+    }),
+    false
+  );
+
+  // 2. Customize only branch-samanoud username & password
+  const mapAfterSingle = updateBranchVaultCredentialsMap({
+    targetBranchId: 'branch-samanoud',
+    newUsername: 'samanoud_boss',
+    newPassword: '7744',
+  });
+
+  assert.equal(
+    verifyBranchVaultCredentials({
+      branchId: 'branch-samanoud',
+      enteredUsername: 'samanoud_boss',
+      enteredPassword: '7744',
+      credentialsMap: mapAfterSingle,
+    }),
+    true
+  );
+  // Leaving username empty on a customized branch must fail
+  assert.equal(
+    verifyBranchVaultCredentials({
+      branchId: 'branch-samanoud',
+      enteredUsername: '',
+      enteredPassword: '7744',
+      credentialsMap: mapAfterSingle,
+    }),
+    false
+  );
+  // Mahalla still uses its own credentials
+  assert.equal(
+    verifyBranchVaultCredentials({
+      branchId: 'branch-mahalla',
+      enteredUsername: 'admin',
+      enteredPassword: '2025',
+      credentialsMap: mapAfterSingle,
+    }),
+    true
+  );
+
+  // 3. Validate and apply new username & password across ALL branches at once
+  const validAll = validateNewBranchVaultCredentials({
+    branchId: 'branch-mahalla',
+    currentUsername: 'admin',
+    currentPassword: '2025',
+    newUsername: 'master_owner',
+    newPassword: '9900',
+    confirmNewPassword: '9900',
+    credentialsMap: mapAfterSingle,
+  });
+  assert.equal(validAll.valid, true);
+
+  const mapAfterAll = updateBranchVaultCredentialsMap({
+    targetBranchId: 'ALL',
+    newUsername: validAll.normalizedUsername!,
+    newPassword: validAll.normalizedPassword!,
+    existingMap: mapAfterSingle,
+  });
+
+  assert.equal(
+    verifyBranchVaultCredentials({
+      branchId: 'branch-mahalla',
+      enteredUsername: 'master_owner',
+      enteredPassword: '9900',
+      credentialsMap: mapAfterAll,
+    }),
+    true
+  );
+  assert.equal(
+    verifyBranchVaultCredentials({
+      branchId: 'branch-samanoud',
+      enteredUsername: 'master_owner',
+      enteredPassword: '9900',
+      credentialsMap: mapAfterAll,
+    }),
+    true
+  );
+});
+

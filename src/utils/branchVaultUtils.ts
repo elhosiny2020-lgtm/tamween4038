@@ -1,9 +1,12 @@
-import type { SupplyBranch } from '../types';
+import type { SupplyBranch, BranchVaultCredential } from '../types';
 
 export const DEFAULT_BRANCH_ID = 'branch-mahalla';
 export const SAMANOUD_BRANCH_ID = 'branch-samanoud';
+export const DEFAULT_VAULT_USERNAME = 'admin';
 export const DEFAULT_VAULT_PASSCODE = '2025';
 export const VAULT_PASSCODE_STORAGE_KEY = 'TAMWEEN_MASTER_VAULT_PASSCODE_V1';
+export const VAULT_USERNAME_STORAGE_KEY = 'TAMWEEN_MASTER_VAULT_USERNAME_V1';
+export const VAULT_CREDENTIALS_MAP_KEY = 'TAMWEEN_BRANCH_VAULT_CREDENTIALS_V2';
 
 export const CANONICAL_DEFAULT_BRANCHES: SupplyBranch[] = [
   {
@@ -111,10 +114,9 @@ export function resolveCanonicalBranchIdentity(
     };
   }
 
-  // If the name was a synthetic placeholder "إدارة تموين (branch-xyz)", keep a clean label
   const finalName = cleanName || `إدارة تموين (${cleanId || 'فرع'})`;
   return {
-    canonicalId: cleanId || `branch-${ normKey.replace(/[^a-z0-9\u0600-\u06ff]+/g, '-') }`,
+    canonicalId: cleanId || `branch-${normKey.replace(/[^a-z0-9\u0600-\u06ff]+/g, '-')}`,
     canonicalName: finalName,
     isCanonicalDefault: false,
   };
@@ -136,7 +138,6 @@ export function deduplicateSupplyBranches(
   const seenIds = new Set<string>();
   const seenNormNames = new Set<string>();
 
-  // 1. Seed canonical default branches first so their IDs and clean titles win
   for (const canonical of CANONICAL_DEFAULT_BRANCHES) {
     const matching = sourceList.find(
       (b) =>
@@ -163,11 +164,9 @@ export function deduplicateSupplyBranches(
     result.push(merged);
   }
 
-  // 2. Add any additional user-created branches if neither ID nor normalized Arabic name was seen
   for (const item of sourceList) {
     if (!item || (!item.id && !item.name)) continue;
 
-    // Ignore synthetic auto-generated placeholder rows like "إدارة تموين (branch-17...)" if they have no real name
     const rawName = String(item.name || '').trim();
     if (/^إدارة تموين\s*\(branch-/i.test(rawName) || /^ادارة تموين\s*\(branch-/i.test(rawName)) {
       continue;
@@ -200,14 +199,28 @@ export function deduplicateSupplyBranches(
 }
 
 /**
- * Vault Passcode Helpers for protecting "قسم الحفظ والنسخ" and "جميع الفروع"
+ * Vault Username & Passcode Helpers for protecting "قسم الحفظ والنسخ" and "جميع الفروع"
  */
 export function normalizePasscodeInput(input: string | undefined | null): string {
   if (!input) return '';
-  // Also convert Arabic-Indic digits (٠-٩) to standard digits (0-9) so users typing in Arabic keyboard layout succeed seamlessly
   return String(input)
     .trim()
     .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+}
+
+export function normalizeVaultUsername(input: string | undefined | null): string {
+  if (!input) return '';
+  return String(input)
+    .trim()
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+}
+
+/**
+ * Strictly masks any username or password so it is never visible to unauthorized viewers
+ * ("عدم تباينه لاي حد حفاظا على قاعده البيانات من التلاعب").
+ */
+export function maskSecretValue(_secret?: string | null): string {
+  return '••••••••';
 }
 
 export function verifyVaultPasscode(
@@ -272,12 +285,271 @@ export function getStoredVaultPasscode(configPasscode?: string | null): string {
   return DEFAULT_VAULT_PASSCODE;
 }
 
-export function setStoredVaultPasscode(newPasscode: string): string {
+export function getStoredVaultUsername(configUsername?: string | null): string {
+  const fromConfig = normalizeVaultUsername(configUsername);
+  if (fromConfig) {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(VAULT_USERNAME_STORAGE_KEY, fromConfig);
+      }
+    } catch {}
+    return fromConfig;
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = normalizeVaultUsername(localStorage.getItem(VAULT_USERNAME_STORAGE_KEY));
+      if (saved) return saved;
+    }
+  } catch {}
+  return DEFAULT_VAULT_USERNAME;
+}
+
+export function setStoredVaultPasscode(newPasscode: string, newUsername?: string): string {
   const normalized = normalizePasscodeInput(newPasscode) || DEFAULT_VAULT_PASSCODE;
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(VAULT_PASSCODE_STORAGE_KEY, normalized);
+      if (newUsername && normalizeVaultUsername(newUsername)) {
+        localStorage.setItem(VAULT_USERNAME_STORAGE_KEY, normalizeVaultUsername(newUsername));
+      }
     }
   } catch {}
   return normalized;
 }
+
+/**
+ * Per-Branch & All-Branches Vault Credentials Map Management
+ */
+export function getBranchVaultCredentialsMap(
+  branches?: SupplyBranch[] | null,
+  configCredentialsMap?: Record<string, BranchVaultCredential> | null,
+  fallbackUsername?: string | null,
+  fallbackPasscode?: string | null
+): Record<string, BranchVaultCredential> {
+  const cleanBranches = deduplicateSupplyBranches(branches);
+  const masterUsername = getStoredVaultUsername(fallbackUsername);
+  const masterPasscode = getStoredVaultPasscode(fallbackPasscode);
+
+  let localStoredMap: Record<string, BranchVaultCredential> = {};
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(VAULT_CREDENTIALS_MAP_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          localStoredMap = parsed;
+        }
+      }
+    }
+  } catch {}
+
+  const mergedMap: Record<string, BranchVaultCredential> = {};
+
+  for (const branch of cleanBranches) {
+    const fromConfig = configCredentialsMap?.[branch.id];
+    const fromLocal = localStoredMap?.[branch.id];
+    const resolvedUsername =
+      normalizeVaultUsername(fromConfig?.username) ||
+      normalizeVaultUsername(fromLocal?.username) ||
+      masterUsername ||
+      DEFAULT_VAULT_USERNAME;
+    const resolvedPassword =
+      normalizePasscodeInput(fromConfig?.password) ||
+      normalizePasscodeInput(fromLocal?.password) ||
+      masterPasscode ||
+      DEFAULT_VAULT_PASSCODE;
+
+    mergedMap[branch.id] = {
+      branchId: branch.id,
+      branchName: branch.name,
+      username: resolvedUsername,
+      password: resolvedPassword,
+      updatedAt: fromConfig?.updatedAt || fromLocal?.updatedAt || '2025-01-01',
+    };
+  }
+
+  return mergedMap;
+}
+
+export function getBranchVaultCredential(
+  branchId: string | undefined | null,
+  branches?: SupplyBranch[] | null,
+  configCredentialsMap?: Record<string, BranchVaultCredential> | null,
+  fallbackUsername?: string | null,
+  fallbackPasscode?: string | null
+): BranchVaultCredential {
+  const targetId = String(branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const map = getBranchVaultCredentialsMap(
+    branches,
+    configCredentialsMap,
+    fallbackUsername,
+    fallbackPasscode
+  );
+  if (map[targetId]) return map[targetId];
+  return (
+    map[DEFAULT_BRANCH_ID] || {
+      branchId: targetId,
+      username: getStoredVaultUsername(fallbackUsername),
+      password: getStoredVaultPasscode(fallbackPasscode),
+    }
+  );
+}
+
+export function verifyBranchVaultCredentials(params: {
+  branchId?: string | null;
+  enteredUsername?: string | null;
+  enteredPassword?: string | null;
+  branches?: SupplyBranch[] | null;
+  credentialsMap?: Record<string, BranchVaultCredential> | null;
+  fallbackUsername?: string | null;
+  fallbackPasscode?: string | null;
+}): boolean {
+  const cred = getBranchVaultCredential(
+    params.branchId,
+    params.branches,
+    params.credentialsMap,
+    params.fallbackUsername,
+    params.fallbackPasscode
+  );
+
+  const cleanPass = normalizePasscodeInput(params.enteredPassword);
+  const targetPass = normalizePasscodeInput(cred.password) || DEFAULT_VAULT_PASSCODE;
+  if (!cleanPass || cleanPass !== targetPass) {
+    return false;
+  }
+
+  const cleanUser = normalizeVaultUsername(params.enteredUsername).toLowerCase();
+  const targetUser = (normalizeVaultUsername(cred.username) || DEFAULT_VAULT_USERNAME).toLowerCase();
+
+  // If the user entered a username, it must match targetUser
+  if (cleanUser) {
+    return cleanUser === targetUser;
+  }
+
+  // If username input was left empty, only allow if targetUser is still the initial default ('admin')
+  return targetUser === DEFAULT_VAULT_USERNAME.toLowerCase();
+}
+
+export function validateNewBranchVaultCredentials(params: {
+  branchId?: string | null;
+  currentUsername?: string | null;
+  currentPassword?: string | null;
+  newUsername?: string | null;
+  newPassword?: string | null;
+  confirmNewPassword?: string | null;
+  branches?: SupplyBranch[] | null;
+  credentialsMap?: Record<string, BranchVaultCredential> | null;
+  fallbackUsername?: string | null;
+  fallbackPasscode?: string | null;
+}): {
+  valid: boolean;
+  error?: string;
+  normalizedUsername?: string;
+  normalizedPassword?: string;
+} {
+  const isCurrentValid = verifyBranchVaultCredentials({
+    branchId: params.branchId,
+    enteredUsername: params.currentUsername,
+    enteredPassword: params.currentPassword,
+    branches: params.branches,
+    credentialsMap: params.credentialsMap,
+    fallbackUsername: params.fallbackUsername,
+    fallbackPasscode: params.fallbackPasscode,
+  });
+
+  if (!isCurrentValid) {
+    return {
+      valid: false,
+      error: 'اسم المستخدم الحالي أو كلمة المرور الحالية غير صحيحة! يرجى التأكد من بيانات الدخول الحالية.',
+    };
+  }
+
+  const cleanNewUser = normalizeVaultUsername(params.newUsername) || DEFAULT_VAULT_USERNAME;
+  const cleanNewPass = normalizePasscodeInput(params.newPassword);
+  const cleanConfirmPass = normalizePasscodeInput(params.confirmNewPassword);
+
+  if (!cleanNewUser || cleanNewUser.length < 3) {
+    return {
+      valid: false,
+      error: 'اسم المستخدم (Username) الجديد يجب أن يتكون من 3 حروف أو أرقام على الأقل.',
+    };
+  }
+
+  if (!cleanNewPass || cleanNewPass.length < 4) {
+    return {
+      valid: false,
+      error: 'كلمة المرور (Password) الجديدة يجب أن تتكون من 4 أرقام أو حروف على الأقل.',
+    };
+  }
+
+  if (cleanNewPass !== cleanConfirmPass) {
+    return {
+      valid: false,
+      error: 'كلمة المرور الجديدة وتأكيد كلمة المرور غير متطابقين.',
+    };
+  }
+
+  return {
+    valid: true,
+    normalizedUsername: cleanNewUser,
+    normalizedPassword: cleanNewPass,
+  };
+}
+
+export function updateBranchVaultCredentialsMap(params: {
+  targetBranchId: string | 'ALL';
+  newUsername: string;
+  newPassword: string;
+  branches?: SupplyBranch[] | null;
+  existingMap?: Record<string, BranchVaultCredential> | null;
+  fallbackUsername?: string | null;
+  fallbackPasscode?: string | null;
+}): Record<string, BranchVaultCredential> {
+  const cleanBranches = deduplicateSupplyBranches(params.branches);
+  const currentMap = getBranchVaultCredentialsMap(
+    cleanBranches,
+    params.existingMap,
+    params.fallbackUsername,
+    params.fallbackPasscode
+  );
+
+  const normalizedUsername = normalizeVaultUsername(params.newUsername) || DEFAULT_VAULT_USERNAME;
+  const normalizedPassword = normalizePasscodeInput(params.newPassword) || DEFAULT_VAULT_PASSCODE;
+  const nowIso = new Date().toISOString();
+
+  const nextMap: Record<string, BranchVaultCredential> = { ...currentMap };
+
+  if (params.targetBranchId === 'ALL') {
+    for (const branch of cleanBranches) {
+      nextMap[branch.id] = {
+        branchId: branch.id,
+        branchName: branch.name,
+        username: normalizedUsername,
+        password: normalizedPassword,
+        updatedAt: nowIso,
+      };
+    }
+    setStoredVaultPasscode(normalizedPassword, normalizedUsername);
+  } else {
+    const branchObj = cleanBranches.find((b) => b.id === params.targetBranchId);
+    nextMap[params.targetBranchId] = {
+      branchId: params.targetBranchId,
+      branchName: branchObj?.name || nextMap[params.targetBranchId]?.branchName || params.targetBranchId,
+      username: normalizedUsername,
+      password: normalizedPassword,
+      updatedAt: nowIso,
+    };
+    if (params.targetBranchId === DEFAULT_BRANCH_ID) {
+      setStoredVaultPasscode(normalizedPassword, normalizedUsername);
+    }
+  }
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(VAULT_CREDENTIALS_MAP_KEY, JSON.stringify(nextMap));
+    }
+  } catch {}
+
+  return nextMap;
+}
+

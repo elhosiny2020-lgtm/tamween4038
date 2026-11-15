@@ -15,6 +15,7 @@ import {
   deduplicateSupplyBranches,
   normalizeBranchNameKey,
   resolveCanonicalBranchIdentity,
+  DEFAULT_VAULT_USERNAME,
   DEFAULT_VAULT_PASSCODE,
 } from '../utils/branchVaultUtils.ts';
 
@@ -330,9 +331,17 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
           englishSubtitle: String(row.english_subtitle || ''),
           logoBase64: String(row.logo_base64 || ''),
           debtAlertThreshold: Number(row.debt_alert_threshold || 50000),
+          vaultUsername: String(
+            row.daily_alert_config?.vaultUsername || DEFAULT_VAULT_USERNAME
+          ),
           vaultPasscode: String(
             row.daily_alert_config?.vaultPasscode || row.vault_passcode || DEFAULT_VAULT_PASSCODE
           ),
+          branchVaultCredentials:
+            row.daily_alert_config?.branchVaultCredentials &&
+            typeof row.daily_alert_config.branchVaultCredentials === 'object'
+              ? row.daily_alert_config.branchVaultCredentials
+              : undefined,
           dailyAlertConfig: row.daily_alert_config || undefined,
           rolePermissions: row.role_permissions || undefined,
           roleLabels: row.role_labels || undefined,
@@ -610,28 +619,14 @@ export async function upsertRowWithClient(
     return { success: false, operation: 'INSERT', error: 'معرف السجل (id) مفقود.' };
   }
 
-  // Check existing row & optimistic concurrency version
+  // Row-level lock ensures serialized atomic updates without rejecting user edits on version drift
   const existingRes = await client.query(
     `SELECT * FROM public.${table} WHERE ${pkColumn} = $1 FOR UPDATE`,
     [recordId]
   );
   const exists = existingRes.rows.length > 0;
   const existingRow = exists ? existingRes.rows[0] : null;
-
-  if (
-    exists &&
-    typeof expectedVersion === 'number' &&
-    expectedVersion > 0 &&
-    Number(existingRow.version || 1) !== expectedVersion
-  ) {
-    return {
-      success: false,
-      conflict: true,
-      operation: 'UPDATE',
-      latestRow: mapDbRowByTable(table, existingRow),
-      error: `تعارض تعديل متزامن: تم تحديث هذا السجل من جهاز آخر (إصدار الخادم ${existingRow.version} مقابل إصدارك ${expectedVersion}).`,
-    };
-  }
+  void expectedVersion;
 
   const operation: 'INSERT' | 'UPDATE' = exists ? 'UPDATE' : 'INSERT';
   let resultRow: any = null;
@@ -1114,11 +1109,20 @@ export async function upsertRowWithClient(
       const mergedDailyAlertConfig = {
         ...(existingRow?.daily_alert_config || {}),
         ...(cfg.dailyAlertConfig || {}),
+        vaultUsername: String(
+          cfg.vaultUsername ??
+            existingRow?.daily_alert_config?.vaultUsername ??
+            DEFAULT_VAULT_USERNAME
+        ),
         vaultPasscode: String(
           cfg.vaultPasscode ??
             existingRow?.daily_alert_config?.vaultPasscode ??
             DEFAULT_VAULT_PASSCODE
         ),
+        branchVaultCredentials:
+          cfg.branchVaultCredentials ??
+          existingRow?.daily_alert_config?.branchVaultCredentials ??
+          undefined,
       };
       const res = await client.query(
         `INSERT INTO public.system_config (

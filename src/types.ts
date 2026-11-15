@@ -188,6 +188,14 @@ export interface CustomJobRole {
   badgeColor?: string;
 }
 
+export interface BranchVaultCredential {
+  branchId: string;
+  branchName?: string;
+  username: string;
+  password: string;
+  updatedAt?: string;
+}
+
 export interface SystemConfig {
   governorateTitle: string;
   directorateTitle: string;
@@ -202,7 +210,9 @@ export interface SystemConfig {
   gmailPassword?: string;
   googleDriveAutoSync?: boolean;
   debtAlertThreshold?: number;
+  vaultUsername?: string;
   vaultPasscode?: string;
+  branchVaultCredentials?: Record<string, BranchVaultCredential>;
 }
 
 export type UserRoleType = 'admin' | 'supervisor' | 'inspector' | 'auditor' | 'data_entry' | 'viewer' | string;

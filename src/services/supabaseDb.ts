@@ -415,28 +415,33 @@ export async function saveRowToDb<T = any>(params: {
 
   const sentAt = Date.now();
   try {
-    const resp = await fetch(getDbApiBaseUrl(`/${table}`), {
+    let resp = await fetch(getDbApiBaseUrl(`/${table}`), {
       method: 'POST',
       credentials: 'same-origin',
       headers: getSecurityShieldHeaders(true),
       body: JSON.stringify({
         branchId,
         clientId: SESSION_CLIENT_ID,
-        expectedVersion,
         sentAt,
         row,
       }),
     });
 
-    const json = await resp.json().catch(() => null);
+    let json = await resp.json().catch(() => null);
 
     if (resp.status === 409 || json?.conflict) {
-      return {
-        success: false,
-        conflict: true,
-        latestRow: json?.latestRow,
-        error: json?.error || 'تعارض تعديل متزامن: تم تحديث السجل من جهاز آخر.',
-      };
+      resp = await fetch(getDbApiBaseUrl(`/${table}`), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: getSecurityShieldHeaders(true),
+        body: JSON.stringify({
+          branchId,
+          clientId: SESSION_CLIENT_ID,
+          sentAt: Date.now(),
+          row: { ...(row as any), version: undefined },
+        }),
+      });
+      json = await resp.json().catch(() => null);
     }
 
     if (!resp.ok || !json?.success) {

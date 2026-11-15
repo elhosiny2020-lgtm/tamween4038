@@ -146,6 +146,11 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   }, [isCollapsed]);
 
   const toggleGroup = (groupId: string) => {
+    if (groupId === 'section-backup' && !isVaultUnlocked && onOpenVaultGate) {
+      setOpenGroups((prev) => ({ ...prev, [groupId]: true }));
+      onOpenVaultGate('backup', '4. قسم الحفظ والنسخ الاحتياطي (يطلب Username & Password)');
+      return;
+    }
     if (isCollapsed) {
       setIsCollapsed(false);
       setOpenGroups((prev) => ({ ...prev, [groupId]: true }));
@@ -564,10 +569,10 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                     >
                       <div className="flex items-center gap-2 text-red-300 font-black text-xs">
                         <Lock className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
-                        <span>قسم الحفظ والنسخ مغلق برقم سري</span>
+                        <span>قسم الحفظ والنسخ محمي بـ Username & Password</span>
                       </div>
                       <p className="text-[11px] text-slate-300 font-bold leading-relaxed">
-                        ممنوع الدخول أو العرض أو التشغيل على قسم الحفظ والنسخ وجميع الفروع إلا بعد إدخال الرقم السري الخاص.
+                        ممنوع فتح أو تشغيل قسم الحفظ والنسخ في هذا الفرع أو أي فرع آخر إلا بعد إدخال اسم المستخدم (Username) والباسورد (Password).
                       </p>
                       <button
                         type="button"
@@ -580,7 +585,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                         className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition cursor-pointer"
                       >
                         <KeyRound className="w-3.5 h-3.5" />
-                        <span>خانة الدخول بالرقم السري / تغييره</span>
+                        <span>دخول (Username & Password) / قائمة الفروع</span>
                       </button>
                     </div>
                   ) : (
@@ -589,11 +594,11 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                         <div className="flex items-center gap-1.5 pb-1">
                           <button
                             type="button"
-                            onClick={() => onOpenVaultGate && onOpenVaultGate('both', 'تغيير الرقم السري للحفظ والفروع')}
+                            onClick={() => onOpenVaultGate && onOpenVaultGate('both', 'قائمة الفروع وتغيير الباسورد على جميع الفروع')}
                             className="flex-1 py-1.5 px-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer"
                           >
                             <KeyRound className="w-3 h-3" />
-                            <span>تغيير الرقم السري</span>
+                            <span>قائمة الباسورد للفروع</span>
                           </button>
                           {onLockVault && (
                             <button

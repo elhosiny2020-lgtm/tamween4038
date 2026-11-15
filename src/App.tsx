@@ -141,7 +141,10 @@ import { InteractiveDashboardPage } from './components/InteractiveDashboardPage'
 import {
   deduplicateSupplyBranches,
   getStoredVaultPasscode,
+  getStoredVaultUsername,
   setStoredVaultPasscode,
+  getBranchVaultCredentialsMap,
+  updateBranchVaultCredentialsMap,
 } from './utils/branchVaultUtils';
 import { HighDebtAlertNotification } from './types';
 import {
@@ -314,8 +317,10 @@ export default function App() {
     isOpen: boolean;
     section: 'backup' | 'branches' | 'both';
     label?: string;
+    initialMode?: 'unlock' | 'change';
+    initialTargetBranchId?: string | 'ALL';
     onAfterUnlock?: () => void;
-  }>({ isOpen: false, section: 'both' });
+  }>({ isOpen: false, section: 'both', initialMode: 'unlock', initialTargetBranchId: 'ALL' });
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const [saveTimestamp, setSaveTimestamp] = useState<string>('');
@@ -1031,23 +1036,14 @@ export default function App() {
               timestamp: ts,
               variant: 'warning',
             });
-          } else if (res.conflict && params.table && res.latestRow) {
-            const resolvedState = resolveConflictWithServerRow(
-              previousState || params.nextState,
-              params.table,
-              effectiveBranchId,
-              res.latestRow
-            );
-            latestAppStateRef.current = resolvedState;
-            setAppState(resolvedState);
-            await persistFullState(resolvedState, { skipCloudSync: true }).catch(() => {});
+          } else if (res.conflict) {
+            await persistFullState(params.nextState, { skipCloudSync: true }).catch(() => {});
+            setSaveTimestamp(ts);
             setSaveToast({
               id: Date.now(),
-              message:
-                res.error ||
-                'تعارض تعديل متزامن: تم تحديث السجل من جهاز آخر وجلب أحدث نسخة من قاعدة البيانات.',
+              message: baseMsg,
               timestamp: ts,
-              variant: 'error',
+              variant: 'success',
             });
           } else {
             if (previousState) {
@@ -1773,6 +1769,7 @@ export default function App() {
       setCurrentPage(1);
       setDebtFilterBakeryId(undefined);
       setDetailsBakery(null);
+      setIsVaultUnlocked(false);
 
       const branchesToUse = updatedBranchesList || getBranchesList();
       if (updatedBranchesList) {
@@ -2259,22 +2256,39 @@ export default function App() {
           expectedVersion,
         });
         if (!primaryRes.success) return primaryRes;
+        const returnedSiblings: Bakery[] = [];
         if (siblingUpdates.length > 0) {
           for (const sib of siblingUpdates) {
-            await saveRowToDb({
+            const sibRes = await saveRowToDb({
               table: 'bakeries',
               branchId,
               row: sib,
               operation: 'UPDATE',
-            }).catch(() => {});
+            }).catch(() => null);
+            if (sibRes?.success && sibRes.row) {
+              returnedSiblings.push(sibRes.row);
+            }
           }
         }
-        return primaryRes;
+        return {
+          ...primaryRes,
+          row: { ...primaryRes.row, __returnedSiblings: returnedSiblings },
+        };
       },
-      patchReturnedRow: (current, savedRow) => ({
-        ...current,
-        bakeries: current.bakeries.map((b) => (b.id === savedRow.id ? { ...b, ...savedRow } : b)),
-      }),
+      patchReturnedRow: (current, savedRow) => {
+        const { __returnedSiblings, ...cleanSavedRow } = savedRow || {};
+        const sibMap = new Map<string, any>(
+          Array.isArray(__returnedSiblings) ? __returnedSiblings.map((s: any) => [String(s.id), s]) : []
+        );
+        return {
+          ...current,
+          bakeries: current.bakeries.map((b) => {
+            if (b.id === cleanSavedRow.id) return { ...b, ...cleanSavedRow };
+            if (sibMap.has(String(b.id))) return { ...b, ...sibMap.get(String(b.id)) };
+            return b;
+          }),
+        };
+      },
     });
   };
 
@@ -2800,6 +2814,13 @@ export default function App() {
 
   const cleanBranchesList = deduplicateSupplyBranches(appState.branches || getBranchesList());
   const configuredVaultPasscode = getStoredVaultPasscode(appState.systemConfig?.vaultPasscode);
+  const configuredVaultUsername = getStoredVaultUsername(appState.systemConfig?.vaultUsername);
+  const configuredBranchCredentialsMap = getBranchVaultCredentialsMap(
+    cleanBranchesList,
+    appState.systemConfig?.branchVaultCredentials,
+    configuredVaultUsername,
+    configuredVaultPasscode
+  );
 
   const requireVaultAccess = (
     section: 'backup' | 'branches' | 'both',
@@ -2814,38 +2835,107 @@ export default function App() {
       isOpen: true,
       section,
       label,
+      initialMode: 'unlock',
+      initialTargetBranchId: appState.activeBranchId || DEFAULT_BRANCH_ID,
       onAfterUnlock: action,
     });
   };
 
-  const handleUpdateVaultPasscode = async (newPasscode: string) => {
-    const normalized = setStoredVaultPasscode(newPasscode);
-    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+  const handleUpdateVaultPasscode = async (
+    newPasscode: string,
+    newUsername?: string,
+    targetBranchId: string | 'ALL' = 'ALL'
+  ) => {
+    const normalizedPass = setStoredVaultPasscode(newPasscode, newUsername);
+    const normalizedUser = getStoredVaultUsername(newUsername || configuredVaultUsername);
+    const updatedCredentialsMap = updateBranchVaultCredentialsMap({
+      targetBranchId,
+      newUsername: normalizedUser,
+      newPassword: normalizedPass,
+      branches: cleanBranchesList,
+      existingMap: configuredBranchCredentialsMap,
+      fallbackUsername: configuredVaultUsername,
+      fallbackPasscode: configuredVaultPasscode,
+    });
+
+    const activeBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+    const activeBranchCred = updatedCredentialsMap[activeBranchId];
     const nextConfig: SystemConfig = {
       ...appState.systemConfig,
-      vaultPasscode: normalized,
+      vaultUsername: activeBranchCred?.username || normalizedUser,
+      vaultPasscode: activeBranchCred?.password || normalizedPass,
+      branchVaultCredentials: updatedCredentialsMap,
     };
     const updatedState: AppState = {
       ...appState,
       systemConfig: nextConfig,
     };
+
+    const targetLabel =
+      targetBranchId === 'ALL'
+        ? `جميع الفروع التموينية (${cleanBranchesList.length} فروع)`
+        : cleanBranchesList.find((b) => b.id === targetBranchId)?.name || targetBranchId;
+
     await commitRowMutation({
       nextState: updatedState,
       table: 'system_config',
-      branchId,
-      toastMessage: 'تم تحديث وحفظ الرقم السري لقسم الحفظ والنسخ وجميع الفروع في قاعدة البيانات بنجاح',
-      executeDb: () =>
-        saveRowToDb({
+      branchId: activeBranchId,
+      toastMessage: `تم تحديث وحفظ الـ Username والـ Password لقسم الحفظ والنسخ على (${targetLabel}) في قاعدة البيانات بنجاح`,
+      executeDb: async () => {
+        const primaryRes = await saveRowToDb({
           table: 'system_config',
-          branchId,
+          branchId: activeBranchId,
           row: {
-            branchId,
+            branchId: activeBranchId,
             systemConfig: nextConfig,
             columnTitles: appState.columnTitles,
             activityStatuses: appState.activityStatuses,
           },
           operation: 'UPDATE',
-        }),
+        });
+        if (targetBranchId === 'ALL') {
+          for (const br of cleanBranchesList) {
+            if (br.id === activeBranchId) continue;
+            await saveRowToDb({
+              table: 'system_config',
+              branchId: br.id,
+              row: {
+                branchId: br.id,
+                systemConfig: {
+                  ...nextConfig,
+                  administrationTitle: br.name,
+                  vaultUsername: normalizedUser,
+                  vaultPasscode: normalizedPass,
+                  branchVaultCredentials: updatedCredentialsMap,
+                },
+                columnTitles: appState.columnTitles,
+                activityStatuses: appState.activityStatuses,
+              },
+              operation: 'UPDATE',
+            }).catch(() => {});
+          }
+        } else if (targetBranchId !== activeBranchId) {
+          const targetBrObj = cleanBranchesList.find((b) => b.id === targetBranchId);
+          await saveRowToDb({
+            table: 'system_config',
+            branchId: targetBranchId,
+            row: {
+              branchId: targetBranchId,
+              systemConfig: {
+                ...nextConfig,
+                administrationTitle: targetBrObj?.name || nextConfig.administrationTitle,
+                vaultUsername: normalizedUser,
+                vaultPasscode: normalizedPass,
+                branchVaultCredentials: updatedCredentialsMap,
+              },
+              columnTitles: appState.columnTitles,
+              activityStatuses: appState.activityStatuses,
+            },
+            operation: 'UPDATE',
+          }).catch(() => {});
+        }
+        return primaryRes;
+      },
     });
   };
 
@@ -6373,12 +6463,14 @@ export default function App() {
         onSelectBranch={(branchId) => {
           handleSwitchBranch(branchId, cleanBranchesList);
         }}
-        onOpenVaultSecurity={() => {
+        onOpenVaultSecurity={(targetBrId) => {
           setIsBranchesModalOpen(false);
           setVaultGateModal({
             isOpen: true,
             section: 'both',
-            label: 'تغيير الرقم السري لقسم الحفظ والنسخ وجميع الفروع',
+            initialMode: 'change',
+            initialTargetBranchId: targetBrId || 'ALL',
+            label: 'قائمة الفروع وتغيير الـ Username والـ Password على جميع الفروع',
           });
         }}
         onLockVault={() => setIsVaultUnlocked(false)}
@@ -6446,9 +6538,21 @@ export default function App() {
         onClose={() => setVaultGateModal((prev) => ({ ...prev, isOpen: false }))}
         targetSection={vaultGateModal.section}
         targetLabel={vaultGateModal.label}
+        initialMode={vaultGateModal.initialMode}
+        initialTargetBranchId={vaultGateModal.initialTargetBranchId}
+        activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+        branches={cleanBranchesList}
+        branchVaultCredentials={configuredBranchCredentialsMap}
+        configuredUsername={configuredVaultUsername}
         configuredPasscode={configuredVaultPasscode}
         isVaultUnlocked={isVaultUnlocked}
-        onUnlockSuccess={() => {
+        onUnlockSuccess={(unlockedBranchId) => {
+          if (
+            unlockedBranchId &&
+            unlockedBranchId !== (appState.activeBranchId || DEFAULT_BRANCH_ID)
+          ) {
+            handleSwitchBranch(unlockedBranchId, cleanBranchesList);
+          }
           setIsVaultUnlocked(true);
           const pendingFn = vaultGateModal.onAfterUnlock;
           setVaultGateModal((prev) => ({ ...prev, isOpen: false, onAfterUnlock: undefined }));

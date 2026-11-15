@@ -33,7 +33,7 @@ interface BranchesManagerModalProps {
     updatedBranches: SupplyBranch[],
     nextActiveBranchId: string
   ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
-  onOpenVaultSecurity?: () => void;
+  onOpenVaultSecurity?: (targetBranchId?: string | 'ALL') => void;
   onLockVault?: () => void;
 }
 
@@ -160,12 +160,12 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
             {onOpenVaultSecurity && (
               <button
                 type="button"
-                onClick={onOpenVaultSecurity}
+                onClick={() => onOpenVaultSecurity('ALL')}
                 className="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-400/50 text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
-                title="تغيير الرقم السري الخاص بالحفظ والفروع"
+                title="قائمة الباسورد والـ Username لجميع الفروع"
               >
                 <KeyRound className="w-4 h-4" />
-                <span>تغيير الرقم السري</span>
+                <span>تغيير الباسورد على جميع الفروع</span>
               </button>
             )}
             {onLockVault && (
@@ -451,37 +451,63 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onSelectBranch(branch.id);
-                            onClose();
-                          }}
-                          className={`flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                            isActive
-                              ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm'
-                              : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
-                          }`}
-                        >
-                          <ArrowLeftRight className="w-4 h-4" />
-                          {isActive ? 'مفتوحة حالياً (تأكيد الدخول)' : 'الدخول على واجهة هذه الإدارة'}
-                        </button>
+                      <div className="space-y-2 pt-1">
+                        {onOpenVaultSecurity && (
+                          <div
+                            className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+                              isActive
+                                ? 'bg-slate-900/90 border-amber-400/40 text-amber-200'
+                                : 'bg-amber-50/70 border-amber-200 text-slate-800'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              <span className="truncate">
+                                حماية الحفظ والنسخ: <strong>Username & Password (••••••••)</strong>
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onOpenVaultSecurity(branch.id)}
+                              className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] shrink-0 cursor-pointer transition"
+                            >
+                              تخصيص باسورد الفرع
+                            </button>
+                          </div>
+                        )}
 
-                        {branches.length > 1 && (
+                        <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => setConfirmDeleteId(branch.id)}
-                            className={`p-2 rounded-xl border transition cursor-pointer ${
+                            onClick={() => {
+                              onSelectBranch(branch.id);
+                              onClose();
+                            }}
+                            className={`flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition cursor-pointer ${
                               isActive
-                                ? 'bg-rose-500/20 border-rose-400/40 text-rose-200 hover:bg-rose-600 hover:text-white'
-                                : 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-600 hover:text-white'
+                                ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm'
+                                : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
                             }`}
-                            title="حذف هذه الإدارة التموينية"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <ArrowLeftRight className="w-4 h-4" />
+                            {isActive ? 'مفتوحة حالياً (تأكيد الدخول)' : 'الدخول على واجهة هذه الإدارة'}
                           </button>
-                        )}
+
+                          {branches.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(branch.id)}
+                              className={`p-2 rounded-xl border transition cursor-pointer ${
+                                isActive
+                                  ? 'bg-rose-500/20 border-rose-400/40 text-rose-200 hover:bg-rose-600 hover:text-white'
+                                  : 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-600 hover:text-white'
+                              }`}
+                              title="حذف هذه الإدارة التموينية"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
