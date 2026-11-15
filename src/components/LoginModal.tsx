@@ -3,8 +3,13 @@ import { AppUser, SystemConfig, SupplyBranch } from '../types';
 import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { ParticleCanvas } from './ParticleCanvas';
 import { CartoonBakeryScene } from './CartoonBakeryScene';
-import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Building2, KeyRound, Download, ChevronDown } from 'lucide-react';
+import { Lock, User, ShieldCheck, UserPlus, LogIn, AlertCircle, Building2, KeyRound, Download, ChevronDown, Unlock } from 'lucide-react';
 import { downloadWindowsExeLauncher } from '../utils/htmlExporter';
+import {
+  deduplicateSupplyBranches,
+  verifyVaultPasscode,
+  getStoredVaultPasscode,
+} from '../utils/branchVaultUtils';
 
 interface LoginModalProps {
   systemConfig: SystemConfig;
@@ -39,6 +44,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [successMsg, setSuccessMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const cleanBranches = React.useMemo(() => deduplicateSupplyBranches(branches), [branches]);
+  const [branchGateUnlocked, setBranchGateUnlocked] = useState(false);
+  const [showBranchPinPrompt, setShowBranchPinPrompt] = useState(false);
+  const [branchPinInput, setBranchPinInput] = useState('');
+  const [branchPinError, setBranchPinError] = useState('');
+
   // Always clear username & password when the login screen mounts, on logout, or when switching branches so user types it manually every time
   useEffect(() => {
     setUsername('');
@@ -50,7 +61,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     } catch {}
   }, [logoutReason, activeBranchId]);
 
-  const activeBranchObj = branches.find((b) => b.id === activeBranchId);
+  const activeBranchObj = cleanBranches.find((b) => b.id === activeBranchId);
   const activeBranchTitle = activeBranchObj?.name || systemConfig.administrationTitle;
 
   const handleLogin = (e: React.FormEvent) => {
@@ -187,36 +198,109 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </div>
           </div>
 
-          {/* Branch Dropdown Selection on Login Interface (Only choosing branch/administration) */}
+          {/* Branch Dropdown Selection on Login Interface (Protected by Master Secret Passcode) */}
           <div className="bg-indigo-950/95 text-white p-4 border-b-2 border-amber-400/70" dir="rtl">
-            <label
-              htmlFor="login-branch-select"
-              className="block text-xs font-black text-amber-300 mb-2 flex items-center gap-1.5"
-            >
-              <Building2 className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>اختر الإدارة التموينية أو الفرع للدخول عليه:</span>
-            </label>
-
-            <div className="relative">
-              <select
-                id="login-branch-select"
-                value={activeBranchId}
-                onChange={(e) => onSelectBranch && onSelectBranch(e.target.value)}
-                className="w-full appearance-none bg-slate-900 hover:bg-slate-800 text-amber-300 font-black text-xs sm:text-sm rounded-xl px-3.5 py-2.5 pl-9 border-2 border-amber-400/80 shadow-md focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer transition"
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <label
+                htmlFor="login-branch-select"
+                className="text-xs font-black text-amber-300 flex items-center gap-1.5"
               >
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id} className="bg-slate-900 text-white font-bold">
-                    {branch.name}
-                  </option>
-                ))}
-              </select>
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-amber-400">
-                <ChevronDown className="w-4 h-4 stroke-[2.5]" />
-              </div>
+                <Building2 className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>الإدارة التموينية / الفرع:</span>
+              </label>
+              {branchGateUnlocked ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBranchGateUnlocked(false);
+                    setShowBranchPinPrompt(false);
+                    setBranchPinInput('');
+                  }}
+                  className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white flex items-center gap-1 cursor-pointer"
+                >
+                  <Lock className="w-3 h-3" />
+                  <span>قفل الفروع</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBranchPinPrompt((p) => !p);
+                    setBranchPinError('');
+                  }}
+                  className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-400/50 flex items-center gap-1 transition cursor-pointer"
+                >
+                  <KeyRound className="w-3 h-3" />
+                  <span>دخول جميع الفروع بالرقم السري</span>
+                </button>
+              )}
             </div>
 
+            {!branchGateUnlocked ? (
+              <div className="space-y-2">
+                <div className="w-full bg-slate-900/90 text-amber-300 font-black text-xs sm:text-sm rounded-xl px-3.5 py-2.5 border border-slate-700 flex items-center justify-between">
+                  <span className="truncate">{activeBranchTitle}</span>
+                  <span className="text-[10px] bg-red-500/20 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-md shrink-0">
+                    🔒 الفروع مقفلة برقم سري
+                  </span>
+                </div>
+                {showBranchPinPrompt && (
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-amber-400/50 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={branchPinInput}
+                        onChange={(e) => setBranchPinInput(e.target.value)}
+                        placeholder="أدخل الرقم السري لفتح جميع الفروع..."
+                        className="flex-1 bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-lg px-3 py-1.5 text-xs font-black text-white outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetPin = getStoredVaultPasscode(systemConfig.vaultPasscode);
+                          if (verifyVaultPasscode(branchPinInput, targetPin)) {
+                            setBranchGateUnlocked(true);
+                            setShowBranchPinPrompt(false);
+                            setBranchPinInput('');
+                            setBranchPinError('');
+                          } else {
+                            setBranchPinError('الرقم السري غير صحيح! ممنوع فتح قائمة الفروع.');
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1 cursor-pointer"
+                      >
+                        <Unlock className="w-3.5 h-3.5" />
+                        <span>فتح</span>
+                      </button>
+                    </div>
+                    {branchPinError && (
+                      <div className="text-[11px] font-black text-red-300">{branchPinError}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="relative">
+                <select
+                  id="login-branch-select"
+                  value={activeBranchId}
+                  onChange={(e) => onSelectBranch && onSelectBranch(e.target.value)}
+                  className="w-full appearance-none bg-slate-900 hover:bg-slate-800 text-amber-300 font-black text-xs sm:text-sm rounded-xl px-3.5 py-2.5 pl-9 border-2 border-amber-400/80 shadow-md focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer transition"
+                >
+                  {cleanBranches.map((branch) => (
+                    <option key={branch.id} value={branch.id} className="bg-slate-900 text-white font-bold">
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-amber-400">
+                  <ChevronDown className="w-4 h-4 stroke-[2.5]" />
+                </div>
+              </div>
+            )}
+
             <p className="text-[10px] font-bold text-indigo-200 mt-2 text-center">
-              🔒 كل إدارة تموينية مستقلة ومنفصلة تماماً في البيانات والمخابز والمديونيات
+              🔒 ممنوع الدخول على جميع الفروع أو الحفظ والنسخ إلا بالرقم السري الخاص
             </p>
           </div>
 

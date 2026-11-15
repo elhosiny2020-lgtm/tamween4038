@@ -202,6 +202,7 @@ export interface SystemConfig {
   gmailPassword?: string;
   googleDriveAutoSync?: boolean;
   debtAlertThreshold?: number;
+  vaultPasscode?: string;
 }
 
 export type UserRoleType = 'admin' | 'supervisor' | 'inspector' | 'auditor' | 'data_entry' | 'viewer' | string;

@@ -52,6 +52,11 @@ import {
   collectAllBranchAuthVaults,
   syncAllBranchAuthVaultsFromCloud,
 } from './services/branchAuthVault';
+import {
+  deduplicateSupplyBranches,
+  normalizeBranchNameKey,
+  resolveCanonicalBranchIdentity,
+} from './utils/branchVaultUtils';
 
 export interface MergeConflictItem {
   id: string;
@@ -245,50 +250,7 @@ export function mergeUsersList(
 }
 
 export function sanitizeAndDeduplicateBranches(branches: SupplyBranch[]): SupplyBranch[] {
-  if (!Array.isArray(branches) || branches.length === 0) {
-    return DEFAULT_SUPPLY_BRANCHES;
-  }
-
-  const normName = (str: string) => (str || '').trim().replace(/\s+/g, ' ').toLowerCase();
-
-  const result: SupplyBranch[] = [];
-  const seenIds = new Set<string>();
-  const seenNormNames = new Set<string>();
-
-  // Ensure default supply branches are prioritized with their canonical IDs
-  DEFAULT_SUPPLY_BRANCHES.forEach((db) => {
-    const incDefault = branches.find((b) => b && b.id === db.id) || db;
-    const nameKey = normName(incDefault.name);
-    if (!seenIds.has(incDefault.id) && !seenNormNames.has(nameKey)) {
-      seenIds.add(incDefault.id);
-      seenNormNames.add(nameKey);
-      result.push({
-        ...incDefault,
-        name: incDefault.name.trim(),
-      });
-    }
-  });
-
-  // Add remaining branches if neither ID nor normalized Name is seen
-  branches.forEach((b) => {
-    if (!b || !b.id || !b.name) return;
-    const id = b.id.trim();
-    const nameKey = normName(b.name);
-
-    if (seenIds.has(id) || seenNormNames.has(nameKey)) {
-      return;
-    }
-
-    seenIds.add(id);
-    seenNormNames.add(nameKey);
-    result.push({
-      ...b,
-      id,
-      name: b.name.trim(),
-    });
-  });
-
-  return result.length > 0 ? result : DEFAULT_SUPPLY_BRANCHES;
+  return deduplicateSupplyBranches(branches);
 }
 
 export function getBranchesList(): SupplyBranch[] {
@@ -355,19 +317,28 @@ export function addSupplyBranch(
   description = ''
 ): SupplyBranch {
   const trimmedName = name.trim();
-  const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+  const targetKey = normalizeBranchNameKey(trimmedName);
   const branches = getBranchesList();
-  const existing = branches.find((b) => norm(b.name) === norm(trimmedName));
+  const existing = branches.find((b) => normalizeBranchNameKey(b.name) === targetKey);
   if (existing) {
     return existing;
   }
 
+  const { canonicalId, canonicalName } = resolveCanonicalBranchIdentity(
+    `branch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    trimmedName
+  );
+  const existingByCanonicalId = branches.find((b) => b.id === canonicalId);
+  if (existingByCanonicalId) {
+    return existingByCanonicalId;
+  }
+
   const newBranch: SupplyBranch = {
-    id: `branch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    name: trimmedName,
+    id: canonicalId,
+    name: canonicalName,
     governorateTitle: governorateTitle.trim() || 'محافظة الغربية',
     directorateTitle: directorateTitle.trim() || 'مديرية التموين والتجارة الداخلية بالغربية',
-    description: description.trim() || `قاعدة بيانات مستقلة - ${trimmedName}`,
+    description: description.trim() || `قاعدة بيانات مستقلة - ${canonicalName}`,
     createdAt: new Date().toISOString().slice(0, 10),
     isDefault: false,
   };

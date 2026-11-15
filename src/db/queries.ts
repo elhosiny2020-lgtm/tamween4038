@@ -11,6 +11,12 @@ import type {
   SupplyBranch,
   ColumnTitles,
 } from '../types.ts';
+import {
+  deduplicateSupplyBranches,
+  normalizeBranchNameKey,
+  resolveCanonicalBranchIdentity,
+  DEFAULT_VAULT_PASSCODE,
+} from '../utils/branchVaultUtils.ts';
 
 export const DEFAULT_BRANCH_ID = 'branch-mahalla';
 
@@ -63,7 +69,7 @@ export async function ensurePostgresSchema(): Promise<void> {
       await pool.query(
         `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
          VALUES ($1, $2, $3, $4, $5, TRUE)
-         ON CONFLICT (id) DO NOTHING`,
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, is_default = TRUE`,
         [
           DEFAULT_BRANCH_ROW.id,
           DEFAULT_BRANCH_ROW.name,
@@ -71,6 +77,19 @@ export async function ensurePostgresSchema(): Promise<void> {
           DEFAULT_BRANCH_ROW.directorateTitle,
           DEFAULT_BRANCH_ROW.description || '',
         ]
+      );
+      await pool.query(
+        `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
+         VALUES ('branch-samanoud', 'إدارة تموين سمنود', 'محافظة الغربية', 'مديرية التموين والتجارة الداخلية بالغربية', 'الإدارة التموينية لمركز ومدينة سمنود (قاعدة بيانات مستقلة)', FALSE)
+         ON CONFLICT (id) DO UPDATE SET name = 'إدارة تموين سمنود'`
+      );
+      // Clean up any orphaned synthetic duplicate branch rows that have no bakeries/debts
+      await pool.query(
+        `DELETE FROM public.branches b
+         WHERE b.id NOT IN ('branch-mahalla', 'branch-samanoud')
+           AND (b.name ILIKE 'إدارة تموين (branch-%' OR b.name ILIKE '%المحلة الكبرى%' OR b.name ILIKE '%سمنود%')
+           AND NOT EXISTS (SELECT 1 FROM public.bakeries bk WHERE bk.branch_id = b.id)
+           AND NOT EXISTS (SELECT 1 FROM public.debts dt WHERE dt.branch_id = b.id)`
       );
       schemaInitialized = true;
     } catch (err) {
@@ -311,6 +330,9 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
           englishSubtitle: String(row.english_subtitle || ''),
           logoBase64: String(row.logo_base64 || ''),
           debtAlertThreshold: Number(row.debt_alert_threshold || 50000),
+          vaultPasscode: String(
+            row.daily_alert_config?.vaultPasscode || row.vault_passcode || DEFAULT_VAULT_PASSCODE
+          ),
           dailyAlertConfig: row.daily_alert_config || undefined,
           rolePermissions: row.role_permissions || undefined,
           roleLabels: row.role_labels || undefined,
@@ -405,7 +427,7 @@ export async function getBootstrapFromPostgres(requestedBranchId = DEFAULT_BRANC
 
   return {
     branchId,
-    branches: branchesRes.rows.map(mapDbBranchToApp),
+    branches: deduplicateSupplyBranches(branchesRes.rows.map(mapDbBranchToApp)),
     villages: villagesRes.rows.map((r) => ({
       village: String(r.village),
       localUnits: Array.isArray(r.local_units) ? r.local_units : [],
@@ -542,17 +564,21 @@ export interface UpsertRowResult {
 }
 
 async function ensureBranchRecord(client: any, branchId: string, branchData?: Partial<SupplyBranch>) {
+  const { canonicalId, canonicalName, isCanonicalDefault } = resolveCanonicalBranchIdentity(
+    branchId,
+    branchData?.name
+  );
   await client.query(
     `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (id) DO NOTHING`,
     [
-      branchId,
-      branchData?.name || (branchId === DEFAULT_BRANCH_ID ? DEFAULT_BRANCH_ROW.name : `إدارة تموين (${branchId})`),
+      branchId || canonicalId,
+      canonicalName,
       branchData?.governorateTitle || 'محافظة الغربية',
       branchData?.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
       branchData?.description || '',
-      branchId === DEFAULT_BRANCH_ID,
+      branchId === DEFAULT_BRANCH_ID || isCanonicalDefault,
     ]
   );
 }
@@ -612,6 +638,18 @@ export async function upsertRowWithClient(
 
   switch (table) {
     case 'branches': {
+      const { canonicalId, canonicalName, isCanonicalDefault } = resolveCanonicalBranchIdentity(
+        recordId,
+        payload.name
+      );
+      // Also check if another branch with the same normalized Arabic name already exists in DB
+      const allBranchesRes = await client.query(`SELECT id, name FROM public.branches`);
+      const targetNorm = normalizeBranchNameKey(canonicalName);
+      const matchedExisting = allBranchesRes.rows.find(
+        (r: any) => normalizeBranchNameKey(r.name) === targetNorm
+      );
+      const finalBranchId = matchedExisting ? String(matchedExisting.id) : canonicalId;
+
       const res = await client.query(
         `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -625,12 +663,12 @@ export async function upsertRowWithClient(
            updated_at = NOW()
          RETURNING *`,
         [
-          recordId,
-          String(payload.name || ''),
+          finalBranchId,
+          canonicalName,
           String(payload.governorateTitle || 'محافظة الغربية'),
           String(payload.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'),
           String(payload.description || ''),
-          Boolean(payload.isDefault),
+          Boolean(payload.isDefault || isCanonicalDefault),
         ]
       );
       resultRow = mapDbRowByTable('branches', res.rows[0]);
@@ -1073,6 +1111,15 @@ export async function upsertRowWithClient(
       const cfg = (payload.systemConfig || payload) as SystemConfig;
       const colTitles = payload.columnTitles || existingRow?.column_titles || {};
       const actStatuses = payload.activityStatuses || existingRow?.activity_statuses || [];
+      const mergedDailyAlertConfig = {
+        ...(existingRow?.daily_alert_config || {}),
+        ...(cfg.dailyAlertConfig || {}),
+        vaultPasscode: String(
+          cfg.vaultPasscode ??
+            existingRow?.daily_alert_config?.vaultPasscode ??
+            DEFAULT_VAULT_PASSCODE
+        ),
+      };
       const res = await client.query(
         `INSERT INTO public.system_config (
           branch_id, governorate_title, directorate_title, administration_title, english_subtitle,
@@ -1103,7 +1150,7 @@ export async function upsertRowWithClient(
           String(cfg.englishSubtitle ?? existingRow?.english_subtitle ?? ''),
           String(cfg.logoBase64 ?? existingRow?.logo_base64 ?? ''),
           Number(cfg.debtAlertThreshold ?? existingRow?.debt_alert_threshold ?? 50000),
-          JSON.stringify(cfg.dailyAlertConfig ?? existingRow?.daily_alert_config ?? {}),
+          JSON.stringify(mergedDailyAlertConfig),
           JSON.stringify(cfg.rolePermissions ?? existingRow?.role_permissions ?? {}),
           JSON.stringify(cfg.roleLabels ?? existingRow?.role_labels ?? {}),
           JSON.stringify(cfg.customRoles ?? existingRow?.custom_roles ?? []),

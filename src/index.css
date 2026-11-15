@@ -30,16 +30,88 @@
 }
 
 /* =========================================================
-   ANIMATED BUTTONS & ENTERPRISE ERP INTERACTIVE FEEDBACK
+   ANIMATED BUTTONS, CARDS & ENTERPRISE ERP VISUAL SYSTEM
    ========================================================= */
+@keyframes fadeInSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes floatSubtle {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes pulseGlowGold {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 18px 3px rgba(245, 158, 11, 0.45);
+  }
+}
+
+@keyframes gradientFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeInSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.icon-animated {
+  animation: floatSubtle 2.8s ease-in-out infinite;
+}
+
+.pulse-gold-glow {
+  animation: pulseGlowGold 2.6s ease-in-out infinite;
+}
+
+.animated-royal-gradient {
+  background: linear-gradient(125deg, #071329, #0f2547, #1e3a8a, #0b2239, #064e3b);
+  background-size: 240% 240%;
+  animation: gradientFlow 10s ease infinite;
+}
+
+.card-hover-lift {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+}
+
+.card-hover-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 32px -10px rgba(15, 35, 66, 0.18);
+}
+
 button,
 a[role="button"],
 .btn-interactive {
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .sidebar-btn-erp {
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
 }
 
 /* Enlarged bold numbers with tabular alignment */
@@ -64,7 +136,7 @@ tr.total-summary-row,
 tfoot tr.total-summary-row,
 tr.total-summary-row:hover,
 tfoot tr.total-summary-row:hover {
-  background: #0F2342 !important;
+  background: linear-gradient(90deg, #091931 0%, #172554 50%, #091931 100%) !important;
   color: #fde68a !important;
   font-weight: 900 !important;
   border-top: 3px solid #f59e0b !important;
@@ -81,7 +153,7 @@ tfoot tr.total-summary-row:hover td {
 /* Subtotal rows for Local Units and Villages */
 tr.local-unit-total-row,
 tr.local-unit-total-row:hover {
-  background: #1E3A8A !important;
+  background: linear-gradient(90deg, #1e3a8a 0%, #1d4ed8 50%, #1e3a8a 100%) !important;
   color: #fde68a !important;
   font-weight: 900 !important;
 }
@@ -94,7 +166,7 @@ tr.local-unit-total-row:hover td {
 
 tr.village-total-row,
 tr.village-total-row:hover {
-  background: #dbeafe !important;
+  background: linear-gradient(90deg, #dbeafe 0%, #e0f2fe 50%, #dbeafe 100%) !important;
   color: #0f2342 !important;
   font-weight: 900 !important;
 }
@@ -119,7 +191,7 @@ tfoot tr.total-summary-row:hover td.blackout-summary-cell,
   color: transparent !important;
 }
 
-/* Professional Navy/Royal-Blue row highlight for selected and hovered rows (Never White) */
+/* Professional Navy/Royal-Blue row highlight for selected and hovered rows */
 tr.row-selected {
   background-color: #bfdbfe !important;
   font-weight: 800 !important;
@@ -130,9 +202,13 @@ tr.row-selected td {
   color: #0f2342 !important;
 }
 
-/* Fast Table Row Hover without expensive multi-not selectors */
+/* Smooth Interactive Table Row Hover */
+tbody tr {
+  transition: background-color 0.14s ease;
+}
+
 tbody tr:hover {
-  background-color: #eff6ff;
+  background-color: #e0f2fe;
 }
 
 select:hover,
@@ -140,18 +216,6 @@ select:focus {
   background-color: #dbeafe !important;
   color: #0f2342 !important;
   border-color: #1e3a8a !important;
-}
-
-/* Eliminate GPU compositing lag when opening/closing modal dialogs */
-.fixed.inset-0,
-.report-modal-overlay,
-.animate-in,
-.backdrop-blur-sm,
-.backdrop-blur-md {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  transition: none !important;
-  animation: none !important;
 }
 
 /* Print Styles for A4 Landscape & Full Print Isolation */

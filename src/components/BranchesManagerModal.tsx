@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   Sparkles,
   MapPin,
+  Lock,
+  KeyRound,
 } from 'lucide-react';
 import { SupplyBranch } from '../types';
 import {
@@ -19,6 +21,7 @@ import {
   getBranchSummaryStats,
   sanitizeAndDeduplicateBranches,
 } from '../storage';
+import { normalizeBranchNameKey } from '../utils/branchVaultUtils';
 
 interface BranchesManagerModalProps {
   isOpen: boolean;
@@ -30,6 +33,8 @@ interface BranchesManagerModalProps {
     updatedBranches: SupplyBranch[],
     nextActiveBranchId: string
   ) => Promise<{ success?: boolean; queuedOffline?: boolean; error?: string } | void> | void;
+  onOpenVaultSecurity?: () => void;
+  onLockVault?: () => void;
 }
 
 const QUICK_SUGGESTED_BRANCHES = [
@@ -48,11 +53,17 @@ const QUICK_SUGGESTED_BRANCHES = [
 export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   isOpen,
   onClose,
-  branches,
+  branches: rawBranchesProp,
   activeBranchId,
   onSelectBranch,
   onBranchesChange,
+  onOpenVaultSecurity,
+  onLockVault,
 }) => {
+  const branches = React.useMemo(
+    () => sanitizeAndDeduplicateBranches(rawBranchesProp),
+    [rawBranchesProp]
+  );
   const [newBranchName, setNewBranchName] = useState('');
   const [newGovernorate, setNewGovernorate] = useState('محافظة الغربية');
   const [newDirectorate, setNewDirectorate] = useState('مديرية التموين والتجارة الداخلية بالغربية');
@@ -71,9 +82,9 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
       setStatusBanner({ type: 'error', text: 'يرجى إدخال اسم الإدارة التموينية / الفرع الجديد.' });
       return;
     }
-    const norm = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
-    if (branches.some((b) => norm(b.name) === norm(trimmed))) {
-      setStatusBanner({ type: 'error', text: 'هذه الإدارة التموينية مضافة بالفعل في قائمة الفروع.' });
+    const targetNorm = normalizeBranchNameKey(trimmed);
+    if (branches.some((b) => normalizeBranchNameKey(b.name) === targetNorm)) {
+      setStatusBanner({ type: 'error', text: 'هذه الإدارة التموينية مضافة بالفعل في قائمة الفروع (منع التكرار تلقائياً).' });
       return;
     }
 
@@ -145,14 +156,41 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl bg-white/10 hover:bg-rose-600 text-white transition cursor-pointer"
-            title="إغلاق"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenVaultSecurity && (
+              <button
+                type="button"
+                onClick={onOpenVaultSecurity}
+                className="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-400/50 text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
+                title="تغيير الرقم السري الخاص بالحفظ والفروع"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>تغيير الرقم السري</span>
+              </button>
+            )}
+            {onLockVault && (
+              <button
+                type="button"
+                onClick={() => {
+                  onLockVault();
+                  onClose();
+                }}
+                className="px-3 py-2 rounded-xl bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
+                title="قفل قسم الفروع والحفظ فوراً"
+              >
+                <Lock className="w-4 h-4" />
+                <span>قفل الفروع فوراً</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl bg-white/10 hover:bg-rose-600 text-white transition cursor-pointer"
+              title="إغلاق"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 max-h-[82vh] overflow-y-auto space-y-6 bg-slate-50">
@@ -209,7 +247,9 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
               </label>
               <div className="flex flex-wrap gap-1.5">
                 {QUICK_SUGGESTED_BRANCHES.map((suggestion) => {
-                  const alreadyExists = branches.some((b) => b.name.trim() === suggestion);
+                  const alreadyExists = branches.some(
+                    (b) => normalizeBranchNameKey(b.name) === normalizeBranchNameKey(suggestion)
+                  );
                   return (
                     <button
                       key={suggestion}

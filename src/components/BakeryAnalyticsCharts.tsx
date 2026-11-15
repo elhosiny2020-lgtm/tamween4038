@@ -5,6 +5,8 @@ import {
   Bar,
   AreaChart,
   Area,
+  ComposedChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -53,7 +55,7 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
   const [isExpanded, setIsExpanded] = useState(true);
   const [selectedVillageFilter, setSelectedVillageFilter] = useState('ALL');
   const [selectedUnitFilter, setSelectedUnitFilter] = useState('ALL');
-  const [chartType, setChartType] = useState<'quotas' | 'loaves' | 'debts'>('quotas');
+  const [chartType, setChartType] = useState<'quotas' | 'loaves' | 'debts' | 'beneficiaries'>('quotas');
   const [exeToastMsg, setExeToastMsg] = useState<string | null>(null);
 
   // Compute map of remaining debts per bakery
@@ -295,51 +297,67 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
               )}
 
               {/* Chart Mode Switcher */}
-              <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs font-black gap-1">
+              <div className="flex items-center flex-wrap bg-slate-900/95 p-1.5 rounded-2xl border border-indigo-500/30 text-xs font-black gap-1.5 shadow-inner">
                 <button
+                  type="button"
                   onClick={() => setChartType('quotas')}
-                  className={`px-3 py-1 rounded-lg transition-all duration-200 ${
+                  className={`px-3.5 py-1.5 rounded-xl transition-all duration-300 cursor-pointer ${
                     chartType === 'quotas'
-                      ? 'bg-amber-600 text-slate-950 font-black shadow-sm'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-black shadow-lg shadow-amber-500/25 scale-[1.02]'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800'
                   }`}
                 >
-                  الحصص (شيكارة)
+                  الحصص التأمينية والفعلية (Composed)
                 </button>
                 <button
+                  type="button"
                   onClick={() => setChartType('loaves')}
-                  className={`px-3 py-1 rounded-lg transition-all duration-200 ${
+                  className={`px-3.5 py-1.5 rounded-xl transition-all duration-300 cursor-pointer ${
                     chartType === 'loaves'
-                      ? 'bg-emerald-700 text-white font-black shadow-sm'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black shadow-lg shadow-emerald-500/25 scale-[1.02]'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800'
                   }`}
                 >
-                  الأرغفة اليومية
+                  الأرغفة اليومية (Gradient Bar)
                 </button>
                 <button
-                  onClick={() => setChartType('debts')}
-                  className={`px-3 py-1 rounded-lg transition-all duration-200 flex items-center gap-1 ${
-                    chartType === 'debts'
-                      ? 'bg-red-700 text-white font-black shadow-sm'
-                      : 'text-slate-400 hover:text-red-400'
+                  type="button"
+                  onClick={() => setChartType('beneficiaries')}
+                  className={`px-3.5 py-1.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                    chartType === 'beneficiaries'
+                      ? 'bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-black shadow-lg shadow-indigo-500/25 scale-[1.02]'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800'
                   }`}
-                  title="عرض رسم بياني مساحي (Area Chart) لتراكم المديونيات المتبقية لكل قرية"
+                >
+                  نمو المستفيدين 2023–2025
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartType('debts')}
+                  className={`px-3.5 py-1.5 rounded-xl transition-all duration-300 flex items-center gap-1.5 cursor-pointer ${
+                    chartType === 'debts'
+                      ? 'bg-gradient-to-r from-rose-600 to-red-600 text-white font-black shadow-lg shadow-rose-600/30 scale-[1.02]'
+                      : 'text-slate-300 hover:text-rose-400 hover:bg-slate-800'
+                  }`}
+                  title="عرض رسم بياني مساحي ومتراكم لتراكم المديونيات المتبقية لكل قرية"
                 >
                   <TrendingUp className="w-3.5 h-3.5" />
-                  <span>تراكم المديونيات (Area Chart)</span>
+                  <span>منحنى المديونيات المتبقية (Area + Line)</span>
                 </button>
               </div>
             </div>
 
             {/* Quick Summary Pill */}
-            <div className="flex items-center gap-3 text-xs font-black text-slate-300 bg-slate-900 px-3.5 py-1.5 rounded-xl border border-slate-800 shadow-inner">
-              <span>المخابز: <strong className="text-amber-400">{totals.count}</strong></span>
+            <div className="flex items-center flex-wrap gap-3 text-xs font-black text-slate-200 bg-gradient-to-r from-slate-900 via-indigo-950/80 to-slate-900 px-4 py-2 rounded-2xl border border-indigo-500/30 shadow-lg">
+              <span>المخابز: <strong className="text-amber-400 font-mono">{totals.count}</strong></span>
               <span className="text-slate-700">|</span>
-              <span>تأمينية: <strong className="text-amber-300">{totals.insurance.toLocaleString()}</strong></span>
+              <span>تأمينية: <strong className="text-amber-300 font-mono">{totals.insurance.toLocaleString()}</strong></span>
               <span className="text-slate-700">|</span>
-              <span>فعلية: <strong className="text-cyan-300">{totals.actual.toLocaleString()}</strong></span>
+              <span>فعلية: <strong className="text-cyan-300 font-mono">{totals.actual.toLocaleString()}</strong></span>
               <span className="text-slate-700">|</span>
-              <span>المديونيات: <strong className="text-rose-400">{totals.debts.toLocaleString()}</strong> ج.م</span>
+              <span>الأرغفة: <strong className="text-emerald-400 font-mono">{totals.loaves.toLocaleString()}</strong></span>
+              <span className="text-slate-700">|</span>
+              <span>المديونيات: <strong className="text-rose-400 font-mono">{totals.debts.toLocaleString()}</strong> ج.م</span>
             </div>
           </div>
 
@@ -377,26 +395,33 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
               <div className="h-80 w-full pt-2">
                 <ResponsiveContainer width="100%" height="100%">
                   {chartType === 'debts' ? (
-                    <AreaChart data={barChartData} margin={{ top: 20, right: 15, left: 15, bottom: 35 }}>
+                    <ComposedChart data={barChartData} margin={{ top: 24, right: 15, left: 15, bottom: 35 }}>
                       <defs>
-                        <linearGradient id="debtGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#ef4444" stopOpacity={0.85} />
-                          <stop offset="95%" stopColor="#991b1b" stopOpacity={0.15} />
+                        <linearGradient id="debtAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.85} />
+                          <stop offset="65%" stopColor="#e11d48" stopOpacity={0.35} />
+                          <stop offset="100%" stopColor="#881337" stopOpacity={0.05} />
+                        </linearGradient>
+                        <linearGradient id="debtBarGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#fb7185" stopOpacity={0.95} />
+                          <stop offset="100%" stopColor="#be123c" stopOpacity={0.85} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 800, fill: '#cbd5e1' }} interval={0} angle={-25} textAnchor="end" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 800, fill: '#e2e8f0' }} interval={0} angle={-22} textAnchor="end" />
                       <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: '#020617',
-                          borderColor: '#ef4444',
-                          borderRadius: '12px',
+                          backgroundColor: '#090d16',
+                          borderColor: '#f43f5e',
+                          borderWidth: '2px',
+                          borderRadius: '16px',
                           color: '#ffffff',
                           fontSize: '12px',
                           fontWeight: 'bold',
                           direction: 'rtl',
-                          textAlign: 'right'
+                          textAlign: 'right',
+                          boxShadow: '0 20px 40px -15px rgba(244,63,94,0.4)'
                         }}
                         formatter={(val: unknown) => [`${Number(val || 0).toLocaleString()} ج.م`, 'إجمالي المديونية المتبقية']}
                       />
@@ -404,32 +429,54 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
                       <Area
                         type="monotone"
                         dataKey="totalRemainingDebt"
-                        name="إجمالي المديونيات المتبقية (ج.م)"
-                        stroke="#ef4444"
+                        name="منحنى تراكم المديونيات (ج.م)"
+                        stroke="#fb7185"
                         strokeWidth={3}
                         fillOpacity={1}
-                        fill="url(#debtGradient)"
+                        fill="url(#debtAreaGrad)"
+                      />
+                      <Bar
+                        dataKey="totalRemainingDebt"
+                        name="قيمة المديونية لكل قطاع (ج.م)"
+                        fill="url(#debtBarGrad)"
+                        barSize={26}
+                        radius={[8, 8, 0, 0]}
                       >
                         <LabelList
                           dataKey="totalRemainingDebt"
                           position="top"
-                          fill="#f87171"
+                          fill="#fda4af"
                           fontSize={10}
                           fontWeight={900}
                           formatter={(v: unknown) => (Number(v) > 0 ? `${Number(v).toLocaleString()} ج` : '')}
                         />
-                      </Area>
-                    </AreaChart>
-                  ) : (
-                    <BarChart data={barChartData} margin={{ top: 20, right: 15, left: 15, bottom: 35 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 800, fill: '#cbd5e1' }} interval={0} angle={-25} textAnchor="end" />
+                      </Bar>
+                    </ComposedChart>
+                  ) : chartType === 'beneficiaries' ? (
+                    <ComposedChart data={barChartData} margin={{ top: 24, right: 15, left: 15, bottom: 35 }}>
+                      <defs>
+                        <linearGradient id="ben23Grad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#818cf8" stopOpacity={0.95} />
+                          <stop offset="100%" stopColor="#4338ca" stopOpacity={0.85} />
+                        </linearGradient>
+                        <linearGradient id="ben24Grad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.95} />
+                          <stop offset="100%" stopColor="#0284c7" stopOpacity={0.85} />
+                        </linearGradient>
+                        <linearGradient id="ben25Grad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#34d399" stopOpacity={0.95} />
+                          <stop offset="100%" stopColor="#059669" stopOpacity={0.85} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 800, fill: '#e2e8f0' }} interval={0} angle={-22} textAnchor="end" />
                       <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: '#020617',
-                          borderColor: '#f59e0b',
-                          borderRadius: '12px',
+                          backgroundColor: '#090d16',
+                          borderColor: '#38bdf8',
+                          borderWidth: '2px',
+                          borderRadius: '16px',
                           color: '#ffffff',
                           fontSize: '12px',
                           fontWeight: 'bold',
@@ -438,42 +485,108 @@ export const BakeryAnalyticsCharts: React.FC<BakeryAnalyticsChartsProps> = ({
                         }}
                       />
                       <Legend wrapperStyle={{ fontSize: '11px', fontWeight: 'bold', paddingTop: '10px' }} />
+                      <Bar dataKey="ben2023" name="مستفيدي 2023" fill="url(#ben23Grad)" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="ben2024" name="مستفيدي 2024" fill="url(#ben24Grad)" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="ben2025" name="مستفيدي 2025" fill="url(#ben25Grad)" radius={[6, 6, 0, 0]}>
+                        <LabelList
+                          dataKey="ben2025"
+                          position="top"
+                          fill="#6ee7b7"
+                          fontSize={10}
+                          fontWeight={900}
+                          formatter={(v: unknown) => (Number(v) > 0 ? Number(v).toLocaleString() : '')}
+                        />
+                      </Bar>
+                      <Line type="monotone" dataKey="ben2025" name="اتجاه النمو 2025" stroke="#fbbf24" strokeWidth={2.5} dot={{ r: 4, fill: '#fbbf24' }} />
+                    </ComposedChart>
+                  ) : (
+                    <ComposedChart data={barChartData} margin={{ top: 24, right: 15, left: 15, bottom: 35 }}>
+                      <defs>
+                        <linearGradient id="insQuotaGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.98} />
+                          <stop offset="100%" stopColor="#d97706" stopOpacity={0.85} />
+                        </linearGradient>
+                        <linearGradient id="actQuotaGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.98} />
+                          <stop offset="100%" stopColor="#2563eb" stopOpacity={0.85} />
+                        </linearGradient>
+                        <linearGradient id="loavesGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#34d399" stopOpacity={0.98} />
+                          <stop offset="100%" stopColor="#059669" stopOpacity={0.85} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 800, fill: '#e2e8f0' }} interval={0} angle={-22} textAnchor="end" />
+                      <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#090d16',
+                          borderColor: '#f59e0b',
+                          borderWidth: '2px',
+                          borderRadius: '16px',
+                          color: '#ffffff',
+                          fontSize: '12px',
+                          fontWeight: 'bold',
+                          direction: 'rtl',
+                          textAlign: 'right',
+                          boxShadow: '0 20px 40px -15px rgba(245,158,11,0.35)'
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: '11px', fontWeight: 'bold', paddingTop: '10px' }} />
                       {chartType === 'quotas' ? (
                         <>
-                          <Bar dataKey="insuranceQuota" name="الحصة التأمينية (شيكارة)" fill="#d97706" radius={[6, 6, 0, 0]}>
+                          <Bar dataKey="insuranceQuota" name="الحصة التأمينية (شيكارة)" fill="url(#insQuotaGrad)" radius={[8, 8, 0, 0]}>
                             <LabelList
                               dataKey="insuranceQuota"
                               position="top"
-                              fill="#fbbf24"
+                              fill="#fde68a"
                               fontSize={10}
                               fontWeight={900}
                               formatter={(v: unknown) => (Number(v) > 0 ? Number(v).toLocaleString() : '')}
                             />
                           </Bar>
-                          <Bar dataKey="actualQuota" name="الحصة الفعلية (شيكارة)" fill="#3b82f6" radius={[6, 6, 0, 0]}>
+                          <Bar dataKey="actualQuota" name="الحصة الفعلية (شيكارة)" fill="url(#actQuotaGrad)" radius={[8, 8, 0, 0]}>
                             <LabelList
                               dataKey="actualQuota"
                               position="top"
-                              fill="#60a5fa"
+                              fill="#93c5fd"
                               fontSize={10}
                               fontWeight={900}
                               formatter={(v: unknown) => (Number(v) > 0 ? Number(v).toLocaleString() : '')}
                             />
                           </Bar>
+                          <Line
+                            type="monotone"
+                            dataKey="actualQuota"
+                            name="منحنى التوزيع الفعلي"
+                            stroke="#34d399"
+                            strokeWidth={2.5}
+                            dot={{ r: 4, fill: '#10b981', stroke: '#fff', strokeWidth: 1.5 }}
+                          />
                         </>
                       ) : (
-                        <Bar dataKey="loavesCount" name="إجمالي الأرغفة اليومية (رغيف)" fill="#10b981" radius={[6, 6, 0, 0]}>
-                          <LabelList
+                        <>
+                          <Bar dataKey="loavesCount" name="إجمالي الأرغفة اليومية (رغيف)" fill="url(#loavesGrad)" radius={[8, 8, 0, 0]}>
+                            <LabelList
+                              dataKey="loavesCount"
+                              position="top"
+                              fill="#6ee7b7"
+                              fontSize={10}
+                              fontWeight={900}
+                              formatter={(v: unknown) => (Number(v) > 0 ? Number(v).toLocaleString() : '')}
+                            />
+                          </Bar>
+                          <Line
+                            type="monotone"
                             dataKey="loavesCount"
-                            position="top"
-                            fill="#34d399"
-                            fontSize={10}
-                            fontWeight={900}
-                            formatter={(v: unknown) => (Number(v) > 0 ? Number(v).toLocaleString() : '')}
+                            name="مؤشر كفاءة الإنتاج"
+                            stroke="#fbbf24"
+                            strokeWidth={2.5}
+                            dot={{ r: 4, fill: '#fbbf24' }}
                           />
-                        </Bar>
+                        </>
                       )}
-                    </BarChart>
+                    </ComposedChart>
                   )}
                 </ResponsiveContainer>
               </div>

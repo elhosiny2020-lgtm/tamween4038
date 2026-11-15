@@ -559,38 +559,39 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
         </div>
       </div>
 
-      {/* 2. Four Primary KPI Cards (Single-Elevation, Clean Visual Rhythm) */}
+      {/* 2. Four Primary KPI Cards (Animated High-Contrast Royal Cards) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* KPI 1: Net Remaining Debts & Collection Progress */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs flex flex-col justify-between">
-          <div>
+        <div className="bg-gradient-to-br from-white via-rose-50/40 to-white border-2 border-rose-200/80 hover:border-rose-400 rounded-2xl p-4 shadow-md card-hover-lift flex flex-col justify-between relative overflow-hidden">
+          <div className="h-1.5 w-full bg-gradient-to-r from-rose-600 via-red-500 to-amber-500 absolute top-0 right-0 left-0" />
+          <div className="pt-1">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-slate-600">صافي المديونيات المتبقية</span>
-              <span className="w-8 h-8 rounded-lg bg-red-50 text-red-700 border border-red-100 flex items-center justify-center shrink-0">
-                <Scale className="w-4 h-4" />
+              <span className="text-xs font-black text-slate-700">صافي المديونيات المتبقية</span>
+              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-rose-600 to-red-700 text-white shadow-md shadow-rose-900/20 flex items-center justify-center shrink-0">
+                <Scale className="w-4 h-4 icon-animated" />
               </span>
             </div>
             <div className="mt-2.5 flex items-baseline justify-between gap-2">
               <span
                 data-testid="kpi-total-debts"
-                className="text-2xl font-black text-red-700 font-mono tabular-nums tracking-tight"
+                className="text-2xl font-black text-rose-700 font-mono tabular-nums tracking-tight"
               >
                 {kpis.totalRemainingDebt.toLocaleString('en-US')}
                 <span className="text-xs font-bold text-slate-500 mr-1">ج.م</span>
               </span>
-              <span className="text-[11px] font-mono tabular-nums font-bold text-emerald-700">
+              <span className="text-[11px] font-mono tabular-nums font-black px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200">
                 تحصيل {kpis.collectionRatePercent}%
               </span>
             </div>
-            <div className="mt-2.5 h-1.5 w-full bg-slate-100 rounded-xs overflow-hidden">
+            <div className="mt-2.5 h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
               <div
-                className="h-full bg-emerald-600 transition-all duration-300"
+                className="h-full bg-gradient-to-r from-emerald-500 to-teal-600 transition-all duration-500"
                 style={{ width: `${Math.min(100, Math.max(0, kpis.collectionRatePercent))}%` }}
               />
             </div>
           </div>
 
-          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-600">
+          <div className="mt-3 pt-2.5 border-t border-rose-100 flex items-center justify-between text-[11px] text-slate-600">
             <span>
               المسدد:{' '}
               <strong className="text-emerald-700 font-mono tabular-nums">
@@ -600,7 +601,7 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
             <button
               type="button"
               onClick={() => onNavigateToDebts()}
-              className="text-[#1D4ED8] font-bold hover:underline inline-flex items-center gap-0.5 cursor-pointer"
+              className="text-[#1D4ED8] font-black hover:underline inline-flex items-center gap-0.5 cursor-pointer"
             >
               <span>السجل ({kpis.totalDebtsCount})</span>
               <ArrowUpLeft className="w-3 h-3" />
@@ -609,12 +610,13 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
         </div>
 
         {/* KPI 2: Bakeries Fleet & Operational Status */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs flex flex-col justify-between">
-          <div>
+        <div className="bg-gradient-to-br from-white via-emerald-50/40 to-white border-2 border-emerald-200/80 hover:border-emerald-400 rounded-2xl p-4 shadow-md card-hover-lift flex flex-col justify-between relative overflow-hidden">
+          <div className="h-1.5 w-full bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500 absolute top-0 right-0 left-0" />
+          <div className="pt-1">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-slate-600">إجمالي المخابز والجاهزية</span>
-              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center justify-center shrink-0">
-                <Store className="w-4 h-4" />
+              <span className="text-xs font-black text-slate-700">إجمالي المخابز والجاهزية</span>
+              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white shadow-md shadow-emerald-900/20 flex items-center justify-center shrink-0">
+                <Store className="w-4 h-4 icon-animated" />
               </span>
             </div>
             <div className="mt-2.5 flex items-baseline justify-between gap-2">
@@ -625,27 +627,27 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                 {kpis.bakeriesCount.toLocaleString('en-US')}
                 <span className="text-xs font-bold text-slate-500 mr-1">مخبز</span>
               </span>
-              <span className="text-[11px] font-mono tabular-nums font-bold text-slate-600">
+              <span className="text-[11px] font-mono tabular-nums font-black px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200">
                 جاهزية {kpis.operationalRatePercent}%
               </span>
             </div>
-            <div className="mt-2.5 h-1.5 w-full bg-slate-100 rounded-xs overflow-hidden">
+            <div className="mt-2.5 h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
               <div
-                className="h-full bg-emerald-600 transition-all duration-300"
+                className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
                 style={{ width: `${Math.min(100, Math.max(0, kpis.operationalRatePercent))}%` }}
               />
             </div>
           </div>
 
-          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-            <span className="text-emerald-700 font-bold inline-flex items-center gap-1">
+          <div className="mt-3 pt-2.5 border-t border-emerald-100 flex items-center justify-between text-[11px]">
+            <span className="text-emerald-700 font-black inline-flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5" />
               شغال: <span className="font-mono tabular-nums">{kpis.activeCount}</span>
             </span>
             <button
               type="button"
               onClick={() => onNavigateToBakeries({})}
-              className="text-amber-700 font-bold hover:underline cursor-pointer"
+              className="text-amber-700 font-black hover:underline cursor-pointer"
             >
               متوقف/موقوف: <span className="font-mono tabular-nums">{kpis.stoppedCount}</span>
             </button>
@@ -653,12 +655,13 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
         </div>
 
         {/* KPI 3: Distributed Flour Quotas & Daily Loaves */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs flex flex-col justify-between">
-          <div>
+        <div className="bg-gradient-to-br from-white via-blue-50/40 to-white border-2 border-blue-200/80 hover:border-blue-400 rounded-2xl p-4 shadow-md card-hover-lift flex flex-col justify-between relative overflow-hidden">
+          <div className="h-1.5 w-full bg-gradient-to-r from-blue-700 via-indigo-600 to-cyan-500 absolute top-0 right-0 left-0" />
+          <div className="pt-1">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-slate-600">حصص الدقيق والإنتاج اليومي</span>
-              <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1D4ED8] border border-blue-100 flex items-center justify-center shrink-0">
-                <Wheat className="w-4 h-4" />
+              <span className="text-xs font-black text-slate-700">حصص الدقيق والإنتاج اليومي</span>
+              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-md shadow-blue-900/20 flex items-center justify-center shrink-0">
+                <Wheat className="w-4 h-4 icon-animated" />
               </span>
             </div>
             <div className="mt-2.5 flex items-baseline justify-between gap-2">
@@ -669,19 +672,19 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                 {kpis.totalActualQuota.toLocaleString('en-US')}
                 <span className="text-xs font-bold text-slate-500 mr-1">شكارة فعلية</span>
               </span>
-              <span className="text-[11px] font-mono tabular-nums font-bold text-amber-700">
+              <span className="text-[11px] font-mono tabular-nums font-black px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 border border-blue-200">
                 {kpis.quotaUtilizationPercent}% من التأمينية
               </span>
             </div>
-            <div className="mt-2.5 h-1.5 w-full bg-slate-100 rounded-xs overflow-hidden">
+            <div className="mt-2.5 h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
               <div
-                className="h-full bg-[#1D4ED8] transition-all duration-300"
+                className="h-full bg-gradient-to-r from-blue-600 to-cyan-500 transition-all duration-500"
                 style={{ width: `${Math.min(100, Math.max(0, kpis.quotaUtilizationPercent))}%` }}
               />
             </div>
           </div>
 
-          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-600">
+          <div className="mt-3 pt-2.5 border-t border-blue-100 flex items-center justify-between text-[11px] text-slate-600">
             <span>
               التأمينية:{' '}
               <strong className="text-[#0F2342] font-mono tabular-nums">
@@ -698,14 +701,15 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
         </div>
 
         {/* KPI 4: Threshold Alerts & Compliance Risk */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs flex flex-col justify-between">
-          <div>
+        <div className="bg-gradient-to-br from-white via-amber-50/40 to-white border-2 border-amber-200/80 hover:border-amber-400 rounded-2xl p-4 shadow-md card-hover-lift flex flex-col justify-between relative overflow-hidden">
+          <div className="h-1.5 w-full bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 absolute top-0 right-0 left-0" />
+          <div className="pt-1">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-slate-600">
+              <span className="text-xs font-black text-slate-700">
                 تجاوز حد المديونية ({formatCurrencyCompact(debtAlertThreshold)} ج.م)
               </span>
-              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 border border-amber-100 flex items-center justify-center shrink-0">
-                <ShieldAlert className="w-4 h-4" />
+              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-md shadow-amber-900/20 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-4 h-4 icon-animated" />
               </span>
             </div>
             <div className="mt-2.5 flex items-baseline justify-between gap-2">
@@ -713,13 +717,13 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                 {kpis.thresholdExceededCount}
                 <span className="text-xs font-bold text-slate-500 mr-1">مخبز حرج</span>
               </span>
-              <span className="text-[11px] font-mono tabular-nums font-bold text-red-700">
+              <span className="text-[11px] font-mono tabular-nums font-black text-red-700">
                 {licenseSummary.expiredCount + licenseSummary.expiringSoonCount} وثيقة تتطلب تجديد
               </span>
             </div>
-            <div className="mt-2.5 h-1.5 w-full bg-slate-100 rounded-xs overflow-hidden">
+            <div className="mt-2.5 h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
               <div
-                className="h-full bg-amber-600 transition-all duration-300"
+                className="h-full bg-gradient-to-r from-amber-500 to-red-500 transition-all duration-500"
                 style={{
                   width: `${
                     kpis.bakeriesCount > 0
@@ -731,7 +735,7 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
             </div>
           </div>
 
-          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+          <div className="mt-3 pt-2.5 border-t border-amber-100 flex items-center justify-between text-[11px]">
             <span className="text-slate-600">
               غير مقروء:{' '}
               <strong className="text-[#0F2342] font-mono tabular-nums">{unreadAlertsCount}</strong>
@@ -739,7 +743,7 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
             <button
               type="button"
               onClick={onOpenAlertsDrawer}
-              className="text-red-700 font-bold hover:underline inline-flex items-center gap-0.5 cursor-pointer"
+              className="text-red-700 font-black hover:underline inline-flex items-center gap-0.5 cursor-pointer"
             >
               <span>سجل التنبيهات</span>
               <ArrowUpLeft className="w-3 h-3" />
@@ -877,14 +881,24 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={310} minWidth={0}>
-                <BarChart
+                <ComposedChart
                   data={activeDebtsChartData}
                   margin={{ top: 14, right: 20, left: 10, bottom: 28 }}
                 >
+                  <defs>
+                    <linearGradient id="dashRemDebtGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.98} />
+                      <stop offset="100%" stopColor="#be123c" stopOpacity={0.85} />
+                    </linearGradient>
+                    <linearGradient id="dashPaidDebtGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity={0.98} />
+                      <stop offset="100%" stopColor="#047857" stopOpacity={0.85} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
                   <XAxis
                     dataKey="name"
-                    tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }}
+                    tick={{ fontSize: 11, fill: '#1E293B', fontWeight: 800 }}
                     interval={0}
                     angle={-15}
                     textAnchor="end"
@@ -896,18 +910,19 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                     tickFormatter={(v) => formatCurrencyCompact(Number(v))}
                   />
                   <Tooltip
-                    cursor={{ fill: 'rgba(15, 35, 66, 0.04)' }}
+                    cursor={{ fill: 'rgba(15, 35, 66, 0.05)' }}
                     formatter={(value: any, name: any) => [
                       `${Number(value || 0).toLocaleString('en-US')} ج.م`,
                       name === 'remainingDebt' ? 'صافي المتبقي' : 'إجمالي المسدد',
                     ]}
                     contentStyle={{
-                      backgroundColor: '#FFFFFF',
-                      borderColor: '#CBD5E1',
-                      borderRadius: '8px',
+                      backgroundColor: '#0F172A',
+                      borderColor: '#F43F5E',
+                      borderRadius: '12px',
+                      color: '#FFFFFF',
                       direction: 'rtl',
                       fontSize: '12px',
-                      fontWeight: 700,
+                      fontWeight: 800,
                     }}
                   />
                   <Legend
@@ -930,18 +945,26 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                   <Bar
                     dataKey="remainingDebt"
                     name="remainingDebt"
-                    fill="#DC2626"
-                    radius={[5, 5, 0, 0]}
-                    maxBarSize={40}
+                    fill="url(#dashRemDebtGrad)"
+                    radius={[7, 7, 0, 0]}
+                    maxBarSize={38}
                   />
                   <Bar
                     dataKey="paidAmount"
                     name="paidAmount"
-                    fill="#059669"
-                    radius={[5, 5, 0, 0]}
-                    maxBarSize={40}
+                    fill="url(#dashPaidDebtGrad)"
+                    radius={[7, 7, 0, 0]}
+                    maxBarSize={38}
                   />
-                </BarChart>
+                  <Line
+                    type="monotone"
+                    dataKey="remainingDebt"
+                    name="remainingDebt"
+                    stroke="#f59e0b"
+                    strokeWidth={2.5}
+                    dot={{ r: 3.5, fill: '#f59e0b', stroke: '#fff', strokeWidth: 1.5 }}
+                  />
+                </ComposedChart>
               </ResponsiveContainer>
             )}
           </div>
@@ -1126,14 +1149,24 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
             ) : (
               <ResponsiveContainer width="100%" height={300} minWidth={0}>
                 {quotaViewMode === 'bar' ? (
-                  <BarChart
+                  <ComposedChart
                     data={flourQuotasData}
                     margin={{ top: 10, right: 20, left: 10, bottom: 28 }}
                   >
+                    <defs>
+                      <linearGradient id="dashActQuotaGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.98} />
+                        <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.85} />
+                      </linearGradient>
+                      <linearGradient id="dashInsQuotaGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.98} />
+                        <stop offset="100%" stopColor="#b45309" stopOpacity={0.85} />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
                     <XAxis
                       dataKey="name"
-                      tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }}
+                      tick={{ fontSize: 11, fill: '#1E293B', fontWeight: 800 }}
                       interval={0}
                       angle={-15}
                       textAnchor="end"
@@ -1147,12 +1180,13 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                         name === 'actualQuota' ? 'الحصة الفعلية' : 'الحصة التأمينية',
                       ]}
                       contentStyle={{
-                        backgroundColor: '#FFFFFF',
-                        borderColor: '#CBD5E1',
-                        borderRadius: '8px',
+                        backgroundColor: '#0F172A',
+                        borderColor: '#3B82F6',
+                        borderRadius: '12px',
+                        color: '#FFFFFF',
                         direction: 'rtl',
                         fontSize: '12px',
-                        fontWeight: 700,
+                        fontWeight: 800,
                       }}
                     />
                     <Legend
@@ -1163,27 +1197,45 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                     <Bar
                       dataKey="actualQuota"
                       name="actualQuota"
-                      fill="#1D4ED8"
-                      radius={[5, 5, 0, 0]}
+                      fill="url(#dashActQuotaGrad)"
+                      radius={[7, 7, 0, 0]}
                       maxBarSize={36}
                     />
                     <Bar
                       dataKey="insuranceQuota"
                       name="insuranceQuota"
-                      fill="#D97706"
-                      radius={[5, 5, 0, 0]}
+                      fill="url(#dashInsQuotaGrad)"
+                      radius={[7, 7, 0, 0]}
                       maxBarSize={36}
                     />
-                  </BarChart>
+                    <Line
+                      type="monotone"
+                      dataKey="actualQuota"
+                      name="actualQuota"
+                      stroke="#10b981"
+                      strokeWidth={2.5}
+                      dot={{ r: 3.5, fill: '#10b981', stroke: '#fff', strokeWidth: 1.5 }}
+                    />
+                  </ComposedChart>
                 ) : quotaViewMode === 'area' ? (
                   <AreaChart
                     data={flourQuotasData}
                     margin={{ top: 10, right: 20, left: 10, bottom: 28 }}
                   >
+                    <defs>
+                      <linearGradient id="areaActGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#2563EB" stopOpacity={0.7} />
+                        <stop offset="100%" stopColor="#93C5FD" stopOpacity={0.1} />
+                      </linearGradient>
+                      <linearGradient id="areaInsGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#D97706" stopOpacity={0.65} />
+                        <stop offset="100%" stopColor="#FCD34D" stopOpacity={0.1} />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
                     <XAxis
                       dataKey="name"
-                      tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }}
+                      tick={{ fontSize: 11, fill: '#1E293B', fontWeight: 800 }}
                       interval={0}
                       angle={-15}
                       textAnchor="end"
@@ -1196,12 +1248,13 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                         name === 'actualQuota' ? 'الحصة الفعلية' : 'الحصة التأمينية',
                       ]}
                       contentStyle={{
-                        backgroundColor: '#FFFFFF',
-                        borderColor: '#CBD5E1',
-                        borderRadius: '8px',
+                        backgroundColor: '#0F172A',
+                        borderColor: '#3B82F6',
+                        borderRadius: '12px',
+                        color: '#FFFFFF',
                         direction: 'rtl',
                         fontSize: '12px',
-                        fontWeight: 700,
+                        fontWeight: 800,
                       }}
                     />
                     <Legend
@@ -1214,29 +1267,35 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                       dataKey="actualQuota"
                       name="actualQuota"
                       stroke="#1D4ED8"
-                      fill="#93C5FD"
-                      fillOpacity={0.4}
-                      strokeWidth={2.5}
+                      fill="url(#areaActGrad)"
+                      fillOpacity={1}
+                      strokeWidth={3}
                     />
                     <Area
                       type="monotone"
                       dataKey="insuranceQuota"
                       name="insuranceQuota"
                       stroke="#D97706"
-                      fill="#FCD34D"
-                      fillOpacity={0.3}
-                      strokeWidth={2}
+                      fill="url(#areaInsGrad)"
+                      fillOpacity={1}
+                      strokeWidth={2.5}
                     />
                   </AreaChart>
                 ) : (
-                  <BarChart
+                  <ComposedChart
                     data={flourQuotasData}
                     margin={{ top: 10, right: 20, left: 12, bottom: 28 }}
                   >
+                    <defs>
+                      <linearGradient id="dashLoavesGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#10b981" stopOpacity={0.98} />
+                        <stop offset="100%" stopColor="#047857" stopOpacity={0.85} />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
                     <XAxis
                       dataKey="name"
-                      tick={{ fontSize: 11, fill: '#334155', fontWeight: 700 }}
+                      tick={{ fontSize: 11, fill: '#1E293B', fontWeight: 800 }}
                       interval={0}
                       angle={-15}
                       textAnchor="end"
@@ -1254,23 +1313,32 @@ export const InteractiveDashboardPage: React.FC<InteractiveDashboardPageProps> =
                         'إجمالي الأرغفة',
                       ]}
                       contentStyle={{
-                        backgroundColor: '#FFFFFF',
-                        borderColor: '#CBD5E1',
-                        borderRadius: '8px',
+                        backgroundColor: '#0F172A',
+                        borderColor: '#10B981',
+                        borderRadius: '12px',
+                        color: '#FFFFFF',
                         direction: 'rtl',
                         fontSize: '12px',
-                        fontWeight: 700,
+                        fontWeight: 800,
                       }}
                     />
                     <Legend formatter={() => 'إجمالي الأرغفة اليومية'} />
                     <Bar
                       dataKey="loavesCount"
                       name="loavesCount"
-                      fill="#059669"
-                      radius={[5, 5, 0, 0]}
+                      fill="url(#dashLoavesGrad)"
+                      radius={[7, 7, 0, 0]}
                       maxBarSize={42}
                     />
-                  </BarChart>
+                    <Line
+                      type="monotone"
+                      dataKey="loavesCount"
+                      name="loavesCount"
+                      stroke="#f59e0b"
+                      strokeWidth={2.5}
+                      dot={{ r: 3.5, fill: '#f59e0b' }}
+                    />
+                  </ComposedChart>
                 )}
               </ResponsiveContainer>
             )}

@@ -27,6 +27,9 @@ import {
   CalendarClock,
   BarChart3,
   BookOpen,
+  Lock,
+  KeyRound,
+  Unlock,
 } from 'lucide-react';
 
 export type SidebarNavId = string;
@@ -71,6 +74,9 @@ export interface RightSidebarProps {
   customLogoBase64?: string;
   connectionStatus?: 'connected' | 'syncing' | 'error' | 'offline';
   connectionLabel?: string;
+  isVaultUnlocked?: boolean;
+  onOpenVaultGate?: (section: 'backup' | 'branches' | 'both', label?: string) => void;
+  onLockVault?: () => void;
 }
 
 const SIDEBAR_STORAGE_KEY = 'tamween_sidebar_erp_groups_v4';
@@ -91,6 +97,9 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   customLogoBase64,
   connectionStatus = 'connected',
   connectionLabel,
+  isVaultUnlocked = false,
+  onOpenVaultGate,
+  onLockVault,
 }) => {
   const bakeriesTotal = bakeriesCount ?? totalBakeriesCount ?? 0;
   const debtsTotal = debtsCount ?? totalDebtsCount ?? 0;
@@ -226,10 +235,12 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         {
           id: 'branches-manage',
           label: 'قسم الفروع والإدارات التموينية',
-          subtitle: 'إضافة وحذف الإدارات وتبديل واجهة الفرع',
-          icon: <Layers className="w-4 h-4 shrink-0" />,
-          badge: 'فروع',
-          badgeColor: 'emerald',
+          subtitle: isVaultUnlocked
+            ? 'إضافة وحذف الإدارات وتبديل واجهة الفرع (مفتوح)'
+            : '🔒 محمي برقم سري خاص — ممنوع الدخول لغير المصرح لهم',
+          icon: isVaultUnlocked ? <Layers className="w-4 h-4 shrink-0" /> : <Lock className="w-4 h-4 shrink-0 text-amber-300" />,
+          badge: isVaultUnlocked ? 'مفتوح' : '🔒 سري',
+          badgeColor: isVaultUnlocked ? 'emerald' : 'red',
         },
         {
           id: 'data-edit-bakery',
@@ -546,10 +557,60 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
               {/* Group Sub-Items Menu Tree */}
               {isOpen && !isCollapsed && (
                 <div className="p-2 space-y-1.5 border-t border-slate-800/80 bg-[#050D1D]/90">
-                  {group.items.map((item) => {
-                    const isItemActive = activeNavId === item.id;
-                    const isScheduleItem = item.id === 'debts-add-schedule';
-                    return (
+                  {group.id === 'section-backup' && !isVaultUnlocked ? (
+                    <div
+                      data-testid="sidebar-backup-locked-card"
+                      className="p-3.5 rounded-2xl bg-gradient-to-b from-red-950/90 to-slate-950 border-2 border-red-500/50 text-right space-y-2.5 shadow-lg"
+                    >
+                      <div className="flex items-center gap-2 text-red-300 font-black text-xs">
+                        <Lock className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                        <span>قسم الحفظ والنسخ مغلق برقم سري</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 font-bold leading-relaxed">
+                        ممنوع الدخول أو العرض أو التشغيل على قسم الحفظ والنسخ وجميع الفروع إلا بعد إدخال الرقم السري الخاص.
+                      </p>
+                      <button
+                        type="button"
+                        data-testid="sidebar-unlock-backup-btn"
+                        onClick={() =>
+                          onOpenVaultGate
+                            ? onOpenVaultGate('backup', 'قسم الحفظ والنسخ الاحتياطي وجميع الفروع')
+                            : onSelectNav('data-backup', 'قسم الحفظ والنسخ', 'النسخ الاحتياطي')
+                        }
+                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition cursor-pointer"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>خانة الدخول بالرقم السري / تغييره</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {group.id === 'section-backup' && isVaultUnlocked && (
+                        <div className="flex items-center gap-1.5 pb-1">
+                          <button
+                            type="button"
+                            onClick={() => onOpenVaultGate && onOpenVaultGate('both', 'تغيير الرقم السري للحفظ والفروع')}
+                            className="flex-1 py-1.5 px-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <KeyRound className="w-3 h-3" />
+                            <span>تغيير الرقم السري</span>
+                          </button>
+                          {onLockVault && (
+                            <button
+                              type="button"
+                              onClick={onLockVault}
+                              className="py-1.5 px-2.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Lock className="w-3 h-3" />
+                              <span>قفل فوراً</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {group.items.map((item) => {
+                        const isItemActive = activeNavId === item.id;
+                        const isScheduleItem = item.id === 'debts-add-schedule';
+                        return (
                       <button
                         key={item.id}
                         type="button"
@@ -630,6 +691,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                       </button>
                     );
                   })}
+                    </>
+                  )}
                 </div>
               )}
 

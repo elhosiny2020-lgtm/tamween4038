@@ -136,7 +136,13 @@ import { HomeDashboardView } from './components/HomeDashboardView';
 import { BakeryDetailsModal } from './components/BakeryDetailsModal';
 import { GoogleWorkspaceModal } from './components/GoogleWorkspaceModal';
 import { BranchesManagerModal } from './components/BranchesManagerModal';
+import { VaultSecurityGateModal } from './components/VaultSecurityGateModal';
 import { InteractiveDashboardPage } from './components/InteractiveDashboardPage';
+import {
+  deduplicateSupplyBranches,
+  getStoredVaultPasscode,
+  setStoredVaultPasscode,
+} from './utils/branchVaultUtils';
 import { HighDebtAlertNotification } from './types';
 import {
   downloadUpdatedAppHtml,
@@ -205,7 +211,9 @@ import {
   Clock,
   RotateCw,
   BookOpen,
-  Activity
+  Activity,
+  KeyRound,
+  Unlock,
 } from 'lucide-react';
 import { UserGuideView } from './components/UserGuideView';
 import { RealtimeDiagnosticsView } from './components/RealtimeDiagnosticsView';
@@ -301,6 +309,13 @@ export default function App() {
   const [searchFocusMode, setSearchFocusMode] = useState<'ALL' | 'NAME' | 'MACHINE'>('ALL');
   const [detailsBakery, setDetailsBakery] = useState<Bakery | null>(null);
   const [isActionLocked, setIsActionLocked] = useState<boolean>(false);
+  const [isVaultUnlocked, setIsVaultUnlocked] = useState<boolean>(false);
+  const [vaultGateModal, setVaultGateModal] = useState<{
+    isOpen: boolean;
+    section: 'backup' | 'branches' | 'both';
+    label?: string;
+    onAfterUnlock?: () => void;
+  }>({ isOpen: false, section: 'both' });
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const [saveTimestamp, setSaveTimestamp] = useState<string>('');
@@ -2657,36 +2672,52 @@ export default function App() {
         setIsWeeklyInstallmentsModalOpen(true);
         break;
 
-      // 4. قسم الحفظ والنسخ والفروع
+      // 4. قسم الحفظ والنسخ والفروع (محمي ببوابة الرقم السري الخاص)
       case 'branches-manage':
-        setIsBranchesModalOpen(true);
+        requireVaultAccess('branches', 'قسم الفروع وجميع الإدارات التموينية', () => {
+          setIsBranchesModalOpen(true);
+        });
         break;
       case 'ops-save-data':
-        triggerSave(appState, 'تم حفظ وتثبيت كافة التغييرات في قاعدة البيانات بنجاح');
+        requireVaultAccess('backup', 'قسم الحفظ والنسخ — حفظ البيانات', () => {
+          triggerSave(appState, 'تم حفظ وتثبيت كافة التغييرات في قاعدة البيانات بنجاح');
+        });
         break;
       case 'data-import':
       case 'data-backup':
-        setIsBackupModalOpen(true);
+        requireVaultAccess('backup', 'قسم الحفظ والنسخ الاحتياطي واستيراد البيانات', () => {
+          setIsBackupModalOpen(true);
+        });
         break;
       case 'data-export':
-        handleExportBakeryCSV();
+        requireVaultAccess('backup', 'قسم الحفظ والنسخ — تصدير قاعدة البيانات', () => {
+          handleExportBakeryCSV();
+        });
         break;
       case 'workspace-calendar':
-        setGoogleWorkspaceInitialTab('calendar');
-        setIsGoogleWorkspaceModalOpen(true);
+        requireVaultAccess('backup', 'قسم الحفظ والنسخ — تقويم Google Calendar', () => {
+          setGoogleWorkspaceInitialTab('calendar');
+          setIsGoogleWorkspaceModalOpen(true);
+        });
         break;
       case 'workspace-tasks':
-        setGoogleWorkspaceInitialTab('tasks');
-        setIsGoogleWorkspaceModalOpen(true);
+        requireVaultAccess('backup', 'قسم الحفظ والنسخ — مهام Google Tasks', () => {
+          setGoogleWorkspaceInitialTab('tasks');
+          setIsGoogleWorkspaceModalOpen(true);
+        });
         break;
       case 'workspace-forms':
-        setGoogleWorkspaceInitialTab('forms');
-        setIsGoogleWorkspaceModalOpen(true);
+        requireVaultAccess('backup', 'قسم الحفظ والنسخ — نماذج Google Forms', () => {
+          setGoogleWorkspaceInitialTab('forms');
+          setIsGoogleWorkspaceModalOpen(true);
+        });
         break;
 
       // Additional & Dashboard routes
       case 'realtime-diagnostics':
-        setActiveTab('realtime-diagnostics');
+        requireVaultAccess('backup', 'قسم الحفظ والنسخ — لوحة Realtime والحماية', () => {
+          setActiveTab('realtime-diagnostics');
+        });
         break;
       case 'dashboard-charts':
         setActiveTab('charts');
@@ -2767,13 +2798,65 @@ export default function App() {
   const totalNotificationsCount =
     alertsList.length + unreadInboxCount + highDebtNotifications.filter((n) => !n.isRead).length;
 
+  const cleanBranchesList = deduplicateSupplyBranches(appState.branches || getBranchesList());
+  const configuredVaultPasscode = getStoredVaultPasscode(appState.systemConfig?.vaultPasscode);
+
+  const requireVaultAccess = (
+    section: 'backup' | 'branches' | 'both',
+    label: string,
+    action: () => void
+  ) => {
+    if (isVaultUnlocked) {
+      action();
+      return;
+    }
+    setVaultGateModal({
+      isOpen: true,
+      section,
+      label,
+      onAfterUnlock: action,
+    });
+  };
+
+  const handleUpdateVaultPasscode = async (newPasscode: string) => {
+    const normalized = setStoredVaultPasscode(newPasscode);
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+    const nextConfig: SystemConfig = {
+      ...appState.systemConfig,
+      vaultPasscode: normalized,
+    };
+    const updatedState: AppState = {
+      ...appState,
+      systemConfig: nextConfig,
+    };
+    await commitRowMutation({
+      nextState: updatedState,
+      table: 'system_config',
+      branchId,
+      toastMessage: 'تم تحديث وحفظ الرقم السري لقسم الحفظ والنسخ وجميع الفروع في قاعدة البيانات بنجاح',
+      executeDb: () =>
+        saveRowToDb({
+          table: 'system_config',
+          branchId,
+          row: {
+            branchId,
+            systemConfig: nextConfig,
+            columnTitles: appState.columnTitles,
+            activityStatuses: appState.activityStatuses,
+          },
+          operation: 'UPDATE',
+        }),
+    });
+  };
+
   return (
     <div
       dir="rtl"
-      className="min-h-screen flex flex-col bg-[#F4F6F9] text-slate-800 font-sans selection:bg-[#1E3A8A] selection:text-white"
+      className="min-h-screen flex flex-col bg-gradient-to-br from-[#EEF2FF] via-[#F4F7FB] to-[#ECFDF5] text-slate-800 font-sans selection:bg-[#1E3A8A] selection:text-white"
     >
-      {/* 1. Streamlined Official Governmental Top Header (ترويسة علوية بسيطة وأنيقة) */}
-      <header className="bg-white border-b border-slate-200 text-slate-800 shadow-2xs sticky top-0 z-30 no-print">
+      {/* 1. Streamlined Official Governmental Top Header (ترويسة علوية ملكية متحركة) */}
+      <header className="bg-white/95 backdrop-blur-md border-b-2 border-indigo-200/80 text-slate-800 shadow-md sticky top-0 z-30 no-print">
+        <div className="h-1 w-full bg-gradient-to-r from-[#0F2342] via-amber-500 to-emerald-600" />
         <div className="max-w-[1920px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-4">
           {/* Right Zone: Emblem, Directorate & Administration Name, System Name */}
           <div className="flex items-center gap-3 min-w-0">
@@ -2947,43 +3030,100 @@ export default function App() {
               </span>
             </div>
 
-            {/* Header Direct Branch Dropdown Switcher (قائمة منسدلة لاختيار أي فرع مباشرة من الواجهة) */}
-            <div className="flex items-center gap-1.5 bg-slate-900 text-amber-300 px-2.5 py-1.5 rounded-lg border-2 border-amber-400/90 shadow-2xs">
-              <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <label htmlFor="header-branch-select" className="text-[11px] font-black text-amber-300 hidden md:inline">
-                الفرع / الإدارة:
-              </label>
-              <select
-                id="header-branch-select"
-                value={appState.activeBranchId || DEFAULT_BRANCH_ID}
-                onChange={(e) => handleSwitchBranch(e.target.value, appState.branches || getBranchesList())}
-                className="bg-slate-900 text-amber-300 font-black text-xs cursor-pointer focus:outline-none pr-1"
-                title="اختيار الإدارة التموينية أو الفرع مباشرة"
+            {/* Master Secret Passcode Gate Button in Header (خانة الدخول بالرقم السري للحفظ والفروع) */}
+            <button
+              type="button"
+              data-testid="header-vault-gate-btn"
+              onClick={() =>
+                setVaultGateModal({
+                  isOpen: true,
+                  section: 'both',
+                  label: 'بوابة الحماية السرية لقسم الحفظ والنسخ وجميع الفروع',
+                })
+              }
+              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-md border ${
+                isVaultUnlocked
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-400'
+                  : 'bg-gradient-to-r from-slate-900 via-red-950 to-slate-900 text-amber-300 border-amber-400/80 pulse-gold-glow'
+              }`}
+              title="خانة الدخول بالرقم السري لقسم الحفظ والنسخ وجميع الفروع وتغيير الرقم السري في أي وقت"
+            >
+              {isVaultUnlocked ? (
+                <Unlock className="w-3.5 h-3.5 text-white" />
+              ) : (
+                <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              )}
+              <span>
+                {isVaultUnlocked ? 'الحفظ والفروع (مفتوح - تغيير/قفل)' : 'خانة الرقم السري (للحفظ والفروع) 🔒'}
+              </span>
+            </button>
+
+            {/* Header Direct Branch Dropdown Switcher (محمي بالرقم السري - ممنوع التبديل أو الرؤية بدون الرقم السري) */}
+            {isVaultUnlocked ? (
+              <div className="flex items-center gap-1.5 bg-slate-900 text-amber-300 px-2.5 py-1.5 rounded-xl border-2 border-amber-400/90 shadow-2xs">
+                <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <label htmlFor="header-branch-select" className="text-[11px] font-black text-amber-300 hidden md:inline">
+                  الفرع / الإدارة:
+                </label>
+                <select
+                  id="header-branch-select"
+                  value={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                  onChange={(e) => handleSwitchBranch(e.target.value, cleanBranchesList)}
+                  className="bg-slate-900 text-amber-300 font-black text-xs cursor-pointer focus:outline-none pr-1"
+                  title="اختيار الإدارة التموينية أو الفرع مباشرة"
+                >
+                  {cleanBranchesList.map((branch) => (
+                    <option key={branch.id} value={branch.id} className="bg-slate-900 text-white font-bold">
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <button
+                type="button"
+                data-testid="header-branch-locked-btn"
+                onClick={() =>
+                  requireVaultAccess('branches', 'فتح وتبديل جميع الفروع التموينية', () => {
+                    setIsBranchesModalOpen(true);
+                  })
+                }
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-amber-300 px-3 py-1.5 rounded-xl border-2 border-red-500/60 shadow-sm text-xs font-black cursor-pointer"
+                title="جميع الفروع محمية برقم سري — اضغط لإدخال الرقم السري"
               >
-                {(appState.branches || getBranchesList()).map((branch) => (
-                  <option key={branch.id} value={branch.id} className="bg-slate-900 text-white font-bold">
-                    {branch.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+                <Lock className="w-3.5 h-3.5 text-red-400" />
+                <span>{appState.systemConfig.administrationTitle}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/40">
+                  الفروع مقفلة 🔒
+                </span>
+              </button>
+            )}
 
             {/* Branches / Supply Departments Manager & Switcher Button */}
             <button
               type="button"
-              onClick={() => setIsBranchesModalOpen(true)}
-              className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-amber-400"
-              title="قسم الفروع والإدارات التموينية (إضافة وحذف الإدارات وتبديل واجهة الإدارة التموينية)"
+              data-testid="header-branches-manager-btn"
+              onClick={() =>
+                requireVaultAccess('branches', 'قسم الفروع والإدارات التموينية', () => {
+                  setIsBranchesModalOpen(true);
+                })
+              }
+              className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-amber-400"
+              title="قسم الفروع والإدارات التموينية (محمي بالرقم السري)"
             >
-              <Building2 className="w-3.5 h-3.5 text-slate-950" />
-              <span>قسم الفروع ({ (appState.branches || getBranchesList()).length })</span>
+              {isVaultUnlocked ? (
+                <Building2 className="w-3.5 h-3.5 text-slate-950" />
+              ) : (
+                <Lock className="w-3.5 h-3.5 text-slate-950" />
+              )}
+              <span>قسم الفروع ({cleanBranchesList.length})</span>
             </button>
 
             {/* Account Settings Button */}
             <button
               type="button"
               onClick={() => setIsUsersModalOpen(true)}
-              className="px-3 py-1.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+              className="px-3 py-1.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
               title="إعدادات الحساب وإدارة المستخدمين"
             >
               <Settings className="w-3.5 h-3.5" />
@@ -3001,7 +3141,7 @@ export default function App() {
                   timestamp: getArabicTimestamp(),
                 });
               }}
-              className="px-3 py-1.5 bg-sky-700 hover:bg-sky-600 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+              className="px-3 py-1.5 bg-sky-700 hover:bg-sky-600 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
               title="فتح المنظومة مباشرة في صفحة إنترنت مستقلة"
             >
               <ExternalLink className="w-3.5 h-3.5 text-amber-300" />
@@ -3019,33 +3159,44 @@ export default function App() {
                   timestamp: getArabicTimestamp(),
                 });
               }}
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-2xs border border-amber-300"
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-2xs border border-amber-300"
               title="تنزيل البرنامج التنفيذي لنظام ويندوز (منظومة_وزارة_التموين.exe)"
             >
               <Download className="w-3.5 h-3.5 text-slate-950" />
               <span>تنزيل البرنامج EXE</span>
             </button>
 
-            {/* Supabase & Cloud Backup Button */}
+            {/* Supabase & Cloud Backup Button (Protected by Vault Passcode) */}
             <button
               type="button"
-              onClick={() => setIsBackupModalOpen(true)}
-              className="px-3 py-1.5 bg-teal-800 hover:bg-teal-700 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-2xs border border-teal-500/40"
-              title="إعدادات Supabase ونسخ كود إنشاء الجداول على SQL والتخزين السحابي"
+              data-testid="header-backup-modal-btn"
+              onClick={() =>
+                requireVaultAccess('backup', 'قسم الحفظ والنسخ السحابي Supabase', () => {
+                  setIsBackupModalOpen(true);
+                })
+              }
+              className="px-3 py-1.5 bg-teal-800 hover:bg-teal-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-2xs border border-teal-500/40"
+              title="قسم الحفظ والنسخ السحابي (محمي بالرقم السري)"
             >
-              <HardDrive className="w-3.5 h-3.5 text-amber-300" />
+              {isVaultUnlocked ? (
+                <HardDrive className="w-3.5 h-3.5 text-amber-300" />
+              ) : (
+                <Lock className="w-3.5 h-3.5 text-amber-300" />
+              )}
               <span className="hidden sm:inline">Supabase والنسخ السحابي</span>
             </button>
 
-            {/* Google Workspace (Calendar, Tasks, Forms) Button */}
+            {/* Google Workspace (Calendar, Tasks, Forms) Button (Protected by Vault Passcode) */}
             <button
               type="button"
-              onClick={() => {
-                setGoogleWorkspaceInitialTab('calendar');
-                setIsGoogleWorkspaceModalOpen(true);
-              }}
-              className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
-              title="مركز خدمات Google Workspace (Calendar • Tasks • Forms)"
+              onClick={() =>
+                requireVaultAccess('backup', 'قسم الحفظ والنسخ — Google Workspace', () => {
+                  setGoogleWorkspaceInitialTab('calendar');
+                  setIsGoogleWorkspaceModalOpen(true);
+                })
+              }
+              className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+              title="مركز خدمات Google Workspace (محمي بالرقم السري)"
             >
               <Calendar className="w-3.5 h-3.5" />
               <span className="hidden xl:inline">Google Workspace</span>
@@ -3056,19 +3207,23 @@ export default function App() {
               type="button"
               onClick={handleManualCloudPull}
               disabled={isSyncingWithCloud}
-              className="px-3 py-1.5 bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-700 hover:to-teal-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-emerald-400/40"
+              className="px-3 py-1.5 bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-emerald-400/40"
               title="مزامنة سحابية فورية وجلب أحدث السجلات المسجلة من الأجهزة الأخرى"
             >
               <RotateCw className={`w-3.5 h-3.5 ${isSyncingWithCloud ? 'animate-spin text-amber-300' : 'text-emerald-300'}`} />
               <span className="hidden md:inline">{isSyncingWithCloud ? 'جاري المزامنة...' : 'مزامنة الأجهزة 🔄'}</span>
             </button>
 
-            {/* Publish & Cloud Hosting Button */}
+            {/* Publish & Cloud Hosting Button (Protected by Vault Passcode) */}
             <button
               type="button"
-              onClick={() => setIsPublishModalOpen(true)}
-              className="px-3 py-1.5 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-600 hover:to-indigo-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-blue-400/30"
-              title="نشر واستضافة المنظومة سحابياً (Cloudflare Pages • Vercel • Google Cloud)"
+              onClick={() =>
+                requireVaultAccess('backup', 'قسم الحفظ والنسخ — النشر والاستضافة السحابية', () => {
+                  setIsPublishModalOpen(true);
+                })
+              }
+              className="px-3 py-1.5 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-blue-400/30"
+              title="نشر واستضافة المنظومة سحابياً (محمي بالرقم السري)"
             >
               <UploadCloud className="w-3.5 h-3.5 text-amber-300" />
               <span className="hidden sm:inline">نشر واستضافة (Cloudflare / Vercel)</span>
@@ -3144,6 +3299,15 @@ export default function App() {
           directorateTitle={appState.systemConfig.directorateTitle}
           connectionStatus={connectionSnapshot.status}
           connectionLabel={connectionSnapshot.label}
+          isVaultUnlocked={isVaultUnlocked}
+          onOpenVaultGate={(section, label) =>
+            setVaultGateModal({
+              isOpen: true,
+              section,
+              label,
+            })
+          }
+          onLockVault={() => setIsVaultUnlocked(false)}
         />
 
         {/* Main Workspace Canvas (Matte Off-White) */}
@@ -3407,20 +3571,30 @@ export default function App() {
                 <span>طباعة</span>
               </button>
 
-              {/* 7. Export Excel */}
+              {/* 7. Export Excel (Protected by Vault Passcode) */}
               <button
                 type="button"
-                onClick={() => runGuardedAction(handleExportBakeryCSV)}
+                onClick={() =>
+                  runGuardedAction(() =>
+                    requireVaultAccess('backup', 'قسم الحفظ والنسخ — تصدير Excel', handleExportBakeryCSV)
+                  )
+                }
                 className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-emerald-800 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
                 <span>تصدير Excel</span>
               </button>
 
-              {/* 8. Import Excel / Backup */}
+              {/* 8. Import Excel / Backup (Protected by Vault Passcode) */}
               <button
                 type="button"
-                onClick={() => runGuardedAction(() => setIsBackupModalOpen(true))}
+                onClick={() =>
+                  runGuardedAction(() =>
+                    requireVaultAccess('backup', 'قسم الحفظ والنسخ — استيراد Excel والنسخ الاحتياطي', () =>
+                      setIsBackupModalOpen(true)
+                    )
+                  )
+                }
                 className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
               >
                 <Upload className="w-3.5 h-3.5 text-[#1E40AF]" />
@@ -3738,48 +3912,54 @@ export default function App() {
               openScheduleSignal={openDebtScheduleSignal}
             />
           ) : (
-            /* BAKERIES DATABASE VIEW (إعادة تصميم قاعدة بيانات المخابز - البند 6) */
-            <div className="space-y-4">
-              {/* Summary Strip Above Bakeries Table */}
+            /* BAKERIES DATABASE VIEW (تصميم احترافي متحرك لقاعدة بيانات المخابز بدون المساس بالمعادلات) */
+            <div className="space-y-4 animate-fade-in">
+              {/* Summary Strip Above Bakeries Table (Animated Elevated Royal Cards) */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs">
-                  <span className="text-[11px] font-semibold text-slate-500 block">إجمالي المخابز</span>
-                  <span className="stat-num text-[#0F2342] block">{bakeryStats.count}</span>
-                  <span className="text-[10px] text-slate-500">مخبز مسجل</span>
+                <div className="bg-gradient-to-br from-white via-indigo-50/50 to-white border-2 border-indigo-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
+                  <div className="h-1 w-full bg-gradient-to-r from-indigo-600 to-blue-500 absolute top-0 right-0 left-0" />
+                  <span className="text-[11px] font-black text-slate-600 block">إجمالي المخابز</span>
+                  <span className="stat-num text-[#0F2342] block mt-0.5">{bakeryStats.count}</span>
+                  <span className="text-[10px] font-bold text-indigo-700">مخبز مسجل بالقاعدة</span>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs">
-                  <span className="text-[11px] font-semibold text-slate-500 block">إجمالي الحصة التأمينية</span>
-                  <span className="stat-num text-[#1E3A8A] block">
+                <div className="bg-gradient-to-br from-white via-amber-50/50 to-white border-2 border-amber-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
+                  <div className="h-1 w-full bg-gradient-to-r from-amber-500 to-orange-500 absolute top-0 right-0 left-0" />
+                  <span className="text-[11px] font-black text-slate-600 block">إجمالي الحصة التأمينية</span>
+                  <span className="stat-num text-amber-700 block mt-0.5">
                     {Number(bakeryStats.totalInsurance.toFixed(2)).toLocaleString()}
                   </span>
-                  <span className="text-[10px] text-slate-500">شيكارة (حساب تلقائي)</span>
+                  <span className="text-[10px] font-bold text-amber-800">شيكارة (حساب تلقائي ∑)</span>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs">
-                  <span className="text-[11px] font-semibold text-slate-500 block">إجمالي الحصة الفعلية</span>
-                  <span className="stat-num text-[#0F2342] block">{bakeryStats.totalActual.toLocaleString()}</span>
-                  <span className="text-[10px] text-slate-500">شيكارة يومياً</span>
+                <div className="bg-gradient-to-br from-white via-sky-50/50 to-white border-2 border-sky-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
+                  <div className="h-1 w-full bg-gradient-to-r from-sky-500 to-blue-600 absolute top-0 right-0 left-0" />
+                  <span className="text-[11px] font-black text-slate-600 block">إجمالي الحصة الفعلية</span>
+                  <span className="stat-num text-[#1E3A8A] block mt-0.5">{bakeryStats.totalActual.toLocaleString()}</span>
+                  <span className="text-[10px] font-bold text-sky-800">شيكارة يومياً</span>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs">
-                  <span className="text-[11px] font-semibold text-slate-500 block">إجمالي الأرغفة اليومية</span>
-                  <span className="stat-num text-emerald-700 block">{bakeryStats.totalLoaves.toLocaleString()}</span>
-                  <span className="text-[10px] text-slate-500">رغيف بلدي مدعم</span>
+                <div className="bg-gradient-to-br from-white via-emerald-50/50 to-white border-2 border-emerald-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
+                  <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-teal-600 absolute top-0 right-0 left-0" />
+                  <span className="text-[11px] font-black text-slate-600 block">إجمالي الأرغفة اليومية</span>
+                  <span className="stat-num text-emerald-700 block mt-0.5">{bakeryStats.totalLoaves.toLocaleString()}</span>
+                  <span className="text-[10px] font-bold text-emerald-800">رغيف بلدي مدعم</span>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs">
-                  <span className="text-[11px] font-semibold text-slate-500 block">متوسط نصيب الفرد (2025)</span>
-                  <span className="stat-num text-[#1E40AF] block">
+                <div className="bg-gradient-to-br from-white via-purple-50/40 to-white border-2 border-purple-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift relative overflow-hidden">
+                  <div className="h-1 w-full bg-gradient-to-r from-purple-600 to-indigo-600 absolute top-0 right-0 left-0" />
+                  <span className="text-[11px] font-black text-slate-600 block">متوسط نصيب الفرد (2025)</span>
+                  <span className="stat-num text-[#1E40AF] block mt-0.5">
                     {annualWeightedSummary?.weightedGeneralAvg2025 || '0.00'}
                   </span>
-                  <span className="text-[10px] text-slate-500">رغيف / مستفيد</span>
+                  <span className="text-[10px] font-bold text-purple-800">رغيف / مستفيد</span>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-3 text-center shadow-2xs col-span-2 sm:col-span-1">
-                  <span className="text-[11px] font-semibold text-slate-500 block">إجمالي المديونيات المتبقية</span>
-                  <span className="stat-num text-red-600 block">{bakeryStats.totalDebts.toLocaleString()}</span>
-                  <span className="text-[10px] text-slate-500">جنيه مصري</span>
+                <div className="bg-gradient-to-br from-white via-rose-50/50 to-white border-2 border-rose-200/80 rounded-2xl p-3.5 text-center shadow-sm card-hover-lift col-span-2 sm:col-span-1 relative overflow-hidden">
+                  <div className="h-1 w-full bg-gradient-to-r from-rose-600 to-red-600 absolute top-0 right-0 left-0" />
+                  <span className="text-[11px] font-black text-slate-600 block">إجمالي المديونيات المتبقية</span>
+                  <span className="stat-num text-rose-600 block mt-0.5">{bakeryStats.totalDebts.toLocaleString()}</span>
+                  <span className="text-[10px] font-bold text-rose-800">جنيه مصري</span>
                 </div>
               </div>
 
               {/* Advanced Filters & Column View Selector Card */}
-              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-3 no-print">
+              <div className="bg-white/95 border-2 border-indigo-100 rounded-2xl p-4 shadow-md space-y-3 no-print">
                 {/* Column Group View Tabs (لتسهيل قراءة البيانات وعدم ازدحام الشاشة) */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -6188,19 +6368,29 @@ export default function App() {
       <BranchesManagerModal
         isOpen={isBranchesModalOpen}
         onClose={() => setIsBranchesModalOpen(false)}
-        branches={appState.branches || getBranchesList()}
+        branches={cleanBranchesList}
         activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
         onSelectBranch={(branchId) => {
-          handleSwitchBranch(branchId, appState.branches || getBranchesList());
+          handleSwitchBranch(branchId, cleanBranchesList);
         }}
+        onOpenVaultSecurity={() => {
+          setIsBranchesModalOpen(false);
+          setVaultGateModal({
+            isOpen: true,
+            section: 'both',
+            label: 'تغيير الرقم السري لقسم الحفظ والنسخ وجميع الفروع',
+          });
+        }}
+        onLockVault={() => setIsVaultUnlocked(false)}
         onBranchesChange={async (updatedBranches, nextBranchId) => {
-          const prevBranches = appState.branches || getBranchesList();
-          const nextIds = new Set(updatedBranches.map((b) => b.id));
+          const deduplicatedNext = deduplicateSupplyBranches(updatedBranches);
+          const prevBranches = cleanBranchesList;
+          const nextIds = new Set(deduplicatedNext.map((b) => b.id));
           const removedBranches = prevBranches.filter((b) => !nextIds.has(b.id));
-          saveBranchesList(updatedBranches);
+          saveBranchesList(deduplicatedNext);
           const currentBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
           const targetBranchId = nextBranchId || currentBranchId;
-          const activeObj = updatedBranches.find((b) => b.id === targetBranchId) || updatedBranches[0];
+          const activeObj = deduplicatedNext.find((b) => b.id === targetBranchId) || deduplicatedNext[0];
 
           const syncBranchesToPg = async () => {
             let lastRes: DbMutationResult = { success: true };
@@ -6212,7 +6402,7 @@ export default function App() {
               });
               if (!lastRes.success) return lastRes;
             }
-            for (const br of updatedBranches) {
+            for (const br of deduplicatedNext) {
               const isNew = !prevBranches.some((p) => p.id === br.id);
               lastRes = await saveRowToDb({
                 table: 'branches',
@@ -6227,12 +6417,12 @@ export default function App() {
 
           if (targetBranchId !== currentBranchId) {
             const res = await syncBranchesToPg();
-            handleSwitchBranch(targetBranchId, updatedBranches);
+            handleSwitchBranch(targetBranchId, deduplicatedNext);
             return res;
           } else {
             const nextState: AppState = {
               ...appState,
-              branches: updatedBranches,
+              branches: deduplicatedNext,
               activeBranchId: targetBranchId,
               systemConfig: {
                 ...appState.systemConfig,
@@ -6243,11 +6433,35 @@ export default function App() {
               nextState,
               table: 'branches',
               branchId: targetBranchId,
-              toastMessage: `تم حفظ وتحديث قائمة الفروع والإدارات التموينية (${updatedBranches.length} إدارة) ومزامنتها لجميع الأجهزة`,
+              toastMessage: `تم حفظ وتحديث قائمة الفروع والإدارات التموينية (${deduplicatedNext.length} إدارة) بدون أي تكرار ومزامنتها لجميع الأجهزة`,
               executeDb: syncBranchesToPg,
             });
           }
         }}
+      />
+
+      {/* Master Secret Passcode Gate Modal for Backup & Copy and All Branches */}
+      <VaultSecurityGateModal
+        isOpen={vaultGateModal.isOpen}
+        onClose={() => setVaultGateModal((prev) => ({ ...prev, isOpen: false }))}
+        targetSection={vaultGateModal.section}
+        targetLabel={vaultGateModal.label}
+        configuredPasscode={configuredVaultPasscode}
+        isVaultUnlocked={isVaultUnlocked}
+        onUnlockSuccess={() => {
+          setIsVaultUnlocked(true);
+          const pendingFn = vaultGateModal.onAfterUnlock;
+          setVaultGateModal((prev) => ({ ...prev, isOpen: false, onAfterUnlock: undefined }));
+          if (pendingFn) {
+            pendingFn();
+          }
+        }}
+        onLockVault={() => {
+          setIsVaultUnlocked(false);
+          setIsBranchesModalOpen(false);
+          setIsBackupModalOpen(false);
+        }}
+        onChangePasscode={handleUpdateVaultPasscode}
       />
 
       {/* In-App Accessible Confirmation Modal (Replaces window.confirm) */}
