@@ -3214,30 +3214,46 @@ export default function App() {
             </button>
 
             {/* Secret Vault Gate Button for Backup & Branch Modifications */}
-            <button
-              type="button"
-              data-testid="header-vault-gate-btn"
-              onClick={() =>
-                setVaultGateModal({
-                  isOpen: true,
-                  section: 'both',
-                  label: 'بوابة الحماية السرية لقسم الحفظ والنسخ وتعديلات الفروع',
-                })
-              }
-              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border ${
-                isVaultUnlocked
-                  ? 'bg-[#10B981] text-white border-emerald-400'
-                  : 'bg-[#0F1E36] hover:bg-[#0D9488] text-[#FDE68A] hover:text-white border-[#D4AF37]/40'
-              }`}
-              title="بوابة الحماية السرية (Username & Password) لقسم الحفظ والنسخ وتعديل/إضافة الفروع"
-            >
-              {isVaultUnlocked ? (
-                <Unlock className="w-3.5 h-3.5 text-white" />
-              ) : (
-                <KeyRound className="w-3.5 h-3.5 text-[#D4AF37]" />
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                data-testid="header-vault-gate-btn"
+                onClick={() => {
+                  if (!isVaultUnlocked) {
+                    setVaultGateModal({
+                      isOpen: true,
+                      section: 'both',
+                      label: 'بوابة الحماية السرية لقسم الحفظ والنسخ وتعديلات الفروع',
+                    });
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border ${
+                  isVaultUnlocked
+                    ? 'bg-[#10B981] text-white border-emerald-400'
+                    : 'bg-[#0F1E36] hover:bg-[#0D9488] text-[#FDE68A] hover:text-white border-[#D4AF37]/40'
+                }`}
+                title={isVaultUnlocked ? "الحماية السرية مفتوحة حالياً" : "بوابة الحماية السرية (Username & Password) لقسم الحفظ والنسخ وتعديل/إضافة الفروع"}
+              >
+                {isVaultUnlocked ? (
+                  <Unlock className="w-3.5 h-3.5 text-white" />
+                ) : (
+                  <KeyRound className="w-3.5 h-3.5 text-[#D4AF37]" />
+                )}
+                <span>{isVaultUnlocked ? 'الحماية السرية (مفتوح)' : 'الحماية السرية 🔒'}</span>
+              </button>
+
+              {isVaultUnlocked && (
+                <button
+                  type="button"
+                  onClick={() => setIsVaultUnlocked(false)}
+                  className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black flex items-center gap-1 transition cursor-pointer shadow-sm"
+                  title="قفل فوري للحماية السرية"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>قفل</span>
+                </button>
               )}
-              <span>{isVaultUnlocked ? 'الحماية السرية (مفتوح)' : 'الحماية السرية 🔒'}</span>
-            </button>
+            </div>
 
             {/* Account Settings Button */}
             <button
