@@ -653,6 +653,11 @@ async function startServer() {
     detail: 'تم تفعيل قاعدة بيانات PostgreSQL العلائقية الموحدة وحماية الملفات بصلاحيات (0600) وجدار حماية API',
   });
 
+  // Google Cloud Run & Kubernetes Health Check Probes
+  app.get(['/healthz', '/_healthz', '/livez', '/readyz'], (_req, res) => {
+    res.status(200).send('OK');
+  });
+
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -1875,7 +1880,11 @@ async function startServer() {
   });
 
   // Vite development middleware vs Static Production files
-  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
+  const isProd =
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.K_SERVICE) ||
+    (fs.existsSync(path.resolve(__dirname, 'dist', 'index.html')) &&
+      process.env.NODE_ENV !== 'development');
   if (!isProd) {
     const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
@@ -1915,6 +1924,14 @@ async function startServer() {
       }
     });
   }
+
+  httpServer.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.warn(`Port ${PORT} is already in use by active server process.`);
+    } else {
+      console.error('HTTP Server startup event:', err);
+    }
+  });
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Tamween Supabase Realtime Server running on http://localhost:${PORT}`);

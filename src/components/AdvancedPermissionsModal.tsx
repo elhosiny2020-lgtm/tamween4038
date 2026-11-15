@@ -342,7 +342,7 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     onUpdateUser(updatedUser);
     setEditingUserId(null);
     showNotice(
-      `تم حفظ تعديل بيانات المستخدم (${cleanName}) - اليوزر: (${cleanUser}) - الباسورد: (${cleanPass}) بنجاح!`
+      `تم حفظ تعديل بيانات المستخدم (${cleanName}) بنجاح!`
     );
   };
 
@@ -531,12 +531,13 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
                         كلمة المرور (الباسورد) *
                       </label>
                       <input
-                        type="text"
+                        type="password"
                         required
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="مثال: 123456"
-                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900 font-mono text-left"
+                        placeholder="••••••••"
+                        autoComplete="new-password"
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900 font-mono text-left tracking-widest"
                       />
                     </div>
                     <div>
@@ -633,18 +634,20 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
                               </span>
                             )}
                           </td>
-                          <td className="p-2.5 border border-slate-200 text-center font-mono font-black text-rose-900">
+                          <td className="p-2.5 border border-slate-200 text-center font-mono font-black text-slate-700">
                             {isEditing ? (
                               <input
-                                type="text"
+                                type="password"
                                 value={editPassword}
                                 onChange={(e) => setEditPassword(e.target.value)}
-                                className="w-full px-2.5 py-1.5 bg-white border-2 border-amber-500 rounded-lg text-xs font-mono font-black text-left"
+                                placeholder="••••••••"
+                                autoComplete="new-password"
+                                className="w-full px-2.5 py-1.5 bg-white border-2 border-amber-500 rounded-lg text-xs font-mono font-black text-left tracking-widest"
                               />
                             ) : (
-                              <span className="bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 text-slate-950">
-                                <Key className="w-3 h-3 text-amber-700" />
-                                {u.password || 'admin'}
+                              <span className="bg-slate-100 border border-slate-300 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 text-slate-700">
+                                <Key className="w-3 h-3 text-slate-500" />
+                                <span>•••••••• (محمي)</span>
                               </span>
                             )}
                           </td>

@@ -444,6 +444,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Designer & Engineer Signature */}
+            <div className="pt-3 border-t border-slate-200 mt-2 text-center">
+              <span className="text-xs font-black text-[#0A1628] bg-amber-50/90 py-1.5 px-3.5 rounded-xl border border-[#D4AF37]/40 inline-flex items-center justify-center gap-1.5 shadow-2xs">
+                <span>تنفيذ وتصميم م/ احمد الحسيني 01004414038</span>
+              </span>
+            </div>
           </form>
         </div>
       </div>

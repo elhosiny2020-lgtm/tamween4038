@@ -413,8 +413,8 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                             <span className="text-[11px] font-mono font-black text-indigo-900 bg-indigo-50 px-2.5 py-0.5 rounded border border-indigo-200">
                               اليوزر: {u.username}
                             </span>
-                            <span className="text-[11px] font-mono font-black text-rose-900 bg-amber-50 px-2.5 py-0.5 rounded border border-amber-300">
-                              الباسورد: {u.password || 'admin'}
+                            <span className="text-[11px] font-mono font-black text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-300">
+                              كلمة المرور: •••••••• (محمي)
                             </span>
                             {u.jobTitle && (
                               <span className="text-[11px] font-bold text-amber-900 bg-amber-100/80 px-2 py-0.5 rounded border border-amber-300">
@@ -567,12 +567,13 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                               كلمة المرور (Password) *
                             </label>
                             <input
-                              type="text"
+                              type="password"
                               required
                               value={editPassword}
                               onChange={(e) => setEditPassword(e.target.value)}
-                              placeholder="كلمة المرور"
-                              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900 font-mono text-left"
+                              placeholder="••••••••"
+                              autoComplete="new-password"
+                              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900 font-mono text-left tracking-widest"
                             />
                           </div>
 
@@ -784,12 +785,13 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                 <div className="relative">
                   <Key className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="text"
+                    type="password"
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="كلمة المرور"
-                    className="w-full pl-8 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 text-left font-mono"
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    className="w-full pl-8 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 text-left font-mono tracking-widest"
                   />
                 </div>
               </div>

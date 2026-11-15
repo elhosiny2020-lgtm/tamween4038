@@ -2639,21 +2639,14 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   </label>
                   <div className="relative">
                     <input
-                      type={showNewAccPassword ? 'text' : 'password'}
+                      type="password"
                       dir="ltr"
                       value={newAccPassword}
                       onChange={(e) => setNewAccPassword(e.target.value)}
                       placeholder="••••••••••••"
-                      className="w-full pl-8 pr-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-cyan-400 outline-none"
+                      autoComplete="new-password"
+                      className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-cyan-400 outline-none tracking-widest"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewAccPassword((prev) => !prev)}
-                      className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
-                      title={showNewAccPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
-                    >
-                      {showNewAccPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
                   </div>
                 </div>
 
@@ -2716,22 +2709,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                           {acc.password ? (
                             <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-700 text-[10px]">
                               <span className="text-slate-400">كلمة المرور:</span>
-                              <span className="font-mono text-amber-300" dir="ltr">
-                                {isPassRevealed ? acc.password : '••••••••'}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setRevealedPasswords((prev) => ({
-                                    ...prev,
-                                    [acc.id]: !prev[acc.id],
-                                  }))
-                                }
-                                className="text-slate-400 hover:text-white cursor-pointer ml-1"
-                                title="إظهار / إخفاء كلمة المرور"
-                              >
-                                {isPassRevealed ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                              </button>
+                              <span className="font-mono text-emerald-400">•••••••• (محمي)</span>
                             </div>
                           ) : (
                             <span className="text-[10px] text-slate-500">بدون كلمة مرور</span>

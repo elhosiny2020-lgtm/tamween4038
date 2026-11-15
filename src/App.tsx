@@ -3105,9 +3105,14 @@ export default function App() {
                   )}
                 </div>
               </div>
-              <h1 className="text-sm sm:text-base font-black text-white truncate mt-0.5">
-                منظومة إدارة بيانات المخابز والتموين والمديونيات
-              </h1>
+              <div className="flex items-center gap-2.5 flex-wrap mt-0.5">
+                <h1 className="text-sm sm:text-base font-black text-white truncate">
+                  منظومة إدارة بيانات المخابز والتموين والمديونيات
+                </h1>
+                <span className="text-[11px] font-black text-[#0A1628] bg-gradient-to-l from-[#D4AF37] to-amber-300 px-2.5 py-0.5 rounded-lg border border-[#D4AF37] shadow-xs shrink-0">
+                  تنفيذ وتصميم م/ احمد الحسيني 01004414038
+                </span>
+              </div>
             </div>
           </div>
 
@@ -5286,8 +5291,8 @@ export default function App() {
             {appState.systemConfig.governorateTitle} · {appState.systemConfig.directorateTitle} ·{' '}
             {appState.systemConfig.administrationTitle}
           </p>
-          <p className="text-[#0F2342] font-bold">
-            تنفيذ وتصميم م/ أحمد الحسيني - تليفون: 01004414038
+          <p className="text-[#0A1628] font-black text-xs md:text-sm bg-gradient-to-l from-amber-100 to-amber-50 px-3.5 py-1.5 rounded-xl border border-[#D4AF37] shadow-2xs">
+            تنفيذ وتصميم م/ احمد الحسيني 01004414038
           </p>
         </div>
       </footer>
