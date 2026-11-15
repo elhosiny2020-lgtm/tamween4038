@@ -547,13 +547,19 @@ function getAlertsApiUrl(): string {
   return '/api/supabase/alerts';
 }
 
+export function getStoredActiveBranchId(): string {
+  const stored = safeGetItem('TAMWEEN_ACTIVE_BRANCH_ID_V1');
+  return stored && stored.trim() ? stored.trim() : 'branch-mahalla';
+}
+
 function getWebSocketSyncUrl(): string | null {
   if (typeof window === 'undefined') return null;
+  const branchParam = `branchId=${encodeURIComponent(getStoredActiveBranchId())}`;
   if (isLocalOrCloudOrigin()) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}/ws/supabase-realtime`;
+    return `${proto}//${window.location.host}/ws/supabase-realtime?${branchParam}`;
   }
-  return 'wss://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/ws/supabase-realtime';
+  return `wss://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/ws/supabase-realtime?${branchParam}`;
 }
 
 function getRealtimeStreamApiUrl(): string {
@@ -561,7 +567,9 @@ function getRealtimeStreamApiUrl(): string {
     const base = isLocalOrCloudOrigin()
       ? '/api/supabase/realtime-stream'
       : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/realtime-stream';
-    return `${base}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`;
+    return `${base}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&branchId=${encodeURIComponent(
+      getStoredActiveBranchId()
+    )}`;
   }
   return '/api/supabase/realtime-stream';
 }
@@ -3261,6 +3269,21 @@ export function addSharedWebSocketListener(listener: WsStateListener): () => voi
   };
 }
 
+export function requestRealtimeBranchInit(branchId: string): void {
+  if (!branchId) return;
+  if (sharedWs && typeof WebSocket !== 'undefined' && sharedWs.readyState === WebSocket.OPEN) {
+    try {
+      sharedWs.send(
+        JSON.stringify({
+          type: 'request_init',
+          branchId,
+          clientId: SESSION_CLIENT_ID,
+        })
+      );
+    } catch {}
+  }
+}
+
 /**
  * إرسال نبضة اختبار تشخيصية فورية عبر WebSocket + Supabase Realtime + HTTP Broadcast لقياس زمن الاستجابة والتحقق من وصول الأحداث لجميع الأجهزة
  */
@@ -3578,7 +3601,9 @@ export async function fetchDatabaseFromSupabase(): Promise<{
 
   // 2. Same-Origin / Shared Live-DB WebSocket Relay (handles multi-device sync seamlessly out-of-the-box)
   if (typeof window !== 'undefined') {
-    const serverSnap = await fetch(getLiveDbApiUrl(), {
+    const activeBranchId = getStoredActiveBranchId();
+    const liveDbUrl = `${getLiveDbApiUrl()}?branchId=${encodeURIComponent(activeBranchId)}`;
+    const serverSnap = await fetch(liveDbUrl, {
       headers: getSecurityShieldHeaders(false),
     })
       .then(async (r) => {
@@ -3664,19 +3689,7 @@ export async function fetchDatabaseFromSupabase(): Promise<{
     return {
       success: true,
       message: 'متصل بالخادم — قاعدة البيانات جاهزة ومحدثة',
-      data: {
-        bakeries: [],
-        debts: [],
-        dailyTasks: [],
-        villages: DEFAULT_VILLAGES_HIERARCHY,
-        issuingEntities: DEFAULT_ISSUING_ENTITIES,
-        violationTypes: DEFAULT_VIOLATION_TYPES,
-        activityStatuses: DEFAULT_ACTIVITY_STATUSES,
-        branches: [],
-        columnTitles: DEFAULT_COLUMN_TITLES,
-        systemConfig: DEFAULT_SYSTEM_CONFIG,
-        users: [],
-      } as unknown as AppState,
+      data: undefined,
       timestamp: new Date().toISOString(),
     };
   }
@@ -4677,6 +4690,7 @@ export function subscribeToSupabaseRealtime(
           const ts = msg.timestamp || new Date().toISOString();
           callbacks.onUpdate(
             {
+              activeBranchId: getStoredActiveBranchId(),
               bakeries: [],
               debts: [],
               dailyTasks: [],

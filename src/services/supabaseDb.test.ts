@@ -20,6 +20,7 @@ import type { Bakery, DebtRecord } from '../types';
 import {
   applyGranularRowChangeToState,
   resolveConflictWithServerRow,
+  shouldApplyIncomingCloudStateForBranch,
 } from './supabaseDb';
 
 function makeEmptyState(branchId = 'branch-mahalla'): AppState {
@@ -395,4 +396,50 @@ test('resolveConflictWithServerRow replaces stale optimistic record with latest 
   assert.equal(resolved.bakeries[0].bakeryOwnerName, 'نسخة الخادم المعتمدة');
   assert.equal(resolved.bakeries[0].actualQuota, 14);
   assert.equal((resolved.bakeries[0] as any).version, 7);
+});
+
+test('shouldApplyIncomingCloudStateForBranch isolates flat and partitioned payloads per branch', () => {
+  // Flat payload targeting branch-mahalla must never overwrite branch-samanoud
+  assert.equal(
+    shouldApplyIncomingCloudStateForBranch('branch-mahalla', {
+      activeBranchId: 'branch-mahalla',
+      bakeries: [],
+    }),
+    true
+  );
+  assert.equal(
+    shouldApplyIncomingCloudStateForBranch('branch-samanoud', {
+      activeBranchId: 'branch-mahalla',
+      bakeries: [],
+    }),
+    false
+  );
+
+  // Legacy flat payload without activeBranchId defaults to branch-mahalla only
+  assert.equal(
+    shouldApplyIncomingCloudStateForBranch('branch-samanoud', {
+      bakeries: [],
+    }),
+    false
+  );
+
+  // Partitioned payload only applies when the active branch has a partition entry
+  assert.equal(
+    shouldApplyIncomingCloudStateForBranch('branch-samanoud', {
+      activeBranchId: 'branch-mahalla',
+      branchPartitions: {
+        'branch-samanoud': { bakeries: [makeBakery({ id: 'b-sam' })] },
+      },
+    }),
+    true
+  );
+  assert.equal(
+    shouldApplyIncomingCloudStateForBranch('branch-tanta', {
+      activeBranchId: 'branch-mahalla',
+      branchPartitions: {
+        'branch-mahalla': { bakeries: [] },
+      },
+    }),
+    false
+  );
 });

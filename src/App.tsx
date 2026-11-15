@@ -92,6 +92,7 @@ import {
   clearHighDebtAlertsInSupabase,
   subscribeToSupabaseHighDebtAlerts,
   recordRealtimeDiagnosticEvent,
+  requestRealtimeBranchInit,
 } from './lib/supabase';
 import {
   applyGranularRowChangeToState,
@@ -101,6 +102,7 @@ import {
   flushRowMutationQueue,
   resolveConflictWithServerRow,
   saveRowToDb,
+  shouldApplyIncomingCloudStateForBranch,
 } from './services/supabaseDb';
 import type { RowMutationTable } from './services/offlineMutationQueue';
 import { getExpirationAlerts } from './components/AlertsModal';
@@ -680,11 +682,17 @@ export default function App() {
 
   // Exclusive Real-Time Synchronization via Supabase & Cloud DB across all devices & all branches:
   useEffect(() => {
-    const applyIncomingCloudState = (incomingData: AppState, remoteTimestamp?: string) => {
+    const applyIncomingCloudState = (
+      incomingData: AppState,
+      remoteTimestamp?: string,
+      options?: { forceRealtimePush?: boolean }
+    ) => {
       if (!incomingData) return;
 
       // 1. Write all branch partitions from cloud payload into their respective isolated local storage keys
-      syncAllBranchesFromCloudPayload(incomingData, remoteTimestamp, { forceRealtimePush: true });
+      syncAllBranchesFromCloudPayload(incomingData, remoteTimestamp, {
+        forceRealtimePush: Boolean(options?.forceRealtimePush),
+      });
       if (remoteTimestamp) {
         lastAppliedCloudTimestampRef.current = remoteTimestamp;
       }
@@ -696,6 +704,10 @@ export default function App() {
         }
 
         const currentBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+        if (!shouldApplyIncomingCloudStateForBranch(currentBranchId, incomingData)) {
+          return current;
+        }
+
         const incomingBranches =
           Array.isArray(incomingData.branches) && incomingData.branches.length > 0
             ? incomingData.branches
@@ -710,7 +722,7 @@ export default function App() {
           | undefined;
         const directBranchData: Partial<AppState> | null =
           directPartitions?.[currentBranchId] ||
-          ((incomingData.activeBranchId || DEFAULT_BRANCH_ID) === currentBranchId || !directPartitions
+          ((incomingData.activeBranchId || DEFAULT_BRANCH_ID) === currentBranchId && !directPartitions
             ? incomingData
             : null);
 
@@ -840,7 +852,7 @@ export default function App() {
             supaRes.data &&
             (!supaRes.timestamp || supaRes.timestamp !== lastAppliedCloudTimestampRef.current)
           ) {
-            applyIncomingCloudState(supaRes.data, supaRes.timestamp);
+            applyIncomingCloudState(supaRes.data, supaRes.timestamp, { forceRealtimePush: false });
           }
         })
         .catch(() => {});
@@ -849,7 +861,7 @@ export default function App() {
     // 2. Real-time Listener: Adopt live database & row-level updates across devices immediately
     const unsubscribeSupabase = subscribeToSupabaseRealtime({
       onUpdate: (supaData, remoteTimestamp) => {
-        applyIncomingCloudState(supaData, remoteTimestamp);
+        applyIncomingCloudState(supaData, remoteTimestamp, { forceRealtimePush: true });
       },
       onRowChange: (change) => {
         if (change.table === 'high_debt_alerts') {
@@ -1698,12 +1710,13 @@ export default function App() {
 
   // Handle Safe Save and Logout (حفظ آمن وتسجيل خروج فوري)
   const handleSafeSaveAndLogout = useCallback(async () => {
-    const current = latestAppStateRef.current || appState;
-    if (!current) return;
+    const initialState = latestAppStateRef.current || appStateRef.current || appState;
+    if (!initialState) return;
     try {
       setIsSavingPulse(true);
       await saveLockRef.current.catch(() => {});
       await flushRowMutationQueue().catch(() => {});
+      const current = latestAppStateRef.current || appStateRef.current || initialState;
       const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
       const batchRes = await batchSyncToDb({
         branchId,
@@ -1727,6 +1740,7 @@ export default function App() {
   const handleSwitchBranch = useCallback(
     async (targetBranchId: string, updatedBranchesList?: SupplyBranch[]) => {
       setActiveBranchId(targetBranchId);
+      requestRealtimeBranchInit(targetBranchId);
       setSelectedVillage('ALL');
       setSelectedUnit('ALL');
       setSelectedActivity('ALL');
@@ -1938,20 +1952,22 @@ export default function App() {
       clearTimeout(idleTimeout);
       idleTimeout = setTimeout(async () => {
         // Pre-logout autosave of all registered data
-        const latest = latestAppStateRef.current || appStateRef.current;
-        if (latest) {
+        if (latestAppStateRef.current || appStateRef.current) {
           try {
             await saveLockRef.current.catch(() => {});
             await flushRowMutationQueue().catch(() => {});
-            const branchId = latest.activeBranchId || DEFAULT_BRANCH_ID;
-            const batchRes = await batchSyncToDb({
-              branchId,
-              data: latest,
-              pruneRemoved: true,
-              sqlOperation: 'UPDATE',
-              affectedTable: 'bakeries',
-            });
-            await persistFullState(latest, { skipCloudSync: batchRes.success }).catch(() => {});
+            const latest = latestAppStateRef.current || appStateRef.current;
+            if (latest) {
+              const branchId = latest.activeBranchId || DEFAULT_BRANCH_ID;
+              const batchRes = await batchSyncToDb({
+                branchId,
+                data: latest,
+                pruneRemoved: true,
+                sqlOperation: 'UPDATE',
+                affectedTable: 'bakeries',
+              });
+              await persistFullState(latest, { skipCloudSync: batchRes.success }).catch(() => {});
+            }
           } catch (e) {
             console.error('Pre-logout autosave failed:', e);
           }
@@ -2021,14 +2037,25 @@ export default function App() {
           setLogoutReason(null);
           const scopedUser: AppUser = { ...user, branchId: activeBranchId };
           saveSessionUser(scopedUser);
-          const mergedState = performGmailDriveAdditiveMerge(appState, scopedUser);
-          const updatedUsers = sanitizeBranchUsers(
-            mergedState.users.map((u) => (u.id === scopedUser.id ? { ...u, ...scopedUser } : u)),
-            activeBranchId,
-            appState.systemConfig.administrationTitle
-          );
-          const finalState: AppState = { ...mergedState, users: updatedUsers, currentUser: scopedUser };
-          setAppState(finalState);
+          setAppState((prev) => {
+            if (!prev) return prev;
+            const branchId = prev.activeBranchId || activeBranchId;
+            const adminTitle =
+              prev.systemConfig?.administrationTitle || appState.systemConfig.administrationTitle;
+            const mergedState = performGmailDriveAdditiveMerge(prev, scopedUser);
+            const updatedUsers = sanitizeBranchUsers(
+              mergedState.users.map((u) => (u.id === scopedUser.id ? { ...u, ...scopedUser } : u)),
+              branchId,
+              adminTitle
+            );
+            const finalState: AppState = {
+              ...mergedState,
+              users: updatedUsers,
+              currentUser: scopedUser,
+            };
+            latestAppStateRef.current = finalState;
+            return finalState;
+          });
           setSaveToast({
             id: Date.now(),
             message: `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`,
@@ -2709,7 +2736,7 @@ export default function App() {
         setIsDailyTasksModalOpen(true);
         break;
       case 'settings-logout':
-        handleLogout();
+        void handleSafeSaveAndLogout();
         break;
     }
   };

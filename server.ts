@@ -421,30 +421,79 @@ async function startServer() {
     }
   }
 
+  const buildLiveSnapshotFromPostgres = async (
+    branchId = DEFAULT_BRANCH_ID,
+    meta?: { clientId?: string; sqlOperation?: string; affectedTable?: string; sentAt?: number }
+  ) => {
+    const pgBoot = await getBootstrapFromPostgres(branchId);
+    const timestamp = new Date().toISOString();
+    const data = {
+      activeBranchId: branchId,
+      branches: pgBoot.branches,
+      villages: pgBoot.villages,
+      bakeries: pgBoot.bakeries,
+      debts: pgBoot.debts,
+      users: pgBoot.users,
+      dailyTasks: pgBoot.dailyTasks,
+      inboxMessages: pgBoot.inboxMessages,
+      ...(pgBoot.systemConfig ? { systemConfig: pgBoot.systemConfig } : {}),
+      ...(pgBoot.columnTitles && Object.keys(pgBoot.columnTitles).length > 0
+        ? { columnTitles: pgBoot.columnTitles }
+        : {}),
+      ...(pgBoot.activityStatuses.length > 0 ? { activityStatuses: pgBoot.activityStatuses } : {}),
+      ...(pgBoot.dropdownLists || {}),
+    };
+    const snapshot = {
+      version: '5.0-supabase-realtime-shield',
+      cleanStartEpoch: CLEAN_START_RESET_EPOCH,
+      timestamp,
+      revision: liveRevision,
+      clientId: meta?.clientId || 'postgres-live',
+      sqlOperation: meta?.sqlOperation || 'SELECT',
+      affectedTable: meta?.affectedTable || 'bakeries',
+      sentAt: meta?.sentAt || Date.now(),
+      integrityHash: computeDatabaseIntegrityHash(data),
+      bakeriesCount: pgBoot.bakeries.length,
+      debtsCount: pgBoot.debts.length,
+      data,
+    };
+    return { pgBoot, snapshot };
+  };
+
+  const refreshCachedSnapshotFromPostgres = async (
+    branchId = DEFAULT_BRANCH_ID,
+    meta?: { clientId?: string; sqlOperation?: string; affectedTable?: string; sentAt?: number }
+  ) => {
+    try {
+      const { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(branchId, meta);
+      if (branchId === DEFAULT_BRANCH_ID || !cachedLiveSnapshot) {
+        cachedLiveSnapshot = snapshot;
+        const serialized = JSON.stringify(snapshot);
+        writeProtectedDatabaseFile(SUPABASE_LIVE_DB_PRIMARY, serialized);
+        writeProtectedDatabaseFile(SUPABASE_LIVE_DB_TMP, serialized);
+      }
+      return { pgBoot, snapshot };
+    } catch {
+      return null;
+    }
+  };
+
   // Ensure normalized PostgreSQL schema & default branch on startup, and hydrate state from PG
   try {
     await ensurePostgresSchema();
-    const pgBoot = await getBootstrapFromPostgres(DEFAULT_BRANCH_ID);
+    const { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
+      clientId: 'postgres-boot',
+      sqlOperation: 'SELECT',
+      affectedTable: 'bakeries',
+    });
     if (pgBoot.hasAnyRows) {
       liveRevision = Math.max(liveRevision, 1);
-      cachedLiveSnapshot = {
-        version: '5.0-supabase-realtime-shield',
-        cleanStartEpoch: CLEAN_START_RESET_EPOCH,
-        timestamp: new Date().toISOString(),
-        revision: liveRevision,
-        clientId: 'postgres-boot',
-        sqlOperation: 'SELECT',
-        affectedTable: 'bakeries',
-        sentAt: Date.now(),
-        integrityHash: computeDatabaseIntegrityHash(pgBoot),
-        bakeriesCount: pgBoot.bakeries.length,
-        debtsCount: pgBoot.debts.length,
-        data: pgBoot,
-      };
+      snapshot.revision = liveRevision;
+      cachedLiveSnapshot = snapshot;
       cachedAlertsState = {
         alerts: pgBoot.highDebtAlerts,
         debtAlertThreshold: pgBoot.systemConfig?.debtAlertThreshold || 50000,
-        updatedAt: new Date().toISOString(),
+        updatedAt: snapshot.timestamp,
         revision: Math.max(cachedAlertsState.revision, 1),
       };
     }
@@ -567,22 +616,49 @@ async function startServer() {
     });
   }, 15000);
 
-  wss.on('connection', (socket) => {
+  wss.on('connection', (socket, req) => {
     socket.on('error', () => {
       // Prevent unhandled socket transport errors on proxy handoff
     });
 
-    // Send authoritative state immediately upon WebSocket connect/reconnect
+    let wsBranchId = DEFAULT_BRANCH_ID;
     try {
-      socket.send(
-        JSON.stringify({
-          type: 'init',
-          timestamp: new Date().toISOString(),
-          snapshot: cachedLiveSnapshot,
-          alertsState: cachedAlertsState,
-        })
-      );
+      const reqUrl = new URL(req?.url || '/', 'http://localhost');
+      wsBranchId = reqUrl.searchParams.get('branchId') || DEFAULT_BRANCH_ID;
     } catch {}
+
+    // Send fresh authoritative PostgreSQL state immediately upon WebSocket connect/reconnect
+    buildLiveSnapshotFromPostgres(wsBranchId, {
+      clientId: 'postgres-ws-init',
+      sqlOperation: 'SELECT',
+      affectedTable: 'bakeries',
+    })
+      .then(({ snapshot }) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(
+            JSON.stringify({
+              type: 'init',
+              timestamp: snapshot.timestamp,
+              snapshot,
+              alertsState: cachedAlertsState,
+            })
+          );
+        }
+      })
+      .catch(() => {
+        try {
+          if (cachedLiveSnapshot && socket.readyState === WebSocket.OPEN) {
+            socket.send(
+              JSON.stringify({
+                type: 'init',
+                timestamp: new Date().toISOString(),
+                snapshot: cachedLiveSnapshot,
+                alertsState: cachedAlertsState,
+              })
+            );
+          }
+        } catch {}
+      });
 
     socket.on('message', (raw) => {
       try {
@@ -657,14 +733,26 @@ async function startServer() {
             snapshot,
           });
         } else if (msg?.type === 'request_init') {
-          socket.send(
-            JSON.stringify({
-              type: 'init',
-              timestamp: new Date().toISOString(),
-              snapshot: cachedLiveSnapshot,
-              alertsState: cachedAlertsState,
+          const requestedBranch = String(msg.branchId || wsBranchId || DEFAULT_BRANCH_ID);
+          wsBranchId = requestedBranch;
+          buildLiveSnapshotFromPostgres(requestedBranch, {
+            clientId: 'postgres-ws-request-init',
+            sqlOperation: 'SELECT',
+            affectedTable: 'bakeries',
+          })
+            .then(({ snapshot }) => {
+              if (socket.readyState === WebSocket.OPEN) {
+                socket.send(
+                  JSON.stringify({
+                    type: 'init',
+                    timestamp: snapshot.timestamp,
+                    snapshot,
+                    alertsState: cachedAlertsState,
+                  })
+                );
+              }
             })
-          );
+            .catch(() => {});
         }
       } catch {}
     });
@@ -812,18 +900,27 @@ async function startServer() {
     res.flushHeaders?.();
 
     sseClients.add(res);
+    const sseBranchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
 
-    // Push initial state immediately upon SSE stream subscription
-    try {
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'init',
-          timestamp: new Date().toISOString(),
-          snapshot: cachedLiveSnapshot,
-          alertsState: cachedAlertsState,
-        })}\n\n`
-      );
-    } catch {}
+    // Push fresh PostgreSQL state immediately upon SSE stream subscription
+    buildLiveSnapshotFromPostgres(sseBranchId, {
+      clientId: 'postgres-sse-init',
+      sqlOperation: 'SELECT',
+      affectedTable: 'bakeries',
+    })
+      .then(({ snapshot }) => {
+        if (!res.writableEnded) {
+          res.write(
+            `data: ${JSON.stringify({
+              type: 'init',
+              timestamp: snapshot.timestamp,
+              snapshot,
+              alertsState: cachedAlertsState,
+            })}\n\n`
+          );
+        }
+      })
+      .catch(() => {});
 
     const keepAliveTimer = setInterval(() => {
       try {
@@ -940,6 +1037,9 @@ async function startServer() {
         debtsCount: freshBoot.debts.length,
         data: snapshotPayload,
       };
+      const serializedBatchSnap = JSON.stringify(cachedLiveSnapshot);
+      writeProtectedDatabaseFile(SUPABASE_LIVE_DB_PRIMARY, serializedBatchSnap);
+      writeProtectedDatabaseFile(SUPABASE_LIVE_DB_TMP, serializedBatchSnap);
 
       broadcastWs({
         type: 'batch_sync',
@@ -1054,6 +1154,12 @@ async function startServer() {
 
       const timestamp = new Date().toISOString();
       liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(branchId, {
+        clientId,
+        sqlOperation: result.operation,
+        affectedTable: table,
+        sentAt: Number(body.sentAt) || Date.now(),
+      });
       broadcastWs({
         type: 'row_change',
         table,
@@ -1115,6 +1221,12 @@ async function startServer() {
 
       const timestamp = new Date().toISOString();
       liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(branchId, {
+        clientId,
+        sqlOperation: result.operation,
+        affectedTable: table,
+        sentAt: Number(body.sentAt) || Date.now(),
+      });
       broadcastWs({
         type: 'row_change',
         table,
@@ -1158,6 +1270,11 @@ async function startServer() {
       const effectiveBranchId = branchId || delRes.deletedRow?.branchId || DEFAULT_BRANCH_ID;
       const timestamp = new Date().toISOString();
       liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(effectiveBranchId, {
+        clientId,
+        sqlOperation: 'DELETE',
+        affectedTable: table,
+      });
       broadcastWs({
         type: 'row_change',
         table,
@@ -1185,41 +1302,14 @@ async function startServer() {
   app.get('/api/supabase/live-db', async (req, res) => {
     try {
       const requestedBranchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
-      const pgBoot = await getBootstrapFromPostgres(requestedBranchId);
+      const { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(requestedBranchId, {
+        clientId: 'postgres-live',
+        sqlOperation: 'SELECT',
+        affectedTable: 'bakeries',
+      });
       const hasPersistedData =
         pgBoot.hasAnyRows || pgBoot.branches.length > 1 || Boolean(pgBoot.systemConfig);
       if (hasPersistedData) {
-        const mergedData = {
-          ...(cachedLiveSnapshot?.data || {}),
-          activeBranchId: requestedBranchId,
-          branches: pgBoot.branches,
-          villages: pgBoot.villages,
-          bakeries: pgBoot.bakeries,
-          debts: pgBoot.debts,
-          users: pgBoot.users.length > 0 ? pgBoot.users : cachedLiveSnapshot?.data?.users || [],
-          dailyTasks: pgBoot.dailyTasks,
-          inboxMessages: pgBoot.inboxMessages,
-          ...(pgBoot.systemConfig ? { systemConfig: pgBoot.systemConfig } : {}),
-          ...(pgBoot.columnTitles && Object.keys(pgBoot.columnTitles).length > 0
-            ? { columnTitles: pgBoot.columnTitles }
-            : {}),
-          ...(pgBoot.activityStatuses.length > 0 ? { activityStatuses: pgBoot.activityStatuses } : {}),
-          ...(pgBoot.dropdownLists || {}),
-        };
-        const snapshot = {
-          version: '5.0-supabase-realtime-shield',
-          cleanStartEpoch: CLEAN_START_RESET_EPOCH,
-          timestamp: cachedLiveSnapshot?.timestamp || new Date().toISOString(),
-          revision: liveRevision,
-          clientId: cachedLiveSnapshot?.clientId || 'postgres-live',
-          sqlOperation: 'SELECT',
-          affectedTable: 'bakeries',
-          sentAt: Date.now(),
-          integrityHash: computeDatabaseIntegrityHash(mergedData),
-          bakeriesCount: pgBoot.bakeries.length,
-          debtsCount: pgBoot.debts.length,
-          data: mergedData,
-        };
         res.json({
           success: true,
           exists: true,
@@ -1230,21 +1320,11 @@ async function startServer() {
         return;
       }
 
-      if (!cachedLiveSnapshot) {
-        res.json({
-          success: true,
-          exists: false,
-          cleanStartEpoch: CLEAN_START_RESET_EPOCH,
-          snapshot: null,
-        });
-        return;
-      }
       res.json({
         success: true,
-        exists: true,
+        exists: false,
         cleanStartEpoch: CLEAN_START_RESET_EPOCH,
-        integrityVerified: true,
-        snapshot: cachedLiveSnapshot,
+        snapshot: null,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });

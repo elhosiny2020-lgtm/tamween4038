@@ -1105,14 +1105,27 @@ export function syncAllBranchesFromCloudPayload(
   );
   let appliedAny = false;
 
-  // Only update DEFAULT_BRANCH_ID if explicitly present in remotePartitions OR payload is a legacy flat single-branch snapshot
-  if (remotePartitions[DEFAULT_BRANCH_ID] || !hasPartitionsMap) {
-    const defaultPartition: BranchPartitionPayload = remotePartitions[DEFAULT_BRANCH_ID] || {
+  // Only update DEFAULT_BRANCH_ID if explicitly present in remotePartitions;
+  // for flat single-branch snapshots, route strictly to cloudData.activeBranchId || DEFAULT_BRANCH_ID.
+  const payloadBranchId = cloudData.activeBranchId || DEFAULT_BRANCH_ID;
+  if (remotePartitions[DEFAULT_BRANCH_ID]) {
+    if (
+      writeBranchPartitionToLocal(
+        DEFAULT_BRANCH_ID,
+        remotePartitions[DEFAULT_BRANCH_ID],
+        remoteTimestamp,
+        options
+      )
+    ) {
+      appliedAny = true;
+    }
+  } else if (!hasPartitionsMap) {
+    const flatPartition: BranchPartitionPayload = {
       ...cloudData,
-      activeBranchId: DEFAULT_BRANCH_ID,
+      activeBranchId: payloadBranchId,
       updatedAt: remoteTimestamp,
     };
-    if (writeBranchPartitionToLocal(DEFAULT_BRANCH_ID, defaultPartition, remoteTimestamp, options)) {
+    if (writeBranchPartitionToLocal(payloadBranchId, flatPartition, remoteTimestamp, options)) {
       appliedAny = true;
     }
   }
@@ -1705,7 +1718,7 @@ export async function persistFullState(
     [scopedKeys.INBOX_MESSAGES, inboxMessages],
     [scopedKeys.COLUMNS, columnTitles],
     [scopedKeys.CONFIG, lockedConfig],
-    [scopedKeys.USERS, users],
+    [scopedKeys.USERS, isolatedBranchUsers],
     [scopedKeys.AUTOSAVE_BACKUP, backupSnapshot],
   ]);
 

@@ -659,6 +659,22 @@ export async function upsertRowWithClient(
 
     case 'bakeries': {
       const b = payload as Bakery;
+      const cleanMachine = String(b.machineNumber || '').trim();
+      if (cleanMachine) {
+        const dupMachineRes = await client.query(
+          `SELECT id, bakery_owner_name FROM public.bakeries
+           WHERE branch_id = $1 AND machine_number = $2 AND id <> $3
+           LIMIT 1 FOR UPDATE`,
+          [effectiveBranchId, cleanMachine, recordId]
+        );
+        if (dupMachineRes.rows.length > 0) {
+          return {
+            success: false,
+            operation,
+            error: `رقم الماكينة (${cleanMachine}) مسجل بالفعل لمخبز آخر (${dupMachineRes.rows[0].bakery_owner_name}) في نفس الإدارة.`,
+          };
+        }
+      }
       const res = await client.query(
         `INSERT INTO public.bakeries (
           id, branch_id, bakery_owner_name, machine_number, village, local_unit, responsible_manager,
@@ -889,6 +905,19 @@ export async function upsertRowWithClient(
 
     case 'app_users': {
       const u = payload as AppUser;
+      const cleanUsername = String(u.username || '').trim();
+      let effectiveUserId = recordId;
+      if (cleanUsername) {
+        const existingByUsername = await client.query(
+          `SELECT id FROM public.app_users
+           WHERE branch_id = $1 AND lower(username) = lower($2)
+           LIMIT 1 FOR UPDATE`,
+          [effectiveBranchId, cleanUsername]
+        );
+        if (existingByUsername.rows.length > 0) {
+          effectiveUserId = String(existingByUsername.rows[0].id);
+        }
+      }
       const res = await client.query(
         `INSERT INTO public.app_users (
           id, branch_id, username, full_name, password_hash, role, job_title, department,
@@ -911,9 +940,9 @@ export async function upsertRowWithClient(
           updated_at = NOW()
         RETURNING *`,
         [
-          recordId,
+          effectiveUserId,
           effectiveBranchId,
-          String(u.username || ''),
+          cleanUsername,
           String(u.fullName || ''),
           String(u.password || ''),
           String(u.role || 'inspector'),
@@ -1219,7 +1248,8 @@ export async function syncFullBranchStateToPostgres(
     await ensureBranchRecord(client, effectiveBranchId);
 
     // 2. Villages
-    const villagesList: VillageHierarchy[] = Array.isArray(stateData?.villages) ? stateData.villages : [];
+    const hasVillagesArray = Array.isArray(stateData?.villages);
+    const villagesList: VillageHierarchy[] = hasVillagesArray ? stateData.villages : [];
     const incomingVillageNames = villagesList.map((v) => String(v.village)).filter(Boolean);
     for (const v of villagesList) {
       if (v?.village) {
@@ -1232,7 +1262,7 @@ export async function syncFullBranchStateToPostgres(
         syncedCounts.villages += 1;
       }
     }
-    if (options?.pruneRemoved) {
+    if (options?.pruneRemoved && hasVillagesArray) {
       if (incomingVillageNames.length === 0) {
         await client.query(`DELETE FROM public.villages WHERE branch_id = $1`, [effectiveBranchId]);
       } else {
@@ -1244,21 +1274,25 @@ export async function syncFullBranchStateToPostgres(
     }
 
     // 3. Bakeries
-    const bakeriesList: Bakery[] = Array.isArray(stateData?.bakeries) ? stateData.bakeries : [];
+    const hasBakeriesArray = Array.isArray(stateData?.bakeries);
+    const bakeriesList: Bakery[] = hasBakeriesArray ? stateData.bakeries : [];
     const incomingBakeryIds = bakeriesList.map((b) => String(b.id)).filter(Boolean);
     for (const b of bakeriesList) {
       if (b?.id) {
-        await upsertRowWithClient(client, 'bakeries', effectiveBranchId, b);
-        syncedCounts.bakeries += 1;
+        const bRes = await upsertRowWithClient(client, 'bakeries', effectiveBranchId, b);
+        if (bRes.success) {
+          syncedCounts.bakeries += 1;
+        }
       }
     }
 
     // 4. Debts (only for existing bakeries)
-    const debtsList: DebtRecord[] = Array.isArray(stateData?.debts) ? stateData.debts : [];
+    const hasDebtsArray = Array.isArray(stateData?.debts);
+    const debtsList: DebtRecord[] = hasDebtsArray ? stateData.debts : [];
     const validBakeryIds = new Set(incomingBakeryIds);
     const incomingDebtIds: string[] = [];
     for (const d of debtsList) {
-      if (d?.id && d?.bakeryId && (validBakeryIds.has(d.bakeryId) || !options?.pruneRemoved)) {
+      if (d?.id && d?.bakeryId && (validBakeryIds.has(d.bakeryId) || !options?.pruneRemoved || !hasBakeriesArray)) {
         const res = await upsertRowWithClient(client, 'debts', effectiveBranchId, d);
         if (res.success) {
           incomingDebtIds.push(d.id);
@@ -1267,7 +1301,7 @@ export async function syncFullBranchStateToPostgres(
       }
     }
 
-    if (options?.pruneRemoved) {
+    if (options?.pruneRemoved && hasDebtsArray) {
       if (incomingDebtIds.length === 0) {
         await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [effectiveBranchId]);
       } else {
@@ -1276,6 +1310,8 @@ export async function syncFullBranchStateToPostgres(
           incomingDebtIds,
         ]);
       }
+    }
+    if (options?.pruneRemoved && hasBakeriesArray) {
       if (incomingBakeryIds.length === 0) {
         await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1`, [effectiveBranchId]);
       } else {
@@ -1287,23 +1323,28 @@ export async function syncFullBranchStateToPostgres(
     }
 
     // 5. Users
-    const usersList: AppUser[] = Array.isArray(stateData?.users) ? stateData.users : [];
-    const incomingUserIds = usersList.map((u) => String(u.id)).filter(Boolean);
+    const hasUsersArray = Array.isArray(stateData?.users);
+    const usersList: AppUser[] = hasUsersArray ? stateData.users : [];
+    const syncedUserIds: string[] = [];
     for (const u of usersList) {
       if (u?.id && u?.username) {
-        await upsertRowWithClient(client, 'app_users', effectiveBranchId, u);
-        syncedCounts.app_users += 1;
+        const uRes = await upsertRowWithClient(client, 'app_users', effectiveBranchId, u);
+        if (uRes.success) {
+          syncedCounts.app_users += 1;
+          if (uRes.row?.id) syncedUserIds.push(String(uRes.row.id));
+        }
       }
     }
-    if (options?.pruneRemoved && incomingUserIds.length > 0) {
+    if (options?.pruneRemoved && hasUsersArray && syncedUserIds.length > 0) {
       await client.query(`DELETE FROM public.app_users WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
         effectiveBranchId,
-        incomingUserIds,
+        syncedUserIds,
       ]);
     }
 
     // 6. Daily Tasks
-    const tasksList: DailyBakeryTask[] = Array.isArray(stateData?.dailyTasks) ? stateData.dailyTasks : [];
+    const hasTasksArray = Array.isArray(stateData?.dailyTasks);
+    const tasksList: DailyBakeryTask[] = hasTasksArray ? stateData.dailyTasks : [];
     const incomingTaskIds = tasksList.map((t) => String(t.id)).filter(Boolean);
     for (const t of tasksList) {
       if (t?.id) {
@@ -1311,7 +1352,7 @@ export async function syncFullBranchStateToPostgres(
         syncedCounts.daily_tasks += 1;
       }
     }
-    if (options?.pruneRemoved) {
+    if (options?.pruneRemoved && hasTasksArray) {
       if (incomingTaskIds.length === 0) {
         await client.query(`DELETE FROM public.daily_tasks WHERE branch_id = $1`, [effectiveBranchId]);
       } else {
@@ -1323,7 +1364,8 @@ export async function syncFullBranchStateToPostgres(
     }
 
     // 7. Inbox Messages
-    const inboxList: InboxChatMessage[] = Array.isArray(stateData?.inboxMessages) ? stateData.inboxMessages : [];
+    const hasInboxArray = Array.isArray(stateData?.inboxMessages);
+    const inboxList: InboxChatMessage[] = hasInboxArray ? stateData.inboxMessages : [];
     const incomingMsgIds = inboxList.map((m) => String(m.id)).filter(Boolean);
     for (const m of inboxList) {
       if (m?.id) {
@@ -1331,7 +1373,7 @@ export async function syncFullBranchStateToPostgres(
         syncedCounts.inbox_messages += 1;
       }
     }
-    if (options?.pruneRemoved) {
+    if (options?.pruneRemoved && hasInboxArray) {
       if (incomingMsgIds.length === 0) {
         await client.query(`DELETE FROM public.inbox_messages WHERE branch_id = $1`, [effectiveBranchId]);
       } else {

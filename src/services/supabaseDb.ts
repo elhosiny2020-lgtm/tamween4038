@@ -345,6 +345,23 @@ export function resolveConflictWithServerRow(
   });
 }
 
+/**
+ * Pure guard ensuring incoming full-state cloud/WebSocket snapshots are only
+ * applied to AppState when they actually target the currently active branch.
+ */
+export function shouldApplyIncomingCloudStateForBranch(
+  currentBranchId: string,
+  incomingData: (Partial<AppState> & { branchPartitions?: Record<string, any> }) | null | undefined
+): boolean {
+  if (!incomingData || !currentBranchId) return false;
+  const directPartitions = incomingData.branchPartitions;
+  if (directPartitions && typeof directPartitions === 'object' && Object.keys(directPartitions).length > 0) {
+    return Boolean(directPartitions[currentBranchId]);
+  }
+  const incomingBranchId = incomingData.activeBranchId || 'branch-mahalla';
+  return incomingBranchId === currentBranchId;
+}
+
 function updateQueueStatusBadge() {
   const totalPending = getRowMutationQueueCount() + getPendingOfflineQueueCount();
   if (isOfflineNow()) {

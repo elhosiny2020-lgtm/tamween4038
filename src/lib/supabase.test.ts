@@ -35,7 +35,12 @@ import {
   SUPABASE_TABLES_SQL_SCHEMA,
   SUPABASE_BUCKET_NAME,
 } from './supabase';
-import { shouldApplyIncomingPartitionTimestamp } from '../storage';
+import {
+  shouldApplyIncomingPartitionTimestamp,
+  syncAllBranchesFromCloudPayload,
+  readBranchPartitionFromLocal,
+  getScopedKeysForBranch,
+} from '../storage';
 
 test('Supabase schema contains all 9 normalized tables, foreign keys, indexes, RLS policies, and Realtime publication', () => {
   assert.ok(SUPABASE_TABLES_SQL_SCHEMA.includes('CREATE TABLE IF NOT EXISTS branches'));
@@ -626,6 +631,58 @@ test('WebSockets & Realtime Console Interceptor automatically resolves socket wa
   assert.strictEqual(snap.supabaseChannelState, 'SUBSCRIBED');
 
   clearRealtimeDiagnosticsLogs();
+});
+
+test('syncAllBranchesFromCloudPayload isolates non-default activeBranchId flat payloads without clobbering default branch', () => {
+  const store = new Map<string, string>();
+  const origLocalStorage = (globalThis as any).localStorage;
+  (globalThis as any).localStorage = {
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => {
+      store.set(k, String(v));
+    },
+    removeItem: (k: string) => {
+      store.delete(k);
+    },
+    clear: () => store.clear(),
+  };
+
+  try {
+    // 1. Seed default branch (branch-mahalla) with 1 registered bakery
+    const appliedMahalla = syncAllBranchesFromCloudPayload(
+      {
+        activeBranchId: 'branch-mahalla',
+        bakeries: [{ id: 'b-mah-1', bakeryOwnerName: 'مخبز المحلة الدائم' } as any],
+        debts: [],
+      },
+      '2026-11-15T10:00:00.000Z',
+      { forceRealtimePush: true }
+    );
+    assert.strictEqual(appliedMahalla, true);
+
+    // 2. Receive a flat empty payload for branch-samanoud -> must write branch-samanoud ONLY
+    const appliedSamanoud = syncAllBranchesFromCloudPayload(
+      {
+        activeBranchId: 'branch-samanoud',
+        bakeries: [],
+        debts: [],
+      },
+      '2026-11-15T10:01:00.000Z',
+      { forceRealtimePush: true }
+    );
+    assert.strictEqual(appliedSamanoud, true);
+
+    const mahallaAfter = readBranchPartitionFromLocal('branch-mahalla');
+    assert.strictEqual(mahallaAfter.bakeries?.length, 1);
+    assert.strictEqual(mahallaAfter.bakeries?.[0]?.id, 'b-mah-1');
+    assert.ok(store.has(getScopedKeysForBranch('branch-samanoud').BAKERIES));
+  } finally {
+    if (origLocalStorage === undefined) {
+      delete (globalThis as any).localStorage;
+    } else {
+      (globalThis as any).localStorage = origLocalStorage;
+    }
+  }
 });
 
 
