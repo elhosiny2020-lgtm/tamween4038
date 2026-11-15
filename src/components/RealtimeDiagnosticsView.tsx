@@ -52,6 +52,7 @@ interface RealtimeDiagnosticsViewProps {
   saveTimestamp: string;
   onForceReconnect: () => Promise<void>;
   onForceSyncNow: () => Promise<void>;
+  onPurgeAllDatabases?: () => Promise<{ success: boolean; message: string }>;
   onClose?: () => void;
 }
 
@@ -60,6 +61,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
   saveTimestamp,
   onForceReconnect,
   onForceSyncNow,
+  onPurgeAllDatabases,
   onClose,
 }) => {
   const [diag, setDiag] = useState<RealtimeDiagnosticsSnapshot>(() =>
@@ -79,6 +81,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
   const [isTestingShield, setIsTestingShield] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isSyncingNow, setIsSyncingNow] = useState(false);
+  const [isPurgingDb, setIsPurgingDb] = useState(false);
   const [isResolvingConsole, setIsResolvingConsole] = useState(false);
   const [remediationSteps, setRemediationSteps] = useState<string[]>([
     'فحص وتأمين اتصال WebSocket المباشر (/ws/supabase-realtime) وتفعيل نبضات Keep-Alive كل 15 ثانية',
@@ -288,6 +291,22 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
     }
   };
 
+  const handlePurgeAllDatabasesClick = async () => {
+    if (isPurgingDb || !onPurgeAllDatabases) return;
+    setIsPurgingDb(true);
+    setPulseBanner(null);
+    try {
+      const res = await onPurgeAllDatabases();
+      await refreshSecurityStatus();
+      setPulseBanner({
+        type: res.success ? 'success' : 'error',
+        text: res.message,
+      });
+    } finally {
+      setIsPurgingDb(false);
+    }
+  };
+
   const renderBadgeForState = (state: string) => {
     if (state === 'SUBSCRIBED' || state === 'OPEN') {
       return (
@@ -444,6 +463,19 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
               <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin' : ''}`} />
               إعادة ربط القنوات
             </button>
+
+            {onPurgeAllDatabases && (
+              <button
+                type="button"
+                data-testid="diag-purge-all-db-btn"
+                onClick={handlePurgeAllDatabasesClick}
+                disabled={isPurgingDb}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-60 text-white font-black text-xs shadow-lg transition cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                {isPurgingDb ? 'جاري المسح الشامل...' : 'مسح شامل لـ Supabase والتسجيل من جديد'}
+              </button>
+            )}
 
             {onClose && (
               <button

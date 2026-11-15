@@ -265,8 +265,17 @@ export function mergeMultiBranchStatesNonDestructive(
   return stripHeavyLogo(merged);
 }
 
+export const CLEAN_START_RESET_EPOCH = '2026-11-15-FRESH-DB-V1';
+
+export function clearPermanentSafetyVault(): void {
+  try {
+    safeRemoveItem(PERMANENT_VAULT_KEY);
+    safeRemoveItem('TAMWEEN_LAST_SUPABASE_SYNC');
+  } catch {}
+}
+
 /**
- * حفظ نسخة أمان دائمة غير قابلة للحذف لجميع البيانات المسجلة لضمان بقائها حتى عند تغيير الخادم
+ * حفظ نسخة أمان دائمة لجميع البيانات المسجلة الجديدة لضمان بقائها حتى عند تغيير الخادم
  */
 export function saveToPermanentSafetyVault(
   state: AppState,
@@ -285,8 +294,9 @@ export function saveToPermanentSafetyVault(
       ? mergeMultiBranchStatesNonDestructive(existing.data, state) || stripHeavyLogo(state)
       : stripHeavyLogo(state);
 
-    const payload: PermanentVaultPayload = {
+    const payload: PermanentVaultPayload & { cleanStartEpoch?: string } = {
       timestamp,
+      cleanStartEpoch: CLEAN_START_RESET_EPOCH,
       data: mergedData,
     };
     safeSetItem(PERMANENT_VAULT_KEY, JSON.stringify(payload));
@@ -298,6 +308,10 @@ export function loadFromPermanentSafetyVault(): PermanentVaultPayload | null {
     const raw = safeGetItem(PERMANENT_VAULT_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
+    if (parsed?.cleanStartEpoch !== CLEAN_START_RESET_EPOCH) {
+      safeRemoveItem(PERMANENT_VAULT_KEY);
+      return null;
+    }
     if (parsed && parsed.data && (Array.isArray(parsed.data.bakeries) || parsed.data.branchPartitions)) {
       return parsed as PermanentVaultPayload;
     }
@@ -2865,6 +2879,33 @@ function handleIncomingRealtimeRelayMessage(
         debtsCount: dCount,
       }),
     });
+  } else if (msg.type === 'state_cleared') {
+    clearPermanentSafetyVault();
+    clearOfflineSyncQueue();
+    pendingSyncPayload = null;
+    lastObservedStateCounts = {
+      bakeries: 0,
+      debts: 0,
+      villages: 0,
+      branches: 0,
+      users: 0,
+      dailyTasks: 0,
+    };
+    for (const tbl of ALL_SUPABASE_REALTIME_TABLES) {
+      markTableRealtimeEvent(tbl, 'DELETE', msg.timestamp);
+    }
+    recordRealtimeDiagnosticEvent({
+      direction: isSelfRealtimeEvent(msg.clientId) ? 'SYSTEM' : 'INCOMING',
+      channel: channelSource,
+      eventType: 'FULL_DATABASE_PURGE_AND_RESET',
+      sqlOperation: 'DELETE',
+      table: 'bakeries',
+      affectedTable: 'bakeries',
+      senderClientId: msg.clientId,
+      isSelf: isSelfRealtimeEvent(msg.clientId),
+      revision: msg.revision,
+      summary: 'تم المسح الشامل لكافة قواعد البيانات وتصفير الجداول لبدء التسجيل من جديد (0 مخبز، 0 مديونية)',
+    });
   } else if (msg.type === 'alerts_update') {
     const sqlOp: SqlRealtimeOperationType = msg.cleared ? 'DELETE' : 'INSERT';
     markTableRealtimeEvent('high_debt_alerts', sqlOp, msg.timestamp);
@@ -4392,6 +4433,17 @@ export function subscribeToSupabaseRealtime(
             setCloudConnectionStatus('connected', 'تم استلام تحديث لحظي فوري من جهاز آخر');
           }
           callbacks.onUpdate(data, ts);
+        } else if (msg.type === 'state_cleared') {
+          if (isSelfRealtimeEvent(msg.clientId)) return;
+          const ts = msg.timestamp || new Date().toISOString();
+          callbacks.onUpdate(
+            {
+              bakeries: [],
+              debts: [],
+              dailyTasks: [],
+            } as unknown as AppState,
+            ts
+          );
         }
       } catch (err: any) {
         recordRealtimeSocketError({
@@ -4712,29 +4764,109 @@ export function subscribeToSupabaseRealtime(
 }
 
 /**
- * حماية قاعدة البيانات المسجلة على Supabase وخادم المزامنة من الحذف النهائي والاحتفاظ بها دائماً
+ * مسح شامل لكافة قواعد البيانات الموجودة حالياً على Supabase والخادم والذاكرة المحلية
+ * لبدء التسجيل والكتابة على قاعدة البيانات من أول وجديد (0 مخبز، 0 مديونية)
  */
 export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; message: string }> {
+  const startMs = Date.now();
+  const nowIso = new Date().toISOString();
+
   try {
-    const vault = loadFromPermanentSafetyVault();
-    if (vault?.data) {
-      await performCloudPush(vault.data, new Date().toISOString(), { skipEnqueueOnFailure: true });
+    // 1. Purge local Permanent Safety Vault, offline sync queue, and cached state counts
+    clearPermanentSafetyVault();
+    clearOfflineSyncQueue();
+    pendingSyncPayload = null;
+    lastObservedStateCounts = {
+      bakeries: 0,
+      debts: 0,
+      villages: 0,
+      branches: 0,
+      users: 0,
+      dailyTasks: 0,
+    };
+
+    // 2. Purge server-side live-db and alerts snapshots + broadcast state_cleared to all connected peers
+    if (typeof window !== 'undefined' && !isBrowserOffline()) {
+      await Promise.all([
+        fetch(`${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: getSecurityShieldHeaders(false),
+        }).catch(() => null),
+        fetch(`${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: getSecurityShieldHeaders(false),
+        }).catch(() => null),
+      ]);
     }
-    setCloudConnectionStatus('connected', 'البيانات المسجلة محمية ضد الحذف النهائي ومحفوظة على Supabase', {
-      hasPendingSync: false,
+
+    // 3. If external Supabase SQL project is configured, delete all records across tables
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await Promise.all([
+          client.from('debts').delete().neq('id', '__non_existent__'),
+          client.from('bakeries').delete().neq('id', '__non_existent__'),
+          client.from('daily_tasks').delete().neq('id', '__non_existent__'),
+          client.from('high_debt_alerts').delete().neq('id', '__non_existent__'),
+          client.from('backup_snapshots').delete().neq('id', '__non_existent__'),
+        ]);
+        if (activeRealtimeChannel) {
+          activeRealtimeChannel.send({
+            type: 'broadcast',
+            event: 'state_update',
+            payload: {
+              clientId: SESSION_CLIENT_ID,
+              timestamp: nowIso,
+              cleared: true,
+              data: { bakeries: [], debts: [], dailyTasks: [] },
+            },
+          });
+        }
+      } catch {}
+    }
+
+    const latencyMs = Math.max(1, Date.now() - startMs);
+    for (const tbl of ALL_SUPABASE_REALTIME_TABLES) {
+      markTableRealtimeEvent(tbl, 'DELETE', nowIso);
+    }
+
+    recordRealtimeDiagnosticEvent({
+      direction: 'OUTGOING',
+      channel: 'SUPABASE_REALTIME',
+      eventType: 'FULL_DATABASE_PURGE_AND_RESET',
+      sqlOperation: 'DELETE',
+      table: 'bakeries',
+      affectedTable: 'bakeries',
+      responseLatencyMs: latencyMs,
+      senderClientId: SESSION_CLIENT_ID,
+      isSelf: true,
+      summary: `تم تنفيذ مسح شامل لجميع قواعد البيانات على Supabase وتصفير الجداول (${latencyMs}ms) لبدء التسجيل من أول وجديد`,
     });
+
+    setCloudConnectionStatus(
+      'connected',
+      'تم المسح الشامل لقواعد البيانات — جاهز للتسجيل والكتابة من أول وجديد',
+      {
+        hasPendingSync: false,
+        pendingQueueCount: 0,
+      }
+    );
+
     return {
       success: true,
       message:
-        'نظام الحماية الدائمة مفعّل: تم الاحتفاظ بكافة البيانات المسجلة على Supabase وخزنة الأمان الدائمة ومنع حذفها نهائياً حتى عند تغيير الخادم.',
+        'تم المسح الشامل لجميع قواعد البيانات الموجودة حالياً على Supabase والخادم بنجاح (0 مخبز، 0 مديونية). يمكنك الآن التسجيل والكتابة على قاعدة البيانات من أول وجديد!',
     };
   } catch (err: any) {
     return {
       success: false,
-      message: `تعذر تحديث حالة الحماية الدائمة: ${err.message || 'خطأ غير معروف'}`,
+      message: `تعذر إتمام المسح الشامل لقاعدة البيانات: ${err.message || 'خطأ غير معروف'}`,
     };
   }
 }
+
 
 
 

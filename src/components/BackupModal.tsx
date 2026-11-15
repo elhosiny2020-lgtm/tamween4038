@@ -1249,17 +1249,20 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     });
   };
 
-  // Delete Supabase Cloud Database Data
+  // Delete Supabase Cloud Database Data & Reset Local State for Fresh Registration
   const handleDeleteSupabaseCloudData = async () => {
     setPendingActionConfirm({
-      title: 'تأكيد حذف بيانات Supabase نهائياً',
-      message: 'هل أنت متأكد من حذف ومسح كافّة السجلات وقاعدة البيانات المسجلة على Supabase نهائياً؟',
-      confirmLabel: 'حذف من Supabase',
+      title: 'تأكيد المسح الشامل لقاعدة بيانات Supabase وبدء التسجيل من جديد',
+      message: 'هل أنت متأكد من تنفيذ مسح شامل لجميع قواعد البيانات الموجودة حالياً على Supabase والذاكرة المحلية لتسجيل وكتابة البيانات من أول وجديد؟',
+      confirmLabel: 'مسح شامل والبدء من جديد',
       variant: 'danger',
       onConfirm: async () => {
         setIsProcessing(true);
-        setStatusMsg({ text: 'جاري مسح وحذف كافة البيانات من قاعدة بيانات Supabase السحابية...', type: 'info' });
+        setStatusMsg({ text: 'جاري المسح الشامل لكافة قواعد البيانات على Supabase وتصفير الجداول...', type: 'info' });
         const res = await clearSupabaseDatabaseData();
+        try {
+          await onFactoryReset();
+        } catch {}
         setIsProcessing(false);
         if (res.success) {
           setLastSupabaseSyncTime(null);

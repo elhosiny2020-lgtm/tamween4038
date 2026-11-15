@@ -411,13 +411,24 @@ test('Permanent Safety Vault and Non-Destructive Multi-Branch Merge retain all r
   assert.ok(vault!.data.debts.length >= 2);
   assert.ok((vault!.data as any).branchPartitions['branch-mahalla'].bakeries.length >= 2);
 
-  // 3. clearSupabaseDatabaseData protects registered records instead of wiping them
-  const countBeforeClear = vault!.data.bakeries.length;
+  // 3. clearSupabaseDatabaseData performs a full database wipe and allows registering fresh records from scratch
   const clearRes = await clearSupabaseDatabaseData();
   assert.strictEqual(clearRes.success, true);
-  assert.ok(clearRes.message.includes('الحماية الدائمة'));
+  assert.ok(clearRes.message.includes('المسح الشامل'));
   const vaultAfterClear = loadFromPermanentSafetyVault();
-  assert.strictEqual(vaultAfterClear?.data.bakeries.length, countBeforeClear);
+  assert.strictEqual(vaultAfterClear, null);
+
+  // 4. Registering a new bakery from scratch after a full wipe saves cleanly
+  const freshState: any = {
+    activeBranchId: 'branch-mahalla',
+    bakeries: [{ id: 'b-fresh-1', bakeryOwnerName: 'مخبز البداية الجديدة', lastUpdatedAt: '2026-11-15T10:00:00Z' }],
+    debts: [],
+  };
+  saveToPermanentSafetyVault(freshState, '2026-11-15T10:00:00Z');
+  const vaultAfterFreshWrite = loadFromPermanentSafetyVault();
+  assert.strictEqual(vaultAfterFreshWrite?.data.bakeries.length, 1);
+  assert.strictEqual(vaultAfterFreshWrite?.data.bakeries[0].bakeryOwnerName, 'مخبز البداية الجديدة');
+  clearSupabaseDatabaseData();
 });
 
 test('Realtime Diagnostics telemetry tracks all 9 subscribed tables, incoming/outgoing Events Log, AppState memory updates, and WebSocket console errors with zero polling', async () => {

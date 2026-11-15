@@ -40,6 +40,8 @@ import {
   autoSyncToSupabaseDetailed,
   fetchDatabaseFromSupabase,
   SESSION_CLIENT_ID,
+  CLEAN_START_RESET_EPOCH,
+  clearPermanentSafetyVault,
 } from './lib/supabase';
 import {
   BranchAuthVaultRecord,
@@ -475,8 +477,8 @@ export function getBranchSummaryStats(branchId: string): {
 
     if (branchId === DEFAULT_BRANCH_ID && !rawBakeries) {
       return {
-        bakeriesCount: INITIAL_BAKERIES.length,
-        debtsCount: INITIAL_DEBTS.length,
+        bakeriesCount: 0,
+        debtsCount: 0,
         villagesCount: DEFAULT_VILLAGES_HIERARCHY.length,
       };
     }
@@ -806,8 +808,8 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
     const fallbackVault = loadBranchAuthVault(branchId, branchObj?.name);
     return {
       activeBranchId: branchId,
-      bakeries: isDefault ? INITIAL_BAKERIES : [],
-      debts: isDefault ? INITIAL_DEBTS : [],
+      bakeries: [],
+      debts: [],
       villages: isDefault ? DEFAULT_VILLAGES_HIERARCHY : [],
       users: fallbackVault.users,
       systemConfig: {
@@ -826,8 +828,14 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
   const rawVillages = localStorage.getItem(bKeys.VILLAGES);
   const rawConfig = localStorage.getItem(bKeys.CONFIG);
 
-  const bakeries = safeParse<Bakery[]>(rawBake, isDefault ? INITIAL_BAKERIES : []);
-  const debts = safeParse<DebtRecord[]>(rawDebts, isDefault ? INITIAL_DEBTS : []);
+  const parsedBakeries = safeParse<Bakery[]>(rawBake, []);
+  const parsedDebts = safeParse<DebtRecord[]>(rawDebts, []);
+  // Never re-seed the 7 legacy demo bakeries/debts if they match the old default seed state
+  const isLegacyDemoSeed =
+    parsedBakeries.length === INITIAL_BAKERIES.length &&
+    isDefaultSeedState(parsedBakeries, parsedDebts);
+  const bakeries = isLegacyDemoSeed ? [] : parsedBakeries;
+  const debts = isLegacyDemoSeed ? [] : parsedDebts;
   const villages = safeParse<VillageHierarchy[]>(
     rawVillages,
     isDefault ? DEFAULT_VILLAGES_HIERARCHY : []
@@ -864,7 +872,7 @@ export function readBranchPartitionFromLocal(branchId: string): BranchPartitionP
     paymentMethods: safeParse<string[]>(localStorage.getItem(bKeys.PAYMENT_METHODS), PAYMENT_METHODS),
     dailyTasks: safeParse<DailyBakeryTask[]>(
       localStorage.getItem(bKeys.DAILY_TASKS),
-      isDefault ? INITIAL_DAILY_TASKS : []
+      []
     ),
     inboxMessages: safeParse<InboxChatMessage[]>(
       localStorage.getItem(bKeys.INBOX_MESSAGES),
@@ -1187,8 +1195,8 @@ export function buildFullCloudMultiBranchPayload(
     ...(defaultBranchState as AppState),
     activeBranchId: DEFAULT_BRANCH_ID,
     branches: branchesList,
-    bakeries: defaultBranchState.bakeries || INITIAL_BAKERIES,
-    debts: defaultBranchState.debts || INITIAL_DEBTS,
+    bakeries: defaultBranchState.bakeries || [],
+    debts: defaultBranchState.debts || [],
     villages: defaultBranchState.villages || DEFAULT_VILLAGES_HIERARCHY,
     users: defaultBranchState.users || INITIAL_USERS,
     systemConfig: {
@@ -1202,7 +1210,36 @@ export function buildFullCloudMultiBranchPayload(
   };
 }
 
+const CLEAN_START_EPOCH_KEY = 'TAMWEEN_CLEAN_START_EPOCH';
+
+export async function ensureCleanStartDatabaseEpoch(): Promise<void> {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const currentEpoch = localStorage.getItem(CLEAN_START_EPOCH_KEY);
+    if (currentEpoch === CLEAN_START_RESET_EPOCH) return;
+
+    const savedSession = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(BASE_KEYS.SESSION) : null;
+    localStorage.clear();
+    clearPermanentSafetyVault();
+    localStorage.setItem(CLEAN_START_EPOCH_KEY, CLEAN_START_RESET_EPOCH);
+    if (savedSession && typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(BASE_KEYS.SESSION, savedSession);
+    }
+
+    try {
+      const db = await openIndexedDB();
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).clear();
+      await new Promise((res) => {
+        tx.oncomplete = res;
+        tx.onerror = res;
+      });
+    } catch {}
+  } catch {}
+}
+
 export async function loadInitialState(requestedBranchId?: string): Promise<AppState> {
+  await ensureCleanStartDatabaseEpoch();
   const initialBranches = getBranchesList();
   const activeBranchId =
     requestedBranchId && initialBranches.some((b) => b.id === requestedBranchId)
@@ -1252,16 +1289,6 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     // 2. Read isolated state for activeBranchId from its scoped keys
     const localPartition = readBranchPartitionFromLocal(activeBranchId);
 
-    // 3. Check standalone preloaded state for default branch if local storage is empty
-    interface PreloadedStatePayload extends Partial<AppState> {
-      exportTimestamp?: string;
-    }
-    const preloaded =
-      isDefaultBranch && typeof window !== 'undefined'
-        ? (window as unknown as { PRELOADED_TAMWEEN_STATE?: PreloadedStatePayload })
-            .PRELOADED_TAMWEEN_STATE
-        : undefined;
-
     let bakeries = localPartition.bakeries;
     let debts = localPartition.debts;
     let villages = localPartition.villages;
@@ -1282,35 +1309,9 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     let systemConfig = localPartition.systemConfig;
     let users = localPartition.users;
 
-    if (isDefaultBranch && preloaded && preloaded.bakeries && preloaded.bakeries.length > 0) {
-      const hasRawLocal =
-        typeof localStorage !== 'undefined' && Boolean(localStorage.getItem(scopedKeys.BAKERIES));
-      if (!hasRawLocal) {
-        bakeries = preloaded.bakeries.map(normalizeBakeryPerCapita);
-        debts = preloaded.debts ?? INITIAL_DEBTS;
-        villages = preloaded.villages ?? DEFAULT_VILLAGES_HIERARCHY;
-        issuingEntities = preloaded.issuingEntities ?? DEFAULT_ISSUING_ENTITIES;
-        violationTypes = preloaded.violationTypes ?? DEFAULT_VIOLATION_TYPES;
-        activityStatuses = preloaded.activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
-        bakeryCategories = preloaded.bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES;
-        breadTypes = preloaded.breadTypes ?? DEFAULT_BREAD_TYPES;
-        breadTypeCounts = preloaded.breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
-        lineTypes = preloaded.lineTypes ?? DEFAULT_LINE_TYPES;
-        fuelTypes = preloaded.fuelTypes ?? DEFAULT_FUEL_TYPES;
-        leaseContractTypes = preloaded.leaseContractTypes ?? DEFAULT_LEASE_CONTRACT_TYPES;
-        responsibleManagerOptions = preloaded.responsibleManagerOptions ?? DEFAULT_RESPONSIBLE_MANAGER_OPTIONS;
-        paymentMethods = preloaded.paymentMethods ?? PAYMENT_METHODS;
-        dailyTasks = preloaded.dailyTasks ?? INITIAL_DAILY_TASKS;
-        inboxMessages = preloaded.inboxMessages ?? INITIAL_INBOX_MESSAGES;
-        columnTitles = preloaded.columnTitles ?? DEFAULT_COLUMN_TITLES;
-        systemConfig = preloaded.systemConfig ?? DEFAULT_SYSTEM_CONFIG;
-        users = preloaded.users ?? INITIAL_USERS;
-      }
-    }
-
     const syncedInitial = synchronizeBakeryAndDebts(
-      (bakeries ?? (isDefaultBranch ? INITIAL_BAKERIES : [])).map(normalizeBakeryPerCapita),
-      debts ?? (isDefaultBranch ? INITIAL_DEBTS : [])
+      (bakeries ?? []).map(normalizeBakeryPerCapita),
+      debts ?? []
     );
     bakeries = syncedInitial.bakeries;
     debts = syncedInitial.debts;
@@ -1326,7 +1327,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     leaseContractTypes = leaseContractTypes ?? DEFAULT_LEASE_CONTRACT_TYPES;
     responsibleManagerOptions = responsibleManagerOptions ?? DEFAULT_RESPONSIBLE_MANAGER_OPTIONS;
     paymentMethods = paymentMethods ?? PAYMENT_METHODS;
-    dailyTasks = dailyTasks ?? (isDefaultBranch ? INITIAL_DAILY_TASKS : []);
+    dailyTasks = dailyTasks ?? [];
     inboxMessages = inboxMessages ?? (isDefaultBranch ? INITIAL_INBOX_MESSAGES : []);
     columnTitles = columnTitles
       ? { ...DEFAULT_COLUMN_TITLES, ...columnTitles }
@@ -1464,15 +1465,11 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
         currentUser: null,
       };
     }
-    const fallbackSync = synchronizeBakeryAndDebts(
-      INITIAL_BAKERIES.map(normalizeBakeryPerCapita),
-      INITIAL_DEBTS
-    );
     return {
       activeBranchId,
       branches: updatedBranchesList,
-      bakeries: fallbackSync.bakeries,
-      debts: fallbackSync.debts,
+      bakeries: [],
+      debts: [],
       villages: DEFAULT_VILLAGES_HIERARCHY,
       issuingEntities: DEFAULT_ISSUING_ENTITIES,
       violationTypes: DEFAULT_VIOLATION_TYPES,
@@ -1485,7 +1482,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       leaseContractTypes: DEFAULT_LEASE_CONTRACT_TYPES,
       responsibleManagerOptions: DEFAULT_RESPONSIBLE_MANAGER_OPTIONS,
       paymentMethods: PAYMENT_METHODS,
-      dailyTasks: INITIAL_DAILY_TASKS,
+      dailyTasks: [],
       inboxMessages: INITIAL_INBOX_MESSAGES,
       columnTitles: DEFAULT_COLUMN_TITLES,
       systemConfig: DEFAULT_SYSTEM_CONFIG,
@@ -1529,7 +1526,7 @@ export async function persistFullState(
     leaseContractTypes = DEFAULT_LEASE_CONTRACT_TYPES,
     responsibleManagerOptions = DEFAULT_RESPONSIBLE_MANAGER_OPTIONS,
     paymentMethods = PAYMENT_METHODS,
-    dailyTasks = isDefaultBranch ? INITIAL_DAILY_TASKS : [],
+    dailyTasks = [],
     inboxMessages = isDefaultBranch ? INITIAL_INBOX_MESSAGES : [],
     columnTitles,
     systemConfig,
@@ -2040,9 +2037,17 @@ export async function saveBackupToPartition(data: object): Promise<{ success: bo
   }
 }
 
-// Reset everything to factory defaults
+// Reset everything to factory defaults (0 bakeries, 0 debts, ready for fresh registration)
 export async function factoryReset(): Promise<void> {
-  localStorage.clear();
+  try {
+    const savedSession = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(BASE_KEYS.SESSION) : null;
+    localStorage.clear();
+    clearPermanentSafetyVault();
+    localStorage.setItem(CLEAN_START_EPOCH_KEY, CLEAN_START_RESET_EPOCH);
+    if (savedSession && typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(BASE_KEYS.SESSION, savedSession);
+    }
+  } catch {}
   try {
     const db = await openIndexedDB();
     const tx = db.transaction(STORE_NAME, 'readwrite');

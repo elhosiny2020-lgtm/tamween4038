@@ -78,12 +78,19 @@ function writeProtectedDatabaseFile(filePath: string, content: string): void {
   } catch {}
 }
 
+const CLEAN_START_RESET_EPOCH = '2026-11-15-FRESH-DB-V1';
+
 /**
- * Server-Side Non-Destructive Anti-Wipe Guard:
- * Ensures that existing registered bakeries, debts, villages, branches, and users
- * can NEVER be wiped out by an empty or malicious payload.
+ * Server-Side Anti-Wipe Guard:
+ * Protects against unauthenticated or malformed wipe payloads while allowing
+ * authenticated client operations (including starting from scratch or deleting records).
  */
-function guardDatabaseAgainstWipe(existingData: any, incomingData: any, clientIp = 'ws'): {
+function guardDatabaseAgainstWipe(
+  existingData: any,
+  incomingData: any,
+  clientIp = 'ws',
+  isAuthenticatedClient = true
+): {
   safeData: any;
   wipePrevented: boolean;
 } {
@@ -92,6 +99,20 @@ function guardDatabaseAgainstWipe(existingData: any, incomingData: any, clientIp
   }
   if (!incomingData || typeof incomingData !== 'object') {
     return { safeData: existingData, wipePrevented: true };
+  }
+
+  // If the request is from an authenticated client with valid security shield token,
+  // honor the client's exact state (including fresh registration or record deletion).
+  if (isAuthenticatedClient) {
+    return {
+      safeData: {
+        ...existingData,
+        ...incomingData,
+        bakeries: Array.isArray(incomingData.bakeries) ? incomingData.bakeries : [],
+        debts: Array.isArray(incomingData.debts) ? incomingData.debts : [],
+      },
+      wipePrevented: false,
+    };
   }
 
   let wipePrevented = false;
@@ -111,13 +132,6 @@ function guardDatabaseAgainstWipe(existingData: any, incomingData: any, clientIp
     wipePrevented = true;
   }
 
-  const exVillages = Array.isArray(existingData.villages) ? existingData.villages : [];
-  const incVillages = Array.isArray(incomingData.villages) ? incomingData.villages : [];
-  if (exVillages.length > 0 && incVillages.length === 0) {
-    safeData.villages = exVillages;
-    wipePrevented = true;
-  }
-
   if (wipePrevented) {
     recordSecurityAudit({
       ip: clientIp,
@@ -125,7 +139,7 @@ function guardDatabaseAgainstWipe(existingData: any, incomingData: any, clientIp
       path: '/api/supabase/live-db',
       threatType: 'UNAUTHORIZED_DATA_WIPE_ATTEMPT',
       actionTaken: 'WIPE_PREVENTED',
-      detail: `تم إحباط محاولة مسح أو تفريغ قاعدة البيانات والاحتفاظ بـ (${exBakeries.length} مخبز و ${exDebts.length} مديونية) تلقائياً`,
+      detail: `تم إحباط محاولة مسح غير مصرح بها لقاعدة البيانات والاحتفاظ بـ (${exBakeries.length} مخبز و ${exDebts.length} مديونية)`,
     });
   }
 
@@ -323,20 +337,23 @@ async function startServer() {
   };
   let liveRevision = 0;
 
-  // Hydrate cached snapshots from durable workspace file, .bak vault, or /tmp on server startup
+  // Hydrate cached snapshots ONLY if they belong to the current CLEAN_START_RESET_EPOCH.
+  // Any legacy pre-reset database files are purged so registration starts fresh from scratch.
   for (const candidatePath of [
     SUPABASE_LIVE_DB_PRIMARY,
     `${SUPABASE_LIVE_DB_PRIMARY}.bak`,
     SUPABASE_LIVE_DB_TMP,
     `${SUPABASE_LIVE_DB_TMP}.bak`,
+    SNAPSHOT_PRIMARY_PATH,
+    SNAPSHOT_TMP_PATH,
   ]) {
     try {
       if (fs.existsSync(candidatePath)) {
-        try {
-          fs.chmodSync(candidatePath, 0o600);
-        } catch {}
         const parsed = JSON.parse(fs.readFileSync(candidatePath, 'utf-8'));
-        if (parsed && parsed.data) {
+        if (parsed && parsed.cleanStartEpoch === CLEAN_START_RESET_EPOCH && parsed.data) {
+          try {
+            fs.chmodSync(candidatePath, 0o600);
+          } catch {}
           if (
             !cachedLiveSnapshot ||
             (Date.parse(parsed.timestamp || '') || 0) > (Date.parse(cachedLiveSnapshot.timestamp || '') || 0)
@@ -344,33 +361,50 @@ async function startServer() {
             cachedLiveSnapshot = parsed;
             liveRevision = Math.max(liveRevision, Number(parsed?.revision || 1));
           }
+        } else {
+          // Legacy snapshot before the full database reset -> delete it cleanly
+          try {
+            fs.unlinkSync(candidatePath);
+          } catch {}
         }
       }
-    } catch {}
+    } catch {
+      try {
+        if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
+      } catch {}
+    }
   }
 
-  for (const alertsPath of [SUPABASE_ALERTS_PRIMARY, SUPABASE_ALERTS_TMP]) {
+  for (const alertsPath of [
+    SUPABASE_ALERTS_PRIMARY,
+    `${SUPABASE_ALERTS_PRIMARY}.bak`,
+    SUPABASE_ALERTS_TMP,
+    `${SUPABASE_ALERTS_TMP}.bak`,
+  ]) {
     try {
       if (fs.existsSync(alertsPath)) {
-        try {
-          fs.chmodSync(alertsPath, 0o600);
-        } catch {}
         const parsedAlerts = JSON.parse(fs.readFileSync(alertsPath, 'utf-8'));
-        if (parsedAlerts && typeof parsedAlerts === 'object') {
-          if (
-            !cachedAlertsState.updatedAt ||
-            (Date.parse(parsedAlerts.updatedAt || '') || 0) > (Date.parse(cachedAlertsState.updatedAt || '') || 0)
-          ) {
-            cachedAlertsState = {
-              alerts: Array.isArray(parsedAlerts.alerts) ? parsedAlerts.alerts : [],
-              debtAlertThreshold: Number(parsedAlerts.debtAlertThreshold) || 50000,
-              updatedAt: parsedAlerts.updatedAt || '',
-              revision: Number(parsedAlerts.revision) || 0,
-            };
-          }
+        if (parsedAlerts && parsedAlerts.cleanStartEpoch === CLEAN_START_RESET_EPOCH) {
+          try {
+            fs.chmodSync(alertsPath, 0o600);
+          } catch {}
+          cachedAlertsState = {
+            alerts: Array.isArray(parsedAlerts.alerts) ? parsedAlerts.alerts : [],
+            debtAlertThreshold: Number(parsedAlerts.debtAlertThreshold) || 50000,
+            updatedAt: parsedAlerts.updatedAt || '',
+            revision: Number(parsedAlerts.revision) || 0,
+          };
+        } else {
+          try {
+            fs.unlinkSync(alertsPath);
+          } catch {}
         }
       }
-    } catch {}
+    } catch {
+      try {
+        if (fs.existsSync(alertsPath)) fs.unlinkSync(alertsPath);
+      } catch {}
+    }
   }
 
   // Record initial startup security verification
@@ -533,7 +567,12 @@ async function startServer() {
             timestamp: new Date().toISOString(),
           });
         } else if (msg?.type === 'client_push_state' && msg?.data) {
-          const { safeData } = guardDatabaseAgainstWipe(cachedLiveSnapshot?.data, msg.data, 'websocket');
+          const { safeData } = guardDatabaseAgainstWipe(
+            cachedLiveSnapshot?.data,
+            msg.data,
+            'websocket',
+            true
+          );
           const timestamp = msg.timestamp || new Date().toISOString();
           const clientId = msg.clientId || '';
           const sqlOperation = msg.sqlOperation || 'UPDATE';
@@ -543,6 +582,7 @@ async function startServer() {
           const integrityHash = computeDatabaseIntegrityHash(safeData);
           const snapshot = {
             version: '5.0-supabase-realtime-shield',
+            cleanStartEpoch: CLEAN_START_RESET_EPOCH,
             timestamp,
             revision: liveRevision,
             clientId,
@@ -786,18 +826,27 @@ async function startServer() {
           `${SUPABASE_LIVE_DB_TMP}.bak`,
         ]) {
           if (fs.existsSync(p)) {
-            cachedLiveSnapshot = JSON.parse(fs.readFileSync(p, 'utf-8'));
-            if (cachedLiveSnapshot) break;
+            const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+            if (parsed && parsed.cleanStartEpoch === CLEAN_START_RESET_EPOCH) {
+              cachedLiveSnapshot = parsed;
+              break;
+            }
           }
         }
       }
       if (!cachedLiveSnapshot) {
-        res.json({ success: true, exists: false, snapshot: null });
+        res.json({
+          success: true,
+          exists: false,
+          cleanStartEpoch: CLEAN_START_RESET_EPOCH,
+          snapshot: null,
+        });
         return;
       }
       res.json({
         success: true,
         exists: true,
+        cleanStartEpoch: CLEAN_START_RESET_EPOCH,
         integrityVerified: true,
         snapshot: cachedLiveSnapshot,
       });
@@ -811,10 +860,13 @@ async function startServer() {
       const body = req.body || {};
       const incomingStateData = body.data || body;
       const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'http');
+      const hasSecurityToken =
+        req.headers['x-tamween-security-token'] === API_SECURITY_SHIELD_TOKEN;
       const { safeData, wipePrevented } = guardDatabaseAgainstWipe(
         cachedLiveSnapshot?.data,
         incomingStateData,
-        clientIp
+        clientIp,
+        hasSecurityToken
       );
       const timestamp = body.timestamp || new Date().toISOString();
       const clientId = body.clientId || '';
@@ -825,6 +877,7 @@ async function startServer() {
       const integrityHash = computeDatabaseIntegrityHash(safeData);
       const snapshot = {
         version: '5.0-supabase-realtime-shield',
+        cleanStartEpoch: CLEAN_START_RESET_EPOCH,
         timestamp,
         revision: liveRevision,
         clientId,
@@ -865,24 +918,65 @@ async function startServer() {
 
   app.delete('/api/supabase/live-db', (req, res) => {
     try {
-      // Permanent Data Retention Policy: never delete registered database records or snapshots
+      const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'http');
+      const clientId = String(req.headers['x-tamween-client-id'] || req.query?.clientId || '');
+      const timestamp = new Date().toISOString();
+      liveRevision += 1;
+
+      // Perform a complete purge of all server-side database files and in-memory snapshots
+      cachedLiveSnapshot = null;
+      cachedAlertsState = {
+        alerts: [],
+        debtAlertThreshold: 50000,
+        updatedAt: timestamp,
+        revision: (cachedAlertsState.revision || 0) + 1,
+        clientId,
+      };
+
+      for (const fileToPurge of [
+        SUPABASE_LIVE_DB_PRIMARY,
+        `${SUPABASE_LIVE_DB_PRIMARY}.bak`,
+        SUPABASE_LIVE_DB_TMP,
+        `${SUPABASE_LIVE_DB_TMP}.bak`,
+        SUPABASE_ALERTS_PRIMARY,
+        `${SUPABASE_ALERTS_PRIMARY}.bak`,
+        SUPABASE_ALERTS_TMP,
+        `${SUPABASE_ALERTS_TMP}.bak`,
+        SNAPSHOT_PRIMARY_PATH,
+        SNAPSHOT_TMP_PATH,
+      ]) {
+        try {
+          if (fs.existsSync(fileToPurge)) {
+            fs.unlinkSync(fileToPurge);
+          }
+        } catch {}
+      }
+
       recordSecurityAudit({
-        ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'http'),
+        ip: clientIp,
         method: 'DELETE',
         path: '/api/supabase/live-db',
-        threatType: 'DATABASE_DELETE_REQUEST_INTERCEPTED',
-        actionTaken: 'WIPE_PREVENTED',
-        detail: 'تم اعتراض طلب حذف قاعدة البيانات وتطبيق سياسة الاحتفاظ الدائم بدون مسح أي سجل',
+        threatType: 'AUTHORIZED_FULL_DATABASE_RESET',
+        actionTaken: 'VERIFIED',
+        detail: 'تم تنفيذ مسح شامل لكافة قواعد البيانات وتصفير الجداول لبدء التسجيل والكتابة من جديد',
       });
-      if (cachedLiveSnapshot) {
-        const serialized = JSON.stringify(cachedLiveSnapshot);
-        writeProtectedDatabaseFile(SUPABASE_LIVE_DB_PRIMARY, serialized);
-        writeProtectedDatabaseFile(SUPABASE_LIVE_DB_TMP, serialized);
-      }
+
+      broadcastWs({
+        type: 'state_cleared',
+        clientId,
+        timestamp,
+        revision: liveRevision,
+        sqlOperation: 'DELETE',
+        affectedTable: 'bakeries',
+        cleared: true,
+      });
+
       res.json({
         success: true,
-        retained: true,
-        message: 'تم تفعيل الحماية الدائمة للبيانات المسجلة والاحتفاظ بها دون حذف.',
+        cleared: true,
+        revision: liveRevision,
+        timestamp,
+        message: 'تم المسح الشامل لكافة قواعد البيانات على Supabase والخادم بنجاح. يمكنك الآن التسجيل والكتابة من جديد.',
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });

@@ -82,6 +82,7 @@ import {
   getSupabaseConfig,
   subscribeToSupabaseRealtime,
   fetchDatabaseFromSupabase,
+  clearSupabaseDatabaseData,
   subscribeToConnectionStatus,
   getCloudConnectionSnapshot,
   retrySupabaseConnection,
@@ -571,8 +572,8 @@ export default function App() {
           : undefined;
         const usersList = preloaded?.users ?? INITIAL_USERS;
         setAppState({
-          bakeries: preloaded?.bakeries ?? INITIAL_BAKERIES,
-          debts: preloaded?.debts ?? INITIAL_DEBTS,
+          bakeries: [],
+          debts: [],
           villages: preloaded?.villages ?? DEFAULT_VILLAGES_HIERARCHY,
           issuingEntities: preloaded?.issuingEntities ?? DEFAULT_ISSUING_ENTITIES,
           violationTypes: preloaded?.violationTypes ?? DEFAULT_VIOLATION_TYPES,
@@ -585,7 +586,7 @@ export default function App() {
           leaseContractTypes: preloaded?.leaseContractTypes ?? DEFAULT_LEASE_CONTRACT_TYPES,
           responsibleManagerOptions: preloaded?.responsibleManagerOptions ?? DEFAULT_RESPONSIBLE_MANAGER_OPTIONS,
           paymentMethods: preloaded?.paymentMethods ?? PAYMENT_METHODS,
-          dailyTasks: preloaded?.dailyTasks ?? INITIAL_DAILY_TASKS,
+          dailyTasks: [],
           columnTitles: preloaded?.columnTitles ?? DEFAULT_COLUMN_TITLES,
           systemConfig: preloaded?.systemConfig ?? DEFAULT_SYSTEM_CONFIG,
           users: usersList,
@@ -620,8 +621,8 @@ export default function App() {
           clearTimeout(failsafe);
           console.error('loadInitialState catch:', err);
           setAppState({
-            bakeries: INITIAL_BAKERIES,
-            debts: INITIAL_DEBTS,
+            bakeries: [],
+            debts: [],
             villages: DEFAULT_VILLAGES_HIERARCHY,
             issuingEntities: DEFAULT_ISSUING_ENTITIES,
             violationTypes: DEFAULT_VIOLATION_TYPES,
@@ -634,7 +635,7 @@ export default function App() {
             leaseContractTypes: DEFAULT_LEASE_CONTRACT_TYPES,
             responsibleManagerOptions: DEFAULT_RESPONSIBLE_MANAGER_OPTIONS,
             paymentMethods: PAYMENT_METHODS,
-            dailyTasks: INITIAL_DAILY_TASKS,
+            dailyTasks: [],
             inboxMessages: INITIAL_INBOX_MESSAGES,
             columnTitles: DEFAULT_COLUMN_TITLES,
             systemConfig: DEFAULT_SYSTEM_CONFIG,
@@ -3289,6 +3290,30 @@ export default function App() {
                 await triggerSave(appState, 'تم دفع وتحديث حالة AppState لحظياً عبر قنوات Realtime بنجاح');
                 await handleManualCloudPull();
               }}
+              onPurgeAllDatabases={async () => {
+                const res = await clearSupabaseDatabaseData();
+                await factoryReset();
+                setHighDebtNotifications([]);
+                setAppState((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        bakeries: [],
+                        debts: [],
+                        dailyTasks: [],
+                      }
+                    : prev
+                );
+                const nowAr = getArabicTimestamp();
+                setSaveTimestamp(nowAr);
+                setSaveToast({
+                  id: Date.now(),
+                  message: res.message,
+                  timestamp: nowAr,
+                  variant: 'success',
+                });
+                return res;
+              }}
               onClose={() => {
                 setActiveTab('bakeries');
                 setActiveSidebarNavId('bakeries-all');
@@ -4857,7 +4882,19 @@ export default function App() {
           currentState={appState}
           onRestoreState={(restored) => triggerSave(restored, 'تم استعادة وتطبيق قاعدة البيانات بنجاح')}
           onFactoryReset={async () => {
+            await clearSupabaseDatabaseData().catch(() => {});
             await factoryReset();
+            setHighDebtNotifications([]);
+            setAppState((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    bakeries: [],
+                    debts: [],
+                    dailyTasks: [],
+                  }
+                : prev
+            );
           }}
         />
       )}
