@@ -398,52 +398,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <span>{mode === 'login' ? 'دخول إلى المنظومة' : 'إنشاء الحساب وحفظه بالسحابة'}</span>
             </button>
 
-            {mode === 'login' && (
-              <div className="pt-3 border-t border-slate-200 mt-2">
-                <div className="text-[11px] font-black text-slate-500 mb-2 flex items-center justify-between">
-                  <span>حسابات المنظومة الرسمية المعتمدة:</span>
-                  <span className="text-[10px] font-bold text-[#0D9488]">تعبئة سريعة بنقرة واحدة</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUsername('admin');
-                      setPassword('admin');
-                      setError(null);
-                    }}
-                    className="p-2 rounded-xl bg-white border border-slate-200 hover:border-[#D4AF37] hover:bg-[#D4AF37]/5 transition text-right cursor-pointer"
-                  >
-                    <div className="text-xs font-black text-[#0A1628]">مدير المنظومة</div>
-                    <div className="text-[10px] text-slate-500 font-mono">admin</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUsername('inspector1');
-                      setPassword('123');
-                      setError(null);
-                    }}
-                    className="p-2 rounded-xl bg-white border border-slate-200 hover:border-[#0D9488] hover:bg-[#0D9488]/5 transition text-right cursor-pointer"
-                  >
-                    <div className="text-xs font-black text-[#0A1628]">مفتش أول</div>
-                    <div className="text-[10px] text-slate-500 font-mono">inspector1</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUsername('viewer');
-                      setPassword('123');
-                      setError(null);
-                    }}
-                    className="p-2 rounded-xl bg-white border border-slate-200 hover:border-slate-400 hover:bg-slate-50 transition text-right cursor-pointer"
-                  >
-                    <div className="text-xs font-black text-[#0A1628]">مشاهد فقط</div>
-                    <div className="text-[10px] text-slate-500 font-mono">viewer</div>
-                  </button>
-                </div>
-              </div>
-            )}
+
 
             {/* Designer & Engineer Signature */}
             <div className="pt-3 border-t border-slate-200 mt-2 text-center">

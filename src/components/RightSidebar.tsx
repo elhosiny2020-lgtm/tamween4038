@@ -570,7 +570,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                         }`}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className={isActive ? 'text-[#D4AF37]' : 'text-[#5EEAD4]'}>
+                          <span className={`icon-bounce-hover ${isActive ? 'text-[#D4AF37]' : 'text-[#5EEAD4]'}`}>
                             {item.icon}
                           </span>
                           {!isCollapsed && <span className="truncate">{item.label}</span>}

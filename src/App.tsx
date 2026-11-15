@@ -4644,7 +4644,7 @@ export default function App() {
                     </thead>
 
                     {/* Table Body (Pure White & Very Light Gray with Dark Charcoal Text) */}
-                    <tbody className="divide-y divide-slate-200 font-semibold text-slate-800">
+                    <tbody className="divide-y divide-slate-200 font-black text-slate-900">
                       {sortedBakeries.length === 0 ? (
                         <tr>
                           <td colSpan={38} className="py-12 text-center text-slate-500 font-bold bg-white">
