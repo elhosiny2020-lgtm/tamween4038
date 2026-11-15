@@ -87,19 +87,22 @@ import {
   getCloudConnectionSnapshot,
   retrySupabaseConnection,
   CloudConnectionSnapshot,
-  applyRealtimeRowMutation,
-  mapSqlRowToBakery,
-  mapSqlRowToDebt,
-  mapSqlRowToVillage,
-  mapSqlRowToTask,
-  mapSqlRowToBranch,
-  mapSqlRowToUser,
   fetchHighDebtAlertsFromSupabase,
   syncHighDebtAlertsToSupabase,
   clearHighDebtAlertsInSupabase,
   subscribeToSupabaseHighDebtAlerts,
   recordRealtimeDiagnosticEvent,
 } from './lib/supabase';
+import {
+  applyGranularRowChangeToState,
+  batchSyncToDb,
+  DbMutationResult,
+  deleteRowFromDb,
+  flushRowMutationQueue,
+  resolveConflictWithServerRow,
+  saveRowToDb,
+} from './services/supabaseDb';
+import type { RowMutationTable } from './services/offlineMutationQueue';
 import { getExpirationAlerts } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
 import { HeaderCustomizerModal } from './components/HeaderCustomizerModal';
@@ -849,103 +852,58 @@ export default function App() {
         applyIncomingCloudState(supaData, remoteTimestamp);
       },
       onRowChange: (change) => {
+        if (change.table === 'high_debt_alerts') {
+          if (change.eventType === 'DELETE') {
+            const delId = String(change.oldRow?.id || '');
+            if (delId) {
+              setHighDebtNotifications((prev) => {
+                const updated = prev.filter((n) => String(n.id) !== delId);
+                try {
+                  localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(updated));
+                } catch {}
+                return updated;
+              });
+            }
+          } else if (change.newRow) {
+            setHighDebtNotifications((prev) => {
+              const incoming = change.newRow as HighDebtAlertNotification;
+              const merged = mergeHighDebtAlerts(prev, [incoming]);
+              try {
+                localStorage.setItem('TAMWEEN_HIGH_DEBT_NOTIFICATIONS', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+          }
+          return;
+        }
+
         setAppState((current) => {
           if (!current) return current;
-          const activeBranch = current.activeBranchId || DEFAULT_BRANCH_ID;
-          const rowBranch = change.newRow?.branch_id || change.oldRow?.branch_id;
-          if (rowBranch && rowBranch !== activeBranch) {
-            return current;
-          }
+          const nextState = applyGranularRowChangeToState(current, change as any);
+          if (nextState === current) return current;
 
-          let nextState: AppState | null = null;
-
-          if (change.table === 'bakeries') {
-            const nextBakeries = applyRealtimeRowMutation(
-              current.bakeries,
-              change.eventType,
-              change.newRow,
-              change.oldRow,
-              mapSqlRowToBakery
-            );
-            const synced = synchronizeBakeryAndDebts(nextBakeries, current.debts);
-            nextState = { ...current, bakeries: synced.bakeries, debts: synced.debts };
-          } else if (change.table === 'debts') {
-            const nextDebts = applyRealtimeRowMutation(
-              current.debts,
-              change.eventType,
-              change.newRow,
-              change.oldRow,
-              mapSqlRowToDebt
-            );
-            const synced = synchronizeBakeryAndDebts(current.bakeries, nextDebts);
-            nextState = { ...current, bakeries: synced.bakeries, debts: synced.debts };
-          } else if (change.table === 'villages') {
-            const existing = [...(current.villages || [])];
-            let nextVillages = existing;
-            if (change.eventType === 'DELETE') {
-              const delName = change.oldRow?.village_name || change.oldRow?.data_json?.village || change.oldRow?.data_json?.name;
-              if (delName) nextVillages = existing.filter((v) => v.village !== delName);
-            } else {
-              const mapped = mapSqlRowToVillage(change.newRow);
-              if (mapped) {
-                const idx = existing.findIndex((v) => v.village === mapped.village);
-                if (idx >= 0) existing[idx] = mapped;
-                else existing.push(mapped);
-                nextVillages = existing;
-              }
-            }
-            nextState = { ...current, villages: nextVillages };
-          } else if (change.table === 'daily_tasks') {
-            const nextTasks = applyRealtimeRowMutation(
-              current.dailyTasks || [],
-              change.eventType,
-              change.newRow,
-              change.oldRow,
-              mapSqlRowToTask
-            );
-            nextState = { ...current, dailyTasks: nextTasks };
-          } else if (change.table === 'branches') {
-            const nextBranches = applyRealtimeRowMutation(
-              current.branches || [],
-              change.eventType,
-              change.newRow,
-              change.oldRow,
-              mapSqlRowToBranch
-            );
-            nextState = { ...current, branches: nextBranches };
-          } else if (change.table === 'app_users') {
-            const nextUsers = applyRealtimeRowMutation(
-              current.users || [],
-              change.eventType,
-              change.newRow,
-              change.oldRow,
-              mapSqlRowToUser
-            );
-            nextState = { ...current, users: nextUsers };
-          } else if (change.table === 'system_config' && change.newRow?.payload) {
-            nextState = {
-              ...current,
-              systemConfig: {
-                ...current.systemConfig,
-                ...(change.newRow.payload as Partial<SystemConfig>),
-                logoBase64: DEFAULT_OFFICIAL_LOGO,
-              },
-            };
-          }
-
-          if (!nextState) return current;
-          const persistedCopy = nextState;
+          const persistedCopy = {
+            ...nextState,
+            systemConfig: {
+              ...nextState.systemConfig,
+              logoBase64: DEFAULT_OFFICIAL_LOGO,
+            },
+          };
+          latestAppStateRef.current = persistedCopy;
           queueMicrotask(() => {
+            setSaveTimestamp(getArabicTimestamp());
             recordRealtimeDiagnosticEvent({
               direction: 'APPSTATE',
               channel: 'APPSTATE_MEMORY',
               eventType: `ROW_APPLIED:${change.table}:${change.eventType}`,
+              sqlOperation: change.eventType,
               table: change.table,
+              affectedTable: change.table,
               summary: `تم تحديث كائن AppState فوراً استجابة لتعديل سجل في جدول (${change.table})`,
             });
             persistFullState(persistedCopy, { skipCloudSync: true }).catch(() => {});
           });
-          return nextState;
+          return persistedCopy;
         });
       },
     });
@@ -994,8 +952,101 @@ export default function App() {
     }
   }, [appState?.currentUser, hasShownDailyBriefingSession]);
 
-  // Async Optimistic Save with Supabase confirmation before showing success toast & automatic rollback on server failure
+  // Async Optimistic Save with Row-Level PostgreSQL/Supabase confirmation & conflict/error rollback
   const saveLockRef = React.useRef<Promise<void>>(Promise.resolve());
+
+  const commitRowMutation = useCallback(
+    (params: {
+      nextState: AppState;
+      toastMessage: string;
+      table?: RowMutationTable;
+      branchId?: string;
+      executeDb: () => Promise<DbMutationResult>;
+      patchReturnedRow?: (current: AppState, savedRow: any) => AppState;
+    }) => {
+      const previousState = latestAppStateRef.current;
+      latestAppStateRef.current = params.nextState;
+      setAppState(params.nextState);
+      setIsSavingPulse(true);
+      const ts = getArabicTimestamp();
+      const diskInfo = getActiveDiskBackupInfo();
+      const diskSuffix = diskInfo.hasHandle
+        ? ` (وتحديث النسخة الاحتياطية على القرص: ${diskInfo.fileName})`
+        : '';
+      const baseMsg = params.toastMessage + diskSuffix;
+      const effectiveBranchId =
+        params.branchId || params.nextState.activeBranchId || DEFAULT_BRANCH_ID;
+
+      saveLockRef.current = saveLockRef.current
+        .catch(() => {})
+        .then(async () => {
+          const res = await params.executeDb();
+          if (res.success) {
+            let confirmedState = latestAppStateRef.current || params.nextState;
+            if (res.row && params.patchReturnedRow) {
+              confirmedState = params.patchReturnedRow(confirmedState, res.row);
+              latestAppStateRef.current = confirmedState;
+              setAppState(confirmedState);
+            }
+            await persistFullState(confirmedState, { skipCloudSync: true }).catch(() => {});
+            setSaveTimestamp(ts);
+            setSaveToast({
+              id: Date.now(),
+              message: baseMsg,
+              timestamp: ts,
+              variant: 'success',
+            });
+          } else if (res.queuedOffline) {
+            await persistFullState(params.nextState, { skipCloudSync: true }).catch(() => {});
+            setSaveTimestamp(ts);
+            setSaveToast({
+              id: Date.now(),
+              message:
+                'انقطع الاتصال بالإنترنت — تم حفظ العملية بأمان في قائمة الانتظار وستُرسل تلقائياً فور عودة الاتصال.',
+              timestamp: ts,
+              variant: 'warning',
+            });
+          } else if (res.conflict && params.table && res.latestRow) {
+            const resolvedState = resolveConflictWithServerRow(
+              previousState || params.nextState,
+              params.table,
+              effectiveBranchId,
+              res.latestRow
+            );
+            latestAppStateRef.current = resolvedState;
+            setAppState(resolvedState);
+            await persistFullState(resolvedState, { skipCloudSync: true }).catch(() => {});
+            setSaveToast({
+              id: Date.now(),
+              message:
+                res.error ||
+                'تعارض تعديل متزامن: تم تحديث السجل من جهاز آخر وجلب أحدث نسخة من قاعدة البيانات.',
+              timestamp: ts,
+              variant: 'error',
+            });
+          } else {
+            if (previousState) {
+              latestAppStateRef.current = previousState;
+              setAppState(previousState);
+              await persistFullState(previousState, { skipCloudSync: true }).catch(() => {});
+            }
+            setSaveToast({
+              id: Date.now(),
+              message:
+                res.error ||
+                'تعذر حفظ التعديلات على قاعدة البيانات — تم التراجع عن التعديل محلياً.',
+              timestamp: ts,
+              variant: 'error',
+            });
+          }
+        })
+        .finally(() => {
+          setTimeout(() => setIsSavingPulse(false), 600);
+        });
+    },
+    []
+  );
+
   const triggerSave = useCallback((newState: AppState, toastMessage?: string) => {
     const previousState = latestAppStateRef.current;
     latestAppStateRef.current = newState;
@@ -1004,32 +1055,46 @@ export default function App() {
     const ts = getArabicTimestamp();
     const diskInfo = getActiveDiskBackupInfo();
     const diskSuffix = diskInfo.hasHandle ? ` (وتحديث النسخة الاحتياطية على القرص: ${diskInfo.fileName})` : '';
-    const baseMsg = (toastMessage || 'تم الحفظ والمزامنة مع Supabase بنجاح') + diskSuffix;
+    const baseMsg = (toastMessage || 'تم الحفظ والمزامنة مع قاعدة البيانات بنجاح') + diskSuffix;
+    const branchId = newState.activeBranchId || DEFAULT_BRANCH_ID;
 
     saveLockRef.current = saveLockRef.current
       .catch(() => {})
       .then(async () => {
-        const res = await persistFullState(newState);
-        const cloudEnabled = getSupabaseConfig().isConfigured;
+        const batchRes = await batchSyncToDb({
+          branchId,
+          data: newState,
+          pruneRemoved: true,
+          sqlOperation: 'UPDATE',
+          affectedTable: 'bakeries',
+        });
 
-        if (res.cloudSynced || !cloudEnabled) {
-          setSaveTimestamp(res.syncedAt || ts);
-          setSaveToast({
-            id: Date.now(),
-            message: baseMsg,
-            timestamp: res.syncedAt || ts,
-            variant: 'success',
-          });
-        } else if (res.queuedOffline) {
+        if (batchRes.success) {
+          await persistFullState(newState, { skipCloudSync: true }).catch(() => {});
           setSaveTimestamp(ts);
           setSaveToast({
             id: Date.now(),
-            message: 'انقطع الاتصال بالإنترنت — تم حفظ التعديل بأمان في قائمة الانتظار وسيُرسل تلقائياً عند عودة الشبكة.',
+            message: baseMsg,
             timestamp: ts,
-            variant: 'warning',
+            variant: 'success',
+          });
+          return;
+        }
+
+        // Offline fallback: persist full snapshot into offline queue so zero work is lost
+        const res = await persistFullState(newState);
+        if (res.cloudSynced || res.queuedOffline || batchRes.queuedOffline) {
+          setSaveTimestamp(res.syncedAt || ts);
+          setSaveToast({
+            id: Date.now(),
+            message:
+              res.queuedOffline || batchRes.queuedOffline
+                ? 'انقطع الاتصال بالإنترنت — تم حفظ التعديل بأمان في قائمة الانتظار وسيُرسل تلقائياً عند عودة الشبكة.'
+                : baseMsg,
+            timestamp: res.syncedAt || ts,
+            variant: res.queuedOffline || batchRes.queuedOffline ? 'warning' : 'success',
           });
         } else {
-          // Roll back optimistic state if the cloud server explicitly rejected the save while online
           if (previousState) {
             latestAppStateRef.current = previousState;
             setAppState(previousState);
@@ -1037,7 +1102,10 @@ export default function App() {
           }
           setSaveToast({
             id: Date.now(),
-            message: res.error || 'تعذر حفظ التعديلات على قاعدة بيانات Supabase — تم التراجع عن التعديل محلياً.',
+            message:
+              batchRes.error ||
+              res.error ||
+              'تعذر حفظ التعديلات على قاعدة بيانات Supabase — تم التراجع عن التعديل محلياً.',
             timestamp: ts,
             variant: 'error',
           });
@@ -1146,14 +1214,33 @@ export default function App() {
 
   const handleSaveDailyAlertConfig = (updatedConfig: DailyAlertConfig) => {
     if (!appState) return;
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+    const nextConfig = {
+      ...appState.systemConfig,
+      dailyAlertConfig: updatedConfig,
+    };
     const updatedState = {
       ...appState,
-      systemConfig: {
-        ...appState.systemConfig,
-        dailyAlertConfig: updatedConfig,
-      },
+      systemConfig: nextConfig,
     };
-    triggerSave(updatedState, `تم حفظ وتأكيد موعد التنبيه اليومي (${updatedConfig.alertTime}) بنجاح`);
+    commitRowMutation({
+      nextState: updatedState,
+      table: 'system_config',
+      branchId,
+      toastMessage: `تم حفظ وتأكيد موعد التنبيه اليومي (${updatedConfig.alertTime}) في قاعدة البيانات بنجاح`,
+      executeDb: () =>
+        saveRowToDb({
+          table: 'system_config',
+          branchId,
+          row: {
+            branchId,
+            systemConfig: nextConfig,
+            columnTitles: appState.columnTitles,
+            activityStatuses: appState.activityStatuses,
+          },
+          operation: 'UPDATE',
+        }),
+    });
   };
 
   const handleTriggerTestAlert = (matchingBakeries: { bakery: Bakery; docName: string; expiryDate: string; daysDiff: number }[]) => {
@@ -1611,18 +1698,29 @@ export default function App() {
 
   // Handle Safe Save and Logout (حفظ آمن وتسجيل خروج فوري)
   const handleSafeSaveAndLogout = useCallback(async () => {
-    if (!appState) return;
+    const current = latestAppStateRef.current || appState;
+    if (!current) return;
     try {
-      triggerSave(appState, 'جاري الحفظ الآمن لكافة بيانات المنظومة وقفل الجلسة...');
-      await persistFullState(appState);
-      setTimeout(() => {
-        handleLogout('تم الحفظ الآمن لكافة السجلات والبيانات وتأمين تسجيل الخروج بنجاح.');
-      }, 350);
+      setIsSavingPulse(true);
+      await saveLockRef.current.catch(() => {});
+      await flushRowMutationQueue().catch(() => {});
+      const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+      const batchRes = await batchSyncToDb({
+        branchId,
+        data: current,
+        pruneRemoved: true,
+        sqlOperation: 'UPDATE',
+        affectedTable: 'bakeries',
+      });
+      await persistFullState(current, { skipCloudSync: batchRes.success }).catch(() => {});
+      handleLogout('تم الحفظ الآمن لكافة السجلات والبيانات وتأمين تسجيل الخروج بنجاح.');
     } catch (err) {
       console.error('Error during safe save and logout:', err);
       handleLogout('تم تسجيل الخروج وقفل الجلسة بنجاح.');
+    } finally {
+      setIsSavingPulse(false);
     }
-  }, [appState, triggerSave, handleLogout]);
+  }, [appState, handleLogout]);
 
   const [isSyncingWithCloud, setIsSyncingWithCloud] = useState(false);
 
@@ -1840,9 +1938,20 @@ export default function App() {
       clearTimeout(idleTimeout);
       idleTimeout = setTimeout(async () => {
         // Pre-logout autosave of all registered data
-        if (appStateRef.current) {
+        const latest = latestAppStateRef.current || appStateRef.current;
+        if (latest) {
           try {
-            await persistFullState(appStateRef.current);
+            await saveLockRef.current.catch(() => {});
+            await flushRowMutationQueue().catch(() => {});
+            const branchId = latest.activeBranchId || DEFAULT_BRANCH_ID;
+            const batchRes = await batchSyncToDb({
+              branchId,
+              data: latest,
+              pruneRemoved: true,
+              sqlOperation: 'UPDATE',
+              affectedTable: 'bakeries',
+            });
+            await persistFullState(latest, { skipCloudSync: batchRes.success }).catch(() => {});
           } catch (e) {
             console.error('Pre-logout autosave failed:', e);
           }
@@ -1950,10 +2059,19 @@ export default function App() {
             users: updatedUsers,
           };
           const mergedState = performGmailDriveAdditiveMerge(baseWithUser, scopedNewUser);
-          triggerSave(
-            { ...mergedState, currentUser: null },
-            `تم تسجيل وحفظ المستخدم الجديد (${scopedNewUser.username}) في ملف صلاحيات (${appState.systemConfig.administrationTitle}) ومزامنته سحابياً بنجاح`
-          );
+          commitRowMutation({
+            nextState: { ...mergedState, currentUser: null },
+            table: 'app_users',
+            branchId: activeBranchId,
+            toastMessage: `تم تسجيل وحفظ المستخدم الجديد (${scopedNewUser.username}) في قاعدة البيانات بنجاح`,
+            executeDb: () =>
+              saveRowToDb({
+                table: 'app_users',
+                branchId: activeBranchId,
+                row: scopedNewUser,
+                operation: 'INSERT',
+              }),
+          });
         }}
       />
     );
@@ -1966,6 +2084,7 @@ export default function App() {
   ).length;
 
   const handleSendInboxMessage = (msgInput: Omit<InboxChatMessage, 'id' | 'timestamp' | 'readBy'>) => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const newMsg: InboxChatMessage = {
       ...msgInput,
       id: `msg-${Date.now()}`,
@@ -1979,36 +2098,77 @@ export default function App() {
       readBy: [appState.currentUser?.username || 'admin'],
     };
     const updatedMessages = [...inboxMessages, newMsg];
-    triggerSave(
-      { ...appState, inboxMessages: updatedMessages },
-      'تم إرسال الرسالة / التعليمات الإدارية إلى صندوق الوارد لجميع الأطراف بنجاح'
-    );
+    commitRowMutation({
+      nextState: { ...appState, inboxMessages: updatedMessages },
+      table: 'inbox_messages',
+      branchId,
+      toastMessage: 'تم إرسال الرسالة / التعليمات الإدارية وحفظها ومزامنتها لجميع الأجهزة بنجاح',
+      executeDb: () =>
+        saveRowToDb({
+          table: 'inbox_messages',
+          branchId,
+          row: newMsg,
+          operation: 'INSERT',
+        }),
+    });
   };
 
   const handleDeleteInboxMessage = (msgId: string) => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const updatedMessages = inboxMessages.filter((m) => m.id !== msgId);
-    triggerSave({ ...appState, inboxMessages: updatedMessages }, 'تم حذف الرسالة من صندوق الوارد');
+    commitRowMutation({
+      nextState: { ...appState, inboxMessages: updatedMessages },
+      table: 'inbox_messages',
+      branchId,
+      toastMessage: 'تم حذف الرسالة من قاعدة البيانات ومزامنة صندوق الوارد',
+      executeDb: () =>
+        deleteRowFromDb({
+          table: 'inbox_messages',
+          id: msgId,
+          branchId,
+        }),
+    });
   };
 
   const handleMarkAllInboxRead = () => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const username = appState.currentUser?.username || 'admin';
-    const hasUnread = inboxMessages.some((m) => !m.readBy || !m.readBy.includes(username));
-    if (!hasUnread) return;
+    const unreadMsgs = inboxMessages.filter((m) => !m.readBy || !m.readBy.includes(username));
+    if (unreadMsgs.length === 0) return;
     const updatedMessages = inboxMessages.map((m) => ({
       ...m,
       readBy: Array.from(new Set([...(m.readBy || []), username])),
     }));
-    setAppState((prev) => (prev ? { ...prev, inboxMessages: updatedMessages } : null));
-    persistFullState({ ...appState, inboxMessages: updatedMessages });
+    const nextState = { ...appState, inboxMessages: updatedMessages };
+    latestAppStateRef.current = nextState;
+    setAppState(nextState);
+    persistFullState(nextState, { skipCloudSync: true }).catch(() => {});
+    Promise.all(
+      unreadMsgs.map((m) =>
+        saveRowToDb({
+          table: 'inbox_messages',
+          branchId,
+          row: { ...m, readBy: Array.from(new Set([...(m.readBy || []), username])) },
+          operation: 'UPDATE',
+        })
+      )
+    ).catch(() => {});
   };
 
   // Handlers for Bakery
   const handleSaveBakery = (bakery: Bakery) => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const existingIndex = appState.bakeries.findIndex((b) => b.id === bakery.id);
+    const existingBakery = existingIndex >= 0 ? appState.bakeries[existingIndex] : undefined;
+    const expectedVersion =
+      typeof (existingBakery as any)?.version === 'number'
+        ? (existingBakery as any).version
+        : undefined;
+
     let updated: Bakery[];
     if (existingIndex >= 0) {
       updated = [...appState.bakeries];
-      updated[existingIndex] = bakery;
+      updated[existingIndex] = { ...existingBakery, ...bakery };
     } else {
       updated = [bakery, ...appState.bakeries];
     }
@@ -2024,15 +2184,60 @@ export default function App() {
       }
     );
     const synced = synchronizeBakeryAndDebts(unifiedUpdated, appState.debts);
-    triggerSave(
-      { ...appState, bakeries: synced.bakeries, debts: synced.debts },
-      existingIndex >= 0
-        ? `تم حفظ وتعديل بيانات مخبز (${bakery.bakeryOwnerName}) وتوحيد إحصائيات الوحدة المحلية ومزامنة السجلات بنجاح`
-        : `تم إضافة وحفظ بيانات مخبز (${bakery.bakeryOwnerName}) وتوحيد إحصائيات الوحدة المحلية بنجاح`
-    );
+    const savedBakery = synced.bakeries.find((b) => b.id === bakery.id) || bakery;
+
+    // Identify sibling bakeries in the same local unit whose demographics were unified
+    const siblingUpdates = synced.bakeries.filter((b) => {
+      if (b.id === bakery.id) return false;
+      const prev = appState.bakeries.find((p) => p.id === b.id);
+      return (
+        prev &&
+        (prev.villagePopulation !== b.villagePopulation ||
+          prev.beneficiaries2023 !== b.beneficiaries2023 ||
+          prev.beneficiaries2024 !== b.beneficiaries2024 ||
+          prev.beneficiaries2025 !== b.beneficiaries2025 ||
+          prev.perCapitaAverage !== b.perCapitaAverage)
+      );
+    });
+
+    commitRowMutation({
+      nextState: { ...appState, bakeries: synced.bakeries, debts: synced.debts },
+      table: 'bakeries',
+      branchId,
+      toastMessage:
+        existingIndex >= 0
+          ? `تم حفظ وتعديل بيانات مخبز (${bakery.bakeryOwnerName}) وتوحيد إحصائيات الوحدة المحلية ومزامنة السجلات بنجاح`
+          : `تم إضافة وحفظ بيانات مخبز (${bakery.bakeryOwnerName}) وتوحيد إحصائيات الوحدة المحلية بنجاح`,
+      executeDb: async () => {
+        const primaryRes = await saveRowToDb({
+          table: 'bakeries',
+          branchId,
+          row: savedBakery,
+          operation: existingIndex >= 0 ? 'UPDATE' : 'INSERT',
+          expectedVersion,
+        });
+        if (!primaryRes.success) return primaryRes;
+        if (siblingUpdates.length > 0) {
+          for (const sib of siblingUpdates) {
+            await saveRowToDb({
+              table: 'bakeries',
+              branchId,
+              row: sib,
+              operation: 'UPDATE',
+            }).catch(() => {});
+          }
+        }
+        return primaryRes;
+      },
+      patchReturnedRow: (current, savedRow) => ({
+        ...current,
+        bakeries: current.bakeries.map((b) => (b.id === savedRow.id ? { ...b, ...savedRow } : b)),
+      }),
+    });
   };
 
   const handleRecalculateAllDatabaseEquations = () => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     // 1. Save a safety snapshot before global recalculation
     try {
       localStorage.setItem(
@@ -2047,37 +2252,67 @@ export default function App() {
 
     // 2. Execute full database recalculation
     const result = recalculateAllDatabaseEquations(appState.bakeries, appState.debts);
-    triggerSave(
-      {
-        ...appState,
-        bakeries: result.bakeries,
-        debts: result.debts,
-      },
-      `تم تنفيذ احتساب المعادلات لجميع سجلات قاعدة البيانات (${result.bakeries.length} مخبز و ${result.debts.length} مديونية) بنجاح!`
-    );
+    const nextState = {
+      ...appState,
+      bakeries: result.bakeries,
+      debts: result.debts,
+    };
+    commitRowMutation({
+      nextState,
+      branchId,
+      toastMessage: `تم تنفيذ احتساب المعادلات لجميع سجلات قاعدة البيانات (${result.bakeries.length} مخبز و ${result.debts.length} مديونية) ومزامنتها بنجاح!`,
+      executeDb: () =>
+        batchSyncToDb({
+          branchId,
+          data: { bakeries: result.bakeries, debts: result.debts },
+          pruneRemoved: false,
+          sqlOperation: 'UPDATE',
+          affectedTable: 'bakeries',
+        }),
+    });
     setIsAuditModalOpen(true);
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     setPendingConfirm({
       title: 'تأكيد حذف المخبز نهائياً',
       message: `هل أنت متأكد من حذف المخبز الخاص بـ "${ownerName}" نهائياً من المنظومة؟`,
       confirmLabel: 'حذف المخبز نهائياً',
       variant: 'danger',
       onConfirm: () => {
-        const updated = appState.bakeries.filter((b) => String(b.id) !== String(bakeryId));
-        triggerSave({ ...appState, bakeries: updated }, `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات بنجاح`);
+        const updatedBakeries = appState.bakeries.filter((b) => String(b.id) !== String(bakeryId));
+        const updatedDebts = appState.debts.filter((d) => String(d.bakeryId) !== String(bakeryId));
+        commitRowMutation({
+          nextState: { ...appState, bakeries: updatedBakeries, debts: updatedDebts },
+          table: 'bakeries',
+          branchId,
+          toastMessage: `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات وجميع الأجهزة بنجاح`,
+          executeDb: () =>
+            deleteRowFromDb({
+              table: 'bakeries',
+              id: bakeryId,
+              branchId,
+            }),
+        });
       },
     });
   };
 
   // Handlers for Debts
   const handleSaveDebt = (debt: DebtRecord) => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const existingIndex = appState.debts.findIndex((d) => String(d.id) === String(debt.id));
+    const existingDebt = existingIndex >= 0 ? appState.debts[existingIndex] : undefined;
+    const expectedVersion =
+      typeof (existingDebt as any)?.version === 'number'
+        ? (existingDebt as any).version
+        : undefined;
+
     let updated: DebtRecord[];
     if (existingIndex >= 0) {
       updated = [...appState.debts];
-      updated[existingIndex] = debt;
+      updated[existingIndex] = { ...existingDebt, ...debt };
     } else {
       updated = [debt, ...appState.debts];
     }
@@ -2104,17 +2339,48 @@ export default function App() {
       ? ` — ⚠️ تنبيه: تجاوزت المديونية (${savedDebt.netRemainingDebt.toLocaleString('en-US')} ج.م) حد التنبيه (${alertThreshold.toLocaleString('en-US')} ج.م) وتم إضافته لسجل التنبيهات!`
       : '';
 
-    triggerSave(
-      { ...appState, bakeries: synced.bakeries, debts: synced.debts },
-      (existingIndex >= 0
-        ? 'تم تعديل وحفظ قيد المديونية وإعادة احتساب الأرصدة بنجاح'
-        : 'تم إضافة وتسجيل قيد المديونية وإعادة احتساب الأرصدة بنجاح') + alertSuffix
-    );
+    commitRowMutation({
+      nextState: { ...appState, bakeries: synced.bakeries, debts: synced.debts },
+      table: 'debts',
+      branchId,
+      toastMessage:
+        (existingIndex >= 0
+          ? 'تم تعديل وحفظ قيد المديونية وإعادة احتساب الأرصدة ومزامنتها بنجاح'
+          : 'تم إضافة وتسجيل قيد المديونية وإعادة احتساب الأرصدة ومزامنتها بنجاح') + alertSuffix,
+      executeDb: () =>
+        saveRowToDb({
+          table: 'debts',
+          branchId,
+          row: savedDebt,
+          operation: existingIndex >= 0 ? 'UPDATE' : 'INSERT',
+          expectedVersion,
+        }),
+      patchReturnedRow: (current, returnedDebt) => {
+        const resynced = synchronizeBakeryAndDebts(
+          current.bakeries,
+          current.debts.map((d) => (String(d.id) === String(returnedDebt.id) ? { ...d, ...returnedDebt } : d))
+        );
+        return { ...current, bakeries: resynced.bakeries, debts: resynced.debts };
+      },
+    });
   };
 
   const handleDeleteDebt = (debtId: string) => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const updated = appState.debts.filter((d) => String(d.id) !== String(debtId));
-    triggerSave({ ...appState, debts: updated }, 'تم حذف قيد المديونية وتحديث قاعدة البيانات بنجاح');
+    const synced = synchronizeBakeryAndDebts(appState.bakeries, updated);
+    commitRowMutation({
+      nextState: { ...appState, bakeries: synced.bakeries, debts: synced.debts },
+      table: 'debts',
+      branchId,
+      toastMessage: 'تم حذف قيد المديونية وتحديث الأرصدة وجميع الأجهزة بنجاح',
+      executeDb: () =>
+        deleteRowFromDb({
+          table: 'debts',
+          id: debtId,
+          branchId,
+        }),
+    });
   };
 
   // Quick 1-click partition save
@@ -3287,6 +3553,7 @@ export default function App() {
               saveTimestamp={saveTimestamp}
               onForceReconnect={handleRetryConnection}
               onForceSyncNow={async () => {
+                await flushRowMutationQueue().catch(() => {});
                 await triggerSave(appState, 'تم دفع وتحديث حالة AppState لحظياً عبر قنوات Realtime بنجاح');
                 await handleManualCloudPull();
               }}
@@ -3301,6 +3568,7 @@ export default function App() {
                         bakeries: [],
                         debts: [],
                         dailyTasks: [],
+                        inboxMessages: [],
                       }
                     : prev
                 );
@@ -3343,33 +3611,89 @@ export default function App() {
               currentUser={appState.currentUser}
               onSaveDebt={handleSaveDebt}
               onDeleteDebt={handleDeleteDebt}
-              onUpdateEntities={(ents) =>
-                triggerSave({ ...appState, issuingEntities: ents }, 'تم تحديث قائمة الجهات المحررة بنجاح')
-              }
-              onUpdateViolations={(viols) =>
-                triggerSave({ ...appState, violationTypes: viols }, 'تم تحديث قائمة أنواع المخالفات بنجاح')
-              }
+              onUpdateEntities={(ents) => {
+                const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+                commitRowMutation({
+                  nextState: { ...appState, issuingEntities: ents },
+                  table: 'dropdown_lists',
+                  branchId,
+                  toastMessage: 'تم تحديث قائمة الجهات المحررة في قاعدة البيانات بنجاح',
+                  executeDb: () =>
+                    saveRowToDb({
+                      table: 'dropdown_lists',
+                      branchId,
+                      row: {
+                        id: `${branchId}__issuingEntities`,
+                        branchId,
+                        listKey: 'issuingEntities',
+                        options: ents,
+                      },
+                      operation: 'UPDATE',
+                    }),
+                });
+              }}
+              onUpdateViolations={(viols) => {
+                const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+                commitRowMutation({
+                  nextState: { ...appState, violationTypes: viols },
+                  table: 'dropdown_lists',
+                  branchId,
+                  toastMessage: 'تم تحديث قائمة أنواع المخالفات في قاعدة البيانات بنجاح',
+                  executeDb: () =>
+                    saveRowToDb({
+                      table: 'dropdown_lists',
+                      branchId,
+                      row: {
+                        id: `${branchId}__violationTypes`,
+                        branchId,
+                        listKey: 'violationTypes',
+                        options: viols,
+                      },
+                      operation: 'UPDATE',
+                    }),
+                });
+              }}
               onRenameEntity={(oldName, newName) => {
                 if (!oldName.trim() || !newName.trim() || oldName === newName) return;
+                const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
                 const updatedEntities = appState.issuingEntities.map((e) => (e === oldName ? newName : e));
                 const updatedDebts = appState.debts.map((d) =>
                   d.issuingEntity === oldName ? { ...d, issuingEntity: newName } : d
                 );
-                triggerSave(
-                  { ...appState, issuingEntities: updatedEntities, debts: updatedDebts },
-                  `تم تعديل الجهة المحررة إلى "${newName}" وتحديث القيود المرتبطة بها`
-                );
+                commitRowMutation({
+                  nextState: { ...appState, issuingEntities: updatedEntities, debts: updatedDebts },
+                  branchId,
+                  toastMessage: `تم تعديل الجهة المحررة إلى "${newName}" وتحديث القيود المرتبطة بها في قاعدة البيانات`,
+                  executeDb: () =>
+                    batchSyncToDb({
+                      branchId,
+                      data: { issuingEntities: updatedEntities, debts: updatedDebts },
+                      pruneRemoved: false,
+                      sqlOperation: 'UPDATE',
+                      affectedTable: 'debts',
+                    }),
+                });
               }}
               onRenameViolation={(oldName, newName) => {
                 if (!oldName.trim() || !newName.trim() || oldName === newName) return;
+                const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
                 const updatedViolations = appState.violationTypes.map((v) => (v === oldName ? newName : v));
                 const updatedDebts = appState.debts.map((d) =>
                   d.violationType === oldName ? { ...d, violationType: newName } : d
                 );
-                triggerSave(
-                  { ...appState, violationTypes: updatedViolations, debts: updatedDebts },
-                  `تم تعديل نوع المخالفة إلى "${newName}" وتحديث القيود المرتبطة بها`
-                );
+                commitRowMutation({
+                  nextState: { ...appState, violationTypes: updatedViolations, debts: updatedDebts },
+                  branchId,
+                  toastMessage: `تم تعديل نوع المخالفة إلى "${newName}" وتحديث القيود المرتبطة بها في قاعدة البيانات`,
+                  executeDb: () =>
+                    batchSyncToDb({
+                      branchId,
+                      data: { violationTypes: updatedViolations, debts: updatedDebts },
+                      pruneRemoved: false,
+                      sqlOperation: 'UPDATE',
+                      affectedTable: 'debts',
+                    }),
+                });
               }}
               filterBakeryId={debtFilterBakeryId}
               onClearBakeryFilter={() => setDebtFilterBakeryId(undefined)}
@@ -4683,35 +5007,98 @@ export default function App() {
           currentUser={appState.currentUser}
           onAddActivityStatus={(newStatus) => {
             if (!appState.activityStatuses.includes(newStatus)) {
-              triggerSave({
-                ...appState,
-                activityStatuses: [...appState.activityStatuses, newStatus],
+              const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+              const updatedStatuses = [...appState.activityStatuses, newStatus];
+              commitRowMutation({
+                nextState: { ...appState, activityStatuses: updatedStatuses },
+                table: 'dropdown_lists',
+                branchId,
+                toastMessage: 'تم إضافة حالة النشاط الجديدة وحفظها في قاعدة البيانات بنجاح',
+                executeDb: async () => {
+                  const res = await saveRowToDb({
+                    table: 'dropdown_lists',
+                    branchId,
+                    row: {
+                      id: `${branchId}__activityStatuses`,
+                      branchId,
+                      listKey: 'activityStatuses',
+                      options: updatedStatuses,
+                    },
+                    operation: 'UPDATE',
+                  });
+                  await saveRowToDb({
+                    table: 'system_config',
+                    branchId,
+                    row: {
+                      branchId,
+                      systemConfig: appState.systemConfig,
+                      columnTitles: appState.columnTitles,
+                      activityStatuses: updatedStatuses,
+                    },
+                    operation: 'UPDATE',
+                  }).catch(() => {});
+                  return res;
+                },
               });
             }
           }}
           onAddLocalUnit={(villageName, newUnit) => {
-            const exists = appState.villages.some((v) => v.village === villageName);
-            const updatedVillages = exists
-              ? appState.villages.map((v) => {
-                  if (v.village === villageName && newUnit && !v.localUnits.includes(newUnit)) {
-                    return { ...v, localUnits: [...v.localUnits, newUnit] };
-                  }
-                  return v;
-                })
-              : [
-                  ...appState.villages,
-                  { village: villageName, localUnits: newUnit ? [newUnit] : [] },
-                ];
-            triggerSave({ ...appState, villages: updatedVillages });
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const existingVillage = appState.villages.find((v) => v.village === villageName);
+            const targetVillage: VillageHierarchy = existingVillage
+              ? {
+                  village: villageName,
+                  localUnits:
+                    newUnit && !existingVillage.localUnits.includes(newUnit)
+                      ? [...existingVillage.localUnits, newUnit]
+                      : existingVillage.localUnits,
+                }
+              : { village: villageName, localUnits: newUnit ? [newUnit] : [] };
+            const updatedVillages = existingVillage
+              ? appState.villages.map((v) => (v.village === villageName ? targetVillage : v))
+              : [...appState.villages, targetVillage];
+            commitRowMutation({
+              nextState: { ...appState, villages: updatedVillages },
+              table: 'villages',
+              branchId,
+              toastMessage: 'تم حفظ القرية والوحدة المحلية في قاعدة البيانات بنجاح',
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'villages',
+                  branchId,
+                  row: {
+                    id: `${branchId}__${villageName}`,
+                    branchId,
+                    village: villageName,
+                    localUnits: targetVillage.localUnits,
+                  },
+                  operation: existingVillage ? 'UPDATE' : 'INSERT',
+                }),
+            });
           }}
           onUpdateDropdownList={(listKey, updatedList) => {
-            triggerSave(
-              {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            commitRowMutation({
+              nextState: {
                 ...appState,
                 [listKey]: updatedList,
               },
-              'تم تحديث وحفظ القائمة المنسدلة بنجاح'
-            );
+              table: 'dropdown_lists',
+              branchId,
+              toastMessage: 'تم تحديث وحفظ القائمة المنسدلة في قاعدة البيانات بنجاح',
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'dropdown_lists',
+                  branchId,
+                  row: {
+                    id: `${branchId}__${listKey}`,
+                    branchId,
+                    listKey,
+                    options: updatedList,
+                  },
+                  operation: 'UPDATE',
+                }),
+            });
           }}
           onOpenMasterDropdownEditor={() => {
             setIsBakeryModalOpen(false);
@@ -4730,9 +5117,44 @@ export default function App() {
           tasks={appState.dailyTasks || []}
           bakeries={appState.bakeries}
           currentUser={appState.currentUser}
-          onSaveTasks={(updatedTasks, toastMessage) =>
-            triggerSave({ ...appState, dailyTasks: updatedTasks }, toastMessage)
-          }
+          onSaveTasks={(updatedTasks, toastMessage) => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const prevTasks = appState.dailyTasks || [];
+            const nextMap = new Map(updatedTasks.map((t) => [String(t.id), t]));
+            const deletedTasks = prevTasks.filter((t) => !nextMap.has(String(t.id)));
+            const changedTasks = updatedTasks.filter((t) => {
+              const prev = prevTasks.find((p) => String(p.id) === String(t.id));
+              return !prev || JSON.stringify(prev) !== JSON.stringify(t);
+            });
+            commitRowMutation({
+              nextState: { ...appState, dailyTasks: updatedTasks },
+              table: 'daily_tasks',
+              branchId,
+              toastMessage: toastMessage || 'تم حفظ المهام اليومية في قاعدة البيانات بنجاح',
+              executeDb: async () => {
+                let lastRes: DbMutationResult = { success: true };
+                for (const del of deletedTasks) {
+                  lastRes = await deleteRowFromDb({
+                    table: 'daily_tasks',
+                    id: del.id,
+                    branchId,
+                  });
+                  if (!lastRes.success) return lastRes;
+                }
+                for (const chg of changedTasks) {
+                  const isNew = !prevTasks.some((p) => String(p.id) === String(chg.id));
+                  lastRes = await saveRowToDb({
+                    table: 'daily_tasks',
+                    branchId,
+                    row: chg,
+                    operation: isNew ? 'INSERT' : 'UPDATE',
+                  });
+                  if (!lastRes.success) return lastRes;
+                }
+                return lastRes;
+              },
+            });
+          }}
         />
       )}
 
@@ -4773,9 +5195,27 @@ export default function App() {
           isOpen={isColumnModalOpen}
           onClose={() => setIsColumnModalOpen(false)}
           titles={appState.columnTitles}
-          onSaveTitles={(updatedTitles) =>
-            triggerSave({ ...appState, columnTitles: updatedTitles }, 'تم حفظ وتحديث مسميات رؤوس الخانات بنجاح')
-          }
+          onSaveTitles={(updatedTitles) => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            commitRowMutation({
+              nextState: { ...appState, columnTitles: updatedTitles },
+              table: 'system_config',
+              branchId,
+              toastMessage: 'تم حفظ وتحديث مسميات رؤوس الخانات في قاعدة البيانات بنجاح',
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'system_config',
+                  branchId,
+                  row: {
+                    branchId,
+                    systemConfig: appState.systemConfig,
+                    columnTitles: updatedTitles,
+                    activityStatuses: appState.activityStatuses,
+                  },
+                  operation: 'UPDATE',
+                }),
+            });
+          }}
         />
       )}
 
@@ -4827,9 +5267,40 @@ export default function App() {
           onClose={() => setIsActivityModalOpen(false)}
           statuses={appState.activityStatuses}
           bakeries={appState.bakeries}
-          onSaveStatuses={(updatedStatuses) =>
-            triggerSave({ ...appState, activityStatuses: updatedStatuses }, 'تم حفظ وتحديث حالات نشاط المخابز بنجاح')
-          }
+          onSaveStatuses={(updatedStatuses) => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            commitRowMutation({
+              nextState: { ...appState, activityStatuses: updatedStatuses },
+              table: 'system_config',
+              branchId,
+              toastMessage: 'تم حفظ وتحديث حالات نشاط المخابز في قاعدة البيانات بنجاح',
+              executeDb: async () => {
+                const res = await saveRowToDb({
+                  table: 'system_config',
+                  branchId,
+                  row: {
+                    branchId,
+                    systemConfig: appState.systemConfig,
+                    columnTitles: appState.columnTitles,
+                    activityStatuses: updatedStatuses,
+                  },
+                  operation: 'UPDATE',
+                });
+                await saveRowToDb({
+                  table: 'dropdown_lists',
+                  branchId,
+                  row: {
+                    id: `${branchId}__activityStatuses`,
+                    branchId,
+                    listKey: 'activityStatuses',
+                    options: updatedStatuses,
+                  },
+                  operation: 'UPDATE',
+                }).catch(() => {});
+                return res;
+              },
+            });
+          }}
         />
       )}
 
@@ -4839,9 +5310,27 @@ export default function App() {
           isOpen={isHeaderModalOpen}
           onClose={() => setIsHeaderModalOpen(false)}
           config={appState.systemConfig}
-          onSaveConfig={(updatedConfig) =>
-            triggerSave({ ...appState, systemConfig: updatedConfig }, 'تم حفظ وتحديث إعدادات النظام والترويسة وإعدادات التذكير بنجاح')
-          }
+          onSaveConfig={(updatedConfig) => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            commitRowMutation({
+              nextState: { ...appState, systemConfig: updatedConfig },
+              table: 'system_config',
+              branchId,
+              toastMessage: 'تم حفظ وتحديث إعدادات النظام والترويسة في قاعدة البيانات بنجاح',
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'system_config',
+                  branchId,
+                  row: {
+                    branchId,
+                    systemConfig: updatedConfig,
+                    columnTitles: appState.columnTitles,
+                    activityStatuses: appState.activityStatuses,
+                  },
+                  operation: 'UPDATE',
+                }),
+            });
+          }}
           onOpenDailyAlertSettings={() => setIsDailySettingsModalOpen(true)}
         />
       )}
@@ -4852,9 +5341,49 @@ export default function App() {
           isOpen={isVillageModalOpen}
           onClose={() => setIsVillageModalOpen(false)}
           villages={appState.villages}
-          onSaveVillages={(updatedVillages) =>
-            triggerSave({ ...appState, villages: updatedVillages }, 'تم حفظ وتحديث القرى والوحدات المحلية بنجاح')
-          }
+          onSaveVillages={(updatedVillages) => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const prevVillages = appState.villages || [];
+            const nextNames = new Set(updatedVillages.map((v) => v.village));
+            const deleted = prevVillages.filter((v) => !nextNames.has(v.village));
+            const changed = updatedVillages.filter((v) => {
+              const prev = prevVillages.find((p) => p.village === v.village);
+              return !prev || JSON.stringify(prev.localUnits) !== JSON.stringify(v.localUnits);
+            });
+            commitRowMutation({
+              nextState: { ...appState, villages: updatedVillages },
+              table: 'villages',
+              branchId,
+              toastMessage: 'تم حفظ وتحديث القرى والوحدات المحلية في قاعدة البيانات بنجاح',
+              executeDb: async () => {
+                let lastRes: DbMutationResult = { success: true };
+                for (const del of deleted) {
+                  lastRes = await deleteRowFromDb({
+                    table: 'villages',
+                    id: `${branchId}__${del.village}`,
+                    branchId,
+                  });
+                  if (!lastRes.success) return lastRes;
+                }
+                for (const chg of changed) {
+                  const isNew = !prevVillages.some((p) => p.village === chg.village);
+                  lastRes = await saveRowToDb({
+                    table: 'villages',
+                    branchId,
+                    row: {
+                      id: `${branchId}__${chg.village}`,
+                      branchId,
+                      village: chg.village,
+                      localUnits: chg.localUnits,
+                    },
+                    operation: isNew ? 'INSERT' : 'UPDATE',
+                  });
+                  if (!lastRes.success) return lastRes;
+                }
+                return lastRes;
+              },
+            });
+          }}
         />
       )}
 
@@ -5470,18 +5999,34 @@ export default function App() {
           appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD
         }
         onUpdateThreshold={(newThreshold) => {
+          const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+          const nextConfig: SystemConfig = {
+            ...appState.systemConfig,
+            debtAlertThreshold: newThreshold,
+          };
           const updatedState: AppState = {
             ...appState,
-            systemConfig: {
-              ...appState.systemConfig,
-              debtAlertThreshold: newThreshold,
-            },
+            systemConfig: nextConfig,
           };
           syncHighDebtAlertsToSupabase(highDebtNotifications, newThreshold).catch(() => {});
-          triggerSave(
-            updatedState,
-            `تم تحديث حد التنبيه التلقائي للمديونية إلى (${newThreshold.toLocaleString('en-US')} ج.م) ومزامنته على Supabase`
-          );
+          commitRowMutation({
+            nextState: updatedState,
+            table: 'system_config',
+            branchId,
+            toastMessage: `تم تحديث حد التنبيه التلقائي للمديونية إلى (${newThreshold.toLocaleString('en-US')} ج.م) في قاعدة البيانات بنجاح`,
+            executeDb: () =>
+              saveRowToDb({
+                table: 'system_config',
+                branchId,
+                row: {
+                  branchId,
+                  systemConfig: nextConfig,
+                  columnTitles: appState.columnTitles,
+                  activityStatuses: appState.activityStatuses,
+                },
+                operation: 'UPDATE',
+              }),
+          });
         }}
         onMarkAsRead={(id) => {
           const threshold =
@@ -5542,12 +6087,37 @@ export default function App() {
           handleSwitchBranch(branchId, appState.branches || getBranchesList());
         }}
         onBranchesChange={(updatedBranches, nextBranchId) => {
+          const prevBranches = appState.branches || getBranchesList();
+          const nextIds = new Set(updatedBranches.map((b) => b.id));
+          const removedBranches = prevBranches.filter((b) => !nextIds.has(b.id));
           saveBranchesList(updatedBranches);
           const currentBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
           const targetBranchId = nextBranchId || currentBranchId;
           const activeObj = updatedBranches.find((b) => b.id === targetBranchId) || updatedBranches[0];
 
+          const syncBranchesToPg = async () => {
+            let lastRes: DbMutationResult = { success: true };
+            for (const rem of removedBranches) {
+              lastRes = await deleteRowFromDb({
+                table: 'branches',
+                id: rem.id,
+                branchId: rem.id,
+              });
+            }
+            for (const br of updatedBranches) {
+              const isNew = !prevBranches.some((p) => p.id === br.id);
+              lastRes = await saveRowToDb({
+                table: 'branches',
+                branchId: br.id,
+                row: br,
+                operation: isNew ? 'INSERT' : 'UPDATE',
+              });
+            }
+            return lastRes;
+          };
+
           if (targetBranchId !== currentBranchId) {
+            syncBranchesToPg().catch(() => {});
             handleSwitchBranch(targetBranchId, updatedBranches);
           } else {
             const nextState: AppState = {
@@ -5559,10 +6129,13 @@ export default function App() {
                 administrationTitle: activeObj?.name || appState.systemConfig.administrationTitle,
               },
             };
-            triggerSave(
+            commitRowMutation({
               nextState,
-              `تم حفظ وتحديث قائمة الفروع والإدارات التموينية (${updatedBranches.length} إدارة) ومزامنتها سحابياً لجميع الأجهزة`
-            );
+              table: 'branches',
+              branchId: targetBranchId,
+              toastMessage: `تم حفظ وتحديث قائمة الفروع والإدارات التموينية (${updatedBranches.length} إدارة) ومزامنتها لجميع الأجهزة`,
+              executeDb: syncBranchesToPg,
+            });
           }
         }}
       />

@@ -431,7 +431,7 @@ test('Permanent Safety Vault and Non-Destructive Multi-Branch Merge retain all r
   clearSupabaseDatabaseData();
 });
 
-test('Realtime Diagnostics telemetry tracks all 9 subscribed tables, incoming/outgoing Events Log, AppState memory updates, and WebSocket console errors with zero polling', async () => {
+test('Realtime Diagnostics telemetry tracks all 11 subscribed tables, incoming/outgoing Events Log, AppState memory updates, and WebSocket console errors with zero polling', async () => {
   const {
     ALL_SUPABASE_REALTIME_TABLES,
     getRealtimeDiagnosticsSnapshot,
@@ -446,8 +446,8 @@ test('Realtime Diagnostics telemetry tracks all 9 subscribed tables, incoming/ou
 
   assert.strictEqual(initialSnap.syncMode, 'EVENT_DRIVEN_REALTIME');
   assert.strictEqual(initialSnap.pollingDisabled, true);
-  assert.strictEqual(ALL_SUPABASE_REALTIME_TABLES.length, 9);
-  assert.strictEqual(initialSnap.tables.length, 9);
+  assert.strictEqual(ALL_SUPABASE_REALTIME_TABLES.length, 11);
+  assert.strictEqual(initialSnap.tables.length, 11);
   assert.ok(initialSnap.tables.every((t) => t.subscribed === true));
 
   markTableRealtimeEvent('bakeries', 'INSERT', '2026-11-14T14:00:00.000Z');

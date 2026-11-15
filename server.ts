@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -6,6 +7,19 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import {
+  ALLOWED_DB_TABLES,
+  DEFAULT_BRANCH_ID,
+  deleteRowInPostgres,
+  ensurePostgresSchema,
+  getBootstrapFromPostgres,
+  purgeAllPostgresData,
+  queryTablePaginated,
+  syncFullBranchStateToPostgres,
+  syncHighDebtAlertsToPostgres,
+  upsertRowInPostgres,
+  type NormalizedTableName,
+} from './src/db/queries.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -407,6 +421,37 @@ async function startServer() {
     }
   }
 
+  // Ensure normalized PostgreSQL schema & default branch on startup, and hydrate state from PG
+  try {
+    await ensurePostgresSchema();
+    const pgBoot = await getBootstrapFromPostgres(DEFAULT_BRANCH_ID);
+    if (pgBoot.hasAnyRows) {
+      liveRevision = Math.max(liveRevision, 1);
+      cachedLiveSnapshot = {
+        version: '5.0-supabase-realtime-shield',
+        cleanStartEpoch: CLEAN_START_RESET_EPOCH,
+        timestamp: new Date().toISOString(),
+        revision: liveRevision,
+        clientId: 'postgres-boot',
+        sqlOperation: 'SELECT',
+        affectedTable: 'bakeries',
+        sentAt: Date.now(),
+        integrityHash: computeDatabaseIntegrityHash(pgBoot),
+        bakeriesCount: pgBoot.bakeries.length,
+        debtsCount: pgBoot.debts.length,
+        data: pgBoot,
+      };
+      cachedAlertsState = {
+        alerts: pgBoot.highDebtAlerts,
+        debtAlertThreshold: pgBoot.systemConfig?.debtAlertThreshold || 50000,
+        updatedAt: new Date().toISOString(),
+        revision: Math.max(cachedAlertsState.revision, 1),
+      };
+    }
+  } catch (err) {
+    console.warn('PostgreSQL startup bootstrap warning:', (err as Error)?.message);
+  }
+
   // Record initial startup security verification
   recordSecurityAudit({
     ip: '127.0.0.1',
@@ -414,7 +459,7 @@ async function startServer() {
     path: '/system/database-vault',
     threatType: 'STARTUP_INTEGRITY_SEAL',
     actionTaken: 'VERIFIED',
-    detail: 'تم قفل وحماية ملفات قاعدة البيانات بصلاحيات (0600) وتفعيل ختم التكامل المشفر SHA-256 وجدار حماية API',
+    detail: 'تم تفعيل قاعدة بيانات PostgreSQL العلائقية الموحدة وحماية الملفات بصلاحيات (0600) وجدار حماية API',
   });
 
   // Health check endpoint
@@ -578,6 +623,8 @@ async function startServer() {
           const sqlOperation = msg.sqlOperation || 'UPDATE';
           const affectedTable = msg.affectedTable || 'bakeries';
           const sentAt = Number(msg.sentAt) || Date.now();
+          const targetBranchId = String(safeData?.activeBranchId || DEFAULT_BRANCH_ID);
+          syncFullBranchStateToPostgres(targetBranchId, safeData, { pruneRemoved: true }).catch(() => {});
           liveRevision += 1;
           const integrityHash = computeDatabaseIntegrityHash(safeData);
           const snapshot = {
@@ -815,25 +862,374 @@ async function startServer() {
     res.json({ success: true, ...payload });
   });
 
-  // Live Supabase SQL/Cloud State synchronization endpoint + immediate WebSocket fanout
-  app.get('/api/supabase/live-db', (_req, res) => {
+  // =========================================================================
+  // Normalized PostgreSQL Relational CRUD, Pagination & Real-Time Fanout API
+  // =========================================================================
+
+  app.get('/api/db/bootstrap', async (req, res) => {
     try {
-      if (!cachedLiveSnapshot) {
-        for (const p of [
-          SUPABASE_LIVE_DB_PRIMARY,
-          `${SUPABASE_LIVE_DB_PRIMARY}.bak`,
-          SUPABASE_LIVE_DB_TMP,
-          `${SUPABASE_LIVE_DB_TMP}.bak`,
-        ]) {
-          if (fs.existsSync(p)) {
-            const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
-            if (parsed && parsed.cleanStartEpoch === CLEAN_START_RESET_EPOCH) {
-              cachedLiveSnapshot = parsed;
-              break;
-            }
-          }
+      const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
+      const boot = await getBootstrapFromPostgres(branchId);
+      res.json({
+        success: true,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+        ...boot,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل تحميل البيانات من قاعدة البيانات.' });
+    }
+  });
+
+  app.post('/api/db/batch', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const branchId = String(body.branchId || body.data?.activeBranchId || DEFAULT_BRANCH_ID);
+      const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
+      const pruneRemoved = Boolean(body.pruneRemoved);
+      const stateData = body.data || body;
+
+      // Sync multi-branch partitions if present, otherwise active branch
+      if (stateData?.branchPartitions && typeof stateData.branchPartitions === 'object') {
+        for (const [partBranchId, partData] of Object.entries(stateData.branchPartitions)) {
+          await syncFullBranchStateToPostgres(
+            partBranchId,
+            { ...(partData as any), branches: stateData.branches },
+            { pruneRemoved }
+          );
         }
       }
+      const syncRes = await syncFullBranchStateToPostgres(branchId, stateData, { pruneRemoved });
+      if (!syncRes.success) {
+        res.status(500).json({ success: false, error: syncRes.error });
+        return;
+      }
+
+      const freshBoot = await getBootstrapFromPostgres(branchId);
+      const timestamp = new Date().toISOString();
+      liveRevision += 1;
+
+      const snapshotPayload = {
+        ...(stateData || {}),
+        activeBranchId: branchId,
+        branches: freshBoot.branches,
+        villages: freshBoot.villages,
+        bakeries: freshBoot.bakeries,
+        debts: freshBoot.debts,
+        users: freshBoot.users,
+        dailyTasks: freshBoot.dailyTasks,
+        inboxMessages: freshBoot.inboxMessages,
+        ...(freshBoot.systemConfig ? { systemConfig: freshBoot.systemConfig } : {}),
+        ...(freshBoot.columnTitles && Object.keys(freshBoot.columnTitles).length > 0
+          ? { columnTitles: freshBoot.columnTitles }
+          : {}),
+        ...(freshBoot.activityStatuses.length > 0 ? { activityStatuses: freshBoot.activityStatuses } : {}),
+        ...(freshBoot.dropdownLists || {}),
+      };
+      cachedLiveSnapshot = {
+        version: '5.0-supabase-realtime-shield',
+        cleanStartEpoch: CLEAN_START_RESET_EPOCH,
+        timestamp,
+        revision: liveRevision,
+        clientId,
+        sqlOperation: body.sqlOperation || 'UPDATE',
+        affectedTable: body.affectedTable || 'bakeries',
+        sentAt: Number(body.sentAt) || Date.now(),
+        integrityHash: computeDatabaseIntegrityHash(snapshotPayload),
+        bakeriesCount: freshBoot.bakeries.length,
+        debtsCount: freshBoot.debts.length,
+        data: snapshotPayload,
+      };
+
+      broadcastWs({
+        type: 'batch_sync',
+        branchId,
+        clientId,
+        timestamp,
+        revision: liveRevision,
+        sqlOperation: body.sqlOperation || 'UPDATE',
+        affectedTable: body.affectedTable || 'bakeries',
+        data: snapshotPayload,
+      });
+
+      res.json({
+        success: true,
+        revision: liveRevision,
+        timestamp,
+        syncedCounts: syncRes.syncedCounts,
+        data: snapshotPayload,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/db/purge', async (req, res) => {
+    try {
+      const clientId = String(req.headers['x-tamween-client-id'] || req.body?.clientId || '');
+      const timestamp = new Date().toISOString();
+      await purgeAllPostgresData();
+      cachedLiveSnapshot = null;
+      liveRevision += 1;
+      cachedAlertsState = {
+        alerts: [],
+        debtAlertThreshold: 50000,
+        updatedAt: timestamp,
+        revision: (cachedAlertsState.revision || 0) + 1,
+        clientId,
+      };
+      broadcastWs({
+        type: 'state_cleared',
+        clientId,
+        timestamp,
+        revision: liveRevision,
+        sqlOperation: 'DELETE',
+        affectedTable: 'bakeries',
+        cleared: true,
+      });
+      res.json({ success: true, cleared: true, revision: liveRevision, timestamp });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.get('/api/db/:table', async (req, res) => {
+    try {
+      const table = req.params.table as NormalizedTableName;
+      if (!ALLOWED_DB_TABLES.has(table)) {
+        res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
+        return;
+      }
+      const result = await queryTablePaginated(table, {
+        branchId: String(req.query?.branchId || DEFAULT_BRANCH_ID),
+        search: req.query?.search ? String(req.query.search) : undefined,
+        village: req.query?.village ? String(req.query.village) : undefined,
+        localUnit: req.query?.localUnit ? String(req.query.localUnit) : undefined,
+        activityStatus: req.query?.activityStatus ? String(req.query.activityStatus) : undefined,
+        bakeryId: req.query?.bakeryId ? String(req.query.bakeryId) : undefined,
+        status: req.query?.status ? String(req.query.status) : undefined,
+        priority: req.query?.priority ? String(req.query.priority) : undefined,
+        page: req.query?.page ? Number(req.query.page) : 1,
+        pageSize: req.query?.pageSize ? Number(req.query.pageSize) : 100,
+      });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/db/:table', async (req, res) => {
+    try {
+      const table = req.params.table as NormalizedTableName;
+      if (!ALLOWED_DB_TABLES.has(table)) {
+        res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
+        return;
+      }
+      const body = req.body || {};
+      const rowPayload = body.row || body;
+      const branchId = String(body.branchId || rowPayload?.branchId || DEFAULT_BRANCH_ID);
+      const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
+      const expectedVersion =
+        typeof body.expectedVersion === 'number'
+          ? body.expectedVersion
+          : typeof rowPayload?.version === 'number'
+          ? rowPayload.version
+          : undefined;
+
+      const result = await upsertRowInPostgres(table, branchId, rowPayload, expectedVersion);
+      if (result.conflict) {
+        res.status(409).json({
+          success: false,
+          conflict: true,
+          code: 'VERSION_CONFLICT',
+          latestRow: result.latestRow,
+          error: result.error,
+        });
+        return;
+      }
+      if (!result.success) {
+        res.status(400).json({ success: false, error: result.error });
+        return;
+      }
+
+      const timestamp = new Date().toISOString();
+      liveRevision += 1;
+      broadcastWs({
+        type: 'row_change',
+        table,
+        eventType: result.operation,
+        branchId,
+        newRow: result.row,
+        oldRow: null,
+        clientId,
+        revision: liveRevision,
+        timestamp,
+        sentAt: Number(body.sentAt) || Date.now(),
+      });
+
+      res.json({
+        success: true,
+        operation: result.operation,
+        row: result.row,
+        revision: liveRevision,
+        timestamp,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.put('/api/db/:table/:id', async (req, res) => {
+    try {
+      const table = req.params.table as NormalizedTableName;
+      if (!ALLOWED_DB_TABLES.has(table)) {
+        res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
+        return;
+      }
+      const body = req.body || {};
+      const rowPayload = { ...(body.row || body), id: req.params.id };
+      const branchId = String(body.branchId || rowPayload?.branchId || DEFAULT_BRANCH_ID);
+      const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
+      const expectedVersion =
+        typeof body.expectedVersion === 'number'
+          ? body.expectedVersion
+          : typeof rowPayload?.version === 'number'
+          ? rowPayload.version
+          : undefined;
+
+      const result = await upsertRowInPostgres(table, branchId, rowPayload, expectedVersion);
+      if (result.conflict) {
+        res.status(409).json({
+          success: false,
+          conflict: true,
+          code: 'VERSION_CONFLICT',
+          latestRow: result.latestRow,
+          error: result.error,
+        });
+        return;
+      }
+      if (!result.success) {
+        res.status(400).json({ success: false, error: result.error });
+        return;
+      }
+
+      const timestamp = new Date().toISOString();
+      liveRevision += 1;
+      broadcastWs({
+        type: 'row_change',
+        table,
+        eventType: result.operation,
+        branchId,
+        newRow: result.row,
+        oldRow: null,
+        clientId,
+        revision: liveRevision,
+        timestamp,
+        sentAt: Number(body.sentAt) || Date.now(),
+      });
+
+      res.json({
+        success: true,
+        operation: result.operation,
+        row: result.row,
+        revision: liveRevision,
+        timestamp,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.delete('/api/db/:table/:id', async (req, res) => {
+    try {
+      const table = req.params.table as NormalizedTableName;
+      if (!ALLOWED_DB_TABLES.has(table)) {
+        res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
+        return;
+      }
+      const branchId = req.query?.branchId ? String(req.query.branchId) : undefined;
+      const clientId = String(req.query?.clientId || req.headers['x-tamween-client-id'] || '');
+      const delRes = await deleteRowInPostgres(table, req.params.id, branchId);
+      if (!delRes.success) {
+        res.status(400).json({ success: false, error: delRes.error });
+        return;
+      }
+
+      const effectiveBranchId = branchId || delRes.deletedRow?.branchId || DEFAULT_BRANCH_ID;
+      const timestamp = new Date().toISOString();
+      liveRevision += 1;
+      broadcastWs({
+        type: 'row_change',
+        table,
+        eventType: 'DELETE',
+        branchId: effectiveBranchId,
+        newRow: null,
+        oldRow: delRes.deletedRow || { id: req.params.id, branchId: effectiveBranchId },
+        clientId,
+        revision: liveRevision,
+        timestamp,
+      });
+
+      res.json({
+        success: true,
+        deletedRow: delRes.deletedRow,
+        revision: liveRevision,
+        timestamp,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  // Live Supabase SQL/Cloud State synchronization endpoint + immediate WebSocket fanout
+  app.get('/api/supabase/live-db', async (req, res) => {
+    try {
+      const requestedBranchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
+      const pgBoot = await getBootstrapFromPostgres(requestedBranchId);
+      const hasPersistedData =
+        pgBoot.hasAnyRows || pgBoot.branches.length > 1 || Boolean(pgBoot.systemConfig);
+      if (hasPersistedData) {
+        const mergedData = {
+          ...(cachedLiveSnapshot?.data || {}),
+          activeBranchId: requestedBranchId,
+          branches: pgBoot.branches,
+          villages: pgBoot.villages,
+          bakeries: pgBoot.bakeries,
+          debts: pgBoot.debts,
+          users: pgBoot.users.length > 0 ? pgBoot.users : cachedLiveSnapshot?.data?.users || [],
+          dailyTasks: pgBoot.dailyTasks,
+          inboxMessages: pgBoot.inboxMessages,
+          ...(pgBoot.systemConfig ? { systemConfig: pgBoot.systemConfig } : {}),
+          ...(pgBoot.columnTitles && Object.keys(pgBoot.columnTitles).length > 0
+            ? { columnTitles: pgBoot.columnTitles }
+            : {}),
+          ...(pgBoot.activityStatuses.length > 0 ? { activityStatuses: pgBoot.activityStatuses } : {}),
+          ...(pgBoot.dropdownLists || {}),
+        };
+        const snapshot = {
+          version: '5.0-supabase-realtime-shield',
+          cleanStartEpoch: CLEAN_START_RESET_EPOCH,
+          timestamp: cachedLiveSnapshot?.timestamp || new Date().toISOString(),
+          revision: liveRevision,
+          clientId: cachedLiveSnapshot?.clientId || 'postgres-live',
+          sqlOperation: 'SELECT',
+          affectedTable: 'bakeries',
+          sentAt: Date.now(),
+          integrityHash: computeDatabaseIntegrityHash(mergedData),
+          bakeriesCount: pgBoot.bakeries.length,
+          debtsCount: pgBoot.debts.length,
+          data: mergedData,
+        };
+        res.json({
+          success: true,
+          exists: true,
+          cleanStartEpoch: CLEAN_START_RESET_EPOCH,
+          integrityVerified: true,
+          snapshot,
+        });
+        return;
+      }
+
       if (!cachedLiveSnapshot) {
         res.json({
           success: true,
@@ -855,7 +1251,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/supabase/live-db', (req, res) => {
+  app.post('/api/supabase/live-db', async (req, res) => {
     try {
       const body = req.body || {};
       const incomingStateData = body.data || body;
@@ -868,6 +1264,18 @@ async function startServer() {
         clientIp,
         hasSecurityToken
       );
+      const targetBranchId = String(safeData?.activeBranchId || DEFAULT_BRANCH_ID);
+      if (safeData?.branchPartitions && typeof safeData.branchPartitions === 'object') {
+        for (const [partBranchId, partData] of Object.entries(safeData.branchPartitions)) {
+          await syncFullBranchStateToPostgres(
+            partBranchId,
+            { ...(partData as any), branches: safeData.branches },
+            { pruneRemoved: hasSecurityToken }
+          );
+        }
+      }
+      await syncFullBranchStateToPostgres(targetBranchId, safeData, { pruneRemoved: hasSecurityToken });
+
       const timestamp = body.timestamp || new Date().toISOString();
       const clientId = body.clientId || '';
       const sqlOperation = body.sqlOperation || 'UPDATE';
@@ -916,12 +1324,14 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/supabase/live-db', (req, res) => {
+  app.delete('/api/supabase/live-db', async (req, res) => {
     try {
       const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'http');
       const clientId = String(req.headers['x-tamween-client-id'] || req.query?.clientId || '');
       const timestamp = new Date().toISOString();
       liveRevision += 1;
+
+      await purgeAllPostgresData().catch(() => {});
 
       // Perform a complete purge of all server-side database files and in-memory snapshots
       cachedLiveSnapshot = null;
@@ -984,14 +1394,27 @@ async function startServer() {
   });
 
   // High-Debt Alerts Supabase Realtime Sync endpoints
-  app.get('/api/supabase/alerts', (_req, res) => {
-    res.json({
-      success: true,
-      ...cachedAlertsState,
-    });
+  app.get('/api/supabase/alerts', async (req, res) => {
+    try {
+      const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
+      const pgBoot = await getBootstrapFromPostgres(branchId);
+      res.json({
+        success: true,
+        alerts: pgBoot.highDebtAlerts.length > 0 ? pgBoot.highDebtAlerts : cachedAlertsState.alerts,
+        debtAlertThreshold: pgBoot.systemConfig?.debtAlertThreshold || cachedAlertsState.debtAlertThreshold,
+        updatedAt: cachedAlertsState.updatedAt || new Date().toISOString(),
+        revision: cachedAlertsState.revision,
+        clientId: cachedAlertsState.clientId,
+      });
+    } catch {
+      res.json({
+        success: true,
+        ...cachedAlertsState,
+      });
+    }
   });
 
-  app.post('/api/supabase/alerts', (req, res) => {
+  app.post('/api/supabase/alerts', async (req, res) => {
     try {
       const body = req.body || {};
       const alerts = Array.isArray(body.alerts) ? body.alerts : cachedAlertsState.alerts;
@@ -999,6 +1422,9 @@ async function startServer() {
         typeof body.debtAlertThreshold === 'number' && body.debtAlertThreshold > 0
           ? body.debtAlertThreshold
           : cachedAlertsState.debtAlertThreshold;
+      const branchId = String(body.branchId || DEFAULT_BRANCH_ID);
+      await syncHighDebtAlertsToPostgres(branchId, alerts, debtAlertThreshold);
+
       const timestamp = body.timestamp || new Date().toISOString();
       const clientId = body.clientId || '';
       cachedAlertsState = {
@@ -1025,10 +1451,13 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/supabase/alerts', (req, res) => {
+  app.delete('/api/supabase/alerts', async (req, res) => {
     try {
       const clientId = String(req.query?.clientId || '');
+      const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
       const threshold = Number(req.query?.threshold) || cachedAlertsState.debtAlertThreshold || 50000;
+      await syncHighDebtAlertsToPostgres(branchId, [], threshold);
+
       const timestamp = new Date().toISOString();
       cachedAlertsState = {
         alerts: [],

@@ -86,7 +86,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
   const [remediationSteps, setRemediationSteps] = useState<string[]>([
     'فحص وتأمين اتصال WebSocket المباشر (/ws/supabase-realtime) وتفعيل نبضات Keep-Alive كل 15 ثانية',
     'فحص وتأكيد قناة الدفع الفوري الاحتياطية SSE Push Stream (/api/supabase/realtime-stream)',
-    'تأكيد اشتراكات الجداول الـ 9 (9/9 SUBSCRIBED) لالتقاط أحداث INSERT / UPDATE / DELETE لحظياً',
+    'تأكيد اشتراكات الجداول الـ 11 (11/11 SUBSCRIBED) لالتقاط أحداث INSERT / UPDATE / DELETE لحظياً',
     'اعتراض وتصفير كافة تحذيرات وأخطاء الكونسول البرمجية وتفعيل المعالج التلقائي (Auto-Healer)',
   ]);
   const [pulseBanner, setPulseBanner] = useState<{
@@ -689,7 +689,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
               onChange={(e) => setFilterTable(e.target.value as 'ALL' | SupabaseRealtimeTableName)}
               className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs font-bold text-slate-200 focus:outline-none focus:border-emerald-500 mr-2"
             >
-              <option value="ALL">جميع الجداول المتأثرة (9 جداول)</option>
+              <option value="ALL">جميع الجداول المتأثرة (11 جدولاً)</option>
               {ALL_SUPABASE_REALTIME_TABLES.map((tbl) => (
                 <option key={tbl} value={tbl}>
                   public.{tbl} — {SUPABASE_TABLE_ARABIC_LABELS[tbl]}
@@ -946,11 +946,11 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
                 سياسات RLS وحظر service_role
               </span>
               <span className="px-2 py-0.5 rounded text-[10px] font-black bg-sky-500/20 text-sky-300 border border-sky-500/40">
-                9/9 RLS
+                11/11 RLS
               </span>
             </div>
             <div className="text-xs text-slate-300 leading-relaxed">
-              تفعيل سياسات <code className="text-sky-300 font-mono">Row Level Security (RLS)</code> على كافة جداول Supabase الـ 9، وحظر استخدام مفتاح <code className="text-rose-300 font-mono">service_role</code> في المتصفح نهائياً.
+              تفعيل سياسات <code className="text-sky-300 font-mono">Row Level Security (RLS)</code> على كافة جداول Supabase الـ 11، وحظر استخدام مفتاح <code className="text-rose-300 font-mono">service_role</code> في المتصفح نهائياً.
             </div>
             <div className="text-[11px] font-mono text-sky-300 pt-1 border-t border-slate-900">
               السجلات المحمية: {appState.bakeries?.length || 0} مخبز | {appState.debts?.length || 0} مديونية
@@ -1011,7 +1011,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
             {cloudSnap.label} — {cloudSnap.detail}
           </div>
           <div className="text-[11px] text-slate-400 flex items-center justify-between pt-2 border-t border-slate-800">
-            <span>الجداول المشتركة: 9 / 9 جداول</span>
+            <span>الجداول المشتركة: 11 / 11 جدولاً</span>
             <span className="font-mono text-emerald-400">postgres_changes + broadcast</span>
           </div>
         </div>
@@ -1105,7 +1105,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
           <div className="flex items-center gap-2.5">
             <Layers className="w-5 h-5 text-emerald-400" />
             <h2 className="text-base font-black text-white">
-              حالة تفعيل الاشتراكات اللحظية (Subscriptions) على كافة جداول النظام (9 / 9 جداول)
+              حالة تفعيل الاشتراكات اللحظية (Subscriptions) على كافة جداول النظام (11 / 11 جدولاً)
             </h2>
           </div>
           <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
@@ -1225,7 +1225,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
             </div>
             <p className="text-[11px] text-slate-300">
               {diag.lastAutoHealSummary ||
-                'تم تفعيل المعالج الذاتي لإصلاح انقطاعات WebSocket (Code 1006) وتفعيل البث البديل SSE Push Stream وتأمين اشتراكات الجداول الـ 9 بدون أي توقف.'}
+                'تم تفعيل المعالج الذاتي لإصلاح انقطاعات WebSocket (Code 1006) وتفعيل البث البديل SSE Push Stream وتأمين اشتراكات الجداول الـ 11 بدون أي توقف.'}
             </p>
           </div>
           <span className="px-3 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-black font-mono shrink-0">
@@ -1260,7 +1260,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
                 لا توجد أي أخطاء WebSockets أو Supabase Realtime نشطة في الكونسول (تم حل كافة المشاكل بنجاح)
               </div>
               <p className="text-[11px] text-emerald-300/80">
-                جميع قنوات الاتصال اللحظي (WebSocket + SSE Push + Supabase 9 Tables) تعمل بكفاءة 100% مع تفعيل المعالج التلقائي.
+                جميع قنوات الاتصال اللحظي (WebSocket + SSE Push + Supabase 11 Tables) تعمل بكفاءة 100% مع تفعيل المعالج التلقائي.
               </p>
             </div>
           ) : (

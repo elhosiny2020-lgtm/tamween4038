@@ -1,116 +1,331 @@
-import { pgTable, serial, text, integer, doublePrecision, jsonb, timestamp } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  serial,
+  text,
+  integer,
+  doublePrecision,
+  boolean,
+  jsonb,
+  timestamp,
+  uniqueIndex,
+  index,
+} from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
-// Users table (linked to Firebase Auth UID and App RBAC)
+export const branches = pgTable('branches', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  governorateTitle: text('governorate_title').notNull().default('محافظة الغربية'),
+  directorateTitle: text('directorate_title').notNull().default('مديرية التموين والتجارة الداخلية بالغربية'),
+  description: text('description').notNull().default(''),
+  isDefault: boolean('is_default').notNull().default(false),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+export const villages = pgTable(
+  'villages',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    village: text('village').notNull(),
+    localUnits: jsonb('local_units').notNull().default([]),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_villages_branch_name').on(t.branchId, t.village),
+    index('idx_villages_branch_id').on(t.branchId),
+  ]
+);
+
+export const bakeries = pgTable(
+  'bakeries',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    bakeryOwnerName: text('bakery_owner_name').notNull(),
+    machineNumber: text('machine_number').notNull(),
+    village: text('village').notNull(),
+    localUnit: text('local_unit').notNull(),
+    responsibleManager: text('responsible_manager').notNull().default(''),
+
+    insuranceQuota: doublePrecision('insurance_quota').notNull().default(0),
+    actualQuota: doublePrecision('actual_quota').notNull().default(0),
+    insuranceValue: doublePrecision('insurance_value').notNull().default(0),
+    insuranceCheckNumber: text('insurance_check_number').notNull().default(''),
+    loavesCount: doublePrecision('loaves_count').notNull().default(0),
+
+    villagePopulation: integer('village_population').notNull().default(0),
+    perCapitaAverage: text('per_capita_average').notNull().default('0'),
+    beneficiaries2023: integer('beneficiaries_2023').notNull().default(0),
+    avg2023: text('avg_2023').notNull().default('0'),
+    beneficiaries2024: integer('beneficiaries_2024').notNull().default(0),
+    avg2024: text('avg_2024').notNull().default('0'),
+    beneficiaries2025: integer('beneficiaries_2025').notNull().default(0),
+    avg2025: text('avg_2025').notNull().default('0'),
+    avgDiff: text('avg_diff').notNull().default('0'),
+
+    activityStatus: text('activity_status').notNull().default('يعمل'),
+    bakeryCategory: text('bakery_category').notNull().default('مخبز بلدي مدعم'),
+    breadType: text('bread_type').notNull().default('بلدي مدعم'),
+    flourBagPrice: doublePrecision('flour_bag_price').notNull().default(0),
+    breadTypeCount: text('bread_type_count').notNull().default('660'),
+    lineType: text('line_type').notNull().default('آلي كامل'),
+    fuelType: text('fuel_type').notNull().default('غاز طبيعي'),
+
+    phone: text('phone').notNull().default(''),
+    nationalId: text('national_id').notNull().default(''),
+
+    commercialRegNumber: text('commercial_reg_number').notNull().default(''),
+    commercialRegDate: text('commercial_reg_date').notNull().default(''),
+    bakeryLicenseNumber: text('bakery_license_number').notNull().default(''),
+    bakeryLicenseDate: text('bakery_license_date').notNull().default(''),
+    leaseContractType: text('lease_contract_type').notNull().default(''),
+    leaseAgreementDate: text('lease_agreement_date').notNull().default(''),
+    taxCardNumber: text('tax_card_number').notNull().default(''),
+    taxCardDate: text('tax_card_date').notNull().default(''),
+    notes: text('notes').notNull().default(''),
+
+    activityLog: jsonb('activity_log').default([]),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_bakeries_branch_machine').on(t.branchId, t.machineNumber),
+    index('idx_bakeries_branch_id').on(t.branchId),
+    index('idx_bakeries_village').on(t.branchId, t.village),
+    index('idx_bakeries_local_unit').on(t.branchId, t.localUnit),
+    index('idx_bakeries_status').on(t.branchId, t.activityStatus),
+    index('idx_bakeries_machine').on(t.machineNumber),
+  ]
+);
+
+export const debts = pgTable(
+  'debts',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    bakeryId: text('bakery_id')
+      .notNull()
+      .references(() => bakeries.id, { onDelete: 'cascade' }),
+    bakeryOwnerName: text('bakery_owner_name').notNull(),
+    machineNumber: text('machine_number').notNull(),
+    village: text('village').notNull(),
+    localUnit: text('local_unit').notNull(),
+
+    violationDate: text('violation_date').notNull().default(''),
+    issuingEntity: text('issuing_entity').notNull().default(''),
+    violationType: text('violation_type').notNull().default(''),
+    violationAmount: doublePrecision('violation_amount').notNull().default(0),
+    oldViolations: doublePrecision('old_violations').notNull().default(0),
+    totalViolations: doublePrecision('total_violations').notNull().default(0),
+
+    violationPaymentDate: text('violation_payment_date').notNull().default(''),
+    violationReceiptNumber: text('violation_receipt_number').notNull().default(''),
+    violationPaymentMethod: text('violation_payment_method').notNull().default('كاش'),
+    paidViolationAmount: doublePrecision('paid_violation_amount').notNull().default(0),
+    remainingViolations: doublePrecision('remaining_violations').notNull().default(0),
+
+    addedAmount: doublePrecision('added_amount').notNull().default(0),
+    addedPaymentDate: text('added_payment_date').notNull().default(''),
+    addedReceiptNumber: text('added_receipt_number').notNull().default(''),
+    addedPaymentMethod: text('added_payment_method').notNull().default('كاش'),
+    paidAddedAmount: doublePrecision('paid_added_amount').notNull().default(0),
+    remainingAdded: doublePrecision('remaining_added').notNull().default(0),
+
+    disposalDate: text('disposal_date').notNull().default(''),
+    disposalBags: doublePrecision('disposal_bags').notNull().default(0),
+    disposalBagPrice: doublePrecision('disposal_bag_price').notNull().default(0),
+    disposalMultiplier: doublePrecision('disposal_multiplier').notNull().default(1),
+    disposalValue: doublePrecision('disposal_value').notNull().default(0),
+
+    disposalPaymentDate: text('disposal_payment_date').notNull().default(''),
+    disposalReceiptNumber: text('disposal_receipt_number').notNull().default(''),
+    disposalPaymentMethod: text('disposal_payment_method').notNull().default('كاش'),
+    paidDisposalAmount: doublePrecision('paid_disposal_amount').notNull().default(0),
+    remainingDisposal: doublePrecision('remaining_disposal').notNull().default(0),
+
+    netRemainingDebt: doublePrecision('net_remaining_debt').notNull().default(0),
+    isScheduled: boolean('is_scheduled').notNull().default(false),
+    scheduleInstallmentsCount: integer('schedule_installments_count').notNull().default(0),
+    schedulePeriodType: text('schedule_period_type').notNull().default('شهري'),
+    scheduleInstallmentValue: doublePrecision('schedule_installment_value').notNull().default(0),
+    scheduleStartDate: text('schedule_start_date').notNull().default(''),
+    schedulePaidInstallments: integer('schedule_paid_installments').notNull().default(0),
+    scheduleStatus: text('schedule_status').notNull().default('قيد التحصيل'),
+    notes: text('notes').notNull().default(''),
+
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [
+    index('idx_debts_branch_id').on(t.branchId),
+    index('idx_debts_bakery_id').on(t.bakeryId),
+    index('idx_debts_violation_date').on(t.branchId, t.violationDate),
+    index('idx_debts_schedule_status').on(t.branchId, t.scheduleStatus),
+  ]
+);
+
+export const appUsers = pgTable(
+  'app_users',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    username: text('username').notNull(),
+    fullName: text('full_name').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    role: text('role').notNull().default('inspector'),
+    jobTitle: text('job_title').notNull().default(''),
+    department: text('department').notNull().default(''),
+    phone: text('phone').notNull().default(''),
+    gmailEmail: text('gmail_email').notNull().default(''),
+    gmailPassword: text('gmail_password').notNull().default(''),
+    googleDriveAutoSync: boolean('google_drive_auto_sync').notNull().default(false),
+    customPermissions: jsonb('custom_permissions').default([]),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_app_users_branch_username').on(t.branchId, t.username),
+    index('idx_app_users_branch_id').on(t.branchId),
+  ]
+);
+
+export const dailyTasks = pgTable(
+  'daily_tasks',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    bakeryId: text('bakery_id').notNull().default(''),
+    bakeryName: text('bakery_name').notNull().default(''),
+    village: text('village').notNull().default(''),
+    priority: text('priority').notNull().default('medium'),
+    dueDate: text('due_date').notNull().default(''),
+    status: text('status').notNull().default('pending'),
+    assignedTo: text('assigned_to').notNull().default(''),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [index('idx_daily_tasks_branch_id').on(t.branchId, t.status, t.dueDate)]
+);
+
+export const inboxMessages = pgTable(
+  'inbox_messages',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    senderId: text('sender_id').notNull(),
+    senderName: text('sender_name').notNull(),
+    senderRole: text('sender_role').notNull(),
+    recipientTarget: text('recipient_target').notNull().default('ALL'),
+    recipientLabel: text('recipient_label').notNull().default('الجميع'),
+    messageType: text('message_type').notNull().default('instruction'),
+    content: text('content').notNull(),
+    relatedBakeryId: text('related_bakery_id').notNull().default(''),
+    relatedBakeryName: text('related_bakery_name').notNull().default(''),
+    readBy: jsonb('read_by').default([]),
+    timestamp: text('timestamp').notNull(),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [index('idx_inbox_messages_branch_id').on(t.branchId, t.createdAt)]
+);
+
+export const highDebtAlerts = pgTable(
+  'high_debt_alerts',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    bakeryId: text('bakery_id').notNull(),
+    bakeryOwnerName: text('bakery_owner_name').notNull(),
+    machineNumber: text('machine_number').notNull().default(''),
+    village: text('village').notNull().default(''),
+    debtAmount: doublePrecision('debt_amount').notNull().default(0),
+    thresholdUsed: doublePrecision('threshold_used').notNull().default(50000),
+    editedBy: text('edited_by').notNull().default(''),
+    editorRole: text('editor_role').notNull().default(''),
+    actionType: text('action_type').notNull().default('HIGH_DEBT_SURGE'),
+    isRead: boolean('is_read').notNull().default(false),
+    notes: text('notes').notNull().default(''),
+    createdAtIso: text('created_at_iso').notNull().default(''),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [index('idx_high_debt_alerts_branch_id').on(t.branchId, t.isRead)]
+);
+
+export const systemConfig = pgTable('system_config', {
+  branchId: text('branch_id')
+    .primaryKey()
+    .references(() => branches.id, { onDelete: 'cascade' }),
+  governorateTitle: text('governorate_title').notNull().default(''),
+  directorateTitle: text('directorate_title').notNull().default(''),
+  administrationTitle: text('administration_title').notNull().default(''),
+  englishSubtitle: text('english_subtitle').notNull().default(''),
+  logoBase64: text('logo_base64').notNull().default(''),
+  debtAlertThreshold: doublePrecision('debt_alert_threshold').notNull().default(50000),
+  dailyAlertConfig: jsonb('daily_alert_config').default({}),
+  rolePermissions: jsonb('role_permissions').default({}),
+  roleLabels: jsonb('role_labels').default({}),
+  customRoles: jsonb('custom_roles').default([]),
+  columnTitles: jsonb('column_titles').default({}),
+  activityStatuses: jsonb('activity_statuses').default([]),
+  version: integer('version').notNull().default(1),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+export const dropdownLists = pgTable(
+  'dropdown_lists',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    listKey: text('list_key').notNull(),
+    options: jsonb('options').notNull().default([]),
+    version: integer('version').notNull().default(1),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [uniqueIndex('uq_dropdown_lists_branch_key').on(t.branchId, t.listKey)]
+);
+
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   uid: text('uid').notNull().unique(),
   email: text('email').notNull(),
   fullName: text('full_name').notNull(),
-  role: text('role').notNull().default('inspector'), // admin, auditor, inspector
+  role: text('role').notNull().default('inspector'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-// Bakeries table
-export const bakeries = pgTable('bakeries', {
-  id: text('id').primaryKey(),
-  bakeryOwnerName: text('bakery_owner_name').notNull(),
-  machineNumber: text('machine_number').notNull().unique(),
-  village: text('village').notNull(),
-  localUnit: text('local_unit').notNull(),
-
-  insuranceQuota: integer('insurance_quota').notNull().default(0),
-  actualQuota: integer('actual_quota').notNull().default(0),
-  insuranceValue: doublePrecision('insurance_value').notNull().default(0),
-  loavesCount: integer('loaves_count').notNull().default(0),
-
-  villagePopulation: integer('village_population').notNull().default(0),
-  perCapitaAverage: text('per_capita_average').notNull().default('0'),
-  beneficiaries2023: integer('beneficiaries_2023').notNull().default(0),
-  avg2023: text('avg_2023').notNull().default('0'),
-  beneficiaries2024: integer('beneficiaries_2024').notNull().default(0),
-  avg2024: text('avg_2024').notNull().default('0'),
-  beneficiaries2025: integer('beneficiaries_2025').notNull().default(0),
-  avg2025: text('avg_2025').notNull().default('0'),
-  avgDiff: text('avg_diff').notNull().default('0'),
-
-  activityStatus: text('activity_status').notNull().default('يعمل'),
-  bakeryCategory: text('bakery_category').notNull().default('مخبز بلدي مدعم'),
-  breadType: text('bread_type').notNull().default('ماكينة ميكانيكي'),
-  breadTypeCount: integer('bread_type_count').notNull().default(1),
-  lineType: text('line_type').notNull().default('ميكانيكي كامل'),
-  fuelType: text('fuel_type').notNull().default('سولار'),
-
-  phone: text('phone').notNull().default(''),
-  nationalId: text('national_id').notNull().default(''),
-
-  commercialRegDate: text('commercial_reg_date').notNull().default(''),
-  bakeryLicenseDate: text('bakery_license_date').notNull().default(''),
-  leaseAgreementDate: text('lease_agreement_date').notNull().default(''),
-  taxCardDate: text('tax_card_date').notNull().default(''),
-
-  activityLog: jsonb('activity_log').default([]),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
-// Debts table
-export const debts = pgTable('debts', {
-  id: text('id').primaryKey(),
-  bakeryId: text('bakery_id').notNull().references(() => bakeries.id, { onDelete: 'cascade' }),
-  bakeryOwnerName: text('bakery_owner_name').notNull(),
-  machineNumber: text('machine_number').notNull(),
-  village: text('village').notNull(),
-  localUnit: text('local_unit').notNull(),
-
-  violationDate: text('violation_date').notNull().default(''),
-  issuingEntity: text('issuing_entity').notNull().default('إدارة تموين مركز المحلة الكبرى'),
-  violationType: text('violation_type').notNull().default('نقص وزن الرغيف البلدي المدعم'),
-  violationAmount: doublePrecision('violation_amount').notNull().default(0),
-  oldViolations: doublePrecision('old_violations').notNull().default(0),
-  totalViolations: doublePrecision('total_violations').notNull().default(0),
-
-  violationPaymentDate: text('violation_payment_date').notNull().default(''),
-  violationReceiptNumber: text('violation_receipt_number').notNull().default(''),
-  violationPaymentMethod: text('violation_payment_method').notNull().default('نقدي (كاش)'),
-  paidViolationAmount: doublePrecision('paid_violation_amount').notNull().default(0),
-  remainingViolations: doublePrecision('remaining_violations').notNull().default(0),
-
-  addedAmount: doublePrecision('added_amount').notNull().default(0),
-  addedPaymentDate: text('added_payment_date').notNull().default(''),
-  addedReceiptNumber: text('added_receipt_number').notNull().default(''),
-  addedPaymentMethod: text('added_payment_method').notNull().default('نقدي (كاش)'),
-  paidAddedAmount: doublePrecision('paid_added_amount').notNull().default(0),
-  remainingAdded: doublePrecision('remaining_added').notNull().default(0),
-
-  disposalDate: text('disposal_date').notNull().default(''),
-  disposalBags: integer('disposal_bags').notNull().default(0),
-  disposalBagPrice: doublePrecision('disposal_bag_price').notNull().default(850),
-  disposalMultiplier: integer('disposal_multiplier').notNull().default(1),
-  disposalValue: doublePrecision('disposal_value').notNull().default(0),
-
-  disposalPaymentDate: text('disposal_payment_date').notNull().default(''),
-  disposalReceiptNumber: text('disposal_receipt_number').notNull().default(''),
-  disposalPaymentMethod: text('disposal_payment_method').notNull().default('نقدي (كاش)'),
-  paidDisposalAmount: doublePrecision('paid_disposal_amount').notNull().default(0),
-  remainingDisposal: doublePrecision('remaining_disposal').notNull().default(0),
-
-  netRemainingDebt: doublePrecision('net_remaining_debt').notNull().default(0),
-  notes: text('notes').notNull().default(''),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
-// Villages Hierarchy table
-export const villages = pgTable('villages', {
-  id: serial('id').primaryKey(),
-  village: text('village').notNull().unique(),
-  localUnits: jsonb('local_units').notNull().default([]),
-});
-
-// Security & Audit Log table
 export const auditLogs = pgTable('audit_logs', {
   id: serial('id').primaryKey(),
+  branchId: text('branch_id').default(''),
   userEmail: text('user_email').notNull(),
   action: text('action').notNull(),
   details: text('details').notNull(),
@@ -118,14 +333,30 @@ export const auditLogs = pgTable('audit_logs', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+export const backupSnapshots = pgTable('backup_snapshots', {
+  id: text('id').primaryKey(),
+  branchId: text('branch_id').default('default'),
+  payload: jsonb('payload').notNull(),
+  clientId: text('client_id').default(''),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
 // Relations
-export const bakeriesRelations = relations(bakeries, ({ many }) => ({
+export const bakeriesRelations = relations(bakeries, ({ many, one }) => ({
   debts: many(debts),
+  branch: one(branches, {
+    fields: [bakeries.branchId],
+    references: [branches.id],
+  }),
 }));
 
 export const debtsRelations = relations(debts, ({ one }) => ({
   bakery: one(bakeries, {
     fields: [debts.bakeryId],
     references: [bakeries.id],
+  }),
+  branch: one(branches, {
+    fields: [debts.branchId],
+    references: [branches.id],
   }),
 }));

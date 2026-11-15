@@ -39,6 +39,7 @@ import {
   autoSyncToSupabase,
   autoSyncToSupabaseDetailed,
   fetchDatabaseFromSupabase,
+  getSecurityShieldHeaders,
   SESSION_CLIENT_ID,
   CLEAN_START_RESET_EPOCH,
   clearPermanentSafetyVault,
@@ -84,6 +85,7 @@ export interface AppState {
   systemConfig: SystemConfig;
   users: AppUser[];
   currentUser: AppUser | null;
+  lastUpdatedAt?: string;
 }
 
 const DB_NAME = 'TamweenGharbiaDB';
@@ -1266,15 +1268,57 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
   };
 
   try {
-    // 1. Fetch latest multi-branch database from Supabase / Cloud first and sync all branch partitions locally
+    // 1. Fetch authoritative state for activeBranchId directly from PostgreSQL / Supabase API first
     let cloudHasData = false;
-    let cloudTimestampMs = 0;
+    let pgAuthoritativeData: any = null;
     try {
-      const supaRes = await fetchDatabaseFromSupabase();
-      if (supaRes && supaRes.success && supaRes.data) {
-        cloudHasData = true;
-        cloudTimestampMs = supaRes.timestamp ? Date.parse(supaRes.timestamp) || 0 : 0;
-        syncAllBranchesFromCloudPayload(supaRes.data, supaRes.timestamp);
+      if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine !== false) {
+        const bootResp = await fetch(
+          `${window.location.protocol}//${window.location.host}/api/db/bootstrap?branchId=${encodeURIComponent(
+            activeBranchId
+          )}`,
+          {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: getSecurityShieldHeaders(false),
+          }
+        ).catch(() => null);
+        if (bootResp && bootResp.ok) {
+          const bootJson = await bootResp.json().catch(() => null);
+          if (bootJson?.success && (bootJson.hasAnyRows || (Array.isArray(bootJson.branches) && bootJson.branches.length > 0))) {
+            pgAuthoritativeData = bootJson;
+            if (bootJson.hasAnyRows) {
+              cloudHasData = true;
+            }
+            const bootPayload: any = {
+              activeBranchId,
+              branches: bootJson.branches,
+              villages: bootJson.villages?.length ? bootJson.villages : undefined,
+              bakeries: bootJson.bakeries,
+              debts: bootJson.debts,
+              users: bootJson.users?.length ? bootJson.users : undefined,
+              dailyTasks: bootJson.dailyTasks,
+              inboxMessages: bootJson.inboxMessages,
+              ...(bootJson.systemConfig ? { systemConfig: bootJson.systemConfig } : {}),
+              ...(bootJson.columnTitles && Object.keys(bootJson.columnTitles).length > 0
+                ? { columnTitles: bootJson.columnTitles }
+                : {}),
+              ...(bootJson.activityStatuses?.length ? { activityStatuses: bootJson.activityStatuses } : {}),
+              ...(bootJson.dropdownLists || {}),
+            };
+            syncAllBranchesFromCloudPayload(bootPayload, bootJson.timestamp || new Date().toISOString(), {
+              forceRealtimePush: true,
+            });
+          }
+        }
+      }
+
+      if (!cloudHasData) {
+        const supaRes = await fetchDatabaseFromSupabase();
+        if (supaRes && supaRes.success && supaRes.data) {
+          cloudHasData = true;
+          syncAllBranchesFromCloudPayload(supaRes.data, supaRes.timestamp);
+        }
       }
     } catch (supaErr) {
       console.warn('Cloud boot load skipped or network offline:', supaErr);
@@ -1286,28 +1330,46 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       updatedBranchesList[0] ||
       DEFAULT_SUPPLY_BRANCHES[0];
 
-    // 2. Read isolated state for activeBranchId from its scoped keys
+    // 2. Read isolated state for activeBranchId (preferring authoritative PG arrays when server responded cleanly)
     const localPartition = readBranchPartitionFromLocal(activeBranchId);
 
-    let bakeries = localPartition.bakeries;
-    let debts = localPartition.debts;
-    let villages = localPartition.villages;
-    let issuingEntities = localPartition.issuingEntities;
-    let violationTypes = localPartition.violationTypes;
-    let activityStatuses = localPartition.activityStatuses;
-    let bakeryCategories = localPartition.bakeryCategories;
-    let breadTypes = localPartition.breadTypes;
-    let breadTypeCounts = localPartition.breadTypeCounts;
-    let lineTypes = localPartition.lineTypes;
-    let fuelTypes = localPartition.fuelTypes;
-    let leaseContractTypes = localPartition.leaseContractTypes;
-    let responsibleManagerOptions = localPartition.responsibleManagerOptions;
-    let paymentMethods = localPartition.paymentMethods;
-    let dailyTasks = localPartition.dailyTasks;
-    let inboxMessages = localPartition.inboxMessages;
-    let columnTitles = localPartition.columnTitles;
-    let systemConfig = localPartition.systemConfig;
-    let users = localPartition.users;
+    let bakeries = pgAuthoritativeData ? pgAuthoritativeData.bakeries : localPartition.bakeries;
+    let debts = pgAuthoritativeData ? pgAuthoritativeData.debts : localPartition.debts;
+    let villages =
+      pgAuthoritativeData?.villages?.length > 0 ? pgAuthoritativeData.villages : localPartition.villages;
+    let issuingEntities =
+      pgAuthoritativeData?.dropdownLists?.issuingEntities ?? localPartition.issuingEntities;
+    let violationTypes =
+      pgAuthoritativeData?.dropdownLists?.violationTypes ?? localPartition.violationTypes;
+    let activityStatuses =
+      pgAuthoritativeData?.activityStatuses?.length > 0
+        ? pgAuthoritativeData.activityStatuses
+        : pgAuthoritativeData?.dropdownLists?.activityStatuses ?? localPartition.activityStatuses;
+    let bakeryCategories =
+      pgAuthoritativeData?.dropdownLists?.bakeryCategories ?? localPartition.bakeryCategories;
+    let breadTypes = pgAuthoritativeData?.dropdownLists?.breadTypes ?? localPartition.breadTypes;
+    let breadTypeCounts =
+      pgAuthoritativeData?.dropdownLists?.breadTypeCounts ?? localPartition.breadTypeCounts;
+    let lineTypes = pgAuthoritativeData?.dropdownLists?.lineTypes ?? localPartition.lineTypes;
+    let fuelTypes = pgAuthoritativeData?.dropdownLists?.fuelTypes ?? localPartition.fuelTypes;
+    let leaseContractTypes =
+      pgAuthoritativeData?.dropdownLists?.leaseContractTypes ?? localPartition.leaseContractTypes;
+    let responsibleManagerOptions =
+      pgAuthoritativeData?.dropdownLists?.responsibleManagerOptions ?? localPartition.responsibleManagerOptions;
+    let paymentMethods =
+      pgAuthoritativeData?.dropdownLists?.paymentMethods ?? localPartition.paymentMethods;
+    let dailyTasks = pgAuthoritativeData ? pgAuthoritativeData.dailyTasks : localPartition.dailyTasks;
+    let inboxMessages =
+      pgAuthoritativeData && Array.isArray(pgAuthoritativeData.inboxMessages) && pgAuthoritativeData.inboxMessages.length > 0
+        ? pgAuthoritativeData.inboxMessages
+        : localPartition.inboxMessages;
+    let columnTitles =
+      pgAuthoritativeData?.columnTitles && Object.keys(pgAuthoritativeData.columnTitles).length > 0
+        ? pgAuthoritativeData.columnTitles
+        : localPartition.columnTitles;
+    let systemConfig = pgAuthoritativeData?.systemConfig ?? localPartition.systemConfig;
+    let users =
+      pgAuthoritativeData?.users?.length > 0 ? pgAuthoritativeData.users : localPartition.users;
 
     const syncedInitial = synchronizeBakeryAndDebts(
       (bakeries ?? []).map(normalizeBakeryPerCapita),

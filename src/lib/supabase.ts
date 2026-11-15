@@ -14,6 +14,10 @@ import {
   DEFAULT_VIOLATION_TYPES,
   DEFAULT_ACTIVITY_STATUSES,
 } from '../defaultData';
+import {
+  clearRowMutationQueue,
+  getRowMutationQueueCount,
+} from '../services/offlineMutationQueue';
 
 // Unique per-tab client ID to prevent infinite self-echo sync loops
 export const SESSION_CLIENT_ID = `supa-client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -140,7 +144,12 @@ function persistOfflineQueue(queue: OfflineSyncEntry[]): void {
 }
 
 export function getPendingOfflineQueueCount(): number {
-  return loadOfflineQueueFromStorage().length;
+  return loadOfflineQueueFromStorage().length + getRowMutationQueueCount();
+}
+
+let rowQueueFlusherCallback: (() => Promise<any>) | null = null;
+export function registerRowQueueFlusher(fn: () => Promise<any>): void {
+  rowQueueFlusherCallback = fn;
 }
 
 export function enqueueOfflineSync(state: AppState, timestamp: string = new Date().toISOString()): number {
@@ -162,6 +171,7 @@ export function enqueueOfflineSync(state: AppState, timestamp: string = new Date
 export function clearOfflineSyncQueue(): void {
   inMemoryOfflineQueue = [];
   safeRemoveItem(OFFLINE_QUEUE_KEY);
+  clearRowMutationQueue();
 }
 
 export const PERMANENT_VAULT_KEY = 'TAMWEEN_PERMANENT_VAULT_V1';
@@ -1287,7 +1297,56 @@ ALTER TABLE app_users REPLICA IDENTITY FULL;
 ALTER TABLE daily_tasks REPLICA IDENTITY FULL;
 ALTER TABLE backup_snapshots REPLICA IDENTITY FULL;
 ALTER TABLE system_config REPLICA IDENTITY FULL;
+-- 10. جدول رسائل وتكليفات صندوق الوارد (inbox_messages)
+CREATE TABLE IF NOT EXISTS inbox_messages (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT DEFAULT 'branch-mahalla' REFERENCES branches(id) ON DELETE CASCADE,
+  sender_id TEXT NOT NULL,
+  sender_name TEXT NOT NULL,
+  sender_role TEXT NOT NULL,
+  recipient_target TEXT DEFAULT 'ALL',
+  recipient_label TEXT DEFAULT 'الجميع',
+  message_type TEXT DEFAULT 'instruction',
+  content TEXT NOT NULL,
+  related_bakery_id TEXT DEFAULT '',
+  related_bakery_name TEXT DEFAULT '',
+  read_by JSONB DEFAULT '[]'::jsonb,
+  timestamp TEXT NOT NULL,
+  version INTEGER DEFAULT 1,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_messages_branch_id ON inbox_messages(branch_id);
+
+-- 11. جدول القوائم المنسدلة الديناميكية (dropdown_lists)
+CREATE TABLE IF NOT EXISTS dropdown_lists (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT DEFAULT 'branch-mahalla' REFERENCES branches(id) ON DELETE CASCADE,
+  list_key TEXT NOT NULL,
+  options JSONB DEFAULT '[]'::jsonb,
+  version INTEGER DEFAULT 1,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dropdown_lists_branch_id ON dropdown_lists(branch_id);
+
+ALTER TABLE inbox_messages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow Tamween full access to inbox_messages" ON inbox_messages;
+CREATE POLICY "Allow Tamween full access to inbox_messages" ON inbox_messages FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+
+ALTER TABLE dropdown_lists ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow Tamween full access to dropdown_lists" ON dropdown_lists;
+CREATE POLICY "Allow Tamween full access to dropdown_lists" ON dropdown_lists FOR ALL USING (auth.role() IN ('anon', 'authenticated')) WITH CHECK (auth.role() IN ('anon', 'authenticated'));
+
+ALTER TABLE branches REPLICA IDENTITY FULL;
+ALTER TABLE villages REPLICA IDENTITY FULL;
+ALTER TABLE bakeries REPLICA IDENTITY FULL;
+ALTER TABLE debts REPLICA IDENTITY FULL;
+ALTER TABLE app_users REPLICA IDENTITY FULL;
+ALTER TABLE daily_tasks REPLICA IDENTITY FULL;
+ALTER TABLE backup_snapshots REPLICA IDENTITY FULL;
+ALTER TABLE system_config REPLICA IDENTITY FULL;
 ALTER TABLE high_debt_alerts REPLICA IDENTITY FULL;
+ALTER TABLE inbox_messages REPLICA IDENTITY FULL;
+ALTER TABLE dropdown_lists REPLICA IDENTITY FULL;
 
 DO $$
 BEGIN
@@ -1318,6 +1377,12 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'high_debt_alerts') THEN
       ALTER PUBLICATION supabase_realtime ADD TABLE high_debt_alerts;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'inbox_messages') THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE inbox_messages;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'dropdown_lists') THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE dropdown_lists;
     END IF;
   END IF;
 END $$;
@@ -2020,6 +2085,8 @@ export const ALL_SUPABASE_REALTIME_TABLES = [
   'debts',
   'app_users',
   'daily_tasks',
+  'inbox_messages',
+  'dropdown_lists',
   'backup_snapshots',
   'system_config',
   'high_debt_alerts',
@@ -2033,7 +2100,9 @@ export const SUPABASE_TABLE_ARABIC_LABELS: Record<SupabaseRealtimeTableName, str
   bakeries: 'بيانات وحصص المخابز (bakeries)',
   debts: 'المديونيات والتحصيل (debts)',
   app_users: 'المستخدمين والصلاحيات (app_users)',
-  daily_tasks: 'المهام اليومية والرسائل (daily_tasks)',
+  daily_tasks: 'المهام اليومية (daily_tasks)',
+  inbox_messages: 'صندوق الوارد والتكليفات (inbox_messages)',
+  dropdown_lists: 'القوائم المنسدلة (dropdown_lists)',
   backup_snapshots: 'لقطات المزامنة الفورية (backup_snapshots)',
   system_config: 'إعدادات النظام والهوية (system_config)',
   high_debt_alerts: 'تنبيهات المديونيات المرتفعة (high_debt_alerts)',
@@ -2149,6 +2218,8 @@ const tableDiagnosticsMap: Record<SupabaseRealtimeTableName, TableSubscriptionDi
   debts: { table: 'debts', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.debts, subscribed: true, eventsReceived: 0 },
   app_users: { table: 'app_users', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.app_users, subscribed: true, eventsReceived: 0 },
   daily_tasks: { table: 'daily_tasks', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.daily_tasks, subscribed: true, eventsReceived: 0 },
+  inbox_messages: { table: 'inbox_messages', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.inbox_messages, subscribed: true, eventsReceived: 0 },
+  dropdown_lists: { table: 'dropdown_lists', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.dropdown_lists, subscribed: true, eventsReceived: 0 },
   backup_snapshots: { table: 'backup_snapshots', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.backup_snapshots, subscribed: true, eventsReceived: 0 },
   system_config: { table: 'system_config', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.system_config, subscribed: true, eventsReceived: 0 },
   high_debt_alerts: { table: 'high_debt_alerts', arabicLabel: SUPABASE_TABLE_ARABIC_LABELS.high_debt_alerts, subscribed: true, eventsReceived: 0 },
@@ -2407,7 +2478,7 @@ export function recordRealtimeSocketError(
   const autoResolve = options?.autoResolveImmediately ?? true;
   const healAction =
     entry.autoHealAction ||
-    'تم الاعتراض التلقائي وتفعيل المعالج الذاتي (Auto-Healer): تم تأمين قناة WebSocket/SSE وإعادة ضبط اشتراكات الجداول الـ 9 بنجاح';
+    'تم الاعتراض التلقائي وتفعيل المعالج الذاتي (Auto-Healer): تم تأمين قناة WebSocket/SSE وإعادة ضبط اشتراكات الجداول الـ 11 بنجاح';
 
   const fullErr: ConsoleSocketErrorEntry = {
     id: `err-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -2529,7 +2600,7 @@ export async function resolveAllConsoleAndSocketIssues(): Promise<{
     stepsCompleted: [
       'فحص وتأمين اتصال WebSocket المباشر (/ws/supabase-realtime) وتفعيل نبضات Keep-Alive كل 15 ثانية',
       'فحص وتأكيد قناة الدفع الفوري الاحتياطية SSE Push Stream (/api/supabase/realtime-stream)',
-      'تأكيد اشتراكات الجداول الـ 9 (9/9 SUBSCRIBED) لالتقاط أحداث INSERT / UPDATE / DELETE لحظياً',
+      'تأكيد اشتراكات الجداول الـ 11 (11/11 SUBSCRIBED) لالتقاط أحداث INSERT / UPDATE / DELETE لحظياً',
       'اعتراض وتصفير كافة تحذيرات وأخطاء الكونسول البرمجية وتفعيل المعالج التلقائي (Auto-Healer)',
     ],
   };
@@ -2696,7 +2767,18 @@ type WsStateListener = (msg: {
     | 'state_cleared'
     | 'alerts_update'
     | 'config_updated'
-    | 'diagnostic_pong';
+    | 'diagnostic_pong'
+    | 'row_change'
+    | 'batch_sync';
+  table?: SupabaseRealtimeTableName;
+  eventType?: 'INSERT' | 'UPDATE' | 'DELETE';
+  branchId?: string;
+  newRow?: any;
+  oldRow?: any;
+  revision?: number;
+  data?: any;
+  sqlOperation?: SqlRealtimeOperationType;
+  affectedTable?: SupabaseRealtimeTableName;
   snapshot?: any;
   alertsState?: any;
   alerts?: HighDebtAlertNotification[];
@@ -3086,7 +3168,7 @@ function ensureSharedWebSocket(): void {
         direction: 'SYSTEM',
         channel: 'WEBSOCKET',
         eventType: 'WS_OPEN',
-        summary: `تم فتح اتصال WebSocket المباشر (${wsUrl}) — جميع الجداول الـ 9 في وضع الاستماع اللحظي`,
+        summary: `تم فتح اتصال WebSocket المباشر (${wsUrl}) — جميع الجداول الـ 11 في وضع الاستماع اللحظي`,
       });
       const client = getSupabaseClient();
       if (!client && !isBrowserOffline()) {
@@ -3422,74 +3504,71 @@ export async function fetchDatabaseFromSupabase(): Promise<{
   // 1. Primary Cloud Source of Truth: Supabase PostgreSQL / Realtime
   if (client) {
     try {
-      const { data: liveRow, error: liveErr } = await client
-        .from('backup_snapshots')
-        .select('payload, timestamp')
-        .eq('id', 'latest_live_snapshot')
-        .maybeSingle();
-
-      if (liveErr) {
-        lastErrorMsg = liveErr.message;
+      // Prioritize live normalized SQL tables first if external Supabase has records
+      const { data: bData, error: bErr } = await client.from('bakeries').select('*');
+      if (bErr) {
+        lastErrorMsg = bErr.message;
       } else {
         serverReachable = true;
       }
 
-      if (!liveErr && liveRow && liveRow.payload) {
-        const payload = liveRow.payload;
-        const data = payload.data || payload;
-        if (
-          data &&
-          (Array.isArray(data.bakeries) ||
-            Array.isArray(data.debts) ||
-            Array.isArray(data.branches) ||
-            data.branchPartitions)
-        ) {
-          candidates.push({
-            data: data as AppState,
-            timestamp: payload.timestamp || liveRow.timestamp || new Date().toISOString(),
-            source: 'Supabase Live Snapshot',
-          });
-        }
+      if (!bErr && bData && bData.length > 0) {
+        const [{ data: dData }, { data: vData }, { data: brData }, { data: uData }, { data: tData }, { data: mData }] =
+          await Promise.all([
+            client.from('debts').select('*'),
+            client.from('villages').select('*'),
+            client.from('branches').select('*'),
+            client.from('app_users').select('*'),
+            client.from('daily_tasks').select('*'),
+            client.from('inbox_messages').select('*'),
+          ]);
+
+        const restoredBakeries = bData.map(mapSqlRowToBakery).filter(Boolean);
+        const restoredDebts = (dData || []).map(mapSqlRowToDebt).filter(Boolean);
+        const restoredBranches = (brData || []).map(mapSqlRowToBranch).filter(Boolean);
+        const restoredVillages = (vData || []).map(mapSqlRowToVillage).filter(Boolean);
+        const restoredUsers = (uData || []).map(mapSqlRowToUser).filter(Boolean);
+        const restoredTasks = (tData || []).map(mapSqlRowToTask).filter(Boolean);
+
+        candidates.push({
+          data: {
+            bakeries: restoredBakeries,
+            debts: restoredDebts,
+            ...(restoredBranches.length > 0 ? { branches: restoredBranches } : {}),
+            ...(restoredVillages.length > 0 ? { villages: restoredVillages } : {}),
+            ...(restoredUsers.length > 0 ? { users: restoredUsers } : {}),
+            ...(restoredTasks.length > 0 ? { dailyTasks: restoredTasks } : {}),
+            ...(Array.isArray(mData) && mData.length > 0 ? { inboxMessages: mData } : {}),
+          } as unknown as AppState,
+          timestamp: new Date().toISOString(),
+          source: 'جداول Supabase SQL',
+        });
       }
 
       if (candidates.length === 0) {
-        const { data: snapshotRows, error: sErr } = await client
+        const { data: liveRow, error: liveErr } = await client
           .from('backup_snapshots')
           .select('payload, timestamp')
-          .order('timestamp', { ascending: false })
-          .limit(1);
+          .eq('id', 'latest_live_snapshot')
+          .maybeSingle();
 
-        if (!sErr && snapshotRows && snapshotRows.length > 0 && snapshotRows[0].payload) {
+        if (!liveErr && liveRow && liveRow.payload) {
           serverReachable = true;
-          const payload = snapshotRows[0].payload;
+          const payload = liveRow.payload;
           const data = payload.data || payload;
-          if (data && (Array.isArray(data.bakeries) || Array.isArray(data.debts))) {
+          if (
+            data &&
+            (Array.isArray(data.bakeries) ||
+              Array.isArray(data.debts) ||
+              Array.isArray(data.branches) ||
+              data.branchPartitions)
+          ) {
             candidates.push({
               data: data as AppState,
-              timestamp: payload.timestamp || snapshotRows[0].timestamp || new Date().toISOString(),
-              source: 'Supabase Backup Snapshots',
+              timestamp: payload.timestamp || liveRow.timestamp || new Date().toISOString(),
+              source: 'Supabase Live Snapshot',
             });
           }
-        }
-      }
-
-      if (candidates.length === 0) {
-        const { data: bData, error: bErr } = await client.from('bakeries').select('*');
-        const { data: dData } = await client.from('debts').select('*');
-
-        if (!bErr && bData && bData.length > 0) {
-          serverReachable = true;
-          const restoredBakeries = bData.map(mapSqlRowToBakery).filter(Boolean);
-          const restoredDebts = (dData || []).map(mapSqlRowToDebt).filter(Boolean);
-
-          candidates.push({
-            data: {
-              bakeries: restoredBakeries,
-              debts: restoredDebts,
-            } as unknown as AppState,
-            timestamp: new Date().toISOString(),
-            source: 'جداول Supabase SQL',
-          });
         }
       }
     } catch (err: any) {
@@ -4008,9 +4087,30 @@ export async function flushOfflineSyncQueue(): Promise<{
   if (isBrowserOffline() || isFlushingOfflineQueue) {
     return { flushedCount: 0, remainingCount: getPendingOfflineQueueCount() };
   }
+
+  let rowFlushedCount = 0;
+  if (rowQueueFlusherCallback) {
+    try {
+      const rowRes = await rowQueueFlusherCallback();
+      rowFlushedCount = Number(rowRes?.flushedCount || 0);
+    } catch {}
+  }
+
   const queue = [...loadOfflineQueueFromStorage()];
   if (queue.length === 0) {
-    return { flushedCount: 0, remainingCount: 0 };
+    if (rowFlushedCount > 0) {
+      const nowAr = new Date().toLocaleTimeString('ar-EG');
+      setCloudConnectionStatus(
+        'connected',
+        `تمت استعادة الاتصال وإرسال (${rowFlushedCount}) عملية من قائمة الانتظار بنجاح`,
+        {
+          lastSyncAt: nowAr,
+          hasPendingSync: getPendingOfflineQueueCount() > 0,
+          pendingQueueCount: getPendingOfflineQueueCount(),
+        }
+      );
+    }
+    return { flushedCount: rowFlushedCount, remainingCount: getPendingOfflineQueueCount() };
   }
 
   isFlushingOfflineQueue = true;
@@ -4473,9 +4573,12 @@ export interface RealtimeSyncCallbacks {
       | 'branches'
       | 'app_users'
       | 'daily_tasks'
+      | 'inbox_messages'
+      | 'dropdown_lists'
       | 'system_config'
       | 'high_debt_alerts';
     eventType: 'INSERT' | 'UPDATE' | 'DELETE';
+    branchId?: string;
     newRow?: any;
     oldRow?: any;
     timestamp: string;
@@ -4484,7 +4587,7 @@ export interface RealtimeSyncCallbacks {
 
 /**
  * الاشتراك في قناة Realtime المباشرة (Supabase Realtime + WebSocket + SSE Push)
- * 100% قائمة على الأحداث اللحظية (Event-Driven) لكافة الجداول الـ 9 بدون أي سحب دوري (Zero Polling)
+ * 100% قائمة على الأحداث اللحظية (Event-Driven) لكافة الجداول الـ 11 بدون أي سحب دوري (Zero Polling)
  */
 export function subscribeToSupabaseRealtime(
   onUpdate: ((state: AppState, timestamp?: string) => void) | RealtimeSyncCallbacks
@@ -4503,7 +4606,52 @@ export function subscribeToSupabaseRealtime(
   unsubscribers.push(
     addSharedWebSocketListener((msg) => {
       try {
-        if (msg.type === 'init' && msg.snapshot?.data) {
+        if (msg.type === 'row_change' && msg.table) {
+          if (isSelfRealtimeEvent(msg.clientId)) return;
+          const ts = msg.timestamp || new Date().toISOString();
+          const rowId = msg.newRow?.id || msg.oldRow?.id || msg.branchId || 'row';
+          const key = `ws-row:${msg.table}:${msg.eventType}:${rowId}:${msg.revision || 0}`;
+          if (!shouldProcessRealtimeEvent(key, Date.now(), 50)) return;
+          if (typeof msg.revision === 'number') {
+            diagLastServerRevision = msg.revision;
+          }
+          markTableRealtimeEvent(msg.table as SupabaseRealtimeTableName, msg.eventType || 'UPDATE', ts);
+          recordRealtimeDiagnosticEvent({
+            direction: 'INCOMING',
+            channel: 'WEBSOCKET',
+            eventType: `postgres_changes:${msg.eventType || 'UPDATE'}`,
+            sqlOperation: msg.eventType,
+            table: msg.table,
+            affectedTable: msg.table,
+            revision: msg.revision,
+            senderClientId: msg.clientId,
+            isSelf: false,
+            responseLatencyMs: msg.sentAt ? Math.max(1, Date.now() - Number(msg.sentAt)) : undefined,
+            summary: `تحديث لحظي فوري لجدول (${msg.table}) — ${msg.eventType}`,
+          });
+          if (!isBrowserOffline()) {
+            setCloudConnectionStatus('connected', 'تم استلام تحديث لحظي فوري من جهاز آخر');
+          }
+          if (msg.table !== 'backup_snapshots') {
+            callbacks.onRowChange?.({
+              table: msg.table,
+              eventType: msg.eventType || 'UPDATE',
+              branchId: msg.branchId,
+              newRow: msg.newRow,
+              oldRow: msg.oldRow,
+              timestamp: ts,
+            });
+          }
+        } else if (msg.type === 'batch_sync' && msg.data) {
+          if (isSelfRealtimeEvent(msg.clientId)) return;
+          const ts = msg.timestamp || new Date().toISOString();
+          const key = `ws-batch:${msg.branchId || 'default'}:${msg.revision || 0}`;
+          if (!shouldProcessRealtimeEvent(key, Date.now(), 80)) return;
+          if (!isBrowserOffline()) {
+            setCloudConnectionStatus('connected', 'تمت مزامنة تحديث جماعي لحظي من جهاز آخر');
+          }
+          callbacks.onUpdate(msg.data as AppState, ts);
+        } else if (msg.type === 'init' && msg.snapshot?.data) {
           const snap = msg.snapshot;
           const data = snap.data as AppState;
           const ts = snap.timestamp || msg.timestamp || new Date().toISOString();
@@ -4532,6 +4680,7 @@ export function subscribeToSupabaseRealtime(
               bakeries: [],
               debts: [],
               dailyTasks: [],
+              inboxMessages: [],
             } as unknown as AppState,
             ts
           );
@@ -4667,6 +4816,8 @@ export function subscribeToSupabaseRealtime(
           | 'branches'
           | 'app_users'
           | 'daily_tasks'
+          | 'inbox_messages'
+          | 'dropdown_lists'
           | 'system_config'
           | 'high_debt_alerts',
         payload: any
@@ -4694,6 +4845,7 @@ export function subscribeToSupabaseRealtime(
           callbacks.onRowChange?.({
             table,
             eventType: evt,
+            branchId: payload.new?.branch_id || payload.old?.branch_id,
             newRow: payload.new,
             oldRow: payload.old,
             timestamp: ts,
@@ -4781,6 +4933,16 @@ export function subscribeToSupabaseRealtime(
         )
         .on(
           'postgres_changes',
+          { event: '*', schema: 'public', table: 'inbox_messages' },
+          (payload: any) => handleTablePostgresChange('inbox_messages', payload)
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'dropdown_lists' },
+          (payload: any) => handleTablePostgresChange('dropdown_lists', payload)
+        )
+        .on(
+          'postgres_changes',
           { event: '*', schema: 'public', table: 'system_config' },
           (payload: any) => handleTablePostgresChange('system_config', payload)
         )
@@ -4797,7 +4959,7 @@ export function subscribeToSupabaseRealtime(
               direction: 'SYSTEM',
               channel: 'SUPABASE_REALTIME',
               eventType: 'CHANNEL_SUBSCRIBED',
-              summary: 'تم تفعيل اشتراكات Supabase Realtime بنجاح على كافة الجداول الـ 9 (SUBSCRIBED)',
+              summary: 'تم تفعيل اشتراكات Supabase Realtime بنجاح على كافة الجداول الـ 11 (SUBSCRIBED)',
             });
             setCloudConnectionStatus('connected', 'قناة البث اللحظي Supabase Realtime متصلة ونشطة لكافة الجداول');
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {

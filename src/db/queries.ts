@@ -1,247 +1,1489 @@
-import { db } from './index.ts';
-import { bakeries, debts, users, villages, auditLogs } from './schema.ts';
-import { eq } from 'drizzle-orm';
-import type { Bakery, DebtRecord, VillageHierarchy, AppUser } from '../types.ts';
+import { pool } from './index.ts';
+import type {
+  Bakery,
+  DebtRecord,
+  VillageHierarchy,
+  AppUser,
+  DailyBakeryTask,
+  InboxChatMessage,
+  HighDebtAlertNotification,
+  SystemConfig,
+  SupplyBranch,
+  ColumnTitles,
+} from '../types.ts';
 
-// Get or Create User in PostgreSQL
-export async function getOrCreateUserInDb(uid: string, email: string, fullName: string, role: string = 'inspector') {
-  try {
-    const existing = await db.select().from(users).where(eq(users.uid, uid));
-    if (existing.length > 0) {
-      return existing[0];
+export const DEFAULT_BRANCH_ID = 'branch-mahalla';
+
+export const DEFAULT_BRANCH_ROW: SupplyBranch = {
+  id: DEFAULT_BRANCH_ID,
+  name: 'إدارة تموين مركز المحلة الكبرى',
+  governorateTitle: 'محافظة الغربية',
+  directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+  description: 'الإدارة الرئيسية الافتراضية لمركز المحلة الكبرى',
+  createdAt: new Date().toISOString(),
+  isDefault: true,
+};
+
+export type NormalizedTableName =
+  | 'branches'
+  | 'villages'
+  | 'bakeries'
+  | 'debts'
+  | 'app_users'
+  | 'daily_tasks'
+  | 'inbox_messages'
+  | 'high_debt_alerts'
+  | 'system_config'
+  | 'dropdown_lists'
+  | 'audit_logs';
+
+export const ALLOWED_DB_TABLES = new Set<NormalizedTableName>([
+  'branches',
+  'villages',
+  'bakeries',
+  'debts',
+  'app_users',
+  'daily_tasks',
+  'inbox_messages',
+  'high_debt_alerts',
+  'system_config',
+  'dropdown_lists',
+  'audit_logs',
+]);
+
+let schemaInitialized = false;
+let schemaInitPromise: Promise<void> | null = null;
+
+export async function ensurePostgresSchema(): Promise<void> {
+  if (schemaInitialized) return;
+  if (schemaInitPromise) return schemaInitPromise;
+
+  schemaInitPromise = (async () => {
+    try {
+      await pool.query(
+        `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
+         VALUES ($1, $2, $3, $4, $5, TRUE)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          DEFAULT_BRANCH_ROW.id,
+          DEFAULT_BRANCH_ROW.name,
+          DEFAULT_BRANCH_ROW.governorateTitle,
+          DEFAULT_BRANCH_ROW.directorateTitle,
+          DEFAULT_BRANCH_ROW.description || '',
+        ]
+      );
+      schemaInitialized = true;
+    } catch (err) {
+      schemaInitPromise = null;
+      console.error('Failed to ensure default branch in PostgreSQL:', err);
+      throw err;
     }
-    const inserted = await db.insert(users).values({
-      uid,
-      email,
-      fullName,
-      role,
-    }).returning();
-    return inserted[0];
-  } catch (error) {
-    console.error('Failed to sync user in database:', error);
-    throw new Error('Database operation failed', { cause: error });
+  })();
+
+  return schemaInitPromise;
+}
+
+// =========================================================================
+// Row Mappers (Snake Case PG <-> Camel Case App Types)
+// =========================================================================
+
+export function mapDbBranchToApp(r: any): SupplyBranch & { version?: number } {
+  return {
+    id: String(r.id),
+    name: String(r.name || ''),
+    governorateTitle: String(r.governorate_title || 'محافظة الغربية'),
+    directorateTitle: String(r.directorate_title || 'مديرية التموين والتجارة الداخلية بالغربية'),
+    description: String(r.description || ''),
+    isDefault: Boolean(r.is_default),
+    createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+    version: Number(r.version || 1),
+  };
+}
+
+export function mapDbVillageToApp(r: any): VillageHierarchy & { id?: string; branchId?: string; version?: number } {
+  return {
+    id: String(r.id),
+    branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
+    village: String(r.village || ''),
+    localUnits: Array.isArray(r.local_units) ? r.local_units : [],
+    version: Number(r.version || 1),
+  };
+}
+
+export function mapDbBakeryToApp(r: any): Bakery & { branchId?: string; version?: number } {
+  return {
+    id: String(r.id),
+    branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
+    bakeryOwnerName: String(r.bakery_owner_name || ''),
+    machineNumber: String(r.machine_number || ''),
+    village: String(r.village || ''),
+    localUnit: String(r.local_unit || ''),
+    responsibleManager: String(r.responsible_manager || ''),
+    insuranceQuota: Number(r.insurance_quota || 0),
+    actualQuota: Number(r.actual_quota || 0),
+    insuranceValue: Number(r.insurance_value || 0),
+    insuranceCheckNumber: String(r.insurance_check_number || ''),
+    loavesCount: Number(r.loaves_count || 0),
+    villagePopulation: Number(r.village_population || 0),
+    perCapitaAverage: String(r.per_capita_average ?? '0'),
+    beneficiaries2023: Number(r.beneficiaries_2023 || 0),
+    avg2023: String(r.avg_2023 ?? '0'),
+    beneficiaries2024: Number(r.beneficiaries_2024 || 0),
+    avg2024: String(r.avg_2024 ?? '0'),
+    beneficiaries2025: Number(r.beneficiaries_2025 || 0),
+    avg2025: String(r.avg_2025 ?? '0'),
+    avgDiff: String(r.avg_diff ?? '0'),
+    activityStatus: String(r.activity_status || 'يعمل'),
+    bakeryCategory: String(r.bakery_category || 'مخبز بلدي مدعم'),
+    breadType: String(r.bread_type || 'بلدي مدعم'),
+    flourBagPrice: Number(r.flour_bag_price || 0),
+    breadTypeCount: String(r.bread_type_count || '660'),
+    lineType: String(r.line_type || 'آلي كامل'),
+    fuelType: String(r.fuel_type || 'غاز طبيعي'),
+    phone: String(r.phone || ''),
+    nationalId: String(r.national_id || ''),
+    commercialRegNumber: String(r.commercial_reg_number || ''),
+    commercialRegDate: String(r.commercial_reg_date || ''),
+    bakeryLicenseNumber: String(r.bakery_license_number || ''),
+    bakeryLicenseDate: String(r.bakery_license_date || ''),
+    leaseContractType: String(r.lease_contract_type || ''),
+    leaseAgreementDate: String(r.lease_agreement_date || ''),
+    taxCardNumber: String(r.tax_card_number || ''),
+    taxCardDate: String(r.tax_card_date || ''),
+    notes: String(r.notes || ''),
+    activityLog: Array.isArray(r.activity_log) ? r.activity_log : [],
+    version: Number(r.version || 1),
+  };
+}
+
+export function mapDbDebtToApp(r: any): DebtRecord & { branchId?: string; version?: number } {
+  return {
+    id: String(r.id),
+    branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
+    bakeryId: String(r.bakery_id),
+    bakeryOwnerName: String(r.bakery_owner_name || ''),
+    machineNumber: String(r.machine_number || ''),
+    village: String(r.village || ''),
+    localUnit: String(r.local_unit || ''),
+    violationDate: String(r.violation_date || ''),
+    issuingEntity: String(r.issuing_entity || ''),
+    violationType: String(r.violation_type || ''),
+    violationAmount: Number(r.violation_amount || 0),
+    oldViolations: Number(r.old_violations || 0),
+    totalViolations: Number(r.total_violations || 0),
+    violationPaymentDate: String(r.violation_payment_date || ''),
+    violationReceiptNumber: String(r.violation_receipt_number || ''),
+    violationPaymentMethod: String(r.violation_payment_method || 'كاش'),
+    paidViolationAmount: Number(r.paid_violation_amount || 0),
+    remainingViolations: Number(r.remaining_violations || 0),
+    addedAmount: Number(r.added_amount || 0),
+    addedPaymentDate: String(r.added_payment_date || ''),
+    addedReceiptNumber: String(r.added_receipt_number || ''),
+    addedPaymentMethod: String(r.added_payment_method || 'كاش'),
+    paidAddedAmount: Number(r.paid_added_amount || 0),
+    remainingAdded: Number(r.remaining_added || 0),
+    disposalDate: String(r.disposal_date || ''),
+    disposalBags: Number(r.disposal_bags || 0),
+    disposalBagPrice: Number(r.disposal_bag_price || 0),
+    disposalMultiplier: Number(r.disposal_multiplier || 1),
+    disposalValue: Number(r.disposal_value || 0),
+    disposalPaymentDate: String(r.disposal_payment_date || ''),
+    disposalReceiptNumber: String(r.disposal_receipt_number || ''),
+    disposalPaymentMethod: String(r.disposal_payment_method || 'كاش'),
+    paidDisposalAmount: Number(r.paid_disposal_amount || 0),
+    remainingDisposal: Number(r.remaining_disposal || 0),
+    netRemainingDebt: Number(r.net_remaining_debt || 0),
+    isScheduled: Boolean(r.is_scheduled),
+    scheduleInstallmentsCount: Number(r.schedule_installments_count || 0),
+    schedulePeriodType: String(r.schedule_period_type || 'شهري'),
+    scheduleInstallmentValue: Number(r.schedule_installment_value || 0),
+    scheduleStartDate: String(r.schedule_start_date || ''),
+    schedulePaidInstallments: Number(r.schedule_paid_installments || 0),
+    scheduleStatus: String(r.schedule_status || 'قيد التحصيل'),
+    notes: String(r.notes || ''),
+    version: Number(r.version || 1),
+  };
+}
+
+export function mapDbUserToApp(r: any): AppUser & { version?: number } {
+  return {
+    id: String(r.id),
+    branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
+    username: String(r.username || ''),
+    fullName: String(r.full_name || ''),
+    password: String(r.password_hash || ''),
+    role: String(r.role || 'inspector'),
+    jobTitle: String(r.job_title || ''),
+    department: String(r.department || ''),
+    phone: String(r.phone || ''),
+    gmailEmail: String(r.gmail_email || ''),
+    gmailPassword: String(r.gmail_password || ''),
+    googleDriveAutoSync: Boolean(r.google_drive_auto_sync),
+    customPermissions: Array.isArray(r.custom_permissions) ? r.custom_permissions : undefined,
+    createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
+    version: Number(r.version || 1),
+  };
+}
+
+export function mapDbTaskToApp(r: any): DailyBakeryTask & { branchId?: string; version?: number } {
+  return {
+    id: String(r.id),
+    branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
+    title: String(r.title || ''),
+    description: String(r.description || ''),
+    bakeryId: r.bakery_id ? String(r.bakery_id) : undefined,
+    bakeryName: r.bakery_name ? String(r.bakery_name) : undefined,
+    village: r.village ? String(r.village) : undefined,
+    priority: (r.priority || 'medium') as DailyBakeryTask['priority'],
+    dueDate: String(r.due_date || ''),
+    status: (r.status || 'pending') as DailyBakeryTask['status'],
+    assignedTo: r.assigned_to ? String(r.assigned_to) : undefined,
+    createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+    version: Number(r.version || 1),
+  };
+}
+
+export function mapDbInboxToApp(r: any): InboxChatMessage & { branchId?: string; version?: number } {
+  return {
+    id: String(r.id),
+    branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
+    senderId: String(r.sender_id || ''),
+    senderName: String(r.sender_name || ''),
+    senderRole: String(r.sender_role || 'inspector'),
+    recipientTarget: String(r.recipient_target || 'ALL'),
+    recipientLabel: String(r.recipient_label || 'الجميع'),
+    messageType: (r.message_type || 'instruction') as InboxChatMessage['messageType'],
+    content: String(r.content || ''),
+    relatedBakeryId: r.related_bakery_id ? String(r.related_bakery_id) : undefined,
+    relatedBakeryName: r.related_bakery_name ? String(r.related_bakery_name) : undefined,
+    readBy: Array.isArray(r.read_by) ? r.read_by : [],
+    timestamp: String(r.timestamp || new Date().toISOString()),
+    version: Number(r.version || 1),
+  };
+}
+
+export function mapDbAlertToApp(r: any): HighDebtAlertNotification & { version?: number } {
+  return {
+    id: String(r.id),
+    branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
+    bakeryId: String(r.bakery_id || ''),
+    bakeryOwnerName: String(r.bakery_owner_name || ''),
+    machineNumber: String(r.machine_number || ''),
+    village: String(r.village || ''),
+    debtAmount: Number(r.debt_amount || 0),
+    thresholdUsed: Number(r.threshold_used || 50000),
+    editedBy: String(r.edited_by || ''),
+    editorRole: String(r.editor_role || ''),
+    actionType: (r.action_type || 'HIGH_DEBT_SURGE') as HighDebtAlertNotification['actionType'],
+    isRead: Boolean(r.is_read),
+    notes: String(r.notes || ''),
+    createdAtIso: String(r.created_at_iso || ''),
+    timestamp: r.created_at_iso || (r.created_at ? new Date(r.created_at).toLocaleString('ar-EG') : ''),
+    version: Number(r.version || 1),
+  };
+}
+
+export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
+  switch (table) {
+    case 'branches':
+      return mapDbBranchToApp(row);
+    case 'villages':
+      return mapDbVillageToApp(row);
+    case 'bakeries':
+      return mapDbBakeryToApp(row);
+    case 'debts':
+      return mapDbDebtToApp(row);
+    case 'app_users':
+      return mapDbUserToApp(row);
+    case 'daily_tasks':
+      return mapDbTaskToApp(row);
+    case 'inbox_messages':
+      return mapDbInboxToApp(row);
+    case 'high_debt_alerts':
+      return mapDbAlertToApp(row);
+    case 'system_config':
+      return {
+        branchId: String(row.branch_id || DEFAULT_BRANCH_ID),
+        systemConfig: {
+          governorateTitle: String(row.governorate_title || ''),
+          directorateTitle: String(row.directorate_title || ''),
+          administrationTitle: String(row.administration_title || ''),
+          englishSubtitle: String(row.english_subtitle || ''),
+          logoBase64: String(row.logo_base64 || ''),
+          debtAlertThreshold: Number(row.debt_alert_threshold || 50000),
+          dailyAlertConfig: row.daily_alert_config || undefined,
+          rolePermissions: row.role_permissions || undefined,
+          roleLabels: row.role_labels || undefined,
+          customRoles: Array.isArray(row.custom_roles) ? row.custom_roles : undefined,
+        } as SystemConfig,
+        columnTitles: (row.column_titles || {}) as Partial<ColumnTitles>,
+        activityStatuses: Array.isArray(row.activity_statuses) ? row.activity_statuses : [],
+        version: Number(row.version || 1),
+      };
+    case 'dropdown_lists':
+      return {
+        id: String(row.id),
+        branchId: String(row.branch_id || DEFAULT_BRANCH_ID),
+        listKey: String(row.list_key || ''),
+        options: Array.isArray(row.options) ? row.options : [],
+        version: Number(row.version || 1),
+      };
+    default:
+      return row;
   }
 }
 
-// Fetch all bakeries
-export async function getAllBakeriesFromDb(): Promise<Bakery[]> {
-  try {
-    const rows = await db.select().from(bakeries);
-    return rows.map((r) => ({
-      id: r.id,
-      bakeryOwnerName: r.bakeryOwnerName,
-      machineNumber: r.machineNumber,
-      village: r.village,
-      localUnit: r.localUnit,
-      insuranceQuota: r.insuranceQuota,
-      actualQuota: r.actualQuota,
-      insuranceValue: r.insuranceValue,
-      loavesCount: r.loavesCount,
-      villagePopulation: r.villagePopulation,
-      perCapitaAverage: String(r.perCapitaAverage || '0'),
-      beneficiaries2023: r.beneficiaries2023,
-      avg2023: String(r.avg2023 || '0'),
-      beneficiaries2024: r.beneficiaries2024,
-      avg2024: String(r.avg2024 || '0'),
-      beneficiaries2025: r.beneficiaries2025,
-      avg2025: String(r.avg2025 || '0'),
-      avgDiff: String(r.avgDiff || '0'),
-      activityStatus: r.activityStatus,
-      bakeryCategory: r.bakeryCategory,
-      breadType: r.breadType,
-      breadTypeCount: r.breadTypeCount,
-      lineType: r.lineType,
-      fuelType: r.fuelType,
-      phone: r.phone,
-      nationalId: r.nationalId,
-      commercialRegDate: r.commercialRegDate,
-      bakeryLicenseDate: r.bakeryLicenseDate,
-      leaseAgreementDate: r.leaseAgreementDate,
-      taxCardDate: r.taxCardDate,
-      activityLog: (r.activityLog as Bakery['activityLog']) || [],
-    }));
-  } catch (error) {
-    console.error('Failed to query bakeries from database:', error);
-    throw new Error('Database query failed', { cause: error });
-  }
+// =========================================================================
+// Full Branch Bootstrap & Paginated Queries
+// =========================================================================
+
+export interface PostgresBootstrapResult {
+  branchId: string;
+  branches: SupplyBranch[];
+  villages: VillageHierarchy[];
+  bakeries: Bakery[];
+  debts: DebtRecord[];
+  users: AppUser[];
+  dailyTasks: DailyBakeryTask[];
+  inboxMessages: InboxChatMessage[];
+  highDebtAlerts: HighDebtAlertNotification[];
+  systemConfig: SystemConfig | null;
+  columnTitles: Partial<ColumnTitles> | null;
+  activityStatuses: string[];
+  dropdownLists: Record<string, string[]>;
+  hasAnyRows: boolean;
 }
 
-// Save or Update Bakery
-export async function upsertBakeryInDb(b: Bakery) {
-  try {
-    const values = {
-      id: b.id,
-      bakeryOwnerName: b.bakeryOwnerName,
-      machineNumber: b.machineNumber,
-      village: b.village,
-      localUnit: b.localUnit,
-      insuranceQuota: b.insuranceQuota || 0,
-      actualQuota: b.actualQuota || 0,
-      insuranceValue: b.insuranceValue || 0,
-      loavesCount: b.loavesCount || 0,
-      villagePopulation: b.villagePopulation || 0,
-      perCapitaAverage: String(b.perCapitaAverage || '0'),
-      beneficiaries2023: b.beneficiaries2023 || 0,
-      avg2023: String(b.avg2023 || '0'),
-      beneficiaries2024: b.beneficiaries2024 || 0,
-      avg2024: String(b.avg2024 || '0'),
-      beneficiaries2025: b.beneficiaries2025 || 0,
-      avg2025: String(b.avg2025 || '0'),
-      avgDiff: String(b.avgDiff || '0'),
-      activityStatus: b.activityStatus || 'يعمل',
-      bakeryCategory: b.bakeryCategory || 'مخبز بلدي مدعم',
-      breadType: b.breadType || 'ماكينة ميكانيكي',
-      breadTypeCount: typeof b.breadTypeCount === 'number' ? b.breadTypeCount : parseInt(String(b.breadTypeCount).replace(/[^\d]/g, '') || '660', 10),
-      lineType: b.lineType || 'ميكانيكي كامل',
-      fuelType: b.fuelType || 'سولار',
-      phone: b.phone || '',
-      nationalId: b.nationalId || '',
-      commercialRegDate: b.commercialRegDate || '',
-      bakeryLicenseDate: b.bakeryLicenseDate || '',
-      leaseAgreementDate: b.leaseAgreementDate || '',
-      taxCardDate: b.taxCardDate || '',
-      activityLog: b.activityLog || [],
-      updatedAt: new Date(),
+export async function getBootstrapFromPostgres(requestedBranchId = DEFAULT_BRANCH_ID): Promise<PostgresBootstrapResult> {
+  await ensurePostgresSchema();
+  const branchId = requestedBranchId || DEFAULT_BRANCH_ID;
+
+  const [
+    branchesRes,
+    villagesRes,
+    bakeriesRes,
+    debtsRes,
+    usersRes,
+    tasksRes,
+    inboxRes,
+    alertsRes,
+    cfgRes,
+    listsRes,
+    totalCountRes,
+  ] = await Promise.all([
+    pool.query(`SELECT * FROM public.branches ORDER BY is_default DESC, created_at ASC`),
+    pool.query(`SELECT * FROM public.villages WHERE branch_id = $1 ORDER BY village ASC`, [branchId]),
+    pool.query(`SELECT * FROM public.bakeries WHERE branch_id = $1 ORDER BY created_at ASC, id ASC`, [branchId]),
+    pool.query(`SELECT * FROM public.debts WHERE branch_id = $1 ORDER BY created_at DESC, id ASC`, [branchId]),
+    pool.query(`SELECT * FROM public.app_users WHERE branch_id = $1 ORDER BY created_at ASC`, [branchId]),
+    pool.query(`SELECT * FROM public.daily_tasks WHERE branch_id = $1 ORDER BY due_date ASC, created_at DESC`, [branchId]),
+    pool.query(`SELECT * FROM public.inbox_messages WHERE branch_id = $1 ORDER BY created_at ASC`, [branchId]),
+    pool.query(`SELECT * FROM public.high_debt_alerts WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 250`, [branchId]),
+    pool.query(`SELECT * FROM public.system_config WHERE branch_id = $1`, [branchId]),
+    pool.query(`SELECT * FROM public.dropdown_lists WHERE branch_id = $1`, [branchId]),
+    pool.query(`
+      SELECT (
+        (SELECT count(*)::int FROM public.bakeries) +
+        (SELECT count(*)::int FROM public.debts) +
+        (SELECT count(*)::int FROM public.villages) +
+        (SELECT count(*)::int FROM public.app_users) +
+        (SELECT count(*)::int FROM public.daily_tasks) +
+        (SELECT count(*)::int FROM public.inbox_messages)
+      )::int AS total
+    `),
+  ]);
+
+  const dropdownLists: Record<string, string[]> = {};
+  for (const r of listsRes.rows) {
+    if (r.list_key && Array.isArray(r.options)) {
+      dropdownLists[String(r.list_key)] = r.options.map(String);
+    }
+  }
+
+  const cfgRow = cfgRes.rows[0];
+  const mappedCfg = cfgRow ? mapDbRowByTable('system_config', cfgRow) : null;
+
+  return {
+    branchId,
+    branches: branchesRes.rows.map(mapDbBranchToApp),
+    villages: villagesRes.rows.map((r) => ({
+      village: String(r.village),
+      localUnits: Array.isArray(r.local_units) ? r.local_units : [],
+    })),
+    bakeries: bakeriesRes.rows.map(mapDbBakeryToApp),
+    debts: debtsRes.rows.map(mapDbDebtToApp),
+    users: usersRes.rows.map(mapDbUserToApp),
+    dailyTasks: tasksRes.rows.map(mapDbTaskToApp),
+    inboxMessages: inboxRes.rows.map(mapDbInboxToApp),
+    highDebtAlerts: alertsRes.rows.map(mapDbAlertToApp),
+    systemConfig: mappedCfg?.systemConfig || null,
+    columnTitles: mappedCfg?.columnTitles || null,
+    activityStatuses: mappedCfg?.activityStatuses || [],
+    dropdownLists,
+    hasAnyRows: (totalCountRes.rows[0]?.total || 0) > 0,
+  };
+}
+
+export async function queryTablePaginated(
+  table: NormalizedTableName,
+  options: {
+    branchId?: string;
+    search?: string;
+    village?: string;
+    localUnit?: string;
+    activityStatus?: string;
+    bakeryId?: string;
+    status?: string;
+    priority?: string;
+    page?: number;
+    pageSize?: number;
+  }
+) {
+  await ensurePostgresSchema();
+  const branchId = options.branchId || DEFAULT_BRANCH_ID;
+  const page = Math.max(1, Number(options.page || 1));
+  const pageSize = Math.min(1000, Math.max(1, Number(options.pageSize || 100)));
+  const offset = (page - 1) * pageSize;
+
+  const conditions: string[] = [];
+  const params: any[] = [];
+  const pushParam = (val: any) => {
+    params.push(val);
+    return `$${params.length}`;
+  };
+
+  if (table !== 'branches') {
+    conditions.push(`branch_id = ${pushParam(branchId)}`);
+  }
+
+  if (table === 'bakeries') {
+    if (options.village && options.village !== 'الكل') {
+      conditions.push(`village = ${pushParam(options.village)}`);
+    }
+    if (options.localUnit && options.localUnit !== 'الكل') {
+      conditions.push(`local_unit = ${pushParam(options.localUnit)}`);
+    }
+    if (options.activityStatus && options.activityStatus !== 'الكل') {
+      conditions.push(`activity_status = ${pushParam(options.activityStatus)}`);
+    }
+    if (options.search?.trim()) {
+      const q = `%${options.search.trim()}%`;
+      const p = pushParam(q);
+      conditions.push(
+        `(bakery_owner_name ILIKE ${p} OR machine_number ILIKE ${p} OR village ILIKE ${p} OR local_unit ILIKE ${p} OR phone ILIKE ${p} OR national_id ILIKE ${p})`
+      );
+    }
+  } else if (table === 'debts') {
+    if (options.bakeryId) {
+      conditions.push(`bakery_id = ${pushParam(options.bakeryId)}`);
+    }
+    if (options.village && options.village !== 'الكل') {
+      conditions.push(`village = ${pushParam(options.village)}`);
+    }
+    if (options.search?.trim()) {
+      const q = `%${options.search.trim()}%`;
+      const p = pushParam(q);
+      conditions.push(
+        `(bakery_owner_name ILIKE ${p} OR machine_number ILIKE ${p} OR village ILIKE ${p} OR violation_type ILIKE ${p} OR notes ILIKE ${p})`
+      );
+    }
+  } else if (table === 'daily_tasks') {
+    if (options.status && options.status !== 'all') {
+      conditions.push(`status = ${pushParam(options.status)}`);
+    }
+    if (options.priority && options.priority !== 'all') {
+      conditions.push(`priority = ${pushParam(options.priority)}`);
+    }
+    if (options.search?.trim()) {
+      const q = `%${options.search.trim()}%`;
+      const p = pushParam(q);
+      conditions.push(`(title ILIKE ${p} OR description ILIKE ${p} OR bakery_name ILIKE ${p} OR village ILIKE ${p})`);
+    }
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const countRes = await pool.query(`SELECT count(*)::int AS total FROM public.${table} ${whereClause}`, params);
+  const total = Number(countRes.rows[0]?.total || 0);
+
+  const orderBy =
+    table === 'system_config'
+      ? 'ORDER BY branch_id ASC'
+      : table === 'audit_logs'
+      ? 'ORDER BY created_at DESC'
+      : 'ORDER BY updated_at DESC, id ASC';
+
+  const limitParam = pushParam(pageSize);
+  const offsetParam = pushParam(offset);
+  const rowsRes = await pool.query(
+    `SELECT * FROM public.${table} ${whereClause} ${orderBy} LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    params
+  );
+
+  return {
+    rows: rowsRes.rows.map((r) => mapDbRowByTable(table, r)),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
+}
+
+// =========================================================================
+// Optimistic Concurrency Upsert & Delete per Normalized Table
+// =========================================================================
+
+export interface UpsertRowResult {
+  success: boolean;
+  conflict?: boolean;
+  operation: 'INSERT' | 'UPDATE';
+  row?: any;
+  latestRow?: any;
+  error?: string;
+}
+
+async function ensureBranchRecord(client: any, branchId: string, branchData?: Partial<SupplyBranch>) {
+  await client.query(
+    `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      branchId,
+      branchData?.name || (branchId === DEFAULT_BRANCH_ID ? DEFAULT_BRANCH_ROW.name : `إدارة تموين (${branchId})`),
+      branchData?.governorateTitle || 'محافظة الغربية',
+      branchData?.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+      branchData?.description || '',
+      branchId === DEFAULT_BRANCH_ID,
+    ]
+  );
+}
+
+export async function upsertRowWithClient(
+  client: any,
+  table: NormalizedTableName,
+  branchId: string,
+  payload: any,
+  expectedVersion?: number
+): Promise<UpsertRowResult> {
+  const effectiveBranchId = String(payload?.branchId || payload?.branch_id || branchId || DEFAULT_BRANCH_ID);
+
+  if (table !== 'branches') {
+    await ensureBranchRecord(client, effectiveBranchId);
+  }
+
+  const pkColumn = table === 'system_config' ? 'branch_id' : 'id';
+  const recordId =
+    table === 'system_config'
+      ? effectiveBranchId
+      : table === 'villages'
+      ? String(payload?.id || `${effectiveBranchId}__${payload?.village || ''}`)
+      : table === 'dropdown_lists'
+      ? String(payload?.id || `${effectiveBranchId}__${payload?.listKey || ''}`)
+      : String(payload?.id || '');
+
+  if (!recordId) {
+    return { success: false, operation: 'INSERT', error: 'معرف السجل (id) مفقود.' };
+  }
+
+  // Check existing row & optimistic concurrency version
+  const existingRes = await client.query(
+    `SELECT * FROM public.${table} WHERE ${pkColumn} = $1 FOR UPDATE`,
+    [recordId]
+  );
+  const exists = existingRes.rows.length > 0;
+  const existingRow = exists ? existingRes.rows[0] : null;
+
+  if (
+    exists &&
+    typeof expectedVersion === 'number' &&
+    expectedVersion > 0 &&
+    Number(existingRow.version || 1) !== expectedVersion
+  ) {
+    return {
+      success: false,
+      conflict: true,
+      operation: 'UPDATE',
+      latestRow: mapDbRowByTable(table, existingRow),
+      error: `تعارض تعديل متزامن: تم تحديث هذا السجل من جهاز آخر (إصدار الخادم ${existingRow.version} مقابل إصدارك ${expectedVersion}).`,
     };
-
-    await db.insert(bakeries).values(values).onConflictDoUpdate({
-      target: bakeries.id,
-      set: values,
-    });
-  } catch (error) {
-    console.error('Failed to upsert bakery in database:', error);
-    throw new Error('Database upsert failed', { cause: error });
   }
+
+  const operation: 'INSERT' | 'UPDATE' = exists ? 'UPDATE' : 'INSERT';
+  let resultRow: any = null;
+
+  switch (table) {
+    case 'branches': {
+      const res = await client.query(
+        `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           governorate_title = EXCLUDED.governorate_title,
+           directorate_title = EXCLUDED.directorate_title,
+           description = EXCLUDED.description,
+           is_default = EXCLUDED.is_default,
+           version = public.branches.version + 1,
+           updated_at = NOW()
+         RETURNING *`,
+        [
+          recordId,
+          String(payload.name || ''),
+          String(payload.governorateTitle || 'محافظة الغربية'),
+          String(payload.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'),
+          String(payload.description || ''),
+          Boolean(payload.isDefault),
+        ]
+      );
+      resultRow = mapDbRowByTable('branches', res.rows[0]);
+      break;
+    }
+
+    case 'villages': {
+      const res = await client.query(
+        `INSERT INTO public.villages (id, branch_id, village, local_units)
+         VALUES ($1, $2, $3, $4::jsonb)
+         ON CONFLICT (branch_id, village) DO UPDATE SET
+           local_units = EXCLUDED.local_units,
+           version = public.villages.version + 1,
+           updated_at = NOW()
+         RETURNING *`,
+        [
+          recordId,
+          effectiveBranchId,
+          String(payload.village || ''),
+          JSON.stringify(Array.isArray(payload.localUnits) ? payload.localUnits : []),
+        ]
+      );
+      resultRow = mapDbRowByTable('villages', res.rows[0]);
+      break;
+    }
+
+    case 'bakeries': {
+      const b = payload as Bakery;
+      const res = await client.query(
+        `INSERT INTO public.bakeries (
+          id, branch_id, bakery_owner_name, machine_number, village, local_unit, responsible_manager,
+          insurance_quota, actual_quota, insurance_value, insurance_check_number, loaves_count,
+          village_population, per_capita_average, beneficiaries_2023, avg_2023,
+          beneficiaries_2024, avg_2024, beneficiaries_2025, avg_2025, avg_diff,
+          activity_status, bakery_category, bread_type, flour_bag_price, bread_type_count,
+          line_type, fuel_type, phone, national_id, commercial_reg_number, commercial_reg_date,
+          bakery_license_number, bakery_license_date, lease_contract_type, lease_agreement_date,
+          tax_card_number, tax_card_date, notes, activity_log
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9, $10, $11, $12,
+          $13, $14, $15, $16,
+          $17, $18, $19, $20, $21,
+          $22, $23, $24, $25, $26,
+          $27, $28, $29, $30, $31, $32,
+          $33, $34, $35, $36,
+          $37, $38, $39, $40::jsonb
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          branch_id = EXCLUDED.branch_id,
+          bakery_owner_name = EXCLUDED.bakery_owner_name,
+          machine_number = EXCLUDED.machine_number,
+          village = EXCLUDED.village,
+          local_unit = EXCLUDED.local_unit,
+          responsible_manager = EXCLUDED.responsible_manager,
+          insurance_quota = EXCLUDED.insurance_quota,
+          actual_quota = EXCLUDED.actual_quota,
+          insurance_value = EXCLUDED.insurance_value,
+          insurance_check_number = EXCLUDED.insurance_check_number,
+          loaves_count = EXCLUDED.loaves_count,
+          village_population = EXCLUDED.village_population,
+          per_capita_average = EXCLUDED.per_capita_average,
+          beneficiaries_2023 = EXCLUDED.beneficiaries_2023,
+          avg_2023 = EXCLUDED.avg_2023,
+          beneficiaries_2024 = EXCLUDED.beneficiaries_2024,
+          avg_2024 = EXCLUDED.avg_2024,
+          beneficiaries_2025 = EXCLUDED.beneficiaries_2025,
+          avg_2025 = EXCLUDED.avg_2025,
+          avg_diff = EXCLUDED.avg_diff,
+          activity_status = EXCLUDED.activity_status,
+          bakery_category = EXCLUDED.bakery_category,
+          bread_type = EXCLUDED.bread_type,
+          flour_bag_price = EXCLUDED.flour_bag_price,
+          bread_type_count = EXCLUDED.bread_type_count,
+          line_type = EXCLUDED.line_type,
+          fuel_type = EXCLUDED.fuel_type,
+          phone = EXCLUDED.phone,
+          national_id = EXCLUDED.national_id,
+          commercial_reg_number = EXCLUDED.commercial_reg_number,
+          commercial_reg_date = EXCLUDED.commercial_reg_date,
+          bakery_license_number = EXCLUDED.bakery_license_number,
+          bakery_license_date = EXCLUDED.bakery_license_date,
+          lease_contract_type = EXCLUDED.lease_contract_type,
+          lease_agreement_date = EXCLUDED.lease_agreement_date,
+          tax_card_number = EXCLUDED.tax_card_number,
+          tax_card_date = EXCLUDED.tax_card_date,
+          notes = EXCLUDED.notes,
+          activity_log = EXCLUDED.activity_log,
+          version = public.bakeries.version + 1,
+          updated_at = NOW()
+        RETURNING *`,
+        [
+          recordId,
+          effectiveBranchId,
+          String(b.bakeryOwnerName || ''),
+          String(b.machineNumber || ''),
+          String(b.village || ''),
+          String(b.localUnit || ''),
+          String(b.responsibleManager || ''),
+          Number(b.insuranceQuota || 0),
+          Number(b.actualQuota || 0),
+          Number(b.insuranceValue || 0),
+          String(b.insuranceCheckNumber || ''),
+          Number(b.loavesCount || 0),
+          Math.round(Number(b.villagePopulation || 0)),
+          String(b.perCapitaAverage ?? '0'),
+          Math.round(Number(b.beneficiaries2023 || 0)),
+          String(b.avg2023 ?? '0'),
+          Math.round(Number(b.beneficiaries2024 || 0)),
+          String(b.avg2024 ?? '0'),
+          Math.round(Number(b.beneficiaries2025 || 0)),
+          String(b.avg2025 ?? '0'),
+          String(b.avgDiff ?? '0'),
+          String(b.activityStatus || 'يعمل'),
+          String(b.bakeryCategory || 'مخبز بلدي مدعم'),
+          String(b.breadType || 'بلدي مدعم'),
+          Number(b.flourBagPrice || 0),
+          String(b.breadTypeCount || '660'),
+          String(b.lineType || 'آلي كامل'),
+          String(b.fuelType || 'غاز طبيعي'),
+          String(b.phone || ''),
+          String(b.nationalId || ''),
+          String(b.commercialRegNumber || ''),
+          String(b.commercialRegDate || ''),
+          String(b.bakeryLicenseNumber || ''),
+          String(b.bakeryLicenseDate || ''),
+          String(b.leaseContractType || ''),
+          String(b.leaseAgreementDate || ''),
+          String(b.taxCardNumber || ''),
+          String(b.taxCardDate || ''),
+          String(b.notes || ''),
+          JSON.stringify(Array.isArray(b.activityLog) ? b.activityLog : []),
+        ]
+      );
+      resultRow = mapDbRowByTable('bakeries', res.rows[0]);
+      break;
+    }
+
+    case 'debts': {
+      const d = payload as DebtRecord;
+      const res = await client.query(
+        `INSERT INTO public.debts (
+          id, branch_id, bakery_id, bakery_owner_name, machine_number, village, local_unit,
+          violation_date, issuing_entity, violation_type, violation_amount, old_violations, total_violations,
+          violation_payment_date, violation_receipt_number, violation_payment_method, paid_violation_amount, remaining_violations,
+          added_amount, added_payment_date, added_receipt_number, added_payment_method, paid_added_amount, remaining_added,
+          disposal_date, disposal_bags, disposal_bag_price, disposal_multiplier, disposal_value,
+          disposal_payment_date, disposal_receipt_number, disposal_payment_method, paid_disposal_amount, remaining_disposal,
+          net_remaining_debt, is_scheduled, schedule_installments_count, schedule_period_type,
+          schedule_installment_value, schedule_start_date, schedule_paid_installments, schedule_status, notes
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9, $10, $11, $12, $13,
+          $14, $15, $16, $17, $18,
+          $19, $20, $21, $22, $23, $24,
+          $25, $26, $27, $28, $29,
+          $30, $31, $32, $33, $34,
+          $35, $36, $37, $38,
+          $39, $40, $41, $42, $43
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          branch_id = EXCLUDED.branch_id,
+          bakery_id = EXCLUDED.bakery_id,
+          bakery_owner_name = EXCLUDED.bakery_owner_name,
+          machine_number = EXCLUDED.machine_number,
+          village = EXCLUDED.village,
+          local_unit = EXCLUDED.local_unit,
+          violation_date = EXCLUDED.violation_date,
+          issuing_entity = EXCLUDED.issuing_entity,
+          violation_type = EXCLUDED.violation_type,
+          violation_amount = EXCLUDED.violation_amount,
+          old_violations = EXCLUDED.old_violations,
+          total_violations = EXCLUDED.total_violations,
+          violation_payment_date = EXCLUDED.violation_payment_date,
+          violation_receipt_number = EXCLUDED.violation_receipt_number,
+          violation_payment_method = EXCLUDED.violation_payment_method,
+          paid_violation_amount = EXCLUDED.paid_violation_amount,
+          remaining_violations = EXCLUDED.remaining_violations,
+          added_amount = EXCLUDED.added_amount,
+          added_payment_date = EXCLUDED.added_payment_date,
+          added_receipt_number = EXCLUDED.added_receipt_number,
+          added_payment_method = EXCLUDED.added_payment_method,
+          paid_added_amount = EXCLUDED.paid_added_amount,
+          remaining_added = EXCLUDED.remaining_added,
+          disposal_date = EXCLUDED.disposal_date,
+          disposal_bags = EXCLUDED.disposal_bags,
+          disposal_bag_price = EXCLUDED.disposal_bag_price,
+          disposal_multiplier = EXCLUDED.disposal_multiplier,
+          disposal_value = EXCLUDED.disposal_value,
+          disposal_payment_date = EXCLUDED.disposal_payment_date,
+          disposal_receipt_number = EXCLUDED.disposal_receipt_number,
+          disposal_payment_method = EXCLUDED.disposal_payment_method,
+          paid_disposal_amount = EXCLUDED.paid_disposal_amount,
+          remaining_disposal = EXCLUDED.remaining_disposal,
+          net_remaining_debt = EXCLUDED.net_remaining_debt,
+          is_scheduled = EXCLUDED.is_scheduled,
+          schedule_installments_count = EXCLUDED.schedule_installments_count,
+          schedule_period_type = EXCLUDED.schedule_period_type,
+          schedule_installment_value = EXCLUDED.schedule_installment_value,
+          schedule_start_date = EXCLUDED.schedule_start_date,
+          schedule_paid_installments = EXCLUDED.schedule_paid_installments,
+          schedule_status = EXCLUDED.schedule_status,
+          notes = EXCLUDED.notes,
+          version = public.debts.version + 1,
+          updated_at = NOW()
+        RETURNING *`,
+        [
+          recordId,
+          effectiveBranchId,
+          String(d.bakeryId || ''),
+          String(d.bakeryOwnerName || ''),
+          String(d.machineNumber || ''),
+          String(d.village || ''),
+          String(d.localUnit || ''),
+          String(d.violationDate || ''),
+          String(d.issuingEntity || ''),
+          String(d.violationType || ''),
+          Number(d.violationAmount || 0),
+          Number(d.oldViolations || 0),
+          Number(d.totalViolations || 0),
+          String(d.violationPaymentDate || ''),
+          String(d.violationReceiptNumber || ''),
+          String(d.violationPaymentMethod || 'كاش'),
+          Number(d.paidViolationAmount || 0),
+          Number(d.remainingViolations || 0),
+          Number(d.addedAmount || 0),
+          String(d.addedPaymentDate || ''),
+          String(d.addedReceiptNumber || ''),
+          String(d.addedPaymentMethod || 'كاش'),
+          Number(d.paidAddedAmount || 0),
+          Number(d.remainingAdded || 0),
+          String(d.disposalDate || ''),
+          Number(d.disposalBags || 0),
+          Number(d.disposalBagPrice || 0),
+          Number(d.disposalMultiplier || 1),
+          Number(d.disposalValue || 0),
+          String(d.disposalPaymentDate || ''),
+          String(d.disposalReceiptNumber || ''),
+          String(d.disposalPaymentMethod || 'كاش'),
+          Number(d.paidDisposalAmount || 0),
+          Number(d.remainingDisposal || 0),
+          Number(d.netRemainingDebt || 0),
+          Boolean(d.isScheduled),
+          Math.round(Number(d.scheduleInstallmentsCount || 0)),
+          String(d.schedulePeriodType || 'شهري'),
+          Number(d.scheduleInstallmentValue || 0),
+          String(d.scheduleStartDate || ''),
+          Math.round(Number(d.schedulePaidInstallments || 0)),
+          String(d.scheduleStatus || 'قيد التحصيل'),
+          String(d.notes || ''),
+        ]
+      );
+      resultRow = mapDbRowByTable('debts', res.rows[0]);
+      break;
+    }
+
+    case 'app_users': {
+      const u = payload as AppUser;
+      const res = await client.query(
+        `INSERT INTO public.app_users (
+          id, branch_id, username, full_name, password_hash, role, job_title, department,
+          phone, gmail_email, gmail_password, google_drive_auto_sync, custom_permissions
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          branch_id = EXCLUDED.branch_id,
+          username = EXCLUDED.username,
+          full_name = EXCLUDED.full_name,
+          password_hash = CASE WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_hash ELSE public.app_users.password_hash END,
+          role = EXCLUDED.role,
+          job_title = EXCLUDED.job_title,
+          department = EXCLUDED.department,
+          phone = EXCLUDED.phone,
+          gmail_email = EXCLUDED.gmail_email,
+          gmail_password = EXCLUDED.gmail_password,
+          google_drive_auto_sync = EXCLUDED.google_drive_auto_sync,
+          custom_permissions = EXCLUDED.custom_permissions,
+          version = public.app_users.version + 1,
+          updated_at = NOW()
+        RETURNING *`,
+        [
+          recordId,
+          effectiveBranchId,
+          String(u.username || ''),
+          String(u.fullName || ''),
+          String(u.password || ''),
+          String(u.role || 'inspector'),
+          String(u.jobTitle || ''),
+          String(u.department || ''),
+          String(u.phone || ''),
+          String(u.gmailEmail || ''),
+          String(u.gmailPassword || ''),
+          Boolean(u.googleDriveAutoSync),
+          JSON.stringify(Array.isArray(u.customPermissions) ? u.customPermissions : []),
+        ]
+      );
+      resultRow = mapDbRowByTable('app_users', res.rows[0]);
+      break;
+    }
+
+    case 'daily_tasks': {
+      const t = payload as DailyBakeryTask;
+      const res = await client.query(
+        `INSERT INTO public.daily_tasks (
+          id, branch_id, title, description, bakery_id, bakery_name, village, priority, due_date, status, assigned_to
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (id) DO UPDATE SET
+          title = EXCLUDED.title,
+          description = EXCLUDED.description,
+          bakery_id = EXCLUDED.bakery_id,
+          bakery_name = EXCLUDED.bakery_name,
+          village = EXCLUDED.village,
+          priority = EXCLUDED.priority,
+          due_date = EXCLUDED.due_date,
+          status = EXCLUDED.status,
+          assigned_to = EXCLUDED.assigned_to,
+          version = public.daily_tasks.version + 1,
+          updated_at = NOW()
+        RETURNING *`,
+        [
+          recordId,
+          effectiveBranchId,
+          String(t.title || ''),
+          String(t.description || ''),
+          String(t.bakeryId || ''),
+          String(t.bakeryName || ''),
+          String(t.village || ''),
+          String(t.priority || 'medium'),
+          String(t.dueDate || ''),
+          String(t.status || 'pending'),
+          String(t.assignedTo || ''),
+        ]
+      );
+      resultRow = mapDbRowByTable('daily_tasks', res.rows[0]);
+      break;
+    }
+
+    case 'inbox_messages': {
+      const m = payload as InboxChatMessage;
+      const res = await client.query(
+        `INSERT INTO public.inbox_messages (
+          id, branch_id, sender_id, sender_name, sender_role, recipient_target, recipient_label,
+          message_type, content, related_bakery_id, related_bakery_name, read_by, timestamp
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
+        ON CONFLICT (id) DO UPDATE SET
+          recipient_target = EXCLUDED.recipient_target,
+          recipient_label = EXCLUDED.recipient_label,
+          message_type = EXCLUDED.message_type,
+          content = EXCLUDED.content,
+          read_by = EXCLUDED.read_by,
+          timestamp = EXCLUDED.timestamp,
+          version = public.inbox_messages.version + 1,
+          updated_at = NOW()
+        RETURNING *`,
+        [
+          recordId,
+          effectiveBranchId,
+          String(m.senderId || ''),
+          String(m.senderName || ''),
+          String(m.senderRole || 'inspector'),
+          String(m.recipientTarget || 'ALL'),
+          String(m.recipientLabel || 'الجميع'),
+          String(m.messageType || 'instruction'),
+          String(m.content || ''),
+          String(m.relatedBakeryId || ''),
+          String(m.relatedBakeryName || ''),
+          JSON.stringify(Array.isArray(m.readBy) ? m.readBy : []),
+          String(m.timestamp || new Date().toISOString()),
+        ]
+      );
+      resultRow = mapDbRowByTable('inbox_messages', res.rows[0]);
+      break;
+    }
+
+    case 'high_debt_alerts': {
+      const a = payload as HighDebtAlertNotification;
+      const res = await client.query(
+        `INSERT INTO public.high_debt_alerts (
+          id, branch_id, bakery_id, bakery_owner_name, machine_number, village,
+          debt_amount, threshold_used, edited_by, editor_role, action_type, is_read, notes, created_at_iso
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT (id) DO UPDATE SET
+          debt_amount = EXCLUDED.debt_amount,
+          threshold_used = EXCLUDED.threshold_used,
+          is_read = EXCLUDED.is_read,
+          notes = EXCLUDED.notes,
+          version = public.high_debt_alerts.version + 1,
+          updated_at = NOW()
+        RETURNING *`,
+        [
+          recordId,
+          effectiveBranchId,
+          String(a.bakeryId || ''),
+          String(a.bakeryOwnerName || ''),
+          String(a.machineNumber || ''),
+          String(a.village || ''),
+          Number(a.debtAmount || 0),
+          Number(a.thresholdUsed || 50000),
+          String(a.editedBy || ''),
+          String(a.editorRole || ''),
+          String(a.actionType || 'HIGH_DEBT_SURGE'),
+          Boolean(a.isRead),
+          String(a.notes || ''),
+          String(a.createdAtIso || a.timestamp || new Date().toISOString()),
+        ]
+      );
+      resultRow = mapDbRowByTable('high_debt_alerts', res.rows[0]);
+      break;
+    }
+
+    case 'system_config': {
+      const cfg = (payload.systemConfig || payload) as SystemConfig;
+      const colTitles = payload.columnTitles || existingRow?.column_titles || {};
+      const actStatuses = payload.activityStatuses || existingRow?.activity_statuses || [];
+      const res = await client.query(
+        `INSERT INTO public.system_config (
+          branch_id, governorate_title, directorate_title, administration_title, english_subtitle,
+          logo_base64, debt_alert_threshold, daily_alert_config, role_permissions, role_labels,
+          custom_roles, column_titles, activity_statuses
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb)
+        ON CONFLICT (branch_id) DO UPDATE SET
+          governorate_title = EXCLUDED.governorate_title,
+          directorate_title = EXCLUDED.directorate_title,
+          administration_title = EXCLUDED.administration_title,
+          english_subtitle = EXCLUDED.english_subtitle,
+          logo_base64 = EXCLUDED.logo_base64,
+          debt_alert_threshold = EXCLUDED.debt_alert_threshold,
+          daily_alert_config = EXCLUDED.daily_alert_config,
+          role_permissions = EXCLUDED.role_permissions,
+          role_labels = EXCLUDED.role_labels,
+          custom_roles = EXCLUDED.custom_roles,
+          column_titles = EXCLUDED.column_titles,
+          activity_statuses = EXCLUDED.activity_statuses,
+          version = public.system_config.version + 1,
+          updated_at = NOW()
+        RETURNING *`,
+        [
+          effectiveBranchId,
+          String(cfg.governorateTitle ?? existingRow?.governorate_title ?? ''),
+          String(cfg.directorateTitle ?? existingRow?.directorate_title ?? ''),
+          String(cfg.administrationTitle ?? existingRow?.administration_title ?? ''),
+          String(cfg.englishSubtitle ?? existingRow?.english_subtitle ?? ''),
+          String(cfg.logoBase64 ?? existingRow?.logo_base64 ?? ''),
+          Number(cfg.debtAlertThreshold ?? existingRow?.debt_alert_threshold ?? 50000),
+          JSON.stringify(cfg.dailyAlertConfig ?? existingRow?.daily_alert_config ?? {}),
+          JSON.stringify(cfg.rolePermissions ?? existingRow?.role_permissions ?? {}),
+          JSON.stringify(cfg.roleLabels ?? existingRow?.role_labels ?? {}),
+          JSON.stringify(cfg.customRoles ?? existingRow?.custom_roles ?? []),
+          JSON.stringify(colTitles),
+          JSON.stringify(Array.isArray(actStatuses) ? actStatuses : []),
+        ]
+      );
+      resultRow = mapDbRowByTable('system_config', res.rows[0]);
+      break;
+    }
+
+    case 'dropdown_lists': {
+      const listKey = String(payload.listKey || '');
+      const options = Array.isArray(payload.options) ? payload.options : [];
+      const res = await client.query(
+        `INSERT INTO public.dropdown_lists (id, branch_id, list_key, options)
+         VALUES ($1, $2, $3, $4::jsonb)
+         ON CONFLICT (branch_id, list_key) DO UPDATE SET
+           options = EXCLUDED.options,
+           version = public.dropdown_lists.version + 1,
+           updated_at = NOW()
+         RETURNING *`,
+        [recordId, effectiveBranchId, listKey, JSON.stringify(options)]
+      );
+      resultRow = mapDbRowByTable('dropdown_lists', res.rows[0]);
+      break;
+    }
+
+    case 'audit_logs': {
+      const res = await client.query(
+        `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [
+          effectiveBranchId,
+          String(payload.userEmail || 'system'),
+          String(payload.action || 'ACTION'),
+          String(payload.details || ''),
+          String(payload.ipAddress || '127.0.0.1'),
+        ]
+      );
+      resultRow = res.rows[0];
+      break;
+    }
+  }
+
+  return { success: true, operation, row: resultRow };
 }
 
-// Delete Bakery
-export async function deleteBakeryFromDb(id: string) {
+export async function upsertRowInPostgres(
+  table: NormalizedTableName,
+  branchId: string,
+  payload: any,
+  expectedVersion?: number
+): Promise<UpsertRowResult> {
+  await ensurePostgresSchema();
+  const client = await pool.connect();
   try {
-    await db.delete(bakeries).where(eq(bakeries.id, id));
-  } catch (error) {
-    console.error('Failed to delete bakery from database:', error);
-    throw new Error('Database delete failed', { cause: error });
-  }
-}
-
-// Fetch all debts
-export async function getAllDebtsFromDb(): Promise<DebtRecord[]> {
-  try {
-    const rows = await db.select().from(debts);
-    return rows.map((r) => ({
-      id: r.id,
-      bakeryId: r.bakeryId,
-      bakeryOwnerName: r.bakeryOwnerName,
-      machineNumber: r.machineNumber,
-      village: r.village,
-      localUnit: r.localUnit,
-      violationDate: r.violationDate,
-      issuingEntity: r.issuingEntity,
-      violationType: r.violationType,
-      violationAmount: r.violationAmount,
-      oldViolations: r.oldViolations,
-      totalViolations: r.totalViolations,
-      violationPaymentDate: r.violationPaymentDate,
-      violationReceiptNumber: r.violationReceiptNumber,
-      violationPaymentMethod: r.violationPaymentMethod,
-      paidViolationAmount: r.paidViolationAmount,
-      remainingViolations: r.remainingViolations,
-      addedAmount: r.addedAmount,
-      addedPaymentDate: r.addedPaymentDate,
-      addedReceiptNumber: r.addedReceiptNumber,
-      addedPaymentMethod: r.addedPaymentMethod,
-      paidAddedAmount: r.paidAddedAmount,
-      remainingAdded: r.remainingAdded,
-      disposalDate: r.disposalDate,
-      disposalBags: r.disposalBags,
-      disposalBagPrice: r.disposalBagPrice,
-      disposalMultiplier: r.disposalMultiplier,
-      disposalValue: r.disposalValue,
-      disposalPaymentDate: r.disposalPaymentDate,
-      disposalReceiptNumber: r.disposalReceiptNumber,
-      disposalPaymentMethod: r.disposalPaymentMethod,
-      paidDisposalAmount: r.paidDisposalAmount,
-      remainingDisposal: r.remainingDisposal,
-      netRemainingDebt: r.netRemainingDebt,
-      notes: r.notes,
-    }));
-  } catch (error) {
-    console.error('Failed to query debts from database:', error);
-    throw new Error('Database query failed', { cause: error });
-  }
-}
-
-// Save or Update Debt
-export async function upsertDebtInDb(d: DebtRecord) {
-  try {
-    const values = {
-      id: d.id,
-      bakeryId: d.bakeryId,
-      bakeryOwnerName: d.bakeryOwnerName,
-      machineNumber: d.machineNumber,
-      village: d.village,
-      localUnit: d.localUnit,
-      violationDate: d.violationDate || '',
-      issuingEntity: d.issuingEntity || '',
-      violationType: d.violationType || '',
-      violationAmount: d.violationAmount || 0,
-      oldViolations: d.oldViolations || 0,
-      totalViolations: d.totalViolations || 0,
-      violationPaymentDate: d.violationPaymentDate || '',
-      violationReceiptNumber: d.violationReceiptNumber || '',
-      violationPaymentMethod: d.violationPaymentMethod || 'نقدي (كاش)',
-      paidViolationAmount: d.paidViolationAmount || 0,
-      remainingViolations: d.remainingViolations || 0,
-      addedAmount: d.addedAmount || 0,
-      addedPaymentDate: d.addedPaymentDate || '',
-      addedReceiptNumber: d.addedReceiptNumber || '',
-      addedPaymentMethod: d.addedPaymentMethod || 'نقدي (كاش)',
-      paidAddedAmount: d.paidAddedAmount || 0,
-      remainingAdded: d.remainingAdded || 0,
-      disposalDate: d.disposalDate || '',
-      disposalBags: d.disposalBags || 0,
-      disposalBagPrice: d.disposalBagPrice || 850,
-      disposalMultiplier: d.disposalMultiplier || 1,
-      disposalValue: d.disposalValue || 0,
-      disposalPaymentDate: d.disposalPaymentDate || '',
-      disposalReceiptNumber: d.disposalReceiptNumber || '',
-      disposalPaymentMethod: d.disposalPaymentMethod || 'نقدي (كاش)',
-      paidDisposalAmount: d.paidDisposalAmount || 0,
-      remainingDisposal: d.remainingDisposal || 0,
-      netRemainingDebt: d.netRemainingDebt || 0,
-      notes: d.notes || '',
-      updatedAt: new Date(),
+    await client.query('BEGIN');
+    const res = await upsertRowWithClient(client, table, branchId, payload, expectedVersion);
+    if (res.conflict || !res.success) {
+      await client.query('ROLLBACK');
+      return res;
+    }
+    await client.query('COMMIT');
+    return res;
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => {});
+    return {
+      success: false,
+      operation: 'UPDATE',
+      error: err?.message || 'فشل حفظ السجل في قاعدة بيانات PostgreSQL.',
     };
-
-    await db.insert(debts).values(values).onConflictDoUpdate({
-      target: debts.id,
-      set: values,
-    });
-  } catch (error) {
-    console.error('Failed to upsert debt in database:', error);
-    throw new Error('Database upsert failed', { cause: error });
+  } finally {
+    client.release();
   }
 }
 
-// Delete Debt
-export async function deleteDebtFromDb(id: string) {
+export async function deleteRowInPostgres(
+  table: NormalizedTableName,
+  id: string,
+  branchId?: string
+): Promise<{ success: boolean; deletedRow?: any; error?: string }> {
+  await ensurePostgresSchema();
+  const client = await pool.connect();
   try {
-    await db.delete(debts).where(eq(debts.id, id));
-  } catch (error) {
-    console.error('Failed to delete debt from database:', error);
-    throw new Error('Database delete failed', { cause: error });
+    await client.query('BEGIN');
+    const pkColumn = table === 'system_config' ? 'branch_id' : 'id';
+    const params: any[] = [id];
+    let branchFilter = '';
+    if (branchId && table !== 'branches' && table !== 'system_config') {
+      params.push(branchId);
+      branchFilter = ` AND branch_id = $2`;
+    }
+    const delRes = await client.query(
+      `DELETE FROM public.${table} WHERE ${pkColumn} = $1 ${branchFilter} RETURNING *`,
+      params
+    );
+    await client.query('COMMIT');
+    if (delRes.rows.length === 0) {
+      return { success: true, deletedRow: null };
+    }
+    return { success: true, deletedRow: mapDbRowByTable(table, delRes.rows[0]) };
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => {});
+    return { success: false, error: err?.message || 'فشل حذف السجل من قاعدة البيانات.' };
+  } finally {
+    client.release();
   }
 }
 
-// Record Security Audit Log
-export async function recordAuditLog(userEmail: string, action: string, details: string, ipAddress?: string) {
+export async function syncFullBranchStateToPostgres(
+  branchId: string,
+  stateData: any,
+  options?: { pruneRemoved?: boolean }
+): Promise<{ success: boolean; syncedCounts: Record<string, number>; error?: string }> {
+  await ensurePostgresSchema();
+  const effectiveBranchId = branchId || stateData?.activeBranchId || DEFAULT_BRANCH_ID;
+  const client = await pool.connect();
+  const syncedCounts: Record<string, number> = {
+    branches: 0,
+    villages: 0,
+    bakeries: 0,
+    debts: 0,
+    app_users: 0,
+    daily_tasks: 0,
+    inbox_messages: 0,
+    dropdown_lists: 0,
+  };
+
   try {
-    await db.insert(auditLogs).values({
-      userEmail,
-      action,
-      details,
-      ipAddress: ipAddress || '127.0.0.1',
-    });
+    await client.query('BEGIN');
+
+    // 1. Branches
+    const branchesList: SupplyBranch[] = Array.isArray(stateData?.branches) ? stateData.branches : [];
+    for (const br of branchesList) {
+      if (br?.id) {
+        await upsertRowWithClient(client, 'branches', br.id, br);
+        syncedCounts.branches += 1;
+      }
+    }
+    await ensureBranchRecord(client, effectiveBranchId);
+
+    // 2. Villages
+    const villagesList: VillageHierarchy[] = Array.isArray(stateData?.villages) ? stateData.villages : [];
+    const incomingVillageNames = villagesList.map((v) => String(v.village)).filter(Boolean);
+    for (const v of villagesList) {
+      if (v?.village) {
+        await upsertRowWithClient(client, 'villages', effectiveBranchId, {
+          id: `${effectiveBranchId}__${v.village}`,
+          branchId: effectiveBranchId,
+          village: v.village,
+          localUnits: v.localUnits || [],
+        });
+        syncedCounts.villages += 1;
+      }
+    }
+    if (options?.pruneRemoved) {
+      if (incomingVillageNames.length === 0) {
+        await client.query(`DELETE FROM public.villages WHERE branch_id = $1`, [effectiveBranchId]);
+      } else {
+        await client.query(`DELETE FROM public.villages WHERE branch_id = $1 AND NOT (village = ANY($2::text[]))`, [
+          effectiveBranchId,
+          incomingVillageNames,
+        ]);
+      }
+    }
+
+    // 3. Bakeries
+    const bakeriesList: Bakery[] = Array.isArray(stateData?.bakeries) ? stateData.bakeries : [];
+    const incomingBakeryIds = bakeriesList.map((b) => String(b.id)).filter(Boolean);
+    for (const b of bakeriesList) {
+      if (b?.id) {
+        await upsertRowWithClient(client, 'bakeries', effectiveBranchId, b);
+        syncedCounts.bakeries += 1;
+      }
+    }
+
+    // 4. Debts (only for existing bakeries)
+    const debtsList: DebtRecord[] = Array.isArray(stateData?.debts) ? stateData.debts : [];
+    const validBakeryIds = new Set(incomingBakeryIds);
+    const incomingDebtIds: string[] = [];
+    for (const d of debtsList) {
+      if (d?.id && d?.bakeryId && (validBakeryIds.has(d.bakeryId) || !options?.pruneRemoved)) {
+        const res = await upsertRowWithClient(client, 'debts', effectiveBranchId, d);
+        if (res.success) {
+          incomingDebtIds.push(d.id);
+          syncedCounts.debts += 1;
+        }
+      }
+    }
+
+    if (options?.pruneRemoved) {
+      if (incomingDebtIds.length === 0) {
+        await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [effectiveBranchId]);
+      } else {
+        await client.query(`DELETE FROM public.debts WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+          effectiveBranchId,
+          incomingDebtIds,
+        ]);
+      }
+      if (incomingBakeryIds.length === 0) {
+        await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1`, [effectiveBranchId]);
+      } else {
+        await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+          effectiveBranchId,
+          incomingBakeryIds,
+        ]);
+      }
+    }
+
+    // 5. Users
+    const usersList: AppUser[] = Array.isArray(stateData?.users) ? stateData.users : [];
+    const incomingUserIds = usersList.map((u) => String(u.id)).filter(Boolean);
+    for (const u of usersList) {
+      if (u?.id && u?.username) {
+        await upsertRowWithClient(client, 'app_users', effectiveBranchId, u);
+        syncedCounts.app_users += 1;
+      }
+    }
+    if (options?.pruneRemoved && incomingUserIds.length > 0) {
+      await client.query(`DELETE FROM public.app_users WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+        effectiveBranchId,
+        incomingUserIds,
+      ]);
+    }
+
+    // 6. Daily Tasks
+    const tasksList: DailyBakeryTask[] = Array.isArray(stateData?.dailyTasks) ? stateData.dailyTasks : [];
+    const incomingTaskIds = tasksList.map((t) => String(t.id)).filter(Boolean);
+    for (const t of tasksList) {
+      if (t?.id) {
+        await upsertRowWithClient(client, 'daily_tasks', effectiveBranchId, t);
+        syncedCounts.daily_tasks += 1;
+      }
+    }
+    if (options?.pruneRemoved) {
+      if (incomingTaskIds.length === 0) {
+        await client.query(`DELETE FROM public.daily_tasks WHERE branch_id = $1`, [effectiveBranchId]);
+      } else {
+        await client.query(`DELETE FROM public.daily_tasks WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+          effectiveBranchId,
+          incomingTaskIds,
+        ]);
+      }
+    }
+
+    // 7. Inbox Messages
+    const inboxList: InboxChatMessage[] = Array.isArray(stateData?.inboxMessages) ? stateData.inboxMessages : [];
+    const incomingMsgIds = inboxList.map((m) => String(m.id)).filter(Boolean);
+    for (const m of inboxList) {
+      if (m?.id) {
+        await upsertRowWithClient(client, 'inbox_messages', effectiveBranchId, m);
+        syncedCounts.inbox_messages += 1;
+      }
+    }
+    if (options?.pruneRemoved) {
+      if (incomingMsgIds.length === 0) {
+        await client.query(`DELETE FROM public.inbox_messages WHERE branch_id = $1`, [effectiveBranchId]);
+      } else {
+        await client.query(`DELETE FROM public.inbox_messages WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+          effectiveBranchId,
+          incomingMsgIds,
+        ]);
+      }
+    }
+
+    // 8. System Config, Column Titles & Activity Statuses
+    if (stateData?.systemConfig || stateData?.columnTitles || stateData?.activityStatuses) {
+      await upsertRowWithClient(client, 'system_config', effectiveBranchId, {
+        branchId: effectiveBranchId,
+        systemConfig: stateData.systemConfig || {},
+        columnTitles: stateData.columnTitles || {},
+        activityStatuses: stateData.activityStatuses || [],
+      });
+    }
+
+    // 9. Dropdown Lists (both explicit stateData.dropdownLists and top-level AppState dropdown arrays)
+    const TOP_LEVEL_DROPDOWN_KEYS = [
+      'issuingEntities',
+      'violationTypes',
+      'activityStatuses',
+      'bakeryCategories',
+      'breadTypes',
+      'breadTypeCounts',
+      'lineTypes',
+      'fuelTypes',
+      'leaseContractTypes',
+      'responsibleManagerOptions',
+      'paymentMethods',
+    ] as const;
+    const mergedDropdowns: Record<string, string[]> = {
+      ...(stateData?.dropdownLists && typeof stateData.dropdownLists === 'object' ? stateData.dropdownLists : {}),
+    };
+    for (const k of TOP_LEVEL_DROPDOWN_KEYS) {
+      if (Array.isArray(stateData?.[k])) {
+        mergedDropdowns[k] = stateData[k];
+      }
+    }
+    for (const [listKey, opts] of Object.entries(mergedDropdowns)) {
+      if (Array.isArray(opts)) {
+        await upsertRowWithClient(client, 'dropdown_lists', effectiveBranchId, {
+          id: `${effectiveBranchId}__${listKey}`,
+          branchId: effectiveBranchId,
+          listKey,
+          options: opts,
+        });
+        syncedCounts.dropdown_lists += 1;
+      }
+    }
+
+    await client.query('COMMIT');
+    return { success: true, syncedCounts };
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('syncFullBranchStateToPostgres error:', err);
+    return { success: false, syncedCounts, error: err?.message || 'PG batch sync error' };
+  } finally {
+    client.release();
+  }
+}
+
+export async function syncHighDebtAlertsToPostgres(
+  branchId: string,
+  alerts: HighDebtAlertNotification[],
+  debtAlertThreshold?: number
+) {
+  await ensurePostgresSchema();
+  const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await ensureBranchRecord(client, effectiveBranchId);
+    const ids = alerts.map((a) => String(a.id)).filter(Boolean);
+    for (const a of alerts) {
+      await upsertRowWithClient(client, 'high_debt_alerts', a.branchId || effectiveBranchId, a);
+    }
+    if (ids.length === 0) {
+      await client.query(`DELETE FROM public.high_debt_alerts WHERE branch_id = $1`, [effectiveBranchId]);
+    } else {
+      await client.query(`DELETE FROM public.high_debt_alerts WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+        effectiveBranchId,
+        ids,
+      ]);
+    }
+    if (typeof debtAlertThreshold === 'number' && debtAlertThreshold > 0) {
+      await client.query(
+        `INSERT INTO public.system_config (branch_id, debt_alert_threshold)
+         VALUES ($1, $2)
+         ON CONFLICT (branch_id) DO UPDATE SET debt_alert_threshold = EXCLUDED.debt_alert_threshold`,
+        [effectiveBranchId, debtAlertThreshold]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('syncHighDebtAlertsToPostgres failed:', err);
+  } finally {
+    client.release();
+  }
+}
+
+export async function purgeAllPostgresData(): Promise<void> {
+  await ensurePostgresSchema();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`
+      TRUNCATE TABLE
+        public.high_debt_alerts,
+        public.inbox_messages,
+        public.daily_tasks,
+        public.debts,
+        public.bakeries,
+        public.villages,
+        public.dropdown_lists,
+        public.system_config,
+        public.app_users,
+        public.backup_snapshots
+      CASCADE;
+    `);
+    await client.query(
+      `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
+       VALUES ($1, $2, $3, $4, $5, TRUE)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        DEFAULT_BRANCH_ROW.id,
+        DEFAULT_BRANCH_ROW.name,
+        DEFAULT_BRANCH_ROW.governorateTitle,
+        DEFAULT_BRANCH_ROW.directorateTitle,
+        DEFAULT_BRANCH_ROW.description || '',
+      ]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function recordAuditLog(userEmail: string, action: string, details: string, ipAddress?: string, branchId = DEFAULT_BRANCH_ID) {
+  try {
+    await ensurePostgresSchema();
+    await pool.query(
+      `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)`,
+      [branchId, userEmail, action, details, ipAddress || '127.0.0.1']
+    );
   } catch (error) {
     console.error('Failed to record audit log:', error);
   }
