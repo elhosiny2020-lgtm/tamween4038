@@ -1467,12 +1467,13 @@ export function calculateBakeriesColumnTotals(
     sumAvg2025 += Number(uAvg25.toFixed(2));
   });
 
-  const finalPerCapita = Number(sumPerCapita.toFixed(2));
-  const finalAvg2023 = Number(sumAvg2023.toFixed(2));
-  const finalAvg2024 = Number(sumAvg2024.toFixed(2));
-  const finalAvg2025 = Number(sumAvg2025.toFixed(2));
-  // الفرق التراكمي = مجموع متوسطات 2023 - مجموع متوسطات 2024 - مجموع متوسطات 2025
+  const totalLoavesForGrandTotal = loavesCount;
+  const finalAvg2023 = beneficiaries2023 > 0 ? Number((totalLoavesForGrandTotal / beneficiaries2023).toFixed(2)) : 0;
+  const finalAvg2024 = beneficiaries2024 > 0 ? Number((totalLoavesForGrandTotal / beneficiaries2024).toFixed(2)) : 0;
+  const finalAvg2025 = beneficiaries2025 > 0 ? Number((totalLoavesForGrandTotal / beneficiaries2025).toFixed(2)) : 0;
+  // الفرق التراكمي = متوسطات 2023 - متوسطات 2024 - متوسطات 2025
   const finalAvgDiff = Number((finalAvg2023 - finalAvg2024 - finalAvg2025).toFixed(2));
+  const finalPerCapita = finalAvg2025;
 
   const bakeryCount = (bakeries || []).length;
   const stoppedCount = Math.max(0, bakeryCount - activeCount);

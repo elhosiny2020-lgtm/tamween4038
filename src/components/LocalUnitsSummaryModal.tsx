@@ -268,9 +268,9 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
       }
     );
 
-    const totalA23 = Number(res.avg2023Sum.toFixed(2));
-    const totalA24 = Number(res.avg2024Sum.toFixed(2));
-    const totalA25 = Number(res.avg2025Sum.toFixed(2));
+    const totalA23 = res.ben2023 > 0 ? Number((res.loaves / res.ben2023).toFixed(2)) : 0;
+    const totalA24 = res.ben2024 > 0 ? Number((res.loaves / res.ben2024).toFixed(2)) : 0;
+    const totalA25 = res.ben2025 > 0 ? Number((res.loaves / res.ben2025).toFixed(2)) : 0;
     return {
       ...res,
       uniqueVillages: villagesSet.size,
