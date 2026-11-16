@@ -1,4 +1,4 @@
-import { Bakery, DebtRecord, DailyBakeryTask, TaskPriority, DailyTaskCategory } from '../types';
+import type { Bakery, DebtRecord, DailyBakeryTask, TaskPriority, DailyTaskCategory } from '../types.ts';
 
 /**
  * المعامل التمويني المعتمد لاحتساب عدد الأرغفة من المبلغ التأميني:

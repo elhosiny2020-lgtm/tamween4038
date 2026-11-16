@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer as createViteServer } from 'vite';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -2140,17 +2139,21 @@ async function startServer() {
   });
 
   // Vite development middleware vs Static Production files
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd =
+    process.env.NODE_ENV === 'production' ||
+    process.env.npm_lifecycle_event === 'start';
   if (!isProd) {
     const hmrDisabled = process.env.DISABLE_HMR === 'true';
-    const viteReadyPromise = createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: !hmrDisabled,
-        ws: hmrDisabled ? false : undefined,
-      },
-      appType: 'custom',
-    });
+    const viteReadyPromise = import('vite').then(({ createServer: createViteServer }) =>
+      createViteServer({
+        server: {
+          middlewareMode: true,
+          hmr: !hmrDisabled,
+          ws: hmrDisabled ? false : undefined,
+        },
+        appType: 'custom',
+      })
+    );
 
     app.use(async (req, res, next) => {
       if (req.path.startsWith('/api/')) {

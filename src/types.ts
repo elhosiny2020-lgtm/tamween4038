@@ -2,13 +2,13 @@ import type {
   DepartmentScopeId,
   LoafWeightFineRecord,
   LoafWeightSettings,
-} from './types/modules';
+} from './types/modules.ts';
 export type {
   DepartmentScopeId,
   LoafWeightFineRecord,
   LoafWeightSettings,
-} from './types/modules';
-export { DEPARTMENT_SCOPES } from './types/modules';
+} from './types/modules.ts';
+export { DEPARTMENT_SCOPES } from './types/modules.ts';
 
 export interface BakeryActivityLogItem {
   id: string;
