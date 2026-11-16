@@ -804,7 +804,7 @@ export const LocalUnitsSummaryModal: React.FC<LocalUnitsSummaryModalProps> = ({
         <div className="p-3 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs font-bold shrink-0">
           <span className="text-slate-400 flex items-center gap-1.5">
             <Wheat className="w-4 h-4 text-amber-400" />
-            <span>الحصص محسوبة بالشكائر زنة 50 كجم يومياً - معدل إنتاج الرغيف 1350 رغيف لكل شيكارة</span>
+            <span>الحصص محسوبة بالشكائر زنة 50 كجم يومياً - معدل إنتاج الرغيف حسب نوع الخبز (660 أو 725 رغيف لكل شيكارة)</span>
           </span>
 
           <button

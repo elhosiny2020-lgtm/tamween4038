@@ -1,0 +1,890 @@
+import fs from 'fs';
+import path from 'path';
+import type {
+  Bakery,
+  DebtRecord,
+  VillageHierarchy,
+  AppUser,
+  DailyBakeryTask,
+  InboxChatMessage,
+  HighDebtAlertNotification,
+  SystemConfig,
+  SupplyBranch,
+  ColumnTitles,
+} from '../types.ts';
+import {
+  deduplicateSupplyBranches,
+  normalizeBranchNameKey,
+  resolveCanonicalBranchIdentity,
+  DEFAULT_VAULT_USERNAME,
+  DEFAULT_VAULT_PASSCODE,
+} from '../utils/branchVaultUtils.ts';
+import type {
+  NormalizedTableName,
+  PostgresBootstrapResult,
+  StoredFileEntry,
+  UpsertRowResult,
+} from './queries.ts';
+
+const FALLBACK_STORE_PATH = '/tmp/tamween_pg_fallback_store.json';
+const DEFAULT_BRANCH_ID = 'branch-mahalla';
+
+const DEFAULT_BRANCH: SupplyBranch & { version?: number } = {
+  id: DEFAULT_BRANCH_ID,
+  name: 'إدارة تموين مركز المحلة الكبرى',
+  governorateTitle: 'محافظة الغربية',
+  directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+  description: 'الإدارة الرئيسية الافتراضية لمركز المحلة الكبرى',
+  createdAt: new Date().toISOString(),
+  isDefault: true,
+  version: 1,
+};
+
+const SAMANOUD_BRANCH: SupplyBranch & { version?: number } = {
+  id: 'branch-samanoud',
+  name: 'إدارة تموين سمنود',
+  governorateTitle: 'محافظة الغربية',
+  directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+  description: 'الإدارة التموينية لمركز ومدينة سمنود (قاعدة بيانات مستقلة)',
+  createdAt: new Date().toISOString(),
+  isDefault: false,
+  version: 1,
+};
+
+interface FallbackStoreData {
+  branches: Array<SupplyBranch & { version?: number }>;
+  villages: Array<VillageHierarchy & { id: string; branchId: string; version?: number }>;
+  bakeries: Array<Bakery & { branchId: string; version?: number }>;
+  debts: Array<DebtRecord & { branchId: string; version?: number }>;
+  app_users: Array<AppUser & { branchId: string; version?: number }>;
+  daily_tasks: Array<DailyBakeryTask & { branchId: string; version?: number }>;
+  inbox_messages: Array<InboxChatMessage & { branchId: string; version?: number }>;
+  high_debt_alerts: Array<HighDebtAlertNotification & { branchId: string; version?: number }>;
+  system_config: Array<{
+    branchId: string;
+    systemConfig: SystemConfig;
+    columnTitles: Partial<ColumnTitles>;
+    activityStatuses: string[];
+    version?: number;
+  }>;
+  dropdown_lists: Array<{
+    id: string;
+    branchId: string;
+    listKey: string;
+    options: string[];
+    version?: number;
+  }>;
+  audit_logs: Array<{
+    id: string;
+    branchId: string;
+    userEmail: string;
+    action: string;
+    details: string;
+    ipAddress: string;
+    createdAt: string;
+  }>;
+  storage_files: Record<string, StoredFileEntry>;
+  module_states: Record<
+    string,
+    { branchId: string; moduleKey: string; payload: any; updatedBy: string; version: number; updatedAt: string }
+  >;
+}
+
+let memoryStore: FallbackStoreData | null = null;
+
+function createEmptyStore(): FallbackStoreData {
+  return {
+    branches: [{ ...DEFAULT_BRANCH }, { ...SAMANOUD_BRANCH }],
+    villages: [],
+    bakeries: [],
+    debts: [],
+    app_users: [],
+    daily_tasks: [],
+    inbox_messages: [],
+    high_debt_alerts: [],
+    system_config: [],
+    dropdown_lists: [],
+    audit_logs: [],
+    storage_files: {},
+    module_states: {},
+  };
+}
+
+function loadStore(): FallbackStoreData {
+  if (memoryStore) return memoryStore;
+  try {
+    if (fs.existsSync(FALLBACK_STORE_PATH)) {
+      const raw = fs.readFileSync(FALLBACK_STORE_PATH, 'utf-8');
+      if (raw && raw.trim()) {
+        const parsed = JSON.parse(raw) as Partial<FallbackStoreData>;
+        const base = createEmptyStore();
+        memoryStore = {
+          ...base,
+          ...parsed,
+          branches:
+            Array.isArray(parsed.branches) && parsed.branches.length > 0
+              ? deduplicateSupplyBranches(parsed.branches)
+              : base.branches,
+          storage_files: parsed.storage_files && typeof parsed.storage_files === 'object' ? parsed.storage_files : {},
+          module_states: parsed.module_states && typeof parsed.module_states === 'object' ? parsed.module_states : {},
+        };
+        return memoryStore;
+      }
+    }
+  } catch {
+    // Fall back to fresh empty store if file is unreadable
+  }
+  memoryStore = createEmptyStore();
+  return memoryStore;
+}
+
+function persistStore(store: FallbackStoreData): void {
+  memoryStore = store;
+  try {
+    const dir = path.dirname(FALLBACK_STORE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(FALLBACK_STORE_PATH, JSON.stringify(store), { encoding: 'utf-8', mode: 0o600 });
+  } catch {
+    // Keep in-memory store authoritative even if /tmp write fails
+  }
+}
+
+function ensureFallbackBranch(store: FallbackStoreData, branchId: string, branchName?: string) {
+  const cleanId = branchId || DEFAULT_BRANCH_ID;
+  if (store.branches.some((b) => b.id === cleanId)) return;
+  const { canonicalName, isCanonicalDefault } = resolveCanonicalBranchIdentity(cleanId, branchName);
+  store.branches.push({
+    id: cleanId,
+    name: canonicalName,
+    governorateTitle: 'محافظة الغربية',
+    directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+    description: '',
+    createdAt: new Date().toISOString(),
+    isDefault: cleanId === DEFAULT_BRANCH_ID || isCanonicalDefault,
+    version: 1,
+  });
+}
+
+export function isPostgresUnavailableError(err: any): boolean {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    code === '42501' || // insufficient_privilege / permission denied
+    code === '42P01' || // undefined_table
+    code === '3D000' || // invalid_catalog_name
+    code === '28P01' || // invalid_password
+    code === 'ECONNREFUSED' ||
+    code === 'ENOTFOUND' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET' ||
+    msg.includes('permission denied') ||
+    msg.includes('econnrefused') ||
+    msg.includes('does not exist') ||
+    msg.includes('password authentication failed') ||
+    msg.includes('connect') ||
+    msg.includes('connection terminated')
+  );
+}
+
+export function fallbackGetBootstrap(requestedBranchId = DEFAULT_BRANCH_ID): PostgresBootstrapResult {
+  const store = loadStore();
+  const branchId = requestedBranchId || DEFAULT_BRANCH_ID;
+  const dropdownLists: Record<string, string[]> = {};
+  for (const dl of store.dropdown_lists) {
+    if (dl.branchId === branchId && dl.listKey && Array.isArray(dl.options)) {
+      dropdownLists[dl.listKey] = dl.options.map(String);
+    }
+  }
+  const cfg = store.system_config.find((c) => c.branchId === branchId) || null;
+  const totalRows =
+    store.bakeries.length +
+    store.debts.length +
+    store.villages.length +
+    store.app_users.length +
+    store.daily_tasks.length +
+    store.inbox_messages.length;
+
+  return {
+    branchId,
+    branches: deduplicateSupplyBranches(store.branches),
+    villages: store.villages
+      .filter((v) => v.branchId === branchId)
+      .map((v) => ({ village: v.village, localUnits: Array.isArray(v.localUnits) ? v.localUnits : [] })),
+    bakeries: store.bakeries.filter((b) => b.branchId === branchId),
+    debts: store.debts.filter((d) => d.branchId === branchId),
+    users: store.app_users.filter((u) => u.branchId === branchId),
+    dailyTasks: store.daily_tasks.filter((t) => t.branchId === branchId),
+    inboxMessages: store.inbox_messages.filter((m) => m.branchId === branchId),
+    highDebtAlerts: store.high_debt_alerts.filter((a) => a.branchId === branchId).slice(0, 250),
+    systemConfig: cfg?.systemConfig || null,
+    columnTitles: cfg?.columnTitles || null,
+    activityStatuses: cfg?.activityStatuses || [],
+    dropdownLists,
+    hasAnyRows: totalRows > 0,
+  };
+}
+
+export function fallbackQueryTablePaginated(
+  table: NormalizedTableName,
+  options: {
+    branchId?: string;
+    search?: string;
+    village?: string;
+    localUnit?: string;
+    activityStatus?: string;
+    bakeryId?: string;
+    status?: string;
+    priority?: string;
+    page?: number;
+    pageSize?: number;
+  }
+) {
+  const store = loadStore();
+  const branchId = options.branchId || DEFAULT_BRANCH_ID;
+  const page = Math.max(1, Number(options.page || 1));
+  const pageSize = Math.min(1000, Math.max(1, Number(options.pageSize || 100)));
+  const search = options.search?.trim().toLowerCase() || '';
+
+  let rows: any[] = [];
+  if (table === 'branches') {
+    rows = deduplicateSupplyBranches(store.branches);
+  } else {
+    rows = ((store as any)[table] || []).filter((r: any) => (r.branchId || DEFAULT_BRANCH_ID) === branchId);
+  }
+
+  if (table === 'bakeries') {
+    if (options.village && options.village !== 'الكل') {
+      rows = rows.filter((b) => b.village === options.village);
+    }
+    if (options.localUnit && options.localUnit !== 'الكل') {
+      rows = rows.filter((b) => b.localUnit === options.localUnit);
+    }
+    if (options.activityStatus && options.activityStatus !== 'الكل') {
+      rows = rows.filter((b) => b.activityStatus === options.activityStatus);
+    }
+    if (search) {
+      rows = rows.filter((b) =>
+        [b.bakeryOwnerName, b.machineNumber, b.village, b.localUnit, b.phone, b.nationalId]
+          .filter(Boolean)
+          .some((f) => String(f).toLowerCase().includes(search))
+      );
+    }
+  } else if (table === 'debts') {
+    if (options.bakeryId) {
+      rows = rows.filter((d) => d.bakeryId === options.bakeryId);
+    }
+    if (options.village && options.village !== 'الكل') {
+      rows = rows.filter((d) => d.village === options.village);
+    }
+    if (search) {
+      rows = rows.filter((d) =>
+        [d.bakeryOwnerName, d.machineNumber, d.village, d.violationType, d.notes]
+          .filter(Boolean)
+          .some((f) => String(f).toLowerCase().includes(search))
+      );
+    }
+  } else if (table === 'daily_tasks') {
+    if (options.status && options.status !== 'all') {
+      rows = rows.filter((t) => t.status === options.status);
+    }
+    if (options.priority && options.priority !== 'all') {
+      rows = rows.filter((t) => t.priority === options.priority);
+    }
+    if (search) {
+      rows = rows.filter((t) =>
+        [t.title, t.description, t.bakeryName, t.village]
+          .filter(Boolean)
+          .some((f) => String(f).toLowerCase().includes(search))
+      );
+    }
+  }
+
+  const total = rows.length;
+  const offset = (page - 1) * pageSize;
+  return {
+    rows: rows.slice(offset, offset + pageSize),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
+}
+
+function upsertInStoreInternal(
+  store: FallbackStoreData,
+  table: NormalizedTableName,
+  branchId: string,
+  payload: any
+): UpsertRowResult {
+  const effectiveBranchId = String(payload?.branchId || payload?.branch_id || branchId || DEFAULT_BRANCH_ID);
+  if (table !== 'branches') {
+    ensureFallbackBranch(store, effectiveBranchId);
+  }
+
+  const recordId =
+    table === 'system_config'
+      ? effectiveBranchId
+      : table === 'villages'
+      ? String(payload?.id || `${effectiveBranchId}__${payload?.village || ''}`)
+      : table === 'dropdown_lists'
+      ? String(payload?.id || `${effectiveBranchId}__${payload?.listKey || ''}`)
+      : String(payload?.id || `rec-${Date.now()}`);
+
+  if (!recordId) {
+    return { success: false, operation: 'INSERT', error: 'معرف السجل (id) مفقود.' };
+  }
+
+  switch (table) {
+    case 'branches': {
+      const { canonicalId, canonicalName, isCanonicalDefault } = resolveCanonicalBranchIdentity(
+        recordId,
+        payload.name
+      );
+      const targetNorm = normalizeBranchNameKey(canonicalName);
+      const matchedExisting = store.branches.find((b) => normalizeBranchNameKey(b.name) === targetNorm);
+      const finalId = matchedExisting ? matchedExisting.id : canonicalId;
+      const idx = store.branches.findIndex((b) => b.id === finalId);
+      const nextRow: SupplyBranch & { version?: number } = {
+        id: finalId,
+        name: canonicalName,
+        governorateTitle: String(payload.governorateTitle || 'محافظة الغربية'),
+        directorateTitle: String(payload.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'),
+        description: String(payload.description || ''),
+        isDefault: Boolean(payload.isDefault || isCanonicalDefault),
+        createdAt: idx >= 0 ? store.branches[idx].createdAt : new Date().toISOString(),
+        version: idx >= 0 ? Number(store.branches[idx].version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.branches[idx] = nextRow;
+      else store.branches.push(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'villages': {
+      const idx = store.villages.findIndex(
+        (v) => v.branchId === effectiveBranchId && v.village === String(payload.village || '')
+      );
+      const nextRow = {
+        id: recordId,
+        branchId: effectiveBranchId,
+        village: String(payload.village || ''),
+        localUnits: Array.isArray(payload.localUnits) ? payload.localUnits : [],
+        version: idx >= 0 ? Number(store.villages[idx].version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.villages[idx] = nextRow;
+      else store.villages.push(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'bakeries': {
+      const cleanMachine = String(payload.machineNumber || '').trim();
+      if (cleanMachine) {
+        const dup = store.bakeries.find(
+          (b) => b.branchId === effectiveBranchId && b.machineNumber === cleanMachine && b.id !== recordId
+        );
+        if (dup) {
+          return {
+            success: false,
+            operation: 'INSERT',
+            error: `رقم الماكينة (${cleanMachine}) مسجل بالفعل لمخبز آخر (${dup.bakeryOwnerName}) في نفس الإدارة.`,
+          };
+        }
+      }
+      const idx = store.bakeries.findIndex((b) => b.id === recordId);
+      const nextRow = {
+        ...payload,
+        id: recordId,
+        branchId: effectiveBranchId,
+        version: idx >= 0 ? Number(store.bakeries[idx].version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.bakeries[idx] = nextRow;
+      else store.bakeries.push(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'debts': {
+      const idx = store.debts.findIndex((d) => d.id === recordId);
+      const nextRow = {
+        ...payload,
+        id: recordId,
+        branchId: effectiveBranchId,
+        version: idx >= 0 ? Number(store.debts[idx].version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.debts[idx] = nextRow;
+      else store.debts.unshift(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'app_users': {
+      const cleanUsername = String(payload.username || '').trim();
+      const idxById = store.app_users.findIndex((u) => u.id === recordId && u.branchId === effectiveBranchId);
+      const idxByName = cleanUsername
+        ? store.app_users.findIndex(
+            (u) => u.branchId === effectiveBranchId && u.username.toLowerCase() === cleanUsername.toLowerCase()
+          )
+        : -1;
+      const idx = idxById >= 0 ? idxById : idxByName;
+      const existing = idx >= 0 ? store.app_users[idx] : null;
+      const nextRow: AppUser & { branchId: string; version?: number } = {
+        ...payload,
+        id: existing ? existing.id : recordId,
+        branchId: effectiveBranchId,
+        username: cleanUsername || existing?.username || '',
+        password: payload.password ? String(payload.password) : existing?.password || '',
+        isActive: payload.isActive !== false,
+        createdAt: existing?.createdAt || payload.createdAt || new Date().toISOString(),
+        version: existing ? Number(existing.version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.app_users[idx] = nextRow;
+      else store.app_users.push(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'daily_tasks': {
+      const idx = store.daily_tasks.findIndex((t) => t.id === recordId);
+      const nextRow = {
+        ...payload,
+        id: recordId,
+        branchId: effectiveBranchId,
+        createdAt: idx >= 0 ? store.daily_tasks[idx].createdAt : payload.createdAt || new Date().toISOString(),
+        version: idx >= 0 ? Number(store.daily_tasks[idx].version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.daily_tasks[idx] = nextRow;
+      else store.daily_tasks.push(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'inbox_messages': {
+      const idx = store.inbox_messages.findIndex((m) => m.id === recordId);
+      const nextRow = {
+        ...payload,
+        id: recordId,
+        branchId: effectiveBranchId,
+        version: idx >= 0 ? Number(store.inbox_messages[idx].version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.inbox_messages[idx] = nextRow;
+      else store.inbox_messages.push(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'high_debt_alerts': {
+      const idx = store.high_debt_alerts.findIndex((a) => a.id === recordId);
+      const nextRow = {
+        ...payload,
+        id: recordId,
+        branchId: effectiveBranchId,
+        version: idx >= 0 ? Number(store.high_debt_alerts[idx].version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.high_debt_alerts[idx] = nextRow;
+      else store.high_debt_alerts.unshift(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'system_config': {
+      const idx = store.system_config.findIndex((c) => c.branchId === effectiveBranchId);
+      const existing = idx >= 0 ? store.system_config[idx] : null;
+      const cfg = (payload.systemConfig || payload) as SystemConfig;
+      const mergedDailyAlertConfig = {
+        ...(existing?.systemConfig?.dailyAlertConfig || {}),
+        ...(cfg.dailyAlertConfig || {}),
+        vaultUsername: String(
+          cfg.vaultUsername ?? existing?.systemConfig?.vaultUsername ?? DEFAULT_VAULT_USERNAME
+        ),
+        vaultPasscode: String(
+          cfg.vaultPasscode ?? existing?.systemConfig?.vaultPasscode ?? DEFAULT_VAULT_PASSCODE
+        ),
+        branchVaultCredentials:
+          cfg.branchVaultCredentials ?? existing?.systemConfig?.branchVaultCredentials ?? undefined,
+      };
+      const nextRow = {
+        branchId: effectiveBranchId,
+        systemConfig: {
+          ...(existing?.systemConfig || {}),
+          ...cfg,
+          vaultUsername: mergedDailyAlertConfig.vaultUsername,
+          vaultPasscode: mergedDailyAlertConfig.vaultPasscode,
+          branchVaultCredentials: mergedDailyAlertConfig.branchVaultCredentials,
+          dailyAlertConfig: mergedDailyAlertConfig,
+        } as SystemConfig,
+        columnTitles: payload.columnTitles || existing?.columnTitles || {},
+        activityStatuses: Array.isArray(payload.activityStatuses)
+          ? payload.activityStatuses
+          : existing?.activityStatuses || [],
+        version: existing ? Number(existing.version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.system_config[idx] = nextRow;
+      else store.system_config.push(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'dropdown_lists': {
+      const listKey = String(payload.listKey || '');
+      const idx = store.dropdown_lists.findIndex(
+        (dl) => dl.branchId === effectiveBranchId && dl.listKey === listKey
+      );
+      const nextRow = {
+        id: recordId,
+        branchId: effectiveBranchId,
+        listKey,
+        options: Array.isArray(payload.options) ? payload.options : [],
+        version: idx >= 0 ? Number(store.dropdown_lists[idx].version || 1) + 1 : 1,
+      };
+      if (idx >= 0) store.dropdown_lists[idx] = nextRow;
+      else store.dropdown_lists.push(nextRow);
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+    }
+
+    case 'audit_logs': {
+      const nextRow = {
+        id: recordId,
+        branchId: effectiveBranchId,
+        userEmail: String(payload.userEmail || 'system'),
+        action: String(payload.action || 'ACTION'),
+        details: String(payload.details || ''),
+        ipAddress: String(payload.ipAddress || '127.0.0.1'),
+        createdAt: new Date().toISOString(),
+      };
+      store.audit_logs.unshift(nextRow);
+      if (store.audit_logs.length > 500) store.audit_logs.length = 500;
+      return { success: true, operation: 'INSERT', row: nextRow };
+    }
+  }
+}
+
+export function fallbackUpsertRow(
+  table: NormalizedTableName,
+  branchId: string,
+  payload: any
+): UpsertRowResult {
+  const store = loadStore();
+  const res = upsertInStoreInternal(store, table, branchId, payload);
+  if (res.success) {
+    persistStore(store);
+  }
+  return res;
+}
+
+export function fallbackDeleteRow(
+  table: NormalizedTableName,
+  id: string,
+  branchId?: string
+): { success: boolean; deletedRow?: any; error?: string } {
+  const store = loadStore();
+  if (table === 'system_config') {
+    const idx = store.system_config.findIndex((c) => c.branchId === id);
+    if (idx < 0) return { success: true, deletedRow: null };
+    const [deleted] = store.system_config.splice(idx, 1);
+    persistStore(store);
+    return { success: true, deletedRow: deleted };
+  }
+  const arr = (store as any)[table] as any[];
+  if (!Array.isArray(arr)) return { success: true, deletedRow: null };
+  const idx = arr.findIndex(
+    (r) => String(r.id) === String(id) && (!branchId || table === 'branches' || r.branchId === branchId)
+  );
+  if (idx < 0) return { success: true, deletedRow: null };
+  const [deleted] = arr.splice(idx, 1);
+  persistStore(store);
+  return { success: true, deletedRow: deleted };
+}
+
+export function fallbackSyncFullBranchState(
+  branchId: string,
+  stateData: any,
+  options?: { pruneRemoved?: boolean }
+): { success: boolean; syncedCounts: Record<string, number>; error?: string } {
+  const store = loadStore();
+  const effectiveBranchId = branchId || stateData?.activeBranchId || DEFAULT_BRANCH_ID;
+  const syncedCounts: Record<string, number> = {
+    branches: 0,
+    villages: 0,
+    bakeries: 0,
+    debts: 0,
+    app_users: 0,
+    daily_tasks: 0,
+    inbox_messages: 0,
+    dropdown_lists: 0,
+  };
+
+  if (Array.isArray(stateData?.branches)) {
+    for (const br of stateData.branches) {
+      if (br?.id) {
+        upsertInStoreInternal(store, 'branches', br.id, br);
+        syncedCounts.branches += 1;
+      }
+    }
+  }
+  ensureFallbackBranch(store, effectiveBranchId);
+
+  if (Array.isArray(stateData?.villages)) {
+    const names = new Set(stateData.villages.map((v: any) => String(v.village)).filter(Boolean));
+    for (const v of stateData.villages) {
+      if (v?.village) {
+        upsertInStoreInternal(store, 'villages', effectiveBranchId, {
+          id: `${effectiveBranchId}__${v.village}`,
+          branchId: effectiveBranchId,
+          village: v.village,
+          localUnits: v.localUnits || [],
+        });
+        syncedCounts.villages += 1;
+      }
+    }
+    if (options?.pruneRemoved) {
+      store.villages = store.villages.filter(
+        (v) => v.branchId !== effectiveBranchId || names.has(v.village)
+      );
+    }
+  }
+
+  const incomingBakeryIds = new Set<string>();
+  if (Array.isArray(stateData?.bakeries)) {
+    for (const b of stateData.bakeries) {
+      if (b?.id) {
+        const res = upsertInStoreInternal(store, 'bakeries', effectiveBranchId, b);
+        if (res.success) {
+          incomingBakeryIds.add(String(b.id));
+          syncedCounts.bakeries += 1;
+        }
+      }
+    }
+  }
+
+  const incomingDebtIds = new Set<string>();
+  if (Array.isArray(stateData?.debts)) {
+    for (const d of stateData.debts) {
+      if (d?.id && d?.bakeryId) {
+        const res = upsertInStoreInternal(store, 'debts', effectiveBranchId, d);
+        if (res.success) {
+          incomingDebtIds.add(String(d.id));
+          syncedCounts.debts += 1;
+        }
+      }
+    }
+  }
+
+  if (options?.pruneRemoved && Array.isArray(stateData?.debts) && incomingDebtIds.size > 0) {
+    store.debts = store.debts.filter(
+      (d) => d.branchId !== effectiveBranchId || incomingDebtIds.has(String(d.id))
+    );
+  }
+  if (options?.pruneRemoved && Array.isArray(stateData?.bakeries) && incomingBakeryIds.size > 0) {
+    store.bakeries = store.bakeries.filter(
+      (b) => b.branchId !== effectiveBranchId || incomingBakeryIds.has(String(b.id))
+    );
+  }
+
+  if (Array.isArray(stateData?.users)) {
+    const syncedIds = new Set<string>();
+    for (const u of stateData.users) {
+      if (u?.id && u?.username) {
+        const res = upsertInStoreInternal(store, 'app_users', effectiveBranchId, u);
+        if (res.success) {
+          syncedCounts.app_users += 1;
+          if (res.row?.id) syncedIds.add(String(res.row.id));
+        }
+      }
+    }
+    if (options?.pruneRemoved && syncedIds.size > 0) {
+      store.app_users = store.app_users.filter(
+        (u) => u.branchId !== effectiveBranchId || syncedIds.has(String(u.id))
+      );
+    }
+  }
+
+  if (Array.isArray(stateData?.dailyTasks)) {
+    const ids = new Set(stateData.dailyTasks.map((t: any) => String(t.id)).filter(Boolean));
+    for (const t of stateData.dailyTasks) {
+      if (t?.id) {
+        upsertInStoreInternal(store, 'daily_tasks', effectiveBranchId, t);
+        syncedCounts.daily_tasks += 1;
+      }
+    }
+    if (options?.pruneRemoved) {
+      store.daily_tasks = store.daily_tasks.filter(
+        (t) => t.branchId !== effectiveBranchId || ids.has(String(t.id))
+      );
+    }
+  }
+
+  if (Array.isArray(stateData?.inboxMessages)) {
+    const ids = new Set(stateData.inboxMessages.map((m: any) => String(m.id)).filter(Boolean));
+    for (const m of stateData.inboxMessages) {
+      if (m?.id) {
+        upsertInStoreInternal(store, 'inbox_messages', effectiveBranchId, m);
+        syncedCounts.inbox_messages += 1;
+      }
+    }
+    if (options?.pruneRemoved) {
+      store.inbox_messages = store.inbox_messages.filter(
+        (m) => m.branchId !== effectiveBranchId || ids.has(String(m.id))
+      );
+    }
+  }
+
+  if (stateData?.systemConfig || stateData?.columnTitles || stateData?.activityStatuses) {
+    upsertInStoreInternal(store, 'system_config', effectiveBranchId, {
+      branchId: effectiveBranchId,
+      systemConfig: stateData.systemConfig || {},
+      columnTitles: stateData.columnTitles || {},
+      activityStatuses: stateData.activityStatuses || [],
+    });
+  }
+
+  const TOP_LEVEL_DROPDOWN_KEYS = [
+    'issuingEntities',
+    'violationTypes',
+    'activityStatuses',
+    'bakeryCategories',
+    'breadTypes',
+    'breadTypeCounts',
+    'lineTypes',
+    'fuelTypes',
+    'leaseContractTypes',
+    'responsibleManagerOptions',
+    'paymentMethods',
+  ] as const;
+  const mergedDropdowns: Record<string, string[]> = {
+    ...(stateData?.dropdownLists && typeof stateData.dropdownLists === 'object' ? stateData.dropdownLists : {}),
+  };
+  for (const k of TOP_LEVEL_DROPDOWN_KEYS) {
+    if (Array.isArray(stateData?.[k])) {
+      mergedDropdowns[k] = stateData[k];
+    }
+  }
+  for (const [listKey, opts] of Object.entries(mergedDropdowns)) {
+    if (Array.isArray(opts)) {
+      upsertInStoreInternal(store, 'dropdown_lists', effectiveBranchId, {
+        id: `${effectiveBranchId}__${listKey}`,
+        branchId: effectiveBranchId,
+        listKey,
+        options: opts,
+      });
+      syncedCounts.dropdown_lists += 1;
+    }
+  }
+
+  persistStore(store);
+  return { success: true, syncedCounts };
+}
+
+export function fallbackSyncHighDebtAlerts(
+  branchId: string,
+  alerts: HighDebtAlertNotification[],
+  debtAlertThreshold?: number
+) {
+  const store = loadStore();
+  const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
+  ensureFallbackBranch(store, effectiveBranchId);
+  const ids = new Set(alerts.map((a) => String(a.id)).filter(Boolean));
+  for (const a of alerts) {
+    upsertInStoreInternal(store, 'high_debt_alerts', a.branchId || effectiveBranchId, a);
+  }
+  store.high_debt_alerts = store.high_debt_alerts.filter(
+    (a) => a.branchId !== effectiveBranchId || ids.has(String(a.id))
+  );
+  if (typeof debtAlertThreshold === 'number' && debtAlertThreshold > 0) {
+    const cfgIdx = store.system_config.findIndex((c) => c.branchId === effectiveBranchId);
+    if (cfgIdx >= 0) {
+      store.system_config[cfgIdx].systemConfig.debtAlertThreshold = debtAlertThreshold;
+    }
+  }
+  persistStore(store);
+}
+
+export function fallbackPurgeAll(): void {
+  const fresh = createEmptyStore();
+  persistStore(fresh);
+}
+
+export function fallbackUpsertStorageFile(params: {
+  id: string;
+  fileName: string;
+  branchId: string;
+  contentType: string;
+  sizeBytes: number;
+  content: string;
+}): StoredFileEntry {
+  const store = loadStore();
+  const entry: StoredFileEntry = {
+    id: params.id,
+    fileName: params.fileName,
+    branchId: params.branchId,
+    contentType: params.contentType,
+    sizeBytes: params.sizeBytes,
+    content: params.content,
+    updatedAt: new Date().toISOString(),
+  };
+  store.storage_files[params.id] = entry;
+  persistStore(store);
+  return {
+    id: entry.id,
+    fileName: entry.fileName,
+    branchId: entry.branchId,
+    contentType: entry.contentType,
+    sizeBytes: entry.sizeBytes,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+export function fallbackListStorageFiles(branchId: string): StoredFileEntry[] {
+  const store = loadStore();
+  return Object.values(store.storage_files)
+    .filter((f) => f.branchId === branchId)
+    .map(({ content: _omit, ...rest }) => rest)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export function fallbackGetStorageFile(candidateId: string): StoredFileEntry | null {
+  const store = loadStore();
+  return store.storage_files[candidateId] || null;
+}
+
+export function fallbackDeleteStorageFile(candidateId: string): boolean {
+  const store = loadStore();
+  if (!store.storage_files[candidateId]) return false;
+  delete store.storage_files[candidateId];
+  persistStore(store);
+  return true;
+}
+
+export function fallbackGetBranchModuleState(
+  branchId: string,
+  moduleKey = 'all_modules'
+): { exists: boolean; payload: any; version: number; updatedAt: string | null } {
+  const store = loadStore();
+  const key = `${branchId || DEFAULT_BRANCH_ID}::${moduleKey}`;
+  const found = store.module_states[key];
+  if (!found) return { exists: false, payload: null, version: 0, updatedAt: null };
+  return {
+    exists: true,
+    payload: found.payload,
+    version: found.version,
+    updatedAt: found.updatedAt,
+  };
+}
+
+export function fallbackUpsertBranchModuleState(
+  branchId: string,
+  payload: any,
+  updatedBy = 'system',
+  moduleKey = 'all_modules'
+): { version: number; updatedAt: string } {
+  const store = loadStore();
+  const cleanBranch = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const key = `${cleanBranch}::${moduleKey}`;
+  const prev = store.module_states[key];
+  const nextVersion = (prev?.version || 0) + 1;
+  const nowIso = new Date().toISOString();
+  store.module_states[key] = {
+    branchId: cleanBranch,
+    moduleKey,
+    payload,
+    updatedBy,
+    version: nextVersion,
+    updatedAt: nowIso,
+  };
+  persistStore(store);
+  return { version: nextVersion, updatedAt: nowIso };
+}

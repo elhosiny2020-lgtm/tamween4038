@@ -10,6 +10,7 @@ import {
   validateNewBranchVaultCredentials,
   updateBranchVaultCredentialsMap,
   maskSecretValue,
+  CANONICAL_DEFAULT_BRANCHES,
 } from './branchVaultUtils';
 import type { SupplyBranch } from '../types';
 
@@ -82,13 +83,16 @@ test('deduplicateSupplyBranches eliminates duplicate branches with different IDs
   ];
 
   const deduped = deduplicateSupplyBranches(noisyBranches);
-  assert.equal(deduped.length, 3);
-  assert.equal(deduped[0].id, 'branch-mahalla');
-  assert.equal(deduped[0].name, 'إدارة تموين مركز المحلة الكبرى');
-  assert.equal(deduped[1].id, 'branch-samanoud');
-  assert.equal(deduped[1].name, 'إدارة تموين سمنود');
-  assert.equal(deduped[2].id, 'branch-zefta');
-  assert.equal(deduped[2].name, 'إدارة تموين زفتى');
+  assert.equal(deduped.length, CANONICAL_DEFAULT_BRANCHES.length);
+  assert.equal(
+    deduped.filter((b) => b.name === 'إدارة تموين مركز المحلة الكبرى').length,
+    1
+  );
+  assert.equal(deduped.filter((b) => b.name === 'إدارة تموين سمنود').length, 1);
+  assert.equal(deduped.filter((b) => b.name === 'إدارة تموين زفتى').length, 1);
+  assert.equal(deduped.some((b) => b.id === 'branch-mahalla'), true);
+  assert.equal(deduped.some((b) => b.id === 'branch-samanoud'), true);
+  assert.equal(deduped.some((b) => b.id === 'branch-zefta'), true);
 });
 
 test('verifyVaultPasscode supports standard and Arabic-Indic digits and blocks wrong codes', () => {

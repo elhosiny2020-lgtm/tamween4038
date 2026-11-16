@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Bakery, DailyBakeryTask, TaskPriority, TaskStatus, AppUser } from '../types';
-import { filterAndSortDailyTasks } from '../utils/auditHelper';
+import React, { useState, useMemo } from 'react';
+import { Bakery, DailyBakeryTask, TaskPriority, TaskStatus, DailyTaskCategory, AppUser } from '../types';
+import { filterAndSortDailyTasks, getDailyTaskCategoryLabel } from '../utils/auditHelper';
 import {
   X,
   Plus,
@@ -15,7 +15,9 @@ import {
   Save,
   ListTodo,
   Flag,
-  Check
+  Check,
+  Bell,
+  Sparkles,
 } from 'lucide-react';
 
 interface DailyTasksModalProps {
@@ -48,6 +50,11 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
     return d.toISOString().split('T')[0];
   });
   const [assignedTo, setAssignedTo] = useState<string>(currentUser?.fullName || 'مفتش الرقابة التموينية');
+  const [taskType, setTaskType] = useState<DailyTaskCategory>('debt_review');
+  const [showOnWelcomeDashboard, setShowOnWelcomeDashboard] = useState<boolean>(true);
+  const [welcomeReminderDate, setWelcomeReminderDate] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
   const [formError, setFormError] = useState<string>('');
 
   // Filter state
@@ -64,6 +71,9 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
   const [editDueDate, setEditDueDate] = useState('');
   const [editStatus, setEditStatus] = useState<TaskStatus>('pending');
   const [editAssignedTo, setEditAssignedTo] = useState('');
+  const [editTaskType, setEditTaskType] = useState<DailyTaskCategory>('general');
+  const [editShowOnWelcome, setEditShowOnWelcome] = useState<boolean>(false);
+  const [editWelcomeReminderDate, setEditWelcomeReminderDate] = useState<string>('');
 
   // Escape key closing is intentionally disabled per user preference
 
@@ -112,12 +122,42 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
       status: 'pending',
       assignedTo: assignedTo.trim() || currentUser?.fullName || 'مفتش التموين',
       createdAt: new Date().toISOString().split('T')[0],
+      taskType,
+      showOnWelcomeDashboard,
+      welcomeReminderDate: showOnWelcomeDashboard ? welcomeReminderDate || dueDate : undefined,
     };
 
-    onSaveTasks([newTask, ...tasks], `تمت إضافة المهمة اليومية (${cleanTitle}) بنجاح`);
+    onSaveTasks(
+      [newTask, ...tasks],
+      showOnWelcomeDashboard
+        ? `تمت إضافة المهمة (${cleanTitle}) وتعيينها كإشعار تذكيري في صفحة الترحيب ليوم (${welcomeReminderDate || dueDate})`
+        : `تمت إضافة المهمة اليومية (${cleanTitle}) بنجاح`
+    );
     setTitle('');
     setDescription('');
     setFormError('');
+  };
+
+  const handleToggleWelcomeReminder = (task: DailyBakeryTask) => {
+    if (isReadOnly) return;
+    const nextPinned = !task.showOnWelcomeDashboard;
+    const targetReminderDate =
+      task.welcomeReminderDate || task.dueDate || new Date().toISOString().split('T')[0];
+    const updated = tasks.map((t) =>
+      t.id === task.id
+        ? {
+            ...t,
+            showOnWelcomeDashboard: nextPinned,
+            welcomeReminderDate: nextPinned ? targetReminderDate : t.welcomeReminderDate,
+          }
+        : t
+    );
+    onSaveTasks(
+      updated,
+      nextPinned
+        ? `تم تعيين المهمة (${task.title}) لتظهر كإشعار تذكيري في صفحة الترحيب بتاريخ (${targetReminderDate})`
+        : `تم إلغاء عرض المهمة (${task.title}) من إشعارات صفحة الترحيب`
+    );
   };
 
   const handleToggleStatus = (task: DailyBakeryTask) => {
@@ -139,6 +179,9 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
     setEditDueDate(task.dueDate);
     setEditStatus(task.status);
     setEditAssignedTo(task.assignedTo || '');
+    setEditTaskType(task.taskType || 'general');
+    setEditShowOnWelcome(Boolean(task.showOnWelcomeDashboard));
+    setEditWelcomeReminderDate(task.welcomeReminderDate || task.dueDate || '');
   };
 
   const handleSaveEdit = (taskId: string) => {
@@ -159,6 +202,9 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
             dueDate: editDueDate,
             status: editStatus,
             assignedTo: editAssignedTo.trim(),
+            taskType: editTaskType,
+            showOnWelcomeDashboard: editShowOnWelcome,
+            welcomeReminderDate: editShowOnWelcome ? editWelcomeReminderDate || editDueDate : undefined,
           }
         : t
     );
@@ -411,9 +457,101 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
                 </div>
               </div>
 
+              {/* Welcome Dashboard Reminder Assignment & Task Category Presets */}
+              <div
+                data-testid="daily-task-welcome-reminder-box"
+                className="p-3.5 rounded-xl bg-gradient-to-l from-amber-50 via-teal-50/70 to-indigo-50/70 border border-amber-300 space-y-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-600" />
+                    <span className="text-xs font-black text-slate-900">
+                      تعيين سريع لنوع المهمة وإظهارها كإشعار تذكيري في صفحة الترحيب (Welcome Dashboard):
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        {
+                          id: 'debt_review' as DailyTaskCategory,
+                          label: 'مراجعة مديونية',
+                          sampleTitle: 'مراجعة مديونية المخبز ومتابعة تحصيل الدفعة المقررة',
+                        },
+                        {
+                          id: 'bakery_inspection' as DailyTaskCategory,
+                          label: 'تفتيش مخبز',
+                          sampleTitle: 'تفتيش تمويني على المخبز وفحص وزن ومواصفات الرغيف',
+                        },
+                        {
+                          id: 'license_followup' as DailyTaskCategory,
+                          label: 'متابعة ترخيص',
+                          sampleTitle: 'متابعة تجديد رخصة المخبز والسجل التجاري',
+                        },
+                        {
+                          id: 'quota_audit' as DailyTaskCategory,
+                          label: 'جرد حصة دقيق',
+                          sampleTitle: 'مراجعة ومطابقة الحصة الفعلية والتأمينية للمخبز',
+                        },
+                      ] as const
+                    ).map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          setTaskType(preset.id);
+                          if (!title.trim()) {
+                            setTitle(preset.sampleTitle);
+                          }
+                          setShowOnWelcomeDashboard(true);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer transition ${
+                          taskType === preset.id
+                            ? 'bg-indigo-700 text-white border-indigo-800 shadow-xs'
+                            : 'bg-white hover:bg-indigo-50 text-slate-800 border-slate-300'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center pt-1 border-t border-amber-200/80">
+                  <label className="flex items-center gap-2 text-xs font-black text-slate-900 cursor-pointer md:col-span-2">
+                    <input
+                      type="checkbox"
+                      data-testid="task-welcome-reminder-checkbox"
+                      checked={showOnWelcomeDashboard}
+                      onChange={(e) => setShowOnWelcomeDashboard(e.target.checked)}
+                      className="w-4 h-4 accent-teal-700 rounded cursor-pointer"
+                    />
+                    <Bell className="w-4 h-4 text-teal-700 shrink-0" />
+                    <span>
+                      إظهار هذه المهمة كإشعار تذكيري بارز في صفحة الترحيب (Welcome Dashboard) عند تسجيل الدخول
+                    </span>
+                  </label>
+
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] font-black text-slate-700 whitespace-nowrap">
+                      تاريخ التذكير المحدد:
+                    </label>
+                    <input
+                      type="date"
+                      aria-label="تاريخ التذكير في صفحة الترحيب"
+                      data-testid="task-welcome-reminder-date"
+                      disabled={!showOnWelcomeDashboard}
+                      value={welcomeReminderDate}
+                      onChange={(e) => setWelcomeReminderDate(e.target.value)}
+                      className="flex-1 px-2.5 py-1.5 bg-white disabled:bg-slate-100 border border-amber-400 rounded-xl text-xs font-mono font-black text-slate-900"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="flex justify-end pt-1">
                 <button
                   type="submit"
+                  data-testid="add-daily-task-submit-btn"
                   className="inline-flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-700 hover:from-indigo-500 hover:to-purple-600 text-white rounded-xl text-xs font-black shadow-md cursor-pointer"
                 >
                   <Plus className="w-4 h-4 stroke-[3]" />
@@ -522,16 +660,53 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
                                   placeholder="التفاصيل..."
                                   className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[11px] font-bold text-slate-700"
                                 />
+                                <div className="flex flex-wrap items-center gap-2 pt-1">
+                                  <label className="inline-flex items-center gap-1 text-[11px] font-black text-teal-800 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={editShowOnWelcome}
+                                      onChange={(e) => setEditShowOnWelcome(e.target.checked)}
+                                      className="w-3.5 h-3.5 accent-teal-700"
+                                    />
+                                    <span>إشعار بصفحة الترحيب</span>
+                                  </label>
+                                  {editShowOnWelcome && (
+                                    <input
+                                      type="date"
+                                      value={editWelcomeReminderDate}
+                                      onChange={(e) => setEditWelcomeReminderDate(e.target.value)}
+                                      className="px-2 py-0.5 bg-amber-50 border border-amber-300 rounded text-[11px] font-mono font-black text-slate-900"
+                                    />
+                                  )}
+                                </div>
                               </div>
                             ) : (
                               <div>
-                                <p
-                                  className={`font-black text-slate-900 ${
-                                    task.status === 'completed' ? 'line-through text-slate-500' : ''
-                                  }`}
-                                >
-                                  {task.title}
-                                </p>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <p
+                                    className={`font-black text-slate-900 ${
+                                      task.status === 'completed' ? 'line-through text-slate-500' : ''
+                                    }`}
+                                  >
+                                    {task.title}
+                                  </p>
+                                  {task.taskType && task.taskType !== 'general' && (
+                                    <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-black">
+                                      {getDailyTaskCategoryLabel(task.taskType)}
+                                    </span>
+                                  )}
+                                  {task.showOnWelcomeDashboard && (
+                                    <span
+                                      data-testid="task-welcome-pinned-badge"
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300 text-[10px] font-black"
+                                    >
+                                      <Bell className="w-3 h-3 text-amber-700" />
+                                      <span>
+                                        تذكير الترحيب ({task.welcomeReminderDate || task.dueDate})
+                                      </span>
+                                    </span>
+                                  )}
+                                </div>
                                 {task.description && (
                                   <p className="text-[11px] text-slate-500 mt-0.5">{task.description}</p>
                                 )}
@@ -665,6 +840,24 @@ export const DailyTasksModal: React.FC<DailyTasksModalProps> = ({
                               </div>
                             ) : (
                               <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  data-testid="toggle-task-welcome-pin-btn"
+                                  onClick={() => handleToggleWelcomeReminder(task)}
+                                  aria-label={`تعيين المهمة ${task.title} في صفحة الترحيب`}
+                                  className={`p-1.5 border rounded-lg cursor-pointer transition ${
+                                    task.showOnWelcomeDashboard
+                                      ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-xs'
+                                      : 'bg-slate-50 hover:bg-amber-50 text-slate-600 border-slate-200'
+                                  }`}
+                                  title={
+                                    task.showOnWelcomeDashboard
+                                      ? 'مُعينة في صفحة الترحيب — اضغط لإلغاء التعيين'
+                                      : 'تعيين لتظهر كإشعار تذكيري في صفحة الترحيب'
+                                  }
+                                >
+                                  <Bell className="w-3.5 h-3.5" />
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => handleToggleStatus(task)}

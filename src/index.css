@@ -280,16 +280,18 @@ table th {
   z-index: 10;
 }
 
-tbody tr {
-  transition: background-color 0.15s ease, transform 0.15s ease;
-}
+@layer base {
+  tbody tr {
+    transition: background-color 0.15s ease, transform 0.15s ease;
+  }
 
-tbody tr:nth-child(even) {
-  background-color: #F1F5F9;
-}
+  tbody tr:nth-child(even) {
+    background-color: #F1F5F9;
+  }
 
-tbody tr:hover {
-  background-color: rgba(13, 148, 136, 0.08) !important;
+  tbody tr:hover {
+    background-color: rgba(13, 148, 136, 0.08);
+  }
 }
 
 /* Summary / Totals Row Styling */

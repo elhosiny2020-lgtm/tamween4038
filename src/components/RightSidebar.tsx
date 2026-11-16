@@ -34,8 +34,18 @@ import {
   Sparkles,
   Volume2,
   VolumeX,
+  ShoppingBasket,
+  Briefcase,
+  Wrench,
+  TrendingUp,
 } from 'lucide-react';
 import { CloudConnectionStatus } from '../lib/supabase';
+import type { AppUser } from '../types';
+import {
+  canUserAccessDepartment,
+  canUserAccessTab,
+  getDepartmentForSidebarGroup,
+} from '../utils/departmentRbac';
 
 export type SidebarNavId =
   | 'welcome-home'
@@ -97,7 +107,33 @@ export type SidebarNavId =
   | 'settings-users'
   | 'settings-logs'
   | 'settings-daily-tasks'
-  | 'settings-logout';
+  | 'settings-logout'
+  // New Integrated ERP Departmental Menus (Strict Additive Only)
+  | 'executive-analytics'
+  | 'commodities-dashboard'
+  | 'commodities-cards'
+  | 'commodities-catalog'
+  | 'commodities-disbursements'
+  | 'commodities-inspections'
+  | 'commodities-settings'
+  | 'internal-trade-dashboard'
+  | 'internal-trade-merchants'
+  | 'internal-trade-warehouses'
+  | 'internal-trade-requisitions'
+  | 'internal-trade-financial'
+  | 'grain-dashboard'
+  | 'grain-assets'
+  | 'grain-orders'
+  | 'grain-parts'
+  | 'grain-moisture'
+  | 'grain-alerts'
+  | 'hr-dashboard'
+  | 'hr-employees'
+  | 'hr-attendance'
+  | 'hr-leaves'
+  | 'hr-payroll'
+  | 'hr-loans-promotions'
+  | 'hr-settings';
 
 interface SidebarSubItem {
   id: SidebarNavId;
@@ -134,6 +170,7 @@ interface RightSidebarProps {
   isVaultUnlocked?: boolean;
   isAudioMuted?: boolean;
   scheduledAlertsCount?: number;
+  currentUser?: AppUser | null;
   onOpenVaultGate?: (section: 'backup' | 'branches' | 'both', label: string) => void;
   onLockVault?: () => void;
 }
@@ -155,6 +192,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   isVaultUnlocked = false,
   isAudioMuted = false,
   scheduledAlertsCount = 0,
+  currentUser = null,
   onOpenVaultGate,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -165,6 +203,10 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
     'group-3': true,
     'group-4': false,
     'group-5': true,
+    'group-6': false,
+    'group-7': false,
+    'group-8': false,
+    'group-9': false,
   });
 
   const toggleGroup = (group: SidebarGroup) => {
@@ -381,7 +423,74 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         },
       ],
     },
+    {
+      id: 'group-6',
+      title: '6. قسم السلع التموينية',
+      subtitle: 'البطاقات والمقررات والدعم',
+      accentGradient: 'from-[#0D9488] to-cyan-700',
+      icon: <ShoppingBasket className="w-4 h-4" />,
+      items: [
+        { id: 'commodities-dashboard', label: 'لوحة مؤشرات السلع التموينية', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+        { id: 'commodities-cards', label: 'البطاقات والمستفيدون والمقررات', icon: <Users className="w-3.5 h-3.5" /> },
+        { id: 'commodities-catalog', label: 'دليل السلع وسجل الأسعار', icon: <FileText className="w-3.5 h-3.5" /> },
+        { id: 'commodities-disbursements', label: 'عمليات صرف المواطنين', icon: <CheckSquare className="w-3.5 h-3.5" /> },
+        { id: 'commodities-inspections', label: 'الحملات التفتيشية والشكاوى', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+        { id: 'commodities-settings', label: 'إعدادات القرارات والمنحة 2026', icon: <Settings className="w-3.5 h-3.5" /> },
+      ],
+    },
+    {
+      id: 'group-7',
+      title: '7. قسم التجارة التموينية والداخلية',
+      subtitle: 'التجار والمخازن والعمولات',
+      accentGradient: 'from-indigo-600 to-blue-800',
+      icon: <Store className="w-4 h-4" />,
+      items: [
+        { id: 'internal-trade-dashboard', label: 'لوحة التجارة التموينية والداخلية', icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
+        { id: 'internal-trade-merchants', label: 'التجار والجمعيتي والمجمعات', icon: <Store className="w-3.5 h-3.5" /> },
+        { id: 'internal-trade-warehouses', label: 'المخازن والجرد والتنبيهات', icon: <Database className="w-3.5 h-3.5" /> },
+        { id: 'internal-trade-requisitions', label: 'الاستعاضات وسقف التأمين', icon: <FileText className="w-3.5 h-3.5" /> },
+        { id: 'internal-trade-financial', label: 'كشف الحساب والعمولات والتسويات', icon: <Scale className="w-3.5 h-3.5" /> },
+      ],
+    },
+    {
+      id: 'group-8',
+      title: '8. قسم صيانة الحبوب والصوامع',
+      subtitle: 'الأصول وأوامر الصيانة والرطوبة',
+      accentGradient: 'from-amber-600 to-orange-700',
+      icon: <Wrench className="w-4 h-4" />,
+      items: [
+        { id: 'grain-dashboard', label: 'لوحة الصيانة ومؤشرات OEE', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+        { id: 'grain-assets', label: 'سجل الصوامع والشون والمعدات', icon: <Building2 className="w-3.5 h-3.5" /> },
+        { id: 'grain-orders', label: 'أوامر الصيانة الوقائية والطارئة', icon: <Wrench className="w-3.5 h-3.5" /> },
+        { id: 'grain-parts', label: 'مخزن قطع الغيار وإعادة الطلب', icon: <Sliders className="w-3.5 h-3.5" /> },
+        { id: 'grain-moisture', label: 'تصحيح الرطوبة والفاقد والموازين', icon: <Calculator className="w-3.5 h-3.5" /> },
+        { id: 'grain-alerts', label: 'التنبيهات الهندسية والرقابية', icon: <Bell className="w-3.5 h-3.5" /> },
+      ],
+    },
+    {
+      id: 'group-9',
+      title: '9. الموارد البشرية وشؤون العاملين',
+      subtitle: 'الموظفون والحضور والمرتبات',
+      accentGradient: 'from-emerald-600 to-teal-800',
+      icon: <Briefcase className="w-4 h-4" />,
+      items: [
+        { id: 'hr-dashboard', label: 'لوحة تحكم الموارد البشرية', icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
+        { id: 'hr-employees', label: 'ملف العاملين والرقم القومي', icon: <Users className="w-3.5 h-3.5" /> },
+        { id: 'hr-attendance', label: 'سجلات الحضور والتأخيرات', icon: <Clock className="w-3.5 h-3.5" /> },
+        { id: 'hr-leaves', label: 'الإجازات والأرصدة المستقلة', icon: <Calendar className="w-3.5 h-3.5" /> },
+        { id: 'hr-payroll', label: 'مسيرات المرتبات والضرائب والتأمينات', icon: <Scale className="w-3.5 h-3.5" /> },
+        { id: 'hr-loans-promotions', label: 'السلف والترقيات ونهاية الخدمة', icon: <Award className="w-3.5 h-3.5" /> },
+        { id: 'hr-settings', label: 'شرائح الضرائب واللائحة المالية', icon: <Settings className="w-3.5 h-3.5" /> },
+      ],
+    },
   ];
+
+  const visibleGroups = groups.filter((group) => {
+    if (!currentUser) return true;
+    const dept = getDepartmentForSidebarGroup(group.id);
+    if (dept === 'shared') return true;
+    return canUserAccessDepartment(currentUser, dept);
+  });
 
   const getBadgeClasses = (variant?: SidebarSubItem['badgeVariant']) => {
     switch (variant) {
@@ -507,6 +616,33 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
             </div>
           </button>
 
+          {(!currentUser || canUserAccessTab(currentUser, 'executive-analytics')) && (
+            <button
+              type="button"
+              data-testid="sidebar-executive-analytics-btn"
+              onClick={() =>
+                onSelectNav(
+                  'executive-analytics',
+                  'التحليلات التنفيذية',
+                  'لوحة التحليلات التفاعلية المتقدمة (Recharts)'
+                )
+              }
+              title="تحليلات الأداء المتقدمة (Recharts)"
+              className={`w-full flex items-center ${
+                isCollapsed ? 'justify-center px-2' : 'justify-between px-3.5'
+              } py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+                activeNavId === 'executive-analytics'
+                  ? 'bg-gradient-to-l from-[#0D9488] to-teal-700 text-white border-[#D4AF37] shadow-md'
+                  : 'bg-[#0F1E36]/80 text-[#5EEAD4] border-[#0D9488]/30 hover:bg-[#0D9488]/15'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 shrink-0 text-[#D4AF37]" />
+                {!isCollapsed && <span>تحليلات الأداء المتقدمة (Recharts)</span>}
+              </div>
+            </button>
+          )}
+
           <button
             type="button"
             data-testid="sidebar-alerts-drawer-btn"
@@ -533,7 +669,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
       {/* Collapsible Navigation Sections */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
-        {groups.map((group) => {
+        {visibleGroups.map((group) => {
           const isExpanded = expandedGroups[group.id];
           const hasActiveChild = group.items.some((i) => i.id === activeNavId);
 

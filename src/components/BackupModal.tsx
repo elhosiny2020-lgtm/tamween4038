@@ -13,6 +13,7 @@ import {
   syncAllBranchesFromCloudPayload,
   readBranchPartitionFromLocal,
 } from '../storage';
+import { isProtectedOwnerEmail, scrubProtectedOwnerEmail } from '../utils/auditHelper';
 import {
   signInWithGoogleWorkspace,
   signOutGoogleWorkspace,
@@ -110,20 +111,18 @@ const loadStoredDriveAccounts = (): GoogleDriveAccountEntry[] => {
     const raw = localStorage.getItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS');
     if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        const filtered = parsed.filter((acc) => !isProtectedOwnerEmail(acc?.email));
+        if (filtered.length !== parsed.length) {
+          localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(filtered));
+        }
+        return filtered;
+      }
     }
   } catch (e) {
     console.error('Failed to parse TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', e);
   }
-  return [
-    {
-      id: 'default-1',
-      email: 'ELHOSINY2020@gmail.com',
-      password: '',
-      notes: 'الحساب الرئيسي الافتراضي',
-      addedAt: new Date().toLocaleDateString('ar-EG'),
-    },
-  ];
+  return [];
 };
 
 interface BackupModalProps {
@@ -253,9 +252,13 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     () => localStorage.getItem('TAMWEEN_CUSTOM_AUTOSYNC') !== 'false'
   );
   const [gmailEmail, setGmailEmail] = useState<string>(() => {
-    const stored = localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL');
-    if (stored !== null) return stored;
-    return currentState.systemConfig?.gmailEmail || currentState.currentUser?.gmailEmail || '';
+    const stored = scrubProtectedOwnerEmail(localStorage.getItem('TAMWEEN_GMAIL_DRIVE_EMAIL'));
+    if (stored) return stored;
+    return (
+      scrubProtectedOwnerEmail(currentState.systemConfig?.gmailEmail) ||
+      scrubProtectedOwnerEmail(currentState.currentUser?.gmailEmail) ||
+      ''
+    );
   });
   const [googleDriveAutoSync, setGoogleDriveAutoSync] = useState<boolean>(
     () => localStorage.getItem('TAMWEEN_GMAIL_DRIVE_AUTOSYNC') !== 'false'
@@ -879,7 +882,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleConnectGoogleAccount = async () => {
     if (!gmailEmail.trim() || !gmailEmail.includes('@')) {
       setStatusMsg({
-        text: 'يرجى إدخال بريد Gmail الصحيح للمتابعة (مثال: ELHOSINY2020@gmail.com).',
+        text: 'يرجى إدخال بريد Gmail الصحيح للمتابعة (مثال: user@gmail.com).',
         type: 'error',
       });
       return;

@@ -11,7 +11,9 @@ import {
   Clock,
   ChevronLeft,
   SlidersHorizontal,
-  Save
+  Save,
+  Mail,
+  History,
 } from 'lucide-react';
 import { playGentleAlertChime } from '../utils/audioNotifications';
 
@@ -21,6 +23,11 @@ interface AdminNotificationsDrawerProps {
   notifications: HighDebtAlertNotification[];
   debtAlertThreshold?: number;
   muted?: boolean;
+  debtEmailEnabled?: boolean;
+  supervisorRecipientsCount?: number;
+  lastDebtEmailDate?: string;
+  onOpenDailyEmailSettings?: () => void;
+  onOpenDebtEmailHistory?: () => void;
   onUpdateThreshold?: (threshold: number) => void;
   onMarkAsRead: (id: string) => void;
   onMarkAllAsRead: () => void;
@@ -34,6 +41,11 @@ export const AdminNotificationsDrawer: React.FC<AdminNotificationsDrawerProps> =
   notifications,
   debtAlertThreshold = 50000,
   muted = false,
+  debtEmailEnabled = false,
+  supervisorRecipientsCount = 0,
+  lastDebtEmailDate = '',
+  onOpenDailyEmailSettings,
+  onOpenDebtEmailHistory,
   onUpdateThreshold,
   onMarkAsRead,
   onMarkAllAsRead,
@@ -164,6 +176,49 @@ export const AdminNotificationsDrawer: React.FC<AdminNotificationsDrawerProps> =
                 </button>
               ))}
             </div>
+            {(onOpenDailyEmailSettings || onOpenDebtEmailHistory) && (
+              <div className="pt-2 mt-1 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-300">
+                  <Mail className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>
+                    البريد اليومي للمشرفين:{' '}
+                    <strong className={debtEmailEnabled ? 'text-emerald-300' : 'text-slate-400'}>
+                      {debtEmailEnabled ? `مفعّل (${supervisorRecipientsCount})` : 'متوقف'}
+                    </strong>
+                    {lastDebtEmailDate ? ` • آخر إرسال: ${lastDebtEmailDate}` : ''}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {onOpenDebtEmailHistory && (
+                    <button
+                      type="button"
+                      data-testid="drawer-open-debt-email-history-btn"
+                      onClick={() => {
+                        onClose();
+                        onOpenDebtEmailHistory();
+                      }}
+                      className="px-2 py-1 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-200 text-[10px] font-black cursor-pointer transition inline-flex items-center gap-1"
+                    >
+                      <History className="w-3 h-3" />
+                      <span>سجل الإرسال</span>
+                    </button>
+                  )}
+                  {onOpenDailyEmailSettings && (
+                    <button
+                      type="button"
+                      data-testid="drawer-open-email-alerts-btn"
+                      onClick={() => {
+                        onClose();
+                        onOpenDailyEmailSettings();
+                      }}
+                      className="px-2 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-200 text-[10px] font-black cursor-pointer transition shrink-0"
+                    >
+                      إعداد وإرسال البريد
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

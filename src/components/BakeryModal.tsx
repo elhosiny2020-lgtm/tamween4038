@@ -128,18 +128,18 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [actualQuota, setActualQuota] = useState<number>(20);
   const [insuranceValue, setInsuranceValue] = useState<number>(15000);
   const [insuranceCheckNumber, setInsuranceCheckNumber] = useState('');
-  const [loavesCount, setLoavesCount] = useState<number>(20 * 1350);
+  const [loavesCount, setLoavesCount] = useState<number>(20 * 660);
 
   // Demographics & Averages (متوسط نصيب الفرد بعلامة عشرية ورقمين فقط 0.00)
   const [villagePopulation, setVillagePopulation] = useState<number>(30000);
-  const [perCapitaAverage, setPerCapitaAverage] = useState<string>('0.90');
+  const [perCapitaAverage, setPerCapitaAverage] = useState<string>('0.44');
   const [beneficiaries2023, setBeneficiaries2023] = useState<number>(27000);
-  const [avg2023, setAvg2023] = useState<string>('1.000');
+  const [avg2023, setAvg2023] = useState<string>('0.49');
   const [beneficiaries2024, setBeneficiaries2024] = useState<number>(28500);
-  const [avg2024, setAvg2024] = useState<string>('0.947');
+  const [avg2024, setAvg2024] = useState<string>('0.46');
   const [beneficiaries2025, setBeneficiaries2025] = useState<number>(29800);
-  const [avg2025, setAvg2025] = useState<string>('0.906');
-  const [avgDiff, setAvgDiff] = useState<string>('-0.094');
+  const [avg2025, setAvg2025] = useState<string>('0.44');
+  const [avgDiff, setAvgDiff] = useState<string>('-0.41');
   const [isDemographicsPinned, setIsDemographicsPinned] = useState<boolean>(false);
   const [unitSiblingCount, setUnitSiblingCount] = useState<number>(0);
 
@@ -254,19 +254,22 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       updatedAt: Date.now(),
     };
 
-    try {
-      localStorage.setItem('TAMWEEN_BAKERY_DRAFT', JSON.stringify(draftData));
-      setAutoSaveStatus('saved');
-      setLastAutoSaveTime(
-        new Date().toLocaleTimeString('ar-EG', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        })
-      );
-    } catch {
-      // storage fallback
-    }
+    const debounceTimer = setTimeout(() => {
+      try {
+        localStorage.setItem('TAMWEEN_BAKERY_DRAFT', JSON.stringify(draftData));
+        setAutoSaveStatus('saved');
+        setLastAutoSaveTime(
+          new Date().toLocaleTimeString('ar-EG', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          })
+        );
+      } catch {
+        // storage fallback
+      }
+    }, 250);
+    return () => clearTimeout(debounceTimer);
   }, [
     isOpen,
     ownerName,

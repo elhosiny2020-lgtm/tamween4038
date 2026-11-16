@@ -27,12 +27,19 @@ import {
   Store,
   RefreshCw,
   LogOut,
+  Bell,
+  Send,
 } from 'lucide-react';
 
 import { WeeklyInstallmentsModal } from './WeeklyInstallmentsModal';
 import { SupplyFinesCalculatorModal } from './SupplyFinesCalculatorModal';
+import { LoafWeightFineModal } from './LoafWeightFineModal';
 import { printHtmlElementA4, exportElementToPdf } from '../utils/pdfHelper';
-import { filterDebtsByAdvancedCriteria, formatDateDDMMYYYY } from '../utils/auditHelper';
+import {
+  filterDebtsByAdvancedCriteria,
+  formatDateDDMMYYYY,
+  getLateInstallmentPaymentInfo,
+} from '../utils/auditHelper';
 
 export const getDebtOverdueInfo = (
   dateStr?: string,
@@ -82,10 +89,13 @@ interface DebtsViewProps {
   onCloseAlertsKeyModal?: () => void;
   externalManageListModal?: 'entities' | 'violations' | null;
   onCloseExternalManageListModal?: () => void;
-  debtsColumnGroup?: 'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL';
+  debtsColumnGroup?: 'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL' | 'WEIGHT_FINES';
   debtsPageSize?: number;
+  branchName?: string;
+  onUpdateSystemConfig?: (cfg: SystemConfig) => void;
   onSafeSaveAndLogout?: () => void;
   openScheduleSignal?: number;
+  onSendLatePaymentAlert?: (debtsToNotify: DebtRecord[]) => void;
 }
 
 export const DebtsView: React.FC<DebtsViewProps> = ({
@@ -111,8 +121,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   onCloseExternalManageListModal,
   debtsColumnGroup = 'ALL',
   debtsPageSize = 50,
+  branchName = 'إدارة تموين مركز المحلة الكبرى',
+  onUpdateSystemConfig,
   onSafeSaveAndLogout,
   openScheduleSignal = 0,
+  onSendLatePaymentAlert,
 }) => {
   const debtsPrintRef = React.useRef<HTMLDivElement>(null);
   const isViewer = currentUser?.role === 'viewer';
@@ -130,7 +143,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [selectedUnit, setSelectedUnit] = useState('ALL');
   const [selectedEntity, setSelectedEntity] = useState('ALL');
   const [selectedViolationType, setSelectedViolationType] = useState('ALL');
-  const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE'>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<
+    'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE' | 'LATE_14_DAYS'
+  >('ALL');
+  const [sentInstantAlertIds, setSentInstantAlertIds] = useState<Record<string, string>>({});
+  const [instantAlertFeedback, setInstantAlertFeedback] = useState<string | null>(null);
   // Advanced Search Across Debts (البحث المتقدم عبر المديونيات: من تاريخ - إلى تاريخ)
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
@@ -144,6 +161,31 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     message: string;
     onConfirm: () => void;
   } | null>(null);
+
+  const handleTriggerInstantLateAlert = (targetDebts: DebtRecord[]) => {
+    const validTargets = (targetDebts || []).filter((d) => (d.netRemainingDebt || 0) > 0);
+    if (validTargets.length === 0) return;
+    const nowTime = new Date().toLocaleTimeString('ar-EG', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    setSentInstantAlertIds((prev) => {
+      const next = { ...prev };
+      validTargets.forEach((d) => {
+        next[d.id] = nowTime;
+      });
+      return next;
+    });
+    onSendLatePaymentAlert?.(validTargets);
+    const label =
+      validTargets.length === 1
+        ? `تم إرسال إشعار فوري عاجل للمخبز "${validTargets[0].bakeryOwnerName}" والمشرفين بشأن تأخر سداد القسط لأكثر من 14 يوماً (${validTargets[0].netRemainingDebt.toLocaleString()} ج.م).`
+        : `تم إرسال إشعارات فورية عاجلة لعدد (${validTargets.length}) مخبز متأخر عن سداد الأقساط لأكثر من 14 يوماً وإدراجها في صندوق التنبيهات.`;
+    setInstantAlertFeedback(label);
+    setTimeout(() => {
+      setInstantAlertFeedback((curr) => (curr === label ? null : curr));
+    }, 5500);
+  };
 
   const showListError = (msg: string) => {
     setListModalError(msg);
@@ -165,6 +207,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [isViolationsModalOpen, setIsViolationsModalOpen] = useState(false);
   const [isWeeklyInstallmentsOpen, setIsWeeklyInstallmentsOpen] = useState(false);
   const [isCalculatorModalOpen, setIsCalculatorModalOpen] = useState(false);
+  const [isWeightFineModalOpen, setIsWeightFineModalOpen] = useState(false);
+  const [showWeightFinesColsToggle, setShowWeightFinesColsToggle] = useState(false);
   const [installmentBakeryId, setInstallmentBakeryId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -275,6 +319,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const showViolationPayCols = debtsColumnGroup === 'ALL' || debtsColumnGroup === 'VIOLATIONS';
   const showAddedCols = debtsColumnGroup === 'ALL' || debtsColumnGroup === 'ADDED_DISPOSAL' || debtsColumnGroup === 'SUMMARY';
   const showDisposalCols = debtsColumnGroup === 'ALL' || debtsColumnGroup === 'ADDED_DISPOSAL';
+  const hasAnyWeightFineRecords = useMemo(
+    () => enrichedDebts.some((d) => Boolean(d.weightFineDetails)),
+    [enrichedDebts]
+  );
+  const showWeightFinesCols =
+    debtsColumnGroup === 'WEIGHT_FINES' || showWeightFinesColsToggle || hasAnyWeightFineRecords;
 
   // Filtered period totals for the Advanced Search bar summary
   const filteredPeriodNetDebt = useMemo(() => {
@@ -294,6 +344,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     let overdueAmount = 0;
     let over20kCount = 0;
     let paidFullCount = 0;
+    let late14DaysCount = 0;
+    let late14DaysAmount = 0;
+    const late14DaysDebts: DebtRecord[] = [];
     const indebtedBakeryIds = new Set<string>();
 
     enrichedDebts.forEach((d) => {
@@ -319,6 +372,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         overdueCount += 1;
         overdueAmount += d.netRemainingDebt || 0;
       }
+
+      const lateInfo = getLateInstallmentPaymentInfo(d);
+      if (lateInfo.isLateOver14Days) {
+        late14DaysCount += 1;
+        late14DaysAmount += d.netRemainingDebt || 0;
+        late14DaysDebts.push(d);
+      }
     });
 
     const totalOriginalDebt = totalViolations + totalAdded + totalDisposal;
@@ -340,6 +400,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       overdueAmount,
       over20kCount,
       paidFullCount,
+      late14DaysCount,
+      late14DaysAmount,
+      late14DaysDebts,
     };
   }, [enrichedDebts, bakeries.length]);
 
@@ -524,7 +587,35 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
       `"${(d.notes || '').replace(/"/g, '""')}"`,
     ]);
 
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const summaryRow = [
+      '"∑"',
+      `"إجمالي السجلات (${filteredDebts.length} قيد)"`,
+      `"${filteredTotals.uniqueMachinesCount} ماكينة"`,
+      `"${filteredTotals.uniqueVillagesCount} قرية"`,
+      `"${filteredTotals.uniqueUnitsCount} وحدة"`,
+      `"${filteredTotals.violDatesCount} تاريخ"`,
+      `"${filteredTotals.uniqueEntitiesCount} جهة"`,
+      `"${filteredTotals.uniqueViolTypesCount} نوع"`,
+      filteredTotals.sumViol,
+      filteredTotals.sumOldViol,
+      filteredTotals.sumTotalViol,
+      filteredTotals.sumPaidViol,
+      filteredTotals.sumRemViol,
+      filteredTotals.sumAdded,
+      filteredTotals.sumPaidAdded,
+      filteredTotals.sumRemAdded,
+      filteredTotals.sumDispBags,
+      filteredTotals.sumDispBagPrice,
+      filteredTotals.sumDispMultiplier,
+      filteredTotals.sumDispVal,
+      filteredTotals.sumPaidDisp,
+      Math.max(0, filteredTotals.sumDispVal - filteredTotals.sumPaidDisp),
+      filteredTotals.sumNetRem,
+      '"صف الإجماليات TOTAL SUMMARY"',
+    ];
+
+    const csvContent =
+      '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(',')), summaryRow.join(',')].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -683,7 +774,30 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <button
+              type="button"
+              onClick={() => setSelectedStatus(selectedStatus === 'LATE_14_DAYS' ? 'ALL' : 'LATE_14_DAYS')}
+              className={`p-3.5 rounded-xl border text-right transition cursor-pointer flex items-center justify-between ${
+                selectedStatus === 'LATE_14_DAYS'
+                  ? 'bg-fuchsia-700 text-white border-amber-300 shadow-md'
+                  : 'bg-fuchsia-950/70 hover:bg-fuchsia-900/75 text-fuchsia-100 border-fuchsia-400/50'
+              }`}
+            >
+              <div>
+                <div className="text-xs font-black flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-fuchsia-400" />
+                  <span>تأخر سداد قسط (&gt; 14 يوماً)</span>
+                </div>
+                <div className="text-[11px] font-bold text-fuchsia-200 mt-1">
+                  إجمالي المتأخر: {stats.late14DaysAmount.toLocaleString()} ج.م
+                </div>
+              </div>
+              <span className="text-xl font-black font-mono bg-black/25 px-3 py-1 rounded-xl text-white">
+                {stats.late14DaysCount}
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={() => setSelectedStatus(selectedStatus === 'OVER_20K' ? 'ALL' : 'OVER_20K')}
@@ -776,6 +890,87 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               </span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Late Installment Payment Alerts Banner (ميزة تنبيهات الدفع المتأخر > 14 يوماً بدون سداد أي قسط) */}
+      <div
+        data-testid="late-payment-14d-banner"
+        className="bg-gradient-to-l from-[#3B0764] via-[#4A044E] to-[#701A75] text-white rounded-2xl p-4 border-2 border-fuchsia-300/60 shadow-md no-print flex flex-wrap items-center justify-between gap-3"
+      >
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-2xl bg-fuchsia-400/20 border border-fuchsia-300/40 text-amber-300">
+            <Bell className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-black text-white">
+                تنبيهات الدفع المتأخر (تجاوز 14 يوماً بدون سداد أي قسط)
+              </h3>
+              <span className="px-2.5 py-0.5 rounded-lg bg-amber-400 text-[#09152B] text-xs font-black font-mono">
+                {stats.late14DaysCount} مخبز متأخر
+              </span>
+              <span className="px-2.5 py-0.5 rounded-lg bg-white/15 border border-white/20 text-fuchsia-100 text-xs font-black font-mono">
+                إجمالي المتأخرات: {stats.late14DaysAmount.toLocaleString()} ج.م
+              </span>
+            </div>
+            <p className="text-[11px] text-fuchsia-200 font-bold mt-0.5">
+              يتم تمييز المخابز التي لم تسدد أي قسط لمدة تتجاوز 14 يوماً باللون الأرجواني المميز داخل الجدول مع إمكانية إرسال إشعار فوري للمخبز والمشرفين.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="filter-late-14d-btn"
+            onClick={() =>
+              setSelectedStatus(selectedStatus === 'LATE_14_DAYS' ? 'ALL' : 'LATE_14_DAYS')
+            }
+            className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 border ${
+              selectedStatus === 'LATE_14_DAYS'
+                ? 'bg-amber-400 text-[#09152B] border-white shadow-md'
+                : 'bg-white/15 hover:bg-white/25 text-white border-fuchsia-300/50'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            <span>
+              {selectedStatus === 'LATE_14_DAYS'
+                ? 'عرض كافة المديونيات (إلغاء التصفية)'
+                : `عرض المتأخرين > 14 يوماً (${stats.late14DaysCount})`}
+            </span>
+          </button>
+
+          {stats.late14DaysCount > 0 && !isViewer && (
+            <button
+              type="button"
+              data-testid="send-all-late-14d-alerts-btn"
+              onClick={() => handleTriggerInstantLateAlert(stats.late14DaysDebts)}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-[#09152B] text-xs font-black shadow-md transition cursor-pointer flex items-center gap-1.5 border border-amber-200"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>إرسال إشعار فوري لجميع المتأخرين ({stats.late14DaysCount})</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {instantAlertFeedback && (
+        <div
+          data-testid="instant-late-alert-toast"
+          className="bg-emerald-950 text-emerald-100 border-2 border-emerald-400 rounded-2xl p-3.5 flex items-center justify-between text-xs font-black shadow-lg no-print"
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            <span>{instantAlertFeedback}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setInstantAlertFeedback(null)}
+            className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold cursor-pointer"
+          >
+            إغلاق
+          </button>
         </div>
       )}
 
@@ -962,6 +1157,32 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             >
               <Calculator className="w-4 h-4 text-white" />
               <span>حاسبة الغرامات التموينية</span>
+            </button>
+
+            {!isViewer && (
+              <button
+                type="button"
+                data-testid="open-loaf-weight-fine-btn"
+                onClick={() => setIsWeightFineModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-[#0A1628] to-[#0D9488] hover:opacity-95 text-white rounded-xl text-xs font-black shadow-sm border border-[#D4AF37]/60 transition cursor-pointer"
+              >
+                <Scale className="w-4 h-4 text-[#D4AF37]" />
+                <span>حاسبة غرامة نقص وزن الرغيف (2024)</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              data-testid="toggle-weight-fines-columns-btn"
+              onClick={() => setShowWeightFinesColsToggle((p) => !p)}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black border transition cursor-pointer ${
+                showWeightFinesCols
+                  ? 'bg-[#0F2342] text-[#D4AF37] border-[#D4AF37]'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+              }`}
+            >
+              <Scale className="w-3.5 h-3.5" />
+              <span>غرامات نقص الوزن (12 عمود)</span>
             </button>
 
             <button
@@ -1297,10 +1518,23 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               <label className="block text-[11px] font-extrabold text-slate-600 mb-1">حالة السداد والجدولة</label>
               <select
                 value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value as 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE')}
+                onChange={(e) =>
+                  setSelectedStatus(
+                    e.target.value as
+                      | 'ALL'
+                      | 'UNPAID'
+                      | 'PAID'
+                      | 'OVER_20K'
+                      | 'OVERDUE'
+                      | 'LATE_14_DAYS'
+                  )
+                }
                 className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-800"
               >
                 <option value="ALL">الكل (المسدد والمتبقي)</option>
+                <option value="LATE_14_DAYS">
+                  تنبيهات الدفع المتأخر (&gt; 14 يوماً بدون سداد قسط) ({stats.late14DaysCount})
+                </option>
                 <option value="OVERDUE">المتأخرات (&gt; 30 يوماً دون سداد كامل)</option>
                 <option value="OVER_20K">مديونيات تتجاوز 20,000 ج.م (دفعات أسبوعية)</option>
                 <option value="UNPAID">عليه مديونية متبقية فقط</option>
@@ -1396,6 +1630,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       </th>
                     </>
                   )}
+                  {showWeightFinesCols && (
+                    <th
+                      colSpan={12}
+                      className="py-2.5 px-2 bg-[#31102F] border-l border-[#D4AF37]/40 text-[#FDE68A] font-black"
+                    >
+                      8. غرامات نقص وزن الرغيف (12 عمود)
+                    </th>
+                  )}
                   <th
                     colSpan={3}
                     className="py-2.5 px-2 bg-[#0D3B2E] border-l border-[#1E3A8A] text-emerald-200 font-black"
@@ -1483,6 +1725,23 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     </>
                   )}
 
+                  {showWeightFinesCols && (
+                    <>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200 min-w-[115px]">نوع المخالفة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">الوزن المقرر</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">الوزن الفعلي</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">مقدار النقص</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200 min-w-[125px]">شريحة المخالفة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">معامل الغرامة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">سعر الشيكارة وقت المخالفة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">الحصة التأمينية وقت المخالفة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">قيمة الغرامة الأساسية</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">قيمة الغرامة النهائية</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">حالة السداد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#3B1638] text-amber-200">المتبقي من الغرامة</th>
+                    </>
+                  )}
+
                   {/* 7. Debt Scheduling on Bakery Owner */}
                   <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[130px] bg-[#0F3F32] text-emerald-200">
                     حالة الجدولة والدفعات
@@ -1508,13 +1767,19 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   paginatedDebts.map((d, index) => {
                     const globalIndex = (currentPage - 1) * debtsPageSize + index + 1;
                     const isSelected = selectedRowId === d.id;
+                    const latePaymentInfo = getLateInstallmentPaymentInfo(d);
+                    const isLate14Days = latePaymentInfo.isLateOver14Days;
+                    const sentAlertTime = sentInstantAlertIds[d.id];
                     return (
                       <tr
                         key={d.id}
+                        data-testid={isLate14Days ? 'late-payment-debt-row' : 'debt-row'}
                         onClick={() => setSelectedRowId(d.id)}
                         className={`cursor-pointer transition-colors ${
                           isSelected
                             ? 'row-selected'
+                            : isLate14Days
+                            ? 'bg-fuchsia-50/90 hover:bg-fuchsia-100/80 border-r-4 border-r-fuchsia-600'
                             : index % 2 === 0
                             ? 'bg-white hover:bg-blue-50/75'
                             : 'bg-slate-50/90 hover:bg-blue-50/75'
@@ -1527,7 +1792,47 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
                         {/* Mandatory 4 Identifying Columns */}
                         <td className="py-2.5 px-2.5 border-l border-slate-200 font-black text-[#0F2342] text-right">
-                          {d.bakeryOwnerName}
+                          <div className="space-y-1">
+                            <div>{d.bakeryOwnerName}</div>
+                            {isLate14Days && (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span
+                                  data-testid="late-installment-badge"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-fuchsia-700 text-white text-[10px] font-black shadow-2xs"
+                                  title={
+                                    latePaymentInfo.hasPriorPayment
+                                      ? `آخر قسط مسدد بتاريخ ${formatDateDDMMYYYY(latePaymentInfo.lastInstallmentDate || '')} (منذ ${latePaymentInfo.daysSinceLastInstallment} يوماً)`
+                                      : `لم يسدد أي قسط منذ ${latePaymentInfo.daysSinceLastInstallment} يوماً`
+                                  }
+                                >
+                                  <Clock className="w-3 h-3 text-amber-300" />
+                                  <span>
+                                    دفع متأخر ({latePaymentInfo.daysSinceLastInstallment} يوم بدون قسط)
+                                  </span>
+                                </span>
+                                {!isViewer && (
+                                  <button
+                                    type="button"
+                                    data-testid="send-instant-late-alert-inline-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleTriggerInstantLateAlert([d]);
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 hover:bg-amber-300 text-[#09152B] border border-amber-500 text-[10px] font-black cursor-pointer transition no-print shadow-2xs"
+                                    title="إرسال إشعار فوري للمخبز والمشرفين"
+                                  >
+                                    <Bell className="w-3 h-3 text-[#09152B]" />
+                                    <span>{sentAlertTime ? 'إعادة إشعار' : 'إشعار فوري'}</span>
+                                  </button>
+                                )}
+                                {sentAlertTime && (
+                                  <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9px] font-black">
+                                    أُرسل ({sentAlertTime})
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </td>
                         <td className="py-2.5 px-2 border-l border-slate-200 font-mono font-black text-[#1E40AF] bg-blue-50/30">
                           {d.machineNumber}
@@ -1669,6 +1974,61 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                           </>
                         )}
 
+                        {/* 8. Loaf Weight Shortage Fines (12 Columns) */}
+                        {showWeightFinesCols && (() => {
+                          const wf = d.weightFineDetails;
+                          const wfRemaining = wf
+                            ? Math.max(0, Number(d.remainingViolations ?? wf.finalFineAmount))
+                            : 0;
+                          const wfStatus = !wf
+                            ? '—'
+                            : wfRemaining === 0
+                            ? 'مسدد بالكامل'
+                            : Number(d.paidViolationAmount || 0) > 0
+                            ? 'سداد جزئي'
+                            : 'غير مسدد';
+                          return (
+                            <>
+                              <td className="py-2 px-2 border-l border-slate-200 text-xs font-bold text-purple-900 bg-purple-50/40">
+                                {wf ? wf.violationType : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono text-xs bg-purple-50/40">
+                                {wf ? `${wf.prescribedWeightGrams} جم` : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono text-xs bg-purple-50/40">
+                                {wf ? `${wf.actualWeightGrams} جم` : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono font-black text-rose-700 bg-purple-50/40">
+                                {wf ? `${wf.shortageGrams} جم` : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 text-[11px] font-bold bg-purple-50/40">
+                                {wf ? wf.tierLabel : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono font-black bg-purple-50/40">
+                                {wf ? `${wf.tierMultiplier}x` : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono bg-purple-50/40">
+                                {wf ? wf.bagPriceAtViolation.toLocaleString() : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono bg-purple-50/40">
+                                {wf ? wf.insuranceQuotaAtViolation : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono font-bold bg-purple-50/40">
+                                {wf ? wf.baseFineAmount.toLocaleString() : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono font-black text-purple-950 bg-purple-50/60">
+                                {wf ? wf.finalFineAmount.toLocaleString() : '—'}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 text-[11px] font-black bg-purple-50/40">
+                                {wfStatus}
+                              </td>
+                              <td className="py-2 px-2 border-l border-slate-200 font-mono font-black text-rose-800 bg-purple-50/60">
+                                {wf ? wfRemaining.toLocaleString() : '—'}
+                              </td>
+                            </>
+                          );
+                        })()}
+
                         {/* 7. Debt Scheduling Columns on Bakery Owner */}
                         <td className="py-2 px-2 border-l border-slate-200 bg-emerald-50/30">
                           {d.isScheduled || (d.scheduleInstallmentsCount && d.scheduleInstallmentsCount > 0) ? (
@@ -1741,7 +2101,22 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
                         {/* Actions & Details Column */}
                         <td className="py-2 px-1.5 border-l border-slate-200 no-print text-center">
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
+                            {isLate14Days && !isViewer && (
+                              <button
+                                type="button"
+                                data-testid="send-instant-late-alert-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleTriggerInstantLateAlert([d]);
+                                }}
+                                className="px-2 py-1 bg-fuchsia-700 hover:bg-fuchsia-600 text-white border border-fuchsia-500 rounded-lg transition cursor-pointer text-[10px] font-black flex items-center gap-1 shadow-xs"
+                                title="إرسال إشعار فوري للمخبز والمشرفين لتجاوز 14 يوماً بدون سداد قسط"
+                              >
+                                <Bell className="w-3 h-3 text-amber-300" />
+                                <span>{sentAlertTime ? 'إعادة إشعار' : 'إشعار فوري'}</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1919,6 +2294,36 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                         </td>
                         <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-emerald-300 font-black">
                           {filteredTotals.sumPaidDisp.toLocaleString()}
+                        </td>
+                      </>
+                    )}
+                    {showWeightFinesCols && (
+                      <>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black" colSpan={8}>
+                          ملخص غرامات نقص الوزن ({filteredDebts.filter((d) => Boolean(d.weightFineDetails)).length} محضر)
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-white font-black">
+                          {filteredDebts
+                            .reduce((s, d) => s + (d.weightFineDetails?.baseFineAmount || 0), 0)
+                            .toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-300 font-black">
+                          {filteredDebts
+                            .reduce((s, d) => s + (d.weightFineDetails?.finalFineAmount || 0), 0)
+                            .toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-amber-200 font-black">—</td>
+                        <td className="py-2.5 px-2 border-l border-[#1E3A5F] text-rose-300 font-black">
+                          {filteredDebts
+                            .reduce(
+                              (s, d) =>
+                                s +
+                                (d.weightFineDetails
+                                  ? Math.max(0, Number(d.remainingViolations ?? d.weightFineDetails.finalFineAmount))
+                                  : 0),
+                              0
+                            )
+                            .toLocaleString()}
                         </td>
                       </>
                     )}
@@ -2792,6 +3197,32 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             };
             setDebtToEdit(draftDebt);
             setIsDebtModalOpen(true);
+          }}
+        />
+      )}
+
+      {/* Modal 6: Loaf Weight Shortage Fine Calculator (Nov 5, 2024 Regulation) */}
+      {isWeightFineModalOpen && (
+        <LoafWeightFineModal
+          isOpen={isWeightFineModalOpen}
+          onClose={() => setIsWeightFineModalOpen(false)}
+          bakeries={bakeries}
+          existingDebts={debts}
+          issuingEntities={issuingEntities}
+          currentUser={currentUser}
+          branchName={branchName}
+          settings={systemConfig.loafWeightSettings}
+          onUpdateSettings={(nextSettings) => {
+            if (onUpdateSystemConfig) {
+              onUpdateSystemConfig({
+                ...systemConfig,
+                loafWeightSettings: nextSettings,
+              });
+            }
+          }}
+          onSaveFineDebt={async (newDebt) => {
+            await onSaveDebt(newDebt);
+            setShowWeightFinesColsToggle(true);
           }}
         />
       )}

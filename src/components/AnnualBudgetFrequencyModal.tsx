@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { Bakery, SystemConfig, AppUser } from '../types';
 import { Calendar, FileSpreadsheet, Printer, X, RotateCcw, Download } from 'lucide-react';
 import { printHtmlElementA4, exportElementToPdf } from '../utils/pdfHelper';
+import { calculateLoavesCount } from '../utils/auditHelper';
 
 interface AnnualBudgetFrequencyModalProps {
   isOpen: boolean;
@@ -52,13 +53,16 @@ export const AnnualBudgetFrequencyModal: React.FC<AnnualBudgetFrequencyModalProp
 
   // Total Daily Quota across all active bakeries
   const totalDailyQuotaBags = useMemo(() => {
-    return bakeries.reduce((sum, b) => sum + (b.actualQuota || 0), 0);
+    return bakeries.reduce((sum, b) => sum + (Number(b.actualQuota) || 0), 0);
   }, [bakeries]);
 
-  // Total Loaves per day (each 50kg bag yields 1,350 loaves)
+  // Total Loaves per day based on each bakery's bread multiplier (660 or 725)
   const totalDailyLoaves = useMemo(() => {
-    return totalDailyQuotaBags * 1350;
-  }, [totalDailyQuotaBags]);
+    return bakeries.reduce(
+      (sum, b) => sum + calculateLoavesCount(Number(b.actualQuota) || 0, b.breadTypeCount),
+      0
+    );
+  }, [bakeries]);
 
   // Calculated Monthly Frequency Data
   const monthlyData = useMemo(() => {
@@ -68,7 +72,7 @@ export const AnnualBudgetFrequencyModal: React.FC<AnnualBudgetFrequencyModalProp
       const effectiveDailyBags = totalDailyQuotaBags * weight;
       const monthlyBags = Math.round(effectiveDailyBags * m.days);
       const monthlyTons = (monthlyBags * 50) / 1000;
-      const monthlyLoaves = monthlyBags * 1350;
+      const monthlyLoaves = Math.round(totalDailyLoaves * weight * m.days);
       const monthlyCostEGP = monthlyBags * flourBagPrice;
 
       return {
@@ -80,7 +84,7 @@ export const AnnualBudgetFrequencyModal: React.FC<AnnualBudgetFrequencyModalProp
         monthlyCostEGP,
       };
     });
-  }, [MONTHS_TEMPLATE, customWeights, distributionMode, totalDailyQuotaBags, flourBagPrice]);
+  }, [customWeights, distributionMode, totalDailyQuotaBags, totalDailyLoaves, flourBagPrice]);
 
   // Annual Totals
   const annualTotals = useMemo(() => {

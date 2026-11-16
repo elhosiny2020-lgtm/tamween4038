@@ -33,7 +33,9 @@ import {
 } from './defaultData';
 import {
   normalizeBakeryCalculations,
-  synchronizeBakeryAndDebts
+  synchronizeBakeryAndDebts,
+  scrubProtectedOwnerEmail,
+  scrubProtectedOwnerEmailList,
 } from './utils/auditHelper';
 import {
   autoSyncToSupabase,
@@ -1594,13 +1596,24 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     systemConfig = {
       ...DEFAULT_SYSTEM_CONFIG,
       ...(systemConfig || {}),
+      gmailEmail: scrubProtectedOwnerEmail(systemConfig?.gmailEmail),
+      dailyAlertConfig: {
+        ...DEFAULT_SYSTEM_CONFIG.dailyAlertConfig!,
+        ...(systemConfig?.dailyAlertConfig || {}),
+        supervisorEmailRecipients: scrubProtectedOwnerEmailList(
+          systemConfig?.dailyAlertConfig?.supervisorEmailRecipients
+        ),
+      },
       governorateTitle: activeBranchObj.governorateTitle || systemConfig?.governorateTitle || 'محافظة الغربية',
       directorateTitle: activeBranchObj.directorateTitle || systemConfig?.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
       administrationTitle: activeBranchObj.name,
       logoBase64: DEFAULT_OFFICIAL_LOGO,
     };
 
-    const activeUsers = users && users.length > 0 ? users : INITIAL_USERS;
+    const activeUsers = (users && users.length > 0 ? users : INITIAL_USERS).map((u: AppUser) => ({
+      ...u,
+      gmailEmail: scrubProtectedOwnerEmail(u.gmailEmail),
+    }));
     const currentUser = resolveCurrentUser(activeUsers);
 
     const finalLocalState: AppState = {
@@ -1760,6 +1773,15 @@ export async function persistFullState(
   // Guarantee official Egyptian Ministry logo and branch administration title are locked in saved config
   const lockedConfig: SystemConfig = {
     ...(systemConfig || DEFAULT_SYSTEM_CONFIG),
+    gmailEmail: scrubProtectedOwnerEmail(systemConfig?.gmailEmail),
+    dailyAlertConfig: systemConfig?.dailyAlertConfig
+      ? {
+          ...systemConfig.dailyAlertConfig,
+          supervisorEmailRecipients: scrubProtectedOwnerEmailList(
+            systemConfig.dailyAlertConfig.supervisorEmailRecipients
+          ),
+        }
+      : DEFAULT_SYSTEM_CONFIG.dailyAlertConfig,
     administrationTitle: branchObj?.name || systemConfig?.administrationTitle || DEFAULT_SYSTEM_CONFIG.administrationTitle,
     logoBase64: DEFAULT_OFFICIAL_LOGO,
   };

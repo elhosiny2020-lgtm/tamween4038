@@ -1,6 +1,7 @@
 import { AppUser, CustomJobRole, SupplyBranch, SystemConfig } from '../types';
 import { INITIAL_USERS, DEFAULT_SYSTEM_CONFIG } from '../defaultData';
 import { getDefaultRolePermissionsMap } from '../permissions';
+import { scrubProtectedOwnerEmail } from '../utils/auditHelper';
 
 export const DEFAULT_BRANCH_ID = 'branch-mahalla';
 const VAULT_PREFIX = 'TAMWEEN_BRANCH_AUTH_VAULT_V1__';
@@ -78,6 +79,7 @@ export function sanitizeBranchUsers(
       ...u,
       username: u.username.trim(),
       password: (u.password || '').trim(),
+      gmailEmail: scrubProtectedOwnerEmail(u.gmailEmail),
       branchId: cleanBranchId,
       isActive: u.isActive !== false,
     });

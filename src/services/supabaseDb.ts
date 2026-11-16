@@ -100,7 +100,30 @@ function normalizeIncomingDebt(raw: any): DebtRecord | null {
 function normalizeIncomingTask(raw: any): DailyBakeryTask | null {
   if (!raw) return null;
   if ('dueDate' in raw || ('title' in raw && !raw.data_json && !('due_date' in raw))) {
-    return raw as DailyBakeryTask;
+    const task = raw as DailyBakeryTask;
+    if (typeof task.description === 'string' && task.description.includes('<!--WELCOME_META:')) {
+      const match = task.description.match(/\n?<!--WELCOME_META:(\{.*?\})-->$/);
+      const cleanDescription = task.description.replace(/\n?<!--WELCOME_META:(\{.*?\})-->$/, '').trim();
+      let showOnWelcomeDashboard = Boolean(task.showOnWelcomeDashboard);
+      let welcomeReminderDate = task.welcomeReminderDate;
+      let taskType = task.taskType;
+      if (match && match[1]) {
+        try {
+          const parsed = JSON.parse(match[1]);
+          if (typeof parsed.w === 'boolean') showOnWelcomeDashboard = parsed.w;
+          if (typeof parsed.d === 'string' && parsed.d) welcomeReminderDate = parsed.d;
+          if (typeof parsed.t === 'string' && parsed.t) taskType = parsed.t;
+        } catch {}
+      }
+      return {
+        ...task,
+        description: cleanDescription,
+        showOnWelcomeDashboard,
+        welcomeReminderDate,
+        taskType,
+      };
+    }
+    return task;
   }
   return mapSqlRowToTask(raw);
 }

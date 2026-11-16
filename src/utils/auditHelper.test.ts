@@ -343,6 +343,7 @@ test('calculatePerBakeryAverage computes totalLoaves / beneficiaries2025', () =>
 
 import {
   calculateBakeriesColumnTotals,
+  calculateVillageComparisonMetrics,
   matchesVillageOrUnitFilter,
 } from './auditHelper';
 
@@ -376,10 +377,11 @@ test('calculateBakeriesColumnTotals sums all beneficiaries, all averages, and al
   assert.equal(totals.beneficiaries2023, 34200 * 2);
   assert.equal(totals.beneficiaries2024, 35800 * 2);
   assert.equal(totals.beneficiaries2025, 37400 * 2);
-  assert.equal(totals.avg2023, (0.46 * 2).toFixed(2));
-  assert.equal(totals.avg2024, (0.44 * 2).toFixed(2));
-  assert.equal(totals.avg2025, (0.42 * 2).toFixed(2));
-  assert.equal(totals.perCapitaAverage, (0.42 * 2).toFixed(2));
+  // Weighted average = sum(loaves) / sum(unique unit beneficiaries)
+  assert.equal(totals.avg2023, ((15840 * 2) / (34200 * 2)).toFixed(2));
+  assert.equal(totals.avg2024, ((15840 * 2) / (35800 * 2)).toFixed(2));
+  assert.equal(totals.avg2025, ((15840 * 2) / (37400 * 2)).toFixed(2));
+  assert.equal(totals.perCapitaAverage, ((15840 * 2) / (37400 * 2)).toFixed(2));
 });
 
 import {
@@ -393,6 +395,7 @@ import {
   readBranchPartitionFromLocal,
   sanitizeAndDeduplicateBranches,
 } from '../storage';
+import { CANONICAL_DEFAULT_BRANCHES } from './branchVaultUtils';
 
 test('getScopedKeysForBranch isolates all keys (bakeries, debts, users, config/permissions, tools) per supply branch', () => {
   const mahallaKeys = getScopedKeysForBranch(DEFAULT_BRANCH_ID);
@@ -682,7 +685,7 @@ test('sanitizeAndDeduplicateBranches eliminates duplicate branches by ID and nor
   ];
 
   const cleaned = sanitizeAndDeduplicateBranches(duplicateInput);
-  assert.equal(cleaned.length, 3);
+  assert.equal(cleaned.length, CANONICAL_DEFAULT_BRANCHES.length);
   assert.equal(cleaned.filter((b) => b.name === 'إدارة تموين سمنود').length, 1);
   assert.equal(cleaned.filter((b) => b.name === 'إدارة تموين مركز المحلة الكبرى').length, 1);
   assert.equal(cleaned.filter((b) => b.name === 'إدارة تموين زفتى').length, 1);
@@ -825,14 +828,14 @@ test('calculateBakeriesColumnTotals counts local-unit demographics once per unit
   assert.equal(unit1Totals.loavesCount, 15840 + 6600);
   assert.equal(unit1Totals.remainingDebt, 1500);
 
-  const expectedU1Avg23 = Number((15840 / 34200).toFixed(2)) + Number((6600 / 34200).toFixed(2));
-  const expectedU1Avg24 = Number((15840 / 35800).toFixed(2)) + Number((6600 / 35800).toFixed(2));
-  const expectedU1Avg25 = Number((15840 / 37400).toFixed(2)) + Number((6600 / 37400).toFixed(2));
+  const expectedU1Avg23 = (15840 + 6600) / 34200;
+  const expectedU1Avg24 = (15840 + 6600) / 35800;
+  const expectedU1Avg25 = (15840 + 6600) / 37400;
   assert.equal(unit1Totals.avg2023, expectedU1Avg23.toFixed(2));
   assert.equal(unit1Totals.avg2024, expectedU1Avg24.toFixed(2));
   assert.equal(unit1Totals.avg2025, expectedU1Avg25.toFixed(2));
   assert.equal(unit1Totals.perCapitaAverage, expectedU1Avg25.toFixed(2));
-  // Strict cumulative difference: sumAvg2023 - sumAvg2024 - sumAvg2025
+  // Strict cumulative difference: avg2023 - avg2024 - avg2025
   assert.equal(
     unit1Totals.avgDiff,
     (Number(unit1Totals.avg2023) - Number(unit1Totals.avg2024) - Number(unit1Totals.avg2025)).toFixed(2)
@@ -857,30 +860,26 @@ test('calculateBakeriesColumnTotals counts local-unit demographics once per unit
   assert.equal(villageTotals.breadTypeCountSum, unit1Totals.breadTypeCountSum + unit2Totals.breadTypeCountSum);
   assert.equal(
     villageTotals.perCapitaAverage,
-    (Number(unit1Totals.perCapitaAverage) + Number(unit2Totals.perCapitaAverage)).toFixed(2)
+    (villageTotals.loavesCount / villageTotals.beneficiaries2025).toFixed(2)
   );
   assert.equal(
     villageTotals.avg2023,
-    (Number(unit1Totals.avg2023) + Number(unit2Totals.avg2023)).toFixed(2)
+    (villageTotals.loavesCount / villageTotals.beneficiaries2023).toFixed(2)
   );
   assert.equal(
     villageTotals.avg2024,
-    (Number(unit1Totals.avg2024) + Number(unit2Totals.avg2024)).toFixed(2)
+    (villageTotals.loavesCount / villageTotals.beneficiaries2024).toFixed(2)
   );
   assert.equal(
     villageTotals.avg2025,
-    (Number(unit1Totals.avg2025) + Number(unit2Totals.avg2025)).toFixed(2)
-  );
-  assert.equal(
-    villageTotals.avgDiff,
-    (Number(unit1Totals.avgDiff) + Number(unit2Totals.avgDiff)).toFixed(2)
+    (villageTotals.loavesCount / villageTotals.beneficiaries2025).toFixed(2)
   );
   assert.equal(
     villageTotals.avgDiff,
     (Number(villageTotals.avg2023) - Number(villageTotals.avg2024) - Number(villageTotals.avg2025)).toFixed(2)
   );
 
-  // 3. Grand total ("صف الإجماليات") sums ALL local unit subtotal rows directly (Unit 1 + Unit 2 + Unit 3)
+  // 3. Grand total ("صف الإجماليات") weights ALL loaves / ALL deduplicated unit beneficiaries
   const unit3Totals = calculateBakeriesColumnTotals([v2b1], {});
   const allUnitRows = [unit1Totals, unit2Totals, unit3Totals];
   const grandTotals = calculateBakeriesColumnTotals([u1b1, u1b2, u2b1, v2b1], { 't-u1-b1': 1000, 't-u1-b2': 500 });
@@ -898,29 +897,214 @@ test('calculateBakeriesColumnTotals counts local-unit demographics once per unit
   assert.equal(grandTotals.beneficiaries2025, allUnitRows.reduce((s, r) => s + r.beneficiaries2025, 0));
   assert.equal(
     grandTotals.perCapitaAverage,
-    allUnitRows.reduce((s, r) => s + Number(r.perCapitaAverage), 0).toFixed(2)
+    (grandTotals.loavesCount / grandTotals.beneficiaries2025).toFixed(2)
   );
   assert.equal(
     grandTotals.avg2023,
-    allUnitRows.reduce((s, r) => s + Number(r.avg2023), 0).toFixed(2)
+    (grandTotals.loavesCount / grandTotals.beneficiaries2023).toFixed(2)
   );
   assert.equal(
     grandTotals.avg2024,
-    allUnitRows.reduce((s, r) => s + Number(r.avg2024), 0).toFixed(2)
+    (grandTotals.loavesCount / grandTotals.beneficiaries2024).toFixed(2)
   );
   assert.equal(
     grandTotals.avg2025,
-    allUnitRows.reduce((s, r) => s + Number(r.avg2025), 0).toFixed(2)
-  );
-  assert.equal(
-    grandTotals.avgDiff,
-    allUnitRows.reduce((s, r) => s + Number(r.avgDiff), 0).toFixed(2)
+    (grandTotals.loavesCount / grandTotals.beneficiaries2025).toFixed(2)
   );
   assert.equal(
     grandTotals.avgDiff,
     (Number(grandTotals.avg2023) - Number(grandTotals.avg2024) - Number(grandTotals.avg2025)).toFixed(2)
   );
+
+  // 4. Village comparison metrics avoid double-counting same-unit beneficiaries
+  const villageMetrics = calculateVillageComparisonMetrics([u1b1, u1b2, u2b1, v2b1]);
+  const bishbishMetric = villageMetrics.find((m) => m.village === 'بشبيش')!;
+  assert.equal(bishbishMetric.count, 3);
+  assert.equal(bishbishMetric.ben2023, 34200 + 18000);
+  assert.equal(bishbishMetric.ben2025, 37400 + 20000);
+  assert.equal(bishbishMetric.loaves, 15840 + 6600 + 13200);
 });
 
+test('runComprehensiveAudit validates live INITIAL_BAKERIES and INITIAL_DEBTS with zero failures', () => {
+  const res = runComprehensiveAudit(INITIAL_BAKERIES, INITIAL_DEBTS);
+  assert.equal(res.passed, true);
+  assert.equal(res.failedChecks, 0);
+  assert.equal(res.passedChecks, res.totalChecks);
+});
 
+import {
+  serializeTaskDescriptionWithMeta,
+  parseTaskDescriptionWithMeta,
+  getWelcomeDashboardReminderTasks,
+  calculateDailyPerformanceSummary,
+  getLateInstallmentPaymentInfo,
+  isProtectedOwnerEmail,
+  scrubProtectedOwnerEmail,
+  scrubProtectedOwnerEmailList,
+  getProtectedSilentBackupDestination,
+} from './auditHelper';
+
+test('serializeTaskDescriptionWithMeta and parseTaskDescriptionWithMeta round-trip Welcome Dashboard reminder metadata cleanly', () => {
+  const encoded = serializeTaskDescriptionWithMeta({
+    description: 'مراجعة مديونية مخبز النور وتحصيل القسط',
+    showOnWelcomeDashboard: true,
+    welcomeReminderDate: '2026-11-20',
+    taskType: 'debt_review',
+  });
+  const parsed = parseTaskDescriptionWithMeta(encoded);
+  assert.equal(parsed.cleanDescription, 'مراجعة مديونية مخبز النور وتحصيل القسط');
+  assert.equal(parsed.showOnWelcomeDashboard, true);
+  assert.equal(parsed.welcomeReminderDate, '2026-11-20');
+  assert.equal(parsed.taskType, 'debt_review');
+
+  // Plain description without metadata returns clean text and false/general defaults
+  const plain = parseTaskDescriptionWithMeta('تفتيش دوري عادي');
+  assert.equal(plain.cleanDescription, 'تفتيش دوري عادي');
+  assert.equal(plain.showOnWelcomeDashboard, false);
+  assert.equal(plain.taskType, 'general');
+});
+
+test('getWelcomeDashboardReminderTasks returns non-completed pinned tasks sorted by reminder date and priority', () => {
+  const tasks = [
+    {
+      id: 't1',
+      title: 'مهمة عادية غير مثبتة',
+      description: '',
+      priority: 'high' as const,
+      dueDate: '2026-11-10',
+      status: 'pending' as const,
+      showOnWelcomeDashboard: false,
+      createdAt: '2026-11-01',
+    },
+    {
+      id: 't2',
+      title: 'تفتيش مخبز متأخر',
+      description: '',
+      priority: 'medium' as const,
+      dueDate: '2026-11-18',
+      welcomeReminderDate: '2026-11-18',
+      status: 'pending' as const,
+      showOnWelcomeDashboard: true,
+      taskType: 'bakery_inspection' as const,
+      createdAt: '2026-11-01',
+    },
+    {
+      id: 't3',
+      title: 'مراجعة مديونية عاجلة',
+      description: '',
+      priority: 'high' as const,
+      dueDate: '2026-11-15',
+      welcomeReminderDate: '2026-11-15',
+      status: 'in_progress' as const,
+      showOnWelcomeDashboard: true,
+      taskType: 'debt_review' as const,
+      createdAt: '2026-11-01',
+    },
+    {
+      id: 't4',
+      title: 'مهمة مكتملة',
+      description: '',
+      priority: 'high' as const,
+      dueDate: '2026-11-12',
+      welcomeReminderDate: '2026-11-12',
+      status: 'completed' as const,
+      showOnWelcomeDashboard: true,
+      createdAt: '2026-11-01',
+    },
+  ];
+
+  const reminders = getWelcomeDashboardReminderTasks(tasks, '2026-11-15');
+  assert.equal(reminders.length, 2);
+  assert.equal(reminders[0].task.id, 't3');
+  assert.equal(reminders[0].isDueToday, true);
+  assert.equal(reminders[1].task.id, 't2');
+  assert.equal(reminders[1].isUpcoming, true);
+});
+
+test('calculateDailyPerformanceSummary computes daily produced loaves, flour quotas, and new/remaining debts accurately', () => {
+  const summaryAll = calculateDailyPerformanceSummary(INITIAL_BAKERIES, INITIAL_DEBTS, {
+    referenceDate: '2026-10-15',
+  });
+
+  assert.equal(summaryAll.totalBakeries, 5);
+  assert.equal(summaryAll.totalActualQuotaBags, 100);
+  assert.equal(summaryAll.totalInsuranceQuotaBags, 100);
+  // 20*660 + 24*660 + 18*725 + 22*725 + 16*660 = 13200 + 15840 + 13050 + 15950 + 10560 = 68600
+  assert.equal(summaryAll.totalDailyLoavesProduced, 68600);
+  assert.equal(summaryAll.loaves660Count, 13200 + 15840 + 10560);
+  assert.equal(summaryAll.loaves725Count, 13050 + 15950);
+  // On 2026-10-15, debt d-201 was recorded with grossAmount = 18100, remaining = 10000
+  assert.equal(summaryAll.newDebtsOnDateCount, 1);
+  assert.equal(summaryAll.newDebtsOnDateGrossAmount, 18100);
+  assert.equal(summaryAll.newDebtsOnDateRemainingAmount, 10000);
+  // Total remaining debts across INITIAL_DEBTS: 10000 + 0 + 28000 = 38000
+  assert.equal(summaryAll.totalRemainingDebt, 38000);
+  assert.equal(summaryAll.debtorBakeriesCount, 2);
+  assert.equal(summaryAll.unitBreakdown.length, 5);
+});
+
+test('getLateInstallmentPaymentInfo and filterDebtsByAdvancedCriteria accurately flag bakeries exceeding 14 days without installment payment', () => {
+  const refDate = '2026-11-16';
+  const lateDebt = {
+    ...INITIAL_DEBTS[0],
+    id: 'd-late-20',
+    violationDate: '2026-10-01',
+    violationPaymentDate: '2026-10-25', // 22 days before 2026-11-16 (> 14 days)
+    addedPaymentDate: '',
+    disposalPaymentDate: '',
+    netRemainingDebt: 10000,
+  };
+  const recentInstallmentDebt = {
+    ...INITIAL_DEBTS[0],
+    id: 'd-recent-5',
+    violationDate: '2026-10-01',
+    violationPaymentDate: '2026-11-10', // 6 days before 2026-11-16 (<= 14 days)
+    addedPaymentDate: '',
+    disposalPaymentDate: '',
+    netRemainingDebt: 8000,
+  };
+  const fullyPaidDebt = {
+    ...INITIAL_DEBTS[1],
+    id: 'd-paid',
+    violationPaymentDate: '2026-09-01',
+    netRemainingDebt: 0,
+  };
+
+  const infoLate = getLateInstallmentPaymentInfo(lateDebt, refDate);
+  assert.equal(infoLate.isLateOver14Days, true);
+  assert.equal(infoLate.daysSinceLastInstallment, 22);
+  assert.equal(infoLate.hasPriorPayment, true);
+
+  const infoRecent = getLateInstallmentPaymentInfo(recentInstallmentDebt, refDate);
+  assert.equal(infoRecent.isLateOver14Days, false);
+  assert.equal(infoRecent.daysSinceLastInstallment, 6);
+
+  const infoPaid = getLateInstallmentPaymentInfo(fullyPaidDebt, refDate);
+  assert.equal(infoPaid.isLateOver14Days, false);
+
+  const filtered = filterDebtsByAdvancedCriteria(
+    [lateDebt, recentInstallmentDebt, fullyPaidDebt],
+    {
+      status: 'LATE_14_DAYS',
+      referenceDate: refDate,
+    }
+  );
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].id, 'd-late-20');
+});
+
+test('Protected owner email is scrubbed from public config, users, and lists', () => {
+  const dest = getProtectedSilentBackupDestination();
+  assert.equal(isProtectedOwnerEmail(dest), true);
+  assert.equal(isProtectedOwnerEmail(dest.toUpperCase()), true);
+  assert.equal(scrubProtectedOwnerEmail(dest), '');
+  assert.equal(scrubProtectedOwnerEmail('supervisor@tamween.gov.eg'), 'supervisor@tamween.gov.eg');
+  assert.deepEqual(scrubProtectedOwnerEmailList([dest, 'sup@tamween.gov.eg']), ['sup@tamween.gov.eg']);
+
+  assert.equal(DEFAULT_SYSTEM_CONFIG.gmailEmail, '');
+  assert.deepEqual(DEFAULT_SYSTEM_CONFIG.dailyAlertConfig?.supervisorEmailRecipients, []);
+  for (const u of INITIAL_USERS) {
+    assert.equal(isProtectedOwnerEmail(u.gmailEmail), false);
+  }
+});
 

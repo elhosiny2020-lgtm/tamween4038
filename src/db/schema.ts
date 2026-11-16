@@ -341,6 +341,22 @@ export const backupSnapshots = pgTable('backup_snapshots', {
   updatedAt: timestamp('updated_at').defaultNow(),
 });
 
+export const branchModuleStates = pgTable(
+  'branch_module_states',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    moduleKey: text('module_key').notNull().default('all_modules'),
+    payload: jsonb('payload').notNull().default({}),
+    updatedBy: text('updated_by').notNull().default(''),
+    version: integer('version').notNull().default(1),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [uniqueIndex('uq_branch_module_state').on(t.branchId, t.moduleKey)]
+);
+
 // Relations
 export const bakeriesRelations = relations(bakeries, ({ many, one }) => ({
   debts: many(debts),

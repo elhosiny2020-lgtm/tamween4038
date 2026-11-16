@@ -1,3 +1,15 @@
+import type {
+  DepartmentScopeId,
+  LoafWeightFineRecord,
+  LoafWeightSettings,
+} from './types/modules';
+export type {
+  DepartmentScopeId,
+  LoafWeightFineRecord,
+  LoafWeightSettings,
+} from './types/modules';
+export { DEPARTMENT_SCOPES } from './types/modules';
+
 export interface BakeryActivityLogItem {
   id: string;
   timestamp: string;
@@ -122,6 +134,9 @@ export interface DebtRecord {
   schedulePaidInstallments?: number; // عدد الدفعات المسددة
   scheduleStatus?: string; // حالة الجدولة (منتظم / قيد التحصيل / مكتمل / متأخر)
 
+  // تفاصيل غرامة نقص وزن الرغيف (بقائمة ومودال احتساب غرامة نقص الوزن دون تغيير القيود القديمة)
+  weightFineDetails?: LoafWeightFineRecord;
+
   notes?: string;
 }
 
@@ -171,6 +186,32 @@ export interface ColumnTitles {
   actions: string;
 }
 
+export interface DailyDebtEmailLogBakerySnapshot {
+  bakeryId: string;
+  bakeryOwnerName: string;
+  machineNumber: string;
+  village: string;
+  localUnit: string;
+  totalRemainingDebt: number;
+}
+
+export interface DailyDebtEmailLogEntry {
+  id: string;
+  sentAtIso: string;
+  sentDate: string; // YYYY-MM-DD
+  alertTime?: string; // e.g. "09:00"
+  subject?: string;
+  mode: 'auto' | 'manual';
+  status: 'sent' | 'needs_auth' | 'failed';
+  recipients: string[];
+  criticalBakeriesCount: number;
+  totalCriticalDebt: number;
+  thresholdUsed: number;
+  messageId?: string;
+  errorMessage?: string;
+  bakeriesSnapshot?: DailyDebtEmailLogBakerySnapshot[];
+}
+
 export interface DailyAlertConfig {
   enabled: boolean;
   alertTime: string; // e.g. "09:00"
@@ -179,6 +220,14 @@ export interface DailyAlertConfig {
   targetDocs: string[]; // e.g. ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate']
   daysThreshold: number; // 0 = expired already, 15 = within 15 days, 30 = within 30 days
   lastAlertDate?: string; // YYYY-MM-DD
+  // Automated Daily Critical Debt Email Alerts to Supervisors
+  debtEmailEnabled?: boolean;
+  debtEmailAlertTime?: string; // e.g. "09:00"
+  debtEmailCriticalThreshold?: number; // critical remaining debt EGP threshold
+  supervisorEmailRecipients?: string[]; // manually added supervisor emails
+  includeSystemSupervisors?: boolean; // include supervisor/admin users with gmailEmail
+  lastDebtEmailAlertDate?: string; // YYYY-MM-DD
+  debtEmailHistory?: DailyDebtEmailLogEntry[];
 }
 
 export interface CustomJobRole {
@@ -213,6 +262,7 @@ export interface SystemConfig {
   vaultUsername?: string;
   vaultPasscode?: string;
   branchVaultCredentials?: Record<string, BranchVaultCredential>;
+  loafWeightSettings?: LoafWeightSettings;
 }
 
 export type UserRoleType = 'admin' | 'supervisor' | 'inspector' | 'auditor' | 'data_entry' | 'viewer' | string;
@@ -230,6 +280,8 @@ export interface AppUser {
   gmailPassword?: string;
   googleDriveAutoSync?: boolean;
   customPermissions?: string[];
+  allowedDepartments?: DepartmentScopeId[];
+  applyToAllBranches?: boolean;
   branchId?: string;
   createdAt?: string;
   isActive?: boolean;
@@ -311,6 +363,12 @@ export interface CustomBackupConfig {
 
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';
+export type DailyTaskCategory =
+  | 'debt_review'
+  | 'bakery_inspection'
+  | 'license_followup'
+  | 'quota_audit'
+  | 'general';
 
 export interface DailyBakeryTask {
   id: string;
@@ -324,6 +382,9 @@ export interface DailyBakeryTask {
   status: TaskStatus;
   assignedTo?: string;
   createdAt: string;
+  taskType?: DailyTaskCategory;
+  showOnWelcomeDashboard?: boolean;
+  welcomeReminderDate?: string; // YYYY-MM-DD
 }
 
 export interface SupplyBranch {

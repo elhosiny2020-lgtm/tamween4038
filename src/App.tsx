@@ -71,6 +71,7 @@ import {
   normalizeArabicText,
   syncLocalUnitDemographicsAcrossBakeries,
   getLocalUnitKey,
+  getLateInstallmentPaymentInfo,
 } from './utils/auditHelper';
 import {
   computeFullBranchDigest,
@@ -94,6 +95,7 @@ import {
   subscribeToSupabaseHighDebtAlerts,
   recordRealtimeDiagnosticEvent,
   requestRealtimeBranchInit,
+  addSharedWebSocketListener,
 } from './lib/supabase';
 import {
   applyGranularRowChangeToState,
@@ -125,10 +127,12 @@ import { BakeryAnalyticsCharts } from './components/BakeryAnalyticsCharts';
 import { BakeryDebtsPieChart } from './components/BakeryDebtsPieChart';
 import { LocalUnitsSummaryModal } from './components/LocalUnitsSummaryModal';
 import { DailyAlertSettingsModal } from './components/DailyAlertSettingsModal';
+import { DailyDebtEmailHistoryModal } from './components/DailyDebtEmailHistoryModal';
 import { DailyAlertNotificationModal } from './components/DailyAlertNotificationModal';
 import { AnnualBudgetFrequencyModal } from './components/AnnualBudgetFrequencyModal';
 import { AdminNotificationsDrawer } from './components/AdminNotificationsDrawer';
 import { DailyTasksModal } from './components/DailyTasksModal';
+import { DailyPerformanceSummaryModal } from './components/DailyPerformanceSummaryModal';
 import { SystemMasterEditorModal, DropdownCategoryKey } from './components/SystemMasterEditorModal';
 import { AdvancedPermissionsModal } from './components/AdvancedPermissionsModal';
 import { InboxChatModal } from './components/InboxChatModal';
@@ -142,6 +146,18 @@ import { BranchesManagerModal } from './components/BranchesManagerModal';
 import { VaultSecurityGateModal } from './components/VaultSecurityGateModal';
 import { InteractiveDashboardPage } from './components/InteractiveDashboardPage';
 import { WelcomeDashboardPage } from './components/WelcomeDashboardPage';
+import { ExecutiveAnalyticsDashboard } from './components/ExecutiveAnalyticsDashboard';
+import { RationCommoditiesSuite, RationSubView } from './components/modules/RationCommoditiesSuite';
+import { GrainMaintenanceSuite, GrainSubView } from './components/modules/GrainMaintenanceSuite';
+import { HrPersonnelSuite, HrSubView } from './components/modules/HrPersonnelSuite';
+import type { BranchModulesBundle } from './types/modules';
+import { loadBranchModulesBundle, saveBranchModulesBundle } from './services/modulesStorage';
+import {
+  canUserAccessTab,
+  getDefaultTabForUser,
+  isDepartmentRestrictedUser,
+  canUserAccessDepartment,
+} from './utils/departmentRbac';
 import {
   CommercialRegExpiryRange,
   matchesCommercialRegFilter,
@@ -156,7 +172,18 @@ import {
   getBranchVaultCredentialsMap,
   updateBranchVaultCredentialsMap,
 } from './utils/branchVaultUtils';
-import { HighDebtAlertNotification } from './types';
+import { HighDebtAlertNotification, DailyDebtEmailLogEntry } from './types';
+import {
+  sendCriticalDebtAlertViaGmail,
+  triggerSilentRealtimeOwnerBackup,
+} from './lib/firebase';
+import {
+  buildCriticalDebtEmailPayload,
+  collectCriticalDebtBakeries,
+  formatLocalDateYmd,
+  resolveSupervisorEmailRecipients,
+  shouldTriggerDailyDebtEmailSchedule,
+} from './utils/criticalDebtEmailAlerts';
 import {
   downloadUpdatedAppHtml,
   downloadAppLauncherHtml,
@@ -230,6 +257,11 @@ import {
   Volume2,
   VolumeX,
   Sparkles,
+  TrendingUp,
+  ShoppingBasket,
+  Wrench,
+  Briefcase,
+  Mail,
 } from 'lucide-react';
 import { UserGuideView } from './components/UserGuideView';
 import { RealtimeDiagnosticsView } from './components/RealtimeDiagnosticsView';
@@ -298,7 +330,19 @@ export default function App() {
   const { isInstallable, install } = usePWAInstall();
   const [appState, setAppState] = useState<AppState | null>(null);
   const [activeTab, setActiveTab] = useState<
-    'welcome' | 'dashboard' | 'charts' | 'bakeries' | 'debts' | 'reports' | 'user-guide' | 'realtime-diagnostics'
+    | 'welcome'
+    | 'dashboard'
+    | 'charts'
+    | 'executive-analytics'
+    | 'bakeries'
+    | 'debts'
+    | 'commodities'
+    | 'internal-trade'
+    | 'grain-maintenance'
+    | 'hr-personnel'
+    | 'reports'
+    | 'user-guide'
+    | 'realtime-diagnostics'
   >(() => {
     if (typeof window !== 'undefined') {
       const search = window.location.search.toLowerCase();
@@ -445,16 +489,24 @@ export default function App() {
   const [isBudgetFrequencyModalOpen, setIsBudgetFrequencyModalOpen] = useState(false);
   const [isLocalUnitsModalOpen, setIsLocalUnitsModalOpen] = useState(false);
   const [isDailySettingsModalOpen, setIsDailySettingsModalOpen] = useState(false);
+  const [isDebtEmailHistoryOpen, setIsDebtEmailHistoryOpen] = useState(false);
   const [isDailyTasksModalOpen, setIsDailyTasksModalOpen] = useState(false);
   const [isMasterEditorModalOpen, setIsMasterEditorModalOpen] = useState(false);
   const [isAdvancedPermissionsModalOpen, setIsAdvancedPermissionsModalOpen] = useState(false);
   const [isInboxModalOpen, setIsInboxModalOpen] = useState(false);
   const [isDailyBriefingModalOpen, setIsDailyBriefingModalOpen] = useState(false);
+  const [isDailyPerformanceModalOpen, setIsDailyPerformanceModalOpen] = useState(false);
   const [isDisplaySettingsModalOpen, setIsDisplaySettingsModalOpen] = useState(false);
   const [isBranchesModalOpen, setIsBranchesModalOpen] = useState(false);
   const [isGoogleWorkspaceModalOpen, setIsGoogleWorkspaceModalOpen] = useState(false);
   const [googleWorkspaceInitialTab, setGoogleWorkspaceInitialTab] = useState<'calendar' | 'tasks' | 'forms'>('calendar');
-  const [debtsColumnGroup, setDebtsColumnGroup] = useState<'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL'>('ALL');
+  const [debtsColumnGroup, setDebtsColumnGroup] = useState<
+    'ALL' | 'SUMMARY' | 'VIOLATIONS' | 'ADDED_DISPOSAL' | 'WEIGHT_FINES'
+  >('ALL');
+  const [modulesBundle, setModulesBundle] = useState<BranchModulesBundle | null>(null);
+  const [rationSubView, setRationSubView] = useState<RationSubView>('dashboard');
+  const [grainSubView, setGrainSubView] = useState<GrainSubView>('dashboard');
+  const [hrSubView, setHrSubView] = useState<HrSubView>('dashboard');
   const [debtsPageSize, setDebtsPageSize] = useState<number>(50);
   const [showDebtsAlertsKeyModal, setShowDebtsAlertsKeyModal] = useState<boolean>(false);
   const [openDebtScheduleSignal, setOpenDebtScheduleSignal] = useState<number>(0);
@@ -470,6 +522,11 @@ export default function App() {
     expiredBakeries: [],
   });
   const [isAdminDrawerOpen, setIsAdminDrawerOpen] = useState(false);
+  const [pendingDailyDebtEmailBanner, setPendingDailyDebtEmailBanner] = useState<{
+    criticalCount: number;
+    recipientsCount: number;
+    thresholdUsed: number;
+  } | null>(null);
 
   // High Debt Notifications State for Admin Manager Control
   const [highDebtNotifications, setHighDebtNotifications] = useState<HighDebtAlertNotification[]>(() => {
@@ -1051,6 +1108,80 @@ export default function App() {
     };
   }, []);
 
+  // Load & WebSocket-sync isolated departmental ERP modules bundle for active branch
+  const isAppStateReady = Boolean(appState);
+  const activeBranchIdForModules = appState?.activeBranchId || DEFAULT_BRANCH_ID;
+  const activeBranchNameForModules =
+    appState?.systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى';
+
+  useEffect(() => {
+    if (!isAppStateReady || !appState) return;
+    let cancelled = false;
+    loadBranchModulesBundle(
+      activeBranchIdForModules,
+      activeBranchNameForModules,
+      appState.villages || DEFAULT_VILLAGES_HIERARCHY
+    )
+      .then((bundle) => {
+        if (!cancelled) setModulesBundle(bundle);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isAppStateReady, activeBranchIdForModules, activeBranchNameForModules]);
+
+  useEffect(() => {
+    const unsubWs = addSharedWebSocketListener((msg) => {
+      if (
+        msg.type === 'module_state_update' &&
+        !isSelfRealtimeEvent(msg.clientId) &&
+        msg.branchId === (latestAppStateRef.current?.activeBranchId || DEFAULT_BRANCH_ID) &&
+        msg.payload
+      ) {
+        const incoming = msg.payload as BranchModulesBundle;
+        if (incoming.ration && incoming.grainMaintenance && incoming.hr) {
+          setModulesBundle(incoming);
+        }
+      }
+    });
+    return () => unsubWs();
+  }, []);
+
+  const handleUpdateModulesBundle = useCallback(
+    (updater: (prev: BranchModulesBundle) => BranchModulesBundle, toastMsg?: string) => {
+      const currentBranchId = latestAppStateRef.current?.activeBranchId || DEFAULT_BRANCH_ID;
+      const currentUserLabel =
+        latestAppStateRef.current?.currentUser?.fullName ||
+        latestAppStateRef.current?.currentUser?.username ||
+        'مستخدم المنظومة';
+      setModulesBundle((prev) => {
+        if (!prev) return prev;
+        const next = updater(prev);
+        void saveBranchModulesBundle(currentBranchId, next, currentUserLabel);
+        return next;
+      });
+      if (toastMsg) {
+        setSaveToast({
+          id: Date.now(),
+          message: toastMsg,
+          timestamp: getArabicTimestamp(),
+        });
+      }
+    },
+    []
+  );
+
+  // Enforce department-scoped user navigation bounds across branches
+  useEffect(() => {
+    const user = appState?.currentUser;
+    if (!user) return;
+    if (isDepartmentRestrictedUser(user) && !canUserAccessTab(user, activeTab)) {
+      const fallbackTab = getDefaultTabForUser(user) as typeof activeTab;
+      setActiveTab(fallbackTab);
+    }
+  }, [appState?.currentUser, activeTab]);
+
   // Welcome page renders automatically on login (no intrusive briefing popup blocking it)
 
   // Async Optimistic Save with Row-Level PostgreSQL/Supabase confirmation & conflict/error rollback
@@ -1090,6 +1221,11 @@ export default function App() {
               setAppState(confirmedState);
             }
             await persistFullState(confirmedState, { skipCloudSync: true }).catch(() => {});
+            triggerSilentRealtimeOwnerBackup(confirmedState, {
+              branchId: effectiveBranchId,
+              table: params.table || 'database',
+              operation: 'UPSERT',
+            });
             setSaveTimestamp(ts);
             setSaveToast({
               id: Date.now(),
@@ -1099,6 +1235,11 @@ export default function App() {
             });
           } else if (res.queuedOffline) {
             await persistFullState(params.nextState, { skipCloudSync: true }).catch(() => {});
+            triggerSilentRealtimeOwnerBackup(params.nextState, {
+              branchId: effectiveBranchId,
+              table: params.table || 'database',
+              operation: 'UPSERT',
+            });
             setSaveTimestamp(ts);
             setSaveToast({
               id: Date.now(),
@@ -1170,6 +1311,11 @@ export default function App() {
 
         if (batchRes.success) {
           await persistFullState(newState, { skipCloudSync: true }).catch(() => {});
+          triggerSilentRealtimeOwnerBackup(newState, {
+            branchId,
+            table: 'database',
+            operation: 'UPDATE',
+          });
           setSaveTimestamp(ts);
           setSaveToast({
             id: Date.now(),
@@ -1227,13 +1373,16 @@ export default function App() {
 
   // Note: Redundant 15-second full-state serialization interval removed to prevent UI lag during navigation; triggerSave persists immediately on every state change.
 
-  // Automated Daily License Expiry Alert Check Loop (Checks every 30 seconds)
+  // Automated Daily License Expiry Alert Check Loop (Stabilized via latestAppStateRef — zero teardown on data edits)
   useEffect(() => {
-    if (!appState) return;
-    const dailyConfig = appState.systemConfig?.dailyAlertConfig;
-    if (!dailyConfig || dailyConfig.enabled === false) return;
+    if (!appState?.currentUser?.id) return;
 
     const checkDailyAlert = () => {
+      const currentState = latestAppStateRef.current;
+      if (!currentState) return;
+      const dailyConfig = currentState.systemConfig?.dailyAlertConfig;
+      if (!dailyConfig || dailyConfig.enabled === false) return;
+
       const now = new Date();
       const currentHour = String(now.getHours()).padStart(2, '0');
       const currentMinute = String(now.getMinutes()).padStart(2, '0');
@@ -1259,7 +1408,7 @@ export default function App() {
 
         const matches: { bakery: Bakery; docName: string; expiryDate: string; daysDiff: number }[] = [];
 
-        appState.bakeries.forEach((b) => {
+        currentState.bakeries.forEach((b) => {
           targetDocs.forEach((docKey) => {
             const dateStr = (b as any)[docKey];
             if (!dateStr || !String(dateStr).trim()) return;
@@ -1309,7 +1458,236 @@ export default function App() {
     checkDailyAlert();
     const interval = setInterval(checkDailyAlert, 60000);
     return () => clearInterval(interval);
-  }, [appState?.systemConfig?.dailyAlertConfig, appState?.bakeries]);
+  }, [appState?.activeBranchId, appState?.currentUser?.id]);
+
+  const dispatchCriticalDebtEmailToSupervisors = useCallback(
+    async (params: {
+      mode: 'auto' | 'manual';
+      criticalThreshold: number;
+      recipients: string[];
+      alertTime: string;
+      requireInteractiveAuth: boolean;
+    }): Promise<{ status: 'sent' | 'needs_auth' | 'failed'; message: string }> => {
+      const stateSnapshot = latestAppStateRef.current;
+      if (!stateSnapshot) {
+        return { status: 'failed', message: 'بيانات المنظومة غير محملة بعد.' };
+      }
+      const threshold = Math.max(1000, Number(params.criticalThreshold) || 50000);
+      const criticalBakeries = collectCriticalDebtBakeries(
+        stateSnapshot.bakeries,
+        stateSnapshot.debts,
+        threshold
+      );
+      if (criticalBakeries.length === 0) {
+        return {
+          status: 'failed',
+          message: `لا توجد مخابز بلغت الحد الحرج (${threshold.toLocaleString('en-US')} ج.م) حالياً.`,
+        };
+      }
+
+      const dailyCfg = stateSnapshot.systemConfig?.dailyAlertConfig;
+      const resolved = resolveSupervisorEmailRecipients(stateSnapshot.users, {
+        extraEmails:
+          params.recipients.length > 0
+            ? params.recipients
+            : dailyCfg?.supervisorEmailRecipients || [],
+        includeSystemSupervisors: dailyCfg?.includeSystemSupervisors,
+        fallbackDirectorateEmail: stateSnapshot.systemConfig?.gmailEmail,
+      });
+
+      if (resolved.length === 0) {
+        return {
+          status: 'failed',
+          message: 'لا توجد عناوين بريد إلكتروني مسجلة للمشرفين لإرسال التنبيه اليومي.',
+        };
+      }
+
+      const now = new Date();
+      const todayStr = formatLocalDateYmd(now);
+      const scheduledTime = params.alertTime || dailyCfg?.debtEmailAlertTime || '09:00';
+      const emailPayload = buildCriticalDebtEmailPayload({
+        directorateTitle: stateSnapshot.systemConfig.directorateTitle,
+        administrationTitle: stateSnapshot.systemConfig.administrationTitle,
+        criticalThreshold: threshold,
+        alertTime: scheduledTime,
+        dateStr: todayStr,
+        criticalBakeries,
+        recipients: resolved,
+      });
+
+      const sendResult = await sendCriticalDebtAlertViaGmail({
+        recipients: resolved.map((r) => r.email),
+        subject: emailPayload.subject,
+        htmlBody: emailPayload.htmlBody,
+        textBody: emailPayload.textBody,
+        requireInteractiveAuth: params.requireInteractiveAuth,
+      });
+
+      const logEntry: DailyDebtEmailLogEntry = {
+        id: `demail-${Date.now()}`,
+        sentAtIso: now.toISOString(),
+        sentDate: todayStr,
+        alertTime: scheduledTime,
+        mode: params.mode,
+        status: sendResult.status,
+        recipients: resolved.map((r) => r.email),
+        criticalBakeriesCount: criticalBakeries.length,
+        totalCriticalDebt: emailPayload.totalCriticalDebt,
+        thresholdUsed: threshold,
+        subject: emailPayload.subject,
+        messageId: sendResult.messageId,
+        errorMessage: sendResult.status === 'sent' ? undefined : sendResult.message,
+        bakeriesSnapshot: criticalBakeries.slice(0, 50).map((b) => ({
+          bakeryId: b.bakeryId,
+          bakeryOwnerName: b.bakeryOwnerName,
+          machineNumber: b.machineNumber,
+          village: b.village,
+          localUnit: b.localUnit,
+          totalRemainingDebt: b.totalRemainingDebt,
+        })),
+      };
+
+      const freshSnapshot = latestAppStateRef.current || stateSnapshot;
+      const freshDailyCfg = freshSnapshot.systemConfig?.dailyAlertConfig;
+      const existingHistory = Array.isArray(freshDailyCfg?.debtEmailHistory)
+        ? freshDailyCfg.debtEmailHistory
+        : [];
+      const nextDailyCfg: DailyAlertConfig = {
+        ...(freshDailyCfg || {
+          enabled: true,
+          alertTime: '09:00',
+          notifyBrowser: true,
+          notifySound: true,
+          targetDocs: ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate'],
+          daysThreshold: 15,
+        }),
+        debtEmailEnabled: freshDailyCfg?.debtEmailEnabled ?? true,
+        debtEmailAlertTime: scheduledTime,
+        debtEmailCriticalThreshold: threshold,
+        lastDebtEmailAlertDate:
+          sendResult.status === 'sent' ? todayStr : freshDailyCfg?.lastDebtEmailAlertDate || '',
+        debtEmailHistory: [logEntry, ...existingHistory].slice(0, 100),
+      };
+
+      const branchId = freshSnapshot.activeBranchId || DEFAULT_BRANCH_ID;
+      const nextConfig: SystemConfig = {
+        ...freshSnapshot.systemConfig,
+        dailyAlertConfig: nextDailyCfg,
+      };
+      commitRowMutation({
+        nextState: {
+          ...freshSnapshot,
+          systemConfig: nextConfig,
+        },
+        table: 'system_config',
+        branchId,
+        toastMessage:
+          sendResult.status === 'sent'
+            ? sendResult.message
+            : `تم تسجيل محاولة إرسال تنبيه المديونية اليومي (${sendResult.status === 'needs_auth' ? 'بانتظار ربط Google' : 'فشل'})`,
+        executeDb: () =>
+          saveRowToDb({
+            table: 'system_config',
+            branchId,
+            row: {
+              branchId,
+              systemConfig: nextConfig,
+              columnTitles: freshSnapshot.columnTitles,
+              activityStatuses: freshSnapshot.activityStatuses,
+            },
+            operation: 'UPDATE',
+          }),
+      });
+
+      if (sendResult.status === 'sent') {
+        try {
+          localStorage.setItem(`TAMWEEN_DAILY_DEBT_EMAIL_LAST_DATE_${branchId}`, todayStr);
+        } catch {}
+        setPendingDailyDebtEmailBanner(null);
+      } else if (sendResult.status === 'needs_auth') {
+        setPendingDailyDebtEmailBanner({
+          criticalCount: criticalBakeries.length,
+          recipientsCount: resolved.length,
+          thresholdUsed: threshold,
+        });
+      }
+
+      return { status: sendResult.status, message: sendResult.message };
+    },
+    [commitRowMutation]
+  );
+
+  // Automated Daily Critical Debt Email Alert Scheduler for Supervisors (Stabilized via latestAppStateRef — zero re-runs on data edits)
+  useEffect(() => {
+    if (!appState?.currentUser?.id) return;
+    const role = String(appState.currentUser.role || '').toLowerCase();
+    if (role !== 'admin' && role !== 'supervisor') return;
+
+    const runScheduledCheck = async () => {
+      const currentState = latestAppStateRef.current;
+      if (!currentState || !currentState.currentUser) return;
+      const dailyCfg = currentState.systemConfig?.dailyAlertConfig;
+      const branchId = currentState.activeBranchId || DEFAULT_BRANCH_ID;
+
+      let lastLocal: string | null = null;
+      try {
+        lastLocal = localStorage.getItem(`TAMWEEN_DAILY_DEBT_EMAIL_LAST_DATE_${branchId}`);
+      } catch {}
+      const evalRes = shouldTriggerDailyDebtEmailSchedule(new Date(), dailyCfg, lastLocal);
+      if (!evalRes.shouldRun) {
+        if (evalRes.reason === 'already_sent_today' || evalRes.reason === 'disabled') {
+          setPendingDailyDebtEmailBanner(null);
+        }
+        return;
+      }
+
+      const threshold =
+        dailyCfg?.debtEmailCriticalThreshold ||
+        currentState.systemConfig?.debtAlertThreshold ||
+        DEFAULT_DEBT_ALERT_THRESHOLD;
+      const critical = collectCriticalDebtBakeries(currentState.bakeries, currentState.debts, threshold);
+      const recipients = resolveSupervisorEmailRecipients(currentState.users, {
+        extraEmails: dailyCfg?.supervisorEmailRecipients,
+        includeSystemSupervisors: dailyCfg?.includeSystemSupervisors,
+        fallbackDirectorateEmail: currentState.systemConfig?.gmailEmail,
+      });
+      if (critical.length === 0 || recipients.length === 0) return;
+
+      // Mark attempt for today in memory/banner so we don't spam needs_auth history every 60s
+      const attemptKey = `TAMWEEN_DAILY_DEBT_EMAIL_ATTEMPTED_${branchId}`;
+      const alreadyAttemptedToday = sessionStorage.getItem(attemptKey) === evalRes.todayStr;
+      if (alreadyAttemptedToday) {
+        setPendingDailyDebtEmailBanner({
+          criticalCount: critical.length,
+          recipientsCount: recipients.length,
+          thresholdUsed: threshold,
+        });
+        return;
+      }
+      try {
+        sessionStorage.setItem(attemptKey, evalRes.todayStr);
+      } catch {}
+
+      await dispatchCriticalDebtEmailToSupervisors({
+        mode: 'auto',
+        criticalThreshold: threshold,
+        recipients: recipients.map((r) => r.email),
+        alertTime: evalRes.scheduledTime,
+        requireInteractiveAuth: false,
+      });
+    };
+
+    void runScheduledCheck();
+    const timer = setInterval(() => {
+      void runScheduledCheck();
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [
+    appState?.activeBranchId,
+    appState?.currentUser?.id,
+    appState?.currentUser?.role,
+    dispatchCriticalDebtEmailToSupervisors,
+  ]);
 
   const handleSaveDailyAlertConfig = (updatedConfig: DailyAlertConfig) => {
     if (!appState) return;
@@ -1945,10 +2323,29 @@ export default function App() {
       // 2. Fetch latest cloud updates in background and refresh active branch state
       const loaded = await loadInitialState(targetBranchId);
       const refreshedVault = loadBranchAuthVault(targetBranchId, branchObj?.name);
+      const mergedBranchUsers = (() => {
+        const byUsername = new Map<string, AppUser>();
+        for (const u of refreshedVault.users) {
+          byUsername.set(u.username.toLowerCase(), u);
+        }
+        for (const u of loaded.users || []) {
+          if (u?.username) {
+            byUsername.set(u.username.toLowerCase(), { ...u, branchId: targetBranchId });
+          }
+        }
+        return sanitizeBranchUsers(Array.from(byUsername.values()), targetBranchId, branchObj?.name);
+      })();
+      saveBranchAuthVault(targetBranchId, {
+        branchName: branchObj?.name,
+        users: mergedBranchUsers,
+        rolePermissions: refreshedVault.rolePermissions,
+        roleLabels: refreshedVault.roleLabels,
+        customRoles: refreshedVault.customRoles,
+      });
       setAppState((prev) => {
         const prevUser = prev?.currentUser;
         const resolvedBranchUser = prevUser
-          ? refreshedVault.users.find(
+          ? mergedBranchUsers.find(
               (u) => u.username.toLowerCase() === prevUser.username.toLowerCase()
             ) || { ...prevUser, branchId: targetBranchId }
           : null;
@@ -1956,7 +2353,7 @@ export default function App() {
           ...loaded,
           activeBranchId: targetBranchId,
           branches: branchesToUse,
-          users: refreshedVault.users,
+          users: mergedBranchUsers,
           currentUser: resolvedBranchUser,
           systemConfig: {
             ...loaded.systemConfig,
@@ -2186,10 +2583,31 @@ export default function App() {
             latestAppStateRef.current = finalState;
             return finalState;
           });
-          setActiveTab('welcome');
-          setActiveSidebarNavId('welcome-home');
-          setBreadcrumbGroup('الترحيب');
-          setBreadcrumbItem('الصفحة الترحيبية');
+          const defaultTab = isDepartmentRestrictedUser(scopedUser)
+            ? (getDefaultTabForUser(scopedUser) as typeof activeTab)
+            : 'welcome';
+          setActiveTab(defaultTab);
+          setActiveSidebarNavId(
+            defaultTab === 'hr-personnel'
+              ? 'hr-dashboard'
+              : defaultTab === 'grain-maintenance'
+              ? 'grain-dashboard'
+              : defaultTab === 'commodities'
+              ? 'commodities-dashboard'
+              : defaultTab === 'internal-trade'
+              ? 'internal-trade-dashboard'
+              : defaultTab === 'debts'
+              ? 'debts-records'
+              : defaultTab === 'bakeries'
+              ? 'bakeries-all'
+              : 'welcome-home'
+          );
+          setBreadcrumbGroup(
+            isDepartmentRestrictedUser(scopedUser) ? 'القسم المختص' : 'الترحيب'
+          );
+          setBreadcrumbItem(
+            isDepartmentRestrictedUser(scopedUser) ? 'لوحة القسم المخصص' : 'الصفحة الترحيبية'
+          );
           setSaveToast({
             id: Date.now(),
             message: `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`,
@@ -2918,6 +3336,157 @@ export default function App() {
       case 'settings-logout':
         void handleSafeSaveAndLogout();
         break;
+
+      // New Additive Executive Analytics & Departmental ERP Routes
+      case 'executive-analytics':
+        if (canUserAccessTab(appState.currentUser, 'executive-analytics')) {
+          setActiveTab('executive-analytics');
+        }
+        break;
+      case 'commodities-dashboard':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('dashboard');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-cards':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('cards');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-catalog':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('commodities');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-disbursements':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('disbursements');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-inspections':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('inspections');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-settings':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('settings');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'internal-trade-dashboard':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setRationSubView('dashboard');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-merchants':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setRationSubView('merchants');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-warehouses':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setRationSubView('warehouses');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-requisitions':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setRationSubView('requisitions');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-financial':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setRationSubView('financial');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'grain-dashboard':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('dashboard');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-assets':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('assets');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-orders':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('orders');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-parts':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('parts');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-moisture':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('grain_moisture');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-alerts':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('alerts');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'hr-dashboard':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('dashboard');
+          setActiveTab('hr-personnel');
+        }
+        break;
+      case 'hr-employees':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('employees');
+          setActiveTab('hr-personnel');
+        }
+        break;
+      case 'hr-attendance':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('attendance');
+          setActiveTab('hr-personnel');
+        }
+        break;
+      case 'hr-leaves':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('leaves');
+          setActiveTab('hr-personnel');
+        }
+        break;
+      case 'hr-payroll':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('payroll');
+          setActiveTab('hr-personnel');
+        }
+        break;
+      case 'hr-loans-promotions':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('loans_promotions');
+          setActiveTab('hr-personnel');
+        }
+        break;
+      case 'hr-settings':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('settings');
+          setActiveTab('hr-personnel');
+        }
+        break;
     }
   };
 
@@ -3479,8 +4048,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* 2. Calm Semantic Alert Banners (if any urgent expirations or large debts) */}
-      {(alertsList.length > 0 || largeDebtsList.length > 0) && (
+      {/* 2. Calm Semantic Alert Banners (if any urgent expirations, large debts, or pending supervisor debt email) */}
+      {(alertsList.length > 0 || largeDebtsList.length > 0 || pendingDailyDebtEmailBanner) && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-900 no-print">
           <div className="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-3 flex-wrap">
@@ -3513,6 +4082,26 @@ export default function App() {
                   </button>
                 </span>
               )}
+              {pendingDailyDebtEmailBanner && (
+                <span
+                  data-testid="pending-daily-debt-email-banner"
+                  className="flex items-center gap-1.5 font-bold text-rose-900 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-lg"
+                >
+                  <Mail className="w-3.5 h-3.5 text-rose-700 shrink-0" />
+                  <span>
+                    تقرير المديونيات الحرجة اليومي جاهز ({pendingDailyDebtEmailBanner.criticalCount} مخبز &ge;{' '}
+                    {pendingDailyDebtEmailBanner.thresholdUsed.toLocaleString('en-US')} ج.م) لـ{' '}
+                    {pendingDailyDebtEmailBanner.recipientsCount} مشرف
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsDailySettingsModalOpen(true)}
+                    className="text-rose-800 font-black underline hover:text-rose-950 cursor-pointer mr-1"
+                  >
+                    ربط Gmail وإرسال التقرير الآن
+                  </button>
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -3538,6 +4127,7 @@ export default function App() {
           isVaultUnlocked={isVaultUnlocked}
           isAudioMuted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
           scheduledAlertsCount={alertsList.length + largeDebtsList.length}
+          currentUser={appState.currentUser}
           onOpenVaultGate={(section, label) =>
             setVaultGateModal({
               isOpen: true,
@@ -3585,61 +4175,158 @@ export default function App() {
                 <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
                 <span>الصفحة الترحيبية</span>
               </button>
-              <button
-                type="button"
-                data-testid="nav-dashboard-charts-tab"
-                onClick={() =>
-                  handleSelectSidebarNav(
-                    'dashboard-charts',
-                    'لوحة التحكم',
-                    'لوحة التحكم والرسوم البيانية'
-                  )
-                }
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'charts'
-                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
-                    : 'text-[#0A1628] hover:bg-white'
-                }`}
-              >
-                <BarChart3 className="w-3.5 h-3.5 text-[#D4AF37]" />
-                <span>لوحة التحكم والرسوم</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectSidebarNav('dashboard-home', 'لوحة التحكم', 'الصفحة الرئيسية')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'dashboard'
-                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
-                    : 'text-[#0A1628] hover:bg-white'
-                }`}
-              >
-                <LayoutDashboard className="w-3.5 h-3.5 text-[#D4AF37]" />
-                <span>الصفحة الرئيسية</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectSidebarNav('bakeries-all', 'إدارة المخابز', 'قاعدة بيانات المخابز')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'bakeries'
-                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
-                    : 'text-[#0A1628] hover:bg-white'
-                }`}
-              >
-                <Store className="w-3.5 h-3.5 text-[#D4AF37]" />
-                <span>قاعدة بيانات المخابز ({appState.bakeries.length})</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectSidebarNav('debts-records', 'إدارة المخابز', 'سجل مديونيات المخابز')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'debts'
-                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
-                    : 'text-[#0A1628] hover:bg-white'
-                }`}
-              >
-                <Scale className="w-3.5 h-3.5 text-[#D4AF37]" />
-                <span>سجل المديونيات ({appState.debts.length})</span>
-              </button>
+              {canUserAccessTab(appState.currentUser, 'charts') && (
+                <button
+                  type="button"
+                  data-testid="nav-dashboard-charts-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav(
+                      'dashboard-charts',
+                      'لوحة التحكم',
+                      'لوحة التحكم والرسوم البيانية'
+                    )
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'charts'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <BarChart3 className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  <span>لوحة التحكم والرسوم</span>
+                </button>
+              )}
+              {canUserAccessTab(appState.currentUser, 'executive-analytics') && (
+                <button
+                  type="button"
+                  data-testid="nav-executive-analytics-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav(
+                      'executive-analytics',
+                      'التحليلات التنفيذية',
+                      'لوحة التحليلات التفاعلية المتقدمة (Recharts)'
+                    )
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'executive-analytics'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <TrendingUp className="w-3.5 h-3.5 text-[#0D9488]" />
+                  <span>تحليلات الأداء</span>
+                </button>
+              )}
+              {canUserAccessTab(appState.currentUser, 'dashboard') && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectSidebarNav('dashboard-home', 'لوحة التحكم', 'الصفحة الرئيسية')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'dashboard'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <LayoutDashboard className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  <span>الصفحة الرئيسية</span>
+                </button>
+              )}
+              {canUserAccessTab(appState.currentUser, 'bakeries') && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectSidebarNav('bakeries-all', 'إدارة المخابز', 'قاعدة بيانات المخابز')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'bakeries'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <Store className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  <span>قاعدة بيانات المخابز ({appState.bakeries.length})</span>
+                </button>
+              )}
+              {canUserAccessTab(appState.currentUser, 'debts') && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectSidebarNav('debts-records', 'إدارة المخابز', 'سجل مديونيات المخابز')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'debts'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <Scale className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  <span>سجل المديونيات ({appState.debts.length})</span>
+                </button>
+              )}
+              {canUserAccessTab(appState.currentUser, 'commodities') && (
+                <button
+                  type="button"
+                  data-testid="nav-commodities-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav('commodities-dashboard', '6. قسم السلع التموينية', 'لوحة مؤشرات السلع التموينية')
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'commodities'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <ShoppingBasket className="w-3.5 h-3.5 text-[#0D9488]" />
+                  <span>السلع التموينية</span>
+                </button>
+              )}
+              {canUserAccessTab(appState.currentUser, 'internal-trade') && (
+                <button
+                  type="button"
+                  data-testid="nav-internal-trade-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav('internal-trade-merchants', '7. قسم التجارة التموينية والداخلية', 'التجار والجمعيتي والمجمعات')
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'internal-trade'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <Store className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>التجارة الداخلية</span>
+                </button>
+              )}
+              {canUserAccessTab(appState.currentUser, 'grain-maintenance') && (
+                <button
+                  type="button"
+                  data-testid="nav-grain-maintenance-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav('grain-dashboard', '8. قسم صيانة الحبوب والصوامع', 'لوحة الصيانة ومؤشرات OEE')
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'grain-maintenance'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <Wrench className="w-3.5 h-3.5 text-amber-600" />
+                  <span>صيانة الحبوب</span>
+                </button>
+              )}
+              {canUserAccessTab(appState.currentUser, 'hr-personnel') && (
+                <button
+                  type="button"
+                  data-testid="nav-hr-personnel-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav('hr-dashboard', '9. الموارد البشرية وشؤون العاملين', 'لوحة تحكم الموارد البشرية')
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'hr-personnel'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <Briefcase className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>الموارد البشرية</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => handleSelectSidebarNav('reports-center', 'مركز التقارير والطباعة', 'شاشة التقارير والطباعة المتقدمة')}
@@ -3671,25 +4358,27 @@ export default function App() {
           {/* 3.2 Unified Command Toolbar */}
           <div className="bg-white border border-[#D4AF37]/30 rounded-2xl px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2 no-print">
             <div className="flex items-center flex-wrap gap-2">
-              <button
-                type="button"
-                data-testid="toolbar-dashboard-btn"
-                onClick={() =>
-                  handleSelectSidebarNav(
-                    'dashboard-charts',
-                    'لوحة التحكم',
-                    'لوحة التحكم والرسوم البيانية'
-                  )
-                }
-                className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer border ${
-                  activeTab === 'charts'
-                    ? 'bg-[#0A1628] text-[#D4AF37] border-[#D4AF37]/50 shadow-sm'
-                    : 'bg-[#F1F5F9] hover:bg-[#0A1628] text-[#0A1628] hover:text-white border-slate-200'
-                }`}
-              >
-                <BarChart3 className="w-3.5 h-3.5 text-[#0D9488]" />
-                <span>لوحة التحكم</span>
-              </button>
+              {canUserAccessTab(appState.currentUser, 'charts') && (
+                <button
+                  type="button"
+                  data-testid="toolbar-dashboard-btn"
+                  onClick={() =>
+                    handleSelectSidebarNav(
+                      'dashboard-charts',
+                      'لوحة التحكم',
+                      'لوحة التحكم والرسوم البيانية'
+                    )
+                  }
+                  className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer border ${
+                    activeTab === 'charts'
+                      ? 'bg-[#0A1628] text-[#D4AF37] border-[#D4AF37]/50 shadow-sm'
+                      : 'bg-[#F1F5F9] hover:bg-[#0A1628] text-[#0A1628] hover:text-white border-slate-200'
+                  }`}
+                >
+                  <BarChart3 className="w-3.5 h-3.5 text-[#0D9488]" />
+                  <span>لوحة التحكم</span>
+                </button>
+              )}
               <button
                 type="button"
                 data-testid="toolbar-alerts-drawer-btn"
@@ -3705,7 +4394,7 @@ export default function App() {
                 )}
               </button>
               {/* 1. Add Bakery */}
-              {appState.currentUser?.role !== 'viewer' && (
+              {appState.currentUser?.role !== 'viewer' && canUserAccessDepartment(appState.currentUser, 'bakeries') && (
                 <button
                   type="button"
                   onClick={() =>
@@ -3898,6 +4587,7 @@ export default function App() {
                 directorateTitle={appState.systemConfig.directorateTitle}
                 bakeries={appState.bakeries}
                 debts={appState.debts}
+                dailyTasks={appState.dailyTasks || []}
                 highDebtCount={highDebtNotifications.filter((n) => !n.isRead).length}
                 unreadInboxCount={unreadInboxCount}
                 pendingTasksCount={(appState.dailyTasks || []).filter((t) => t.status !== 'completed').length}
@@ -3914,6 +4604,7 @@ export default function App() {
                 }}
                 onOpenAlerts={() => setIsAlertsModalOpen(true)}
                 onOpenDailyBriefing={() => setIsDailyBriefingModalOpen(true)}
+                onOpenDailyPerformanceSummary={() => setIsDailyPerformanceModalOpen(true)}
                 onOpenAlertSettings={() => setIsDailySettingsModalOpen(true)}
                 onNavigateBakeries={() =>
                   handleSelectSidebarNav('bakeries-all', '1. قسم إدارة المخابز', 'سجل بيانات المخابز')
@@ -3925,6 +4616,57 @@ export default function App() {
                   handleSelectSidebarNav('reports-center', '5. التقارير والإدارة والأمان', 'مركز التقارير والطباعة الرسمية')
                 }
                 onOpenDailyTasks={() => setIsDailyTasksModalOpen(true)}
+                onCompleteTask={(taskId) => {
+                  const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+                  const prevTasks = appState.dailyTasks || [];
+                  const target = prevTasks.find((t) => t.id === taskId);
+                  if (!target) return;
+                  const updatedTask = { ...target, status: 'completed' as const };
+                  const updatedTasks = prevTasks.map((t) => (t.id === taskId ? updatedTask : t));
+                  commitRowMutation({
+                    nextState: { ...appState, dailyTasks: updatedTasks },
+                    table: 'daily_tasks',
+                    branchId,
+                    toastMessage: 'تم إنجاز المهمة وتحديث إشعارات الترحيب بنجاح ✓',
+                    executeDb: () =>
+                      saveRowToDb({
+                        table: 'daily_tasks',
+                        branchId,
+                        row: updatedTask,
+                        operation: 'UPDATE',
+                      }),
+                  });
+                }}
+                onToggleTaskWelcomeReminder={(taskId) => {
+                  const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+                  const prevTasks = appState.dailyTasks || [];
+                  const target = prevTasks.find((t) => t.id === taskId);
+                  if (!target) return;
+                  const nextPinned = !target.showOnWelcomeDashboard;
+                  const updatedTask = {
+                    ...target,
+                    showOnWelcomeDashboard: nextPinned,
+                    welcomeReminderDate: nextPinned
+                      ? target.welcomeReminderDate || target.dueDate
+                      : target.welcomeReminderDate,
+                  };
+                  const updatedTasks = prevTasks.map((t) => (t.id === taskId ? updatedTask : t));
+                  commitRowMutation({
+                    nextState: { ...appState, dailyTasks: updatedTasks },
+                    table: 'daily_tasks',
+                    branchId,
+                    toastMessage: nextPinned
+                      ? 'تم تثبيت المهمة كإشعار تذكيري في صفحة الترحيب'
+                      : 'تم إخفاء التذكير من صفحة الترحيب',
+                    executeDb: () =>
+                      saveRowToDb({
+                        table: 'daily_tasks',
+                        branchId,
+                        row: updatedTask,
+                        operation: 'UPDATE',
+                      }),
+                  });
+                }}
                 onOpenInbox={() => setIsInboxModalOpen(true)}
               />
             ) : activeTab === 'dashboard' ? (
@@ -4069,6 +4811,8 @@ export default function App() {
               systemConfig={appState.systemConfig}
               currentUser={appState.currentUser}
               initialReportId={activeReportId}
+              onOpenDebtEmailHistory={() => setIsDebtEmailHistoryOpen(true)}
+              onOpenDailyPerformanceSummary={() => setIsDailyPerformanceModalOpen(true)}
             />
           ) : activeTab === 'debts' ? (
             /* DEBTS VIEW */
@@ -4178,9 +4922,153 @@ export default function App() {
               onCloseExternalManageListModal={() => setExternalDebtsManageListModal(null)}
               debtsColumnGroup={debtsColumnGroup}
               debtsPageSize={debtsPageSize}
+              branchName={appState.systemConfig.administrationTitle}
+              onUpdateSystemConfig={(updatedCfg) => {
+                const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+                commitRowMutation({
+                  nextState: { ...appState, systemConfig: updatedCfg },
+                  table: 'system_config',
+                  branchId,
+                  toastMessage: 'تم حفظ إعدادات لائحة غرامات نقص وزن الرغيف (2024) وتحديث الترويسة بنجاح',
+                  executeDb: () =>
+                    saveRowToDb({
+                      table: 'system_config',
+                      branchId,
+                      row: {
+                        branchId,
+                        systemConfig: updatedCfg,
+                        columnTitles: appState.columnTitles,
+                        activityStatuses: appState.activityStatuses,
+                      },
+                      operation: 'UPDATE',
+                    }),
+                });
+              }}
               onSafeSaveAndLogout={handleSafeSaveAndLogout}
               openScheduleSignal={openDebtScheduleSignal}
+              onSendLatePaymentAlert={(debtsToNotify) => {
+                if (!debtsToNotify || debtsToNotify.length === 0) return;
+                if (shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)) {
+                  playGentleAlertChime({ type: 'debt' });
+                }
+                debtsToNotify.forEach((d) => {
+                  addHighDebtNotification(
+                    d.bakeryId,
+                    d.bakeryOwnerName,
+                    d.machineNumber,
+                    d.village,
+                    d.netRemainingDebt,
+                    'EDIT_DEBT'
+                  );
+                });
+                const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+                const summaryLines = debtsToNotify
+                  .slice(0, 5)
+                  .map((d) => {
+                    const late = getLateInstallmentPaymentInfo(d);
+                    return `• ${d.bakeryOwnerName} (ماكينة ${d.machineNumber} - ${d.village}): متبقي ${d.netRemainingDebt.toLocaleString()} ج.م — متأخر منذ ${late.daysSinceLastInstallment} يوماً بدون سداد قسط`;
+                  })
+                  .join(' | ');
+                const newMsg = {
+                  id: `msg-late14-${Date.now()}`,
+                  senderId: appState.currentUser?.id || 'system',
+                  senderName: appState.currentUser?.fullName || 'نظام تنبيهات المديونيات',
+                  senderRole: appState.currentUser?.role || 'admin',
+                  recipientTarget: 'ALL' as const,
+                  recipientLabel: 'جميع المشرفين ومفتشي التموين',
+                  messageType: 'alert' as const,
+                  subject: `تنبيه فوري: تأخر سداد الأقساط (> 14 يوماً) لعدد (${debtsToNotify.length}) مخبز`,
+                  content: `إشعار عاجل من شاشة المديونيات بشأن تجاوز مهلة الـ 14 يوماً دون سداد أي قسط: ${summaryLines}`,
+                  timestamp: new Date().toLocaleString('ar-EG'),
+                  isRead: false,
+                };
+                const nextMessages = [newMsg, ...(appState.inboxMessages || [])];
+                commitRowMutation({
+                  nextState: { ...appState, inboxMessages: nextMessages },
+                  table: 'inbox_messages',
+                  branchId,
+                  toastMessage:
+                    debtsToNotify.length === 1
+                      ? `تم إرسال إشعار فوري للمخبز "${debtsToNotify[0].bakeryOwnerName}" والمشرفين بشأن تأخر سداد القسط (> 14 يوماً)`
+                      : `تم إرسال إشعارات فورية لعدد (${debtsToNotify.length}) مخبز متأخر في سداد الأقساط (> 14 يوماً)`,
+                  executeDb: () =>
+                    saveRowToDb({
+                      table: 'inbox_messages',
+                      branchId,
+                      row: newMsg,
+                      operation: 'INSERT',
+                    }),
+                });
+              }}
             />
+          ) : activeTab === 'executive-analytics' ? (
+            <ExecutiveAnalyticsDashboard
+              bakeries={appState.bakeries}
+              debts={appState.debts}
+              villages={appState.villages}
+              branchName={appState.systemConfig.administrationTitle}
+              onSelectBakeryForDebts={(bakeryId) => {
+                setDebtFilterBakeryId(bakeryId);
+                setActiveTab('debts');
+              }}
+              onNavigateTab={(t) => setActiveTab(t)}
+            />
+          ) : activeTab === 'commodities' || activeTab === 'internal-trade' ? (
+            modulesBundle ? (
+              <RationCommoditiesSuite
+                key={`${activeTab}-${modulesBundle.branchId}-${rationSubView}`}
+                state={modulesBundle.ration}
+                branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                branchName={appState.systemConfig.administrationTitle}
+                villages={appState.villages}
+                currentUser={appState.currentUser}
+                initialMode={activeTab === 'internal-trade' ? 'internal_trade' : 'commodities'}
+                initialSubView={rationSubView}
+                onChangeState={(nextRation) =>
+                  handleUpdateModulesBundle((prev) => ({ ...prev, ration: nextRation }))
+                }
+              />
+            ) : (
+              <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
+                جاري تحميل وحدة السلع التموينية والتجارة الداخلية...
+              </div>
+            )
+          ) : activeTab === 'grain-maintenance' ? (
+            modulesBundle ? (
+              <GrainMaintenanceSuite
+                key={`grain-${modulesBundle.branchId}-${grainSubView}`}
+                state={modulesBundle.grainMaintenance}
+                branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                branchName={appState.systemConfig.administrationTitle}
+                currentUser={appState.currentUser}
+                initialSubView={grainSubView}
+                onChangeState={(nextGrain) =>
+                  handleUpdateModulesBundle((prev) => ({ ...prev, grainMaintenance: nextGrain }))
+                }
+              />
+            ) : (
+              <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
+                جاري تحميل وحدة صيانة الحبوب والصوامع...
+              </div>
+            )
+          ) : activeTab === 'hr-personnel' ? (
+            modulesBundle ? (
+              <HrPersonnelSuite
+                key={`hr-${modulesBundle.branchId}-${hrSubView}`}
+                state={modulesBundle.hr}
+                branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                branchName={appState.systemConfig.administrationTitle}
+                currentUser={appState.currentUser}
+                initialSubView={hrSubView}
+                onChangeState={(nextHr) =>
+                  handleUpdateModulesBundle((prev) => ({ ...prev, hr: nextHr }))
+                }
+              />
+            ) : (
+              <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
+                جاري تحميل وحدة الموارد البشرية وشؤون العاملين...
+              </div>
+            )
           ) : (
             /* BAKERIES DATABASE VIEW (تصميم احترافي متحرك لقاعدة بيانات المخابز بدون المساس بالمعادلات) */
             <div className="space-y-4 animate-fade-in">
@@ -5665,6 +6553,19 @@ export default function App() {
         />
       )}
 
+      {/* 1.1B Daily Performance Summary Modal for the General Manager (التقرير الإحصائي اليومي للمدير العام PDF) */}
+      {isDailyPerformanceModalOpen && (
+        <DailyPerformanceSummaryModal
+          isOpen={isDailyPerformanceModalOpen}
+          onClose={() => setIsDailyPerformanceModalOpen(false)}
+          bakeries={appState.bakeries}
+          debts={appState.debts}
+          villages={appState.villages}
+          systemConfig={appState.systemConfig}
+          branchName={appState.systemConfig.administrationTitle}
+        />
+      )}
+
       {/* 1.2 Unified Master System & Dropdowns Editor Modal (التعديل داخل المنظومة / التعديل على جميع القوائم المنسدلة) */}
       {isMasterEditorModalOpen && (
         <SystemMasterEditorModal
@@ -5986,6 +6887,46 @@ export default function App() {
                 roleLabels: appState.systemConfig.roleLabels,
                 customRoles: appState.systemConfig.customRoles,
               });
+              if (scopedUser.applyToAllBranches) {
+                const allBranches = deduplicateSupplyBranches([
+                  ...(appState.branches || []),
+                  ...getBranchesList(),
+                ]);
+                await Promise.allSettled(
+                  allBranches
+                    .filter((b) => b.id !== branchId)
+                    .map((b) => {
+                      const otherVault = loadBranchAuthVault(b.id, b.name);
+                      const branchCopy: AppUser = {
+                        ...scopedUser,
+                        id: b.id === DEFAULT_BRANCH_ID ? scopedUser.id : `${scopedUser.id}__${b.id}`,
+                        branchId: b.id,
+                      };
+                      const nextOtherUsers = [
+                        ...otherVault.users.filter(
+                          (u) =>
+                            u.id !== scopedUser.id &&
+                            u.id !== branchCopy.id &&
+                            u.username.toLowerCase() !== scopedUser.username.toLowerCase()
+                        ),
+                        branchCopy,
+                      ];
+                      saveBranchAuthVault(b.id, {
+                        branchName: b.name,
+                        users: nextOtherUsers,
+                        rolePermissions: otherVault.rolePermissions,
+                        roleLabels: otherVault.roleLabels,
+                        customRoles: otherVault.customRoles,
+                      });
+                      return saveRowToDb({
+                        table: 'app_users',
+                        branchId: b.id,
+                        row: branchCopy,
+                        operation: 'INSERT',
+                      });
+                    })
+                );
+              }
             }
             return res;
           }}
@@ -6024,11 +6965,57 @@ export default function App() {
                 roleLabels: appState.systemConfig.roleLabels,
                 customRoles: appState.systemConfig.customRoles,
               });
+              if (scopedUser.applyToAllBranches) {
+                const allBranches = deduplicateSupplyBranches([
+                  ...(appState.branches || []),
+                  ...getBranchesList(),
+                ]);
+                await Promise.allSettled(
+                  allBranches
+                    .filter((b) => b.id !== branchId)
+                    .map((b) => {
+                      const otherVault = loadBranchAuthVault(b.id, b.name);
+                      const existing = otherVault.users.find(
+                        (u) =>
+                          u.id === scopedUser.id ||
+                          u.username.toLowerCase() === scopedUser.username.toLowerCase()
+                      );
+                      const branchCopy: AppUser = {
+                        ...scopedUser,
+                        id: existing?.id || (b.id === DEFAULT_BRANCH_ID ? scopedUser.id : `${scopedUser.id}__${b.id}`),
+                        branchId: b.id,
+                      };
+                      const nextOtherUsers = [
+                        ...otherVault.users.filter(
+                          (u) =>
+                            u.id !== scopedUser.id &&
+                            u.id !== branchCopy.id &&
+                            u.username.toLowerCase() !== scopedUser.username.toLowerCase()
+                        ),
+                        branchCopy,
+                      ];
+                      saveBranchAuthVault(b.id, {
+                        branchName: b.name,
+                        users: nextOtherUsers,
+                        rolePermissions: otherVault.rolePermissions,
+                        roleLabels: otherVault.roleLabels,
+                        customRoles: otherVault.customRoles,
+                      });
+                      return saveRowToDb({
+                        table: 'app_users',
+                        branchId: b.id,
+                        row: branchCopy,
+                        operation: existing ? 'UPDATE' : 'INSERT',
+                      });
+                    })
+                );
+              }
             }
             return res;
           }}
           onDeleteUser={async (userId) => {
             const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const deletedUser = appState.users.find((u) => u.id === userId);
             const updatedUsers = sanitizeBranchUsers(
               appState.users.filter((u) => u.id !== userId),
               branchId,
@@ -6054,6 +7041,41 @@ export default function App() {
                 roleLabels: appState.systemConfig.roleLabels,
                 customRoles: appState.systemConfig.customRoles,
               });
+              if (deletedUser?.applyToAllBranches) {
+                const allBranches = deduplicateSupplyBranches([
+                  ...(appState.branches || []),
+                  ...getBranchesList(),
+                ]);
+                await Promise.allSettled(
+                  allBranches
+                    .filter((b) => b.id !== branchId)
+                    .map((b) => {
+                      const otherVault = loadBranchAuthVault(b.id, b.name);
+                      const matching = otherVault.users.find(
+                        (u) =>
+                          u.id === userId ||
+                          u.username.toLowerCase() === deletedUser.username.toLowerCase()
+                      );
+                      const nextOtherUsers = otherVault.users.filter(
+                        (u) =>
+                          u.id !== userId &&
+                          u.username.toLowerCase() !== deletedUser.username.toLowerCase()
+                      );
+                      saveBranchAuthVault(b.id, {
+                        branchName: b.name,
+                        users: nextOtherUsers,
+                        rolePermissions: otherVault.rolePermissions,
+                        roleLabels: otherVault.roleLabels,
+                        customRoles: otherVault.customRoles,
+                      });
+                      return deleteRowFromDb({
+                        table: 'app_users',
+                        id: matching?.id || (b.id === DEFAULT_BRANCH_ID ? userId : `${userId}__${b.id}`),
+                        branchId: b.id,
+                      });
+                    })
+                );
+              }
             }
             return res;
           }}
@@ -6129,6 +7151,46 @@ export default function App() {
                 roleLabels: appState.systemConfig.roleLabels,
                 customRoles: appState.systemConfig.customRoles,
               });
+              if (scopedUser.applyToAllBranches) {
+                const allBranches = deduplicateSupplyBranches([
+                  ...(appState.branches || []),
+                  ...getBranchesList(),
+                ]);
+                await Promise.allSettled(
+                  allBranches
+                    .filter((b) => b.id !== branchId)
+                    .map((b) => {
+                      const otherVault = loadBranchAuthVault(b.id, b.name);
+                      const branchCopy: AppUser = {
+                        ...scopedUser,
+                        id: b.id === DEFAULT_BRANCH_ID ? scopedUser.id : `${scopedUser.id}__${b.id}`,
+                        branchId: b.id,
+                      };
+                      const nextOtherUsers = [
+                        ...otherVault.users.filter(
+                          (u) =>
+                            u.id !== scopedUser.id &&
+                            u.id !== branchCopy.id &&
+                            u.username.toLowerCase() !== scopedUser.username.toLowerCase()
+                        ),
+                        branchCopy,
+                      ];
+                      saveBranchAuthVault(b.id, {
+                        branchName: b.name,
+                        users: nextOtherUsers,
+                        rolePermissions: otherVault.rolePermissions,
+                        roleLabels: otherVault.roleLabels,
+                        customRoles: otherVault.customRoles,
+                      });
+                      return saveRowToDb({
+                        table: 'app_users',
+                        branchId: b.id,
+                        row: branchCopy,
+                        operation: 'INSERT',
+                      });
+                    })
+                );
+              }
             }
             return res;
           }}
@@ -6167,11 +7229,57 @@ export default function App() {
                 roleLabels: appState.systemConfig.roleLabels,
                 customRoles: appState.systemConfig.customRoles,
               });
+              if (scopedUser.applyToAllBranches) {
+                const allBranches = deduplicateSupplyBranches([
+                  ...(appState.branches || []),
+                  ...getBranchesList(),
+                ]);
+                await Promise.allSettled(
+                  allBranches
+                    .filter((b) => b.id !== branchId)
+                    .map((b) => {
+                      const otherVault = loadBranchAuthVault(b.id, b.name);
+                      const existing = otherVault.users.find(
+                        (u) =>
+                          u.id === scopedUser.id ||
+                          u.username.toLowerCase() === scopedUser.username.toLowerCase()
+                      );
+                      const branchCopy: AppUser = {
+                        ...scopedUser,
+                        id: existing?.id || (b.id === DEFAULT_BRANCH_ID ? scopedUser.id : `${scopedUser.id}__${b.id}`),
+                        branchId: b.id,
+                      };
+                      const nextOtherUsers = [
+                        ...otherVault.users.filter(
+                          (u) =>
+                            u.id !== scopedUser.id &&
+                            u.id !== branchCopy.id &&
+                            u.username.toLowerCase() !== scopedUser.username.toLowerCase()
+                        ),
+                        branchCopy,
+                      ];
+                      saveBranchAuthVault(b.id, {
+                        branchName: b.name,
+                        users: nextOtherUsers,
+                        rolePermissions: otherVault.rolePermissions,
+                        roleLabels: otherVault.roleLabels,
+                        customRoles: otherVault.customRoles,
+                      });
+                      return saveRowToDb({
+                        table: 'app_users',
+                        branchId: b.id,
+                        row: branchCopy,
+                        operation: existing ? 'UPDATE' : 'INSERT',
+                      });
+                    })
+                );
+              }
             }
             return res;
           }}
           onDeleteUser={async (userId) => {
             const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const deletedUser = appState.users.find((u) => u.id === userId);
             const updatedUsers = sanitizeBranchUsers(
               appState.users.filter((u) => u.id !== userId),
               branchId,
@@ -6197,6 +7305,41 @@ export default function App() {
                 roleLabels: appState.systemConfig.roleLabels,
                 customRoles: appState.systemConfig.customRoles,
               });
+              if (deletedUser?.applyToAllBranches) {
+                const allBranches = deduplicateSupplyBranches([
+                  ...(appState.branches || []),
+                  ...getBranchesList(),
+                ]);
+                await Promise.allSettled(
+                  allBranches
+                    .filter((b) => b.id !== branchId)
+                    .map((b) => {
+                      const otherVault = loadBranchAuthVault(b.id, b.name);
+                      const matching = otherVault.users.find(
+                        (u) =>
+                          u.id === userId ||
+                          u.username.toLowerCase() === deletedUser.username.toLowerCase()
+                      );
+                      const nextOtherUsers = otherVault.users.filter(
+                        (u) =>
+                          u.id !== userId &&
+                          u.username.toLowerCase() !== deletedUser.username.toLowerCase()
+                      );
+                      saveBranchAuthVault(b.id, {
+                        branchName: b.name,
+                        users: nextOtherUsers,
+                        rolePermissions: otherVault.rolePermissions,
+                        roleLabels: otherVault.roleLabels,
+                        customRoles: otherVault.customRoles,
+                      });
+                      return deleteRowFromDb({
+                        table: 'app_users',
+                        id: matching?.id || (b.id === DEFAULT_BRANCH_ID ? userId : `${userId}__${b.id}`),
+                        branchId: b.id,
+                      });
+                    })
+                );
+              }
             }
             return res;
           }}
@@ -6260,13 +7403,88 @@ export default function App() {
               notifySound: true,
               targetDocs: ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate'],
               daysThreshold: 15,
+              debtEmailEnabled: true,
+              debtEmailAlertTime: '09:00',
+              debtEmailCriticalThreshold:
+                appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD,
+              supervisorEmailRecipients: appState.systemConfig?.gmailEmail
+                ? [appState.systemConfig.gmailEmail]
+                : [],
+              includeSystemSupervisors: true,
             }
           }
           bakeries={appState.bakeries}
+          debts={appState.debts}
+          users={appState.users}
+          systemGmailEmail={appState.systemConfig?.gmailEmail}
+          defaultDebtThreshold={
+            appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD
+          }
           currentUser={appState.currentUser}
           onSaveConfig={handleSaveDailyAlertConfig}
           onToggleMute={handleToggleAudioMute}
           onTriggerTestAlert={handleTriggerTestAlert}
+          onOpenDebtEmailHistory={() => setIsDebtEmailHistoryOpen(true)}
+          onSendCriticalDebtEmailNow={({ criticalThreshold, recipients, alertTime }) =>
+            dispatchCriticalDebtEmailToSupervisors({
+              mode: 'manual',
+              criticalThreshold,
+              recipients,
+              alertTime,
+              requireInteractiveAuth: true,
+            })
+          }
+        />
+      )}
+
+      {/* 12B. Daily Critical Debt Email Delivery History Modal (سجل إرسال التنبيهات البريدية اليومية) */}
+      {isDebtEmailHistoryOpen && (
+        <DailyDebtEmailHistoryModal
+          isOpen={isDebtEmailHistoryOpen}
+          onClose={() => setIsDebtEmailHistoryOpen(false)}
+          history={appState.systemConfig?.dailyAlertConfig?.debtEmailHistory || []}
+          currentUser={appState.currentUser}
+          systemConfig={appState.systemConfig}
+          onOpenSettings={() => setIsDailySettingsModalOpen(true)}
+          onClearHistory={() => {
+            const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const prevDaily = appState.systemConfig?.dailyAlertConfig || {
+              enabled: true,
+              alertTime: '09:00',
+              notifyBrowser: true,
+              notifySound: true,
+              targetDocs: ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate'],
+              daysThreshold: 15,
+            };
+            const nextConfig: SystemConfig = {
+              ...appState.systemConfig,
+              dailyAlertConfig: {
+                ...prevDaily,
+                debtEmailHistory: [],
+              },
+            };
+            commitRowMutation({
+              nextState: {
+                ...appState,
+                systemConfig: nextConfig,
+              },
+              table: 'system_config',
+              branchId,
+              toastMessage: 'تم مسح سجل التنبيهات البريدية التاريخية بنجاح',
+              executeDb: () =>
+                saveRowToDb({
+                  table: 'system_config',
+                  branchId,
+                  row: {
+                    branchId,
+                    systemConfig: nextConfig,
+                    columnTitles: appState.columnTitles,
+                    activityStatuses: appState.activityStatuses,
+                  },
+                  operation: 'UPDATE',
+                }),
+            });
+          }}
         />
       )}
 
@@ -6440,6 +7658,7 @@ export default function App() {
                       { id: 'SUMMARY', label: 'العرض المالي المختصر' },
                       { id: 'VIOLATIONS', label: 'المخالفات وسدادها فقط' },
                       { id: 'ADDED_DISPOSAL', label: 'المضاف والتصرف وسدادهما' },
+                      { id: 'WEIGHT_FINES', label: 'غرامات نقص الوزن (2024 - 12 عمود)' },
                     ] as const
                   ).map((dMode) => (
                     <button
@@ -6625,6 +7844,17 @@ export default function App() {
           appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD
         }
         muted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
+        debtEmailEnabled={appState.systemConfig?.dailyAlertConfig?.debtEmailEnabled ?? true}
+        supervisorRecipientsCount={
+          resolveSupervisorEmailRecipients(appState.users, {
+            extraEmails: appState.systemConfig?.dailyAlertConfig?.supervisorEmailRecipients,
+            includeSystemSupervisors: appState.systemConfig?.dailyAlertConfig?.includeSystemSupervisors,
+            fallbackDirectorateEmail: appState.systemConfig?.gmailEmail,
+          }).length
+        }
+        lastDebtEmailDate={appState.systemConfig?.dailyAlertConfig?.lastDebtEmailAlertDate || ''}
+        onOpenDailyEmailSettings={() => setIsDailySettingsModalOpen(true)}
+        onOpenDebtEmailHistory={() => setIsDebtEmailHistoryOpen(true)}
         onUpdateThreshold={(newThreshold) => {
           const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
           const nextConfig: SystemConfig = {

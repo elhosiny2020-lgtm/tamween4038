@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppUser, UserRoleType } from '../types';
+import { AppUser, DEPARTMENT_SCOPES, DepartmentScopeId, UserRoleType } from '../types';
 import {
   getRoleNameArabic,
   ALL_PERMISSIONS_LIST,
@@ -105,6 +105,8 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   const [department, setDepartment] = useState('قسم الرقابة التموينية والمخابز');
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState<UserRoleType>('viewer');
+  const [allowedDepartments, setAllowedDepartments] = useState<DepartmentScopeId[]>(['all']);
+  const [applyToAllBranches, setApplyToAllBranches] = useState<boolean>(true);
   const [customPermissions, setCustomPermissions] = useState<string[]>(
     getDefaultPermissionsForRole('viewer')
   );
@@ -120,6 +122,8 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   const [editDepartment, setEditDepartment] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editRole, setEditRole] = useState<UserRoleType>('admin');
+  const [editAllowedDepartments, setEditAllowedDepartments] = useState<DepartmentScopeId[]>(['all']);
+  const [editApplyToAllBranches, setEditApplyToAllBranches] = useState<boolean>(true);
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
 
   const [error, setError] = useState('');
@@ -147,6 +151,21 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
     );
   };
 
+  const toggleScopeSelection = (
+    current: DepartmentScopeId[],
+    target: DepartmentScopeId,
+    setter: (next: DepartmentScopeId[]) => void
+  ) => {
+    if (target === 'all') {
+      setter(['all']);
+      return;
+    }
+    const withoutAll = current.filter((x) => x !== 'all');
+    const exists = withoutAll.includes(target);
+    const next = exists ? withoutAll.filter((x) => x !== target) : [...withoutAll, target];
+    setter(next.length > 0 ? next : ['all']);
+  };
+
   const startEditingUser = (u: AppUser) => {
     setEditingUserId(u.id);
     setEditFullName(u.fullName || '');
@@ -157,6 +176,12 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
     setEditDepartment(u.department || 'إدارة تموين مركز المحلة الكبرى');
     setEditPhone(u.phone || '');
     setEditRole(u.role);
+    setEditAllowedDepartments(
+      Array.isArray(u.allowedDepartments) && u.allowedDepartments.length > 0
+        ? u.allowedDepartments
+        : ['all']
+    );
+    setEditApplyToAllBranches(u.applyToAllBranches !== false);
     setEditPermissions(
       Array.isArray(u.customPermissions) && u.customPermissions.length > 0
         ? u.customPermissions
@@ -212,6 +237,8 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       jobTitle: editJobTitle.trim(),
       department: editDepartment.trim(),
       phone: editPhone.trim(),
+      allowedDepartments: editAllowedDepartments,
+      applyToAllBranches: editApplyToAllBranches,
       customPermissions: editRole === 'admin' ? ALL_PERMISSIONS_LIST.map((p) => p.id) : editPermissions,
     };
 
@@ -262,6 +289,8 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
         jobTitle: jobTitle.trim(),
         department: department.trim(),
         phone: phone.trim(),
+        allowedDepartments,
+        applyToAllBranches,
         customPermissions: role === 'admin' ? ALL_PERMISSIONS_LIST.map((p) => p.id) : customPermissions,
         createdAt: new Date().toISOString().split('T')[0],
       });
@@ -425,6 +454,17 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                                 {u.jobTitle}
                               </span>
                             )}
+                            {Array.isArray(u.allowedDepartments) &&
+                              u.allowedDepartments.length > 0 &&
+                              !u.allowedDepartments.includes('all') && (
+                                <span className="text-[11px] font-black text-teal-950 bg-teal-100 px-2 py-0.5 rounded border border-teal-400">
+                                  مسؤول قسم:{' '}
+                                  {u.allowedDepartments
+                                    .map((d) => DEPARTMENT_SCOPES.find((s) => s.id === d)?.label || d)
+                                    .join(' + ')}
+                                  {u.applyToAllBranches !== false ? ' (معمم على كل الفروع)' : ''}
+                                </span>
+                              )}
                           </div>
                           <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-600 font-bold flex-wrap">
                             <span>الدور: {getRoleNameArabic(u.role)}</span>
@@ -660,6 +700,49 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                           </div>
                         </div>
 
+                        {/* Department Scoping Across All Branches (Edit) */}
+                        <div className="p-3 bg-teal-50/70 border border-teal-300 rounded-xl space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-black text-teal-950">
+                              نطاق الأقسام المسموح بإدارتها (تخصيص مسؤول لكل قسم):
+                            </span>
+                            <label className="inline-flex items-center gap-1.5 text-[11px] font-black text-teal-900 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editApplyToAllBranches}
+                                onChange={(e) => setEditApplyToAllBranches(e.target.checked)}
+                              />
+                              <span>تطبيق وتعميم هذا المسؤول على جميع الفروع تلقائياً</span>
+                            </label>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-1.5">
+                            {DEPARTMENT_SCOPES.map((sc) => {
+                              const active = editAllowedDepartments.includes(sc.id);
+                              return (
+                                <button
+                                  key={sc.id}
+                                  type="button"
+                                  onClick={() =>
+                                    toggleScopeSelection(
+                                      editAllowedDepartments,
+                                      sc.id,
+                                      setEditAllowedDepartments
+                                    )
+                                  }
+                                  className={`p-2 rounded-lg border text-right text-[11px] font-black cursor-pointer transition ${
+                                    active
+                                      ? 'bg-teal-700 text-white border-teal-800'
+                                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <div>{sc.label}</div>
+                                  <div className="text-[9.5px] opacity-80 font-bold">{sc.description}</div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
                         {/* Granular 16 Permissions Matrix */}
                         <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -860,6 +943,46 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                     </option>
                   ))}
                 </select>
+              </div>
+            </div>
+
+            {/* Department Scope Selector for New User (مسؤول لكل قسم عبر كل الفروع) */}
+            <div className="p-3 bg-teal-50/70 border border-teal-300 rounded-xl space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-black text-teal-950">
+                  تخصيص القسم المسموح به للمستخدم (لن يظهر له سوى هذا القسم فقط):
+                </span>
+                <label className="inline-flex items-center gap-1.5 text-[11px] font-black text-teal-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={applyToAllBranches}
+                    onChange={(e) => setApplyToAllBranches(e.target.checked)}
+                  />
+                  <span>ربط وتطبيق الصلاحية على جميع الفروع تلقائياً</span>
+                </label>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-1.5">
+                {DEPARTMENT_SCOPES.map((sc) => {
+                  const active = allowedDepartments.includes(sc.id);
+                  return (
+                    <button
+                      key={sc.id}
+                      type="button"
+                      data-testid={`new-user-scope-${sc.id}`}
+                      onClick={() =>
+                        toggleScopeSelection(allowedDepartments, sc.id, setAllowedDepartments)
+                      }
+                      className={`p-2 rounded-lg border text-right text-[11px] font-black cursor-pointer transition ${
+                        active
+                          ? 'bg-teal-700 text-white border-teal-800'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div>{sc.label}</div>
+                      <div className="text-[9.5px] opacity-80 font-bold">{sc.description}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

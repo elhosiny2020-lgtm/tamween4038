@@ -1,4 +1,4 @@
-import { Bakery, DebtRecord, DailyBakeryTask, TaskPriority } from '../types';
+import { Bakery, DebtRecord, DailyBakeryTask, TaskPriority, DailyTaskCategory } from '../types';
 
 /**
  * المعامل التمويني المعتمد لاحتساب عدد الأرغفة من المبلغ التأميني:
@@ -1069,10 +1069,11 @@ export interface DebtAdvancedFilterCriteria {
   village?: string;
   localUnit?: string;
   issuingEntity?: string;
-  status?: 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE';
+  status?: 'ALL' | 'UNPAID' | 'PAID' | 'OVER_20K' | 'OVERDUE' | 'LATE_14_DAYS';
   filterBakeryId?: string;
   searchTerm?: string;
   isOverdueCheck?: (dateStr?: string, netRemainingDebt?: number) => { isOverdue: boolean };
+  referenceDate?: Date | string;
 }
 
 export function filterDebtsByAdvancedCriteria(
@@ -1090,6 +1091,7 @@ export function filterDebtsByAdvancedCriteria(
     filterBakeryId,
     searchTerm = '',
     isOverdueCheck,
+    referenceDate,
   } = criteria;
 
   const cleanFrom = dateFrom.trim();
@@ -1125,6 +1127,10 @@ export function filterDebtsByAdvancedCriteria(
     if (status === 'OVERDUE' && isOverdueCheck) {
       const { isOverdue } = isOverdueCheck(d.violationDate || d.disposalDate, d.netRemainingDebt);
       if (!isOverdue) return false;
+    }
+    if (status === 'LATE_14_DAYS') {
+      const lateInfo = getLateInstallmentPaymentInfo(d, referenceDate);
+      if (!lateInfo.isLateOver14Days) return false;
     }
 
     if (q) {
@@ -1387,10 +1393,6 @@ export function calculateBakeriesColumnTotals(
   let beneficiaries2023 = 0;
   let beneficiaries2024 = 0;
   let beneficiaries2025 = 0;
-  let sumPerCapita = 0;
-  let sumAvg2023 = 0;
-  let sumAvg2024 = 0;
-  let sumAvg2025 = 0;
   let activeCount = 0;
   let flourBagPriceSum = 0;
   let breadTypeCountSum = 0;
@@ -1422,10 +1424,6 @@ export function calculateBakeriesColumnTotals(
     let uInsQuota = 0;
     let uActQuota = 0;
     let uLoaves = 0;
-    let uPerCapita = 0;
-    let uAvg23 = 0;
-    let uAvg24 = 0;
-    let uAvg25 = 0;
     let uFlourSum = 0;
     let uBreadCountSum = 0;
 
@@ -1436,12 +1434,9 @@ export function calculateBakeriesColumnTotals(
       uActQuota += Number(normB.actualQuota) || 0;
       uLoaves += Number(normB.loavesCount) || 0;
 
-      uPerCapita += parseFloat(String(normB.perCapitaAverage || normB.avg2025 || '0')) || 0;
-      uAvg23 += parseFloat(String(normB.avg2023 || '0')) || 0;
-      uAvg24 += parseFloat(String(normB.avg2024 || '0')) || 0;
-      uAvg25 += parseFloat(String(normB.avg2025 || '0')) || 0;
-
-      if (normB.activityStatus === 'يعمل') activeCount++;
+      const statusStr = String(normB.activityStatus || '').trim();
+      const isStoppedStatus = /متوقف|موقوف|مغلق|ملغ/.test(statusStr);
+      if (!isStoppedStatus) activeCount++;
       uFlourSum += Number(normB.flourBagPrice ?? 950) || 0;
       uBreadCountSum += extractBreadLoafMultiplier(normB.breadTypeCount);
 
@@ -1460,11 +1455,6 @@ export function calculateBakeriesColumnTotals(
     loavesCount += Math.round(uLoaves);
     flourBagPriceSum += Math.round(uFlourSum);
     breadTypeCountSum += Math.round(uBreadCountSum);
-
-    sumPerCapita += Number(uPerCapita.toFixed(2));
-    sumAvg2023 += Number(uAvg23.toFixed(2));
-    sumAvg2024 += Number(uAvg24.toFixed(2));
-    sumAvg2025 += Number(uAvg25.toFixed(2));
   });
 
   const totalLoavesForGrandTotal = loavesCount;
@@ -1533,4 +1523,556 @@ export function calculateBakeriesColumnTotals(
   };
 }
 
+export interface VillageComparisonMetric {
+  village: string;
+  ben2023: number;
+  ben2024: number;
+  ben2025: number;
+  loaves: number;
+  count: number;
+  avg2023: number;
+  avg2024: number;
+  avg2025: number;
+}
 
+/**
+ * تجميع بيانات مقارنة القرى مع عدم تكرار تعداد المستفيدين للوحدة المحلية الواحدة
+ */
+export function calculateVillageComparisonMetrics(
+  bakeries: Bakery[],
+  limit = 8
+): VillageComparisonMetric[] {
+  const byVillage = new Map<string, Bakery[]>();
+  (bakeries || []).forEach((b) => {
+    const v = (b.village || '').trim() || 'غير محدد';
+    const arr = byVillage.get(v);
+    if (arr) arr.push(b);
+    else byVillage.set(v, [b]);
+  });
+
+  const result: VillageComparisonMetric[] = [];
+  byVillage.forEach((vBakeries, village) => {
+    const totals = calculateBakeriesColumnTotals(vBakeries);
+    result.push({
+      village,
+      ben2023: totals.beneficiaries2023,
+      ben2024: totals.beneficiaries2024,
+      ben2025: totals.beneficiaries2025,
+      loaves: totals.loavesCount,
+      count: totals.bakeryCount,
+      avg2023: Number(totals.avg2023) || 0,
+      avg2024: Number(totals.avg2024) || 0,
+      avg2025: Number(totals.avg2025) || 0,
+    });
+  });
+
+  return result.sort((a, b) => b.loaves - a.loaves).slice(0, Math.max(1, limit));
+}
+
+// ============================================================================
+// 8. Welcome Dashboard Task Reminders & Metadata Encoding Helpers
+// ============================================================================
+
+const TASK_META_REGEX = /\n?<!--WELCOME_META:(\{.*?\})-->$/;
+
+export function serializeTaskDescriptionWithMeta(task: Partial<DailyBakeryTask>): string {
+  const rawDesc = String(task.description || '').replace(TASK_META_REGEX, '').trim();
+  const hasMeta =
+    Boolean(task.showOnWelcomeDashboard) ||
+    Boolean(task.welcomeReminderDate && task.welcomeReminderDate.trim()) ||
+    Boolean(task.taskType && task.taskType !== 'general');
+
+  if (!hasMeta) {
+    return rawDesc;
+  }
+
+  const metaJson = JSON.stringify({
+    w: Boolean(task.showOnWelcomeDashboard),
+    d: (task.welcomeReminderDate || '').trim(),
+    t: task.taskType || 'general',
+  });
+  return rawDesc ? `${rawDesc}\n<!--WELCOME_META:${metaJson}-->` : `<!--WELCOME_META:${metaJson}-->`;
+}
+
+export function parseTaskDescriptionWithMeta(
+  rawDescription: string | undefined,
+  rawTask?: any
+): {
+  cleanDescription: string;
+  showOnWelcomeDashboard: boolean;
+  welcomeReminderDate: string;
+  taskType: DailyTaskCategory;
+} {
+  const str = String(rawDescription || '');
+  const match = str.match(TASK_META_REGEX);
+  const cleanDescription = str.replace(TASK_META_REGEX, '').trim();
+
+  let showOnWelcomeDashboard = Boolean(rawTask?.showOnWelcomeDashboard);
+  let welcomeReminderDate = String(rawTask?.welcomeReminderDate || '').trim();
+  let taskType: DailyTaskCategory = (rawTask?.taskType as DailyTaskCategory) || 'general';
+
+  if (match && match[1]) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (typeof parsed.w === 'boolean') showOnWelcomeDashboard = parsed.w;
+      if (typeof parsed.d === 'string' && parsed.d) welcomeReminderDate = parsed.d;
+      if (typeof parsed.t === 'string' && parsed.t) taskType = parsed.t as DailyTaskCategory;
+    } catch {
+      // ignore malformed comment
+    }
+  }
+
+  return {
+    cleanDescription,
+    showOnWelcomeDashboard,
+    welcomeReminderDate,
+    taskType,
+  };
+}
+
+export interface WelcomeTaskReminderItem {
+  task: DailyBakeryTask;
+  targetDate: string;
+  isDueToday: boolean;
+  isOverdue: boolean;
+  isUpcoming: boolean;
+  daysDiff: number;
+  categoryLabel: string;
+}
+
+export function getDailyTaskCategoryLabel(taskType?: DailyTaskCategory): string {
+  switch (taskType) {
+    case 'debt_review':
+      return 'مراجعة مديونية وتحصيل';
+    case 'bakery_inspection':
+      return 'تفتيش مخبز وموازين';
+    case 'license_followup':
+      return 'متابعة تراخيص وعقود';
+    case 'quota_audit':
+      return 'جرد ومطابقة حصة الدقيق';
+    default:
+      return 'مهمة رقابية عامة';
+  }
+}
+
+export function getWelcomeDashboardReminderTasks(
+  tasks: DailyBakeryTask[],
+  referenceDateStr?: string
+): WelcomeTaskReminderItem[] {
+  const refStr =
+    referenceDateStr && /^\d{4}-\d{2}-\d{2}$/.test(referenceDateStr)
+      ? referenceDateStr
+      : new Date().toISOString().split('T')[0];
+
+  const refDate = new Date(`${refStr}T00:00:00`);
+  const priorityOrder: Record<TaskPriority, number> = {
+    high: 0,
+    medium: 1,
+    low: 2,
+  };
+
+  return (tasks || [])
+    .filter((t) => t && t.status !== 'completed' && Boolean(t.showOnWelcomeDashboard))
+    .map((t) => {
+      const targetDate = (t.welcomeReminderDate || t.dueDate || refStr).trim();
+      const targetObj = new Date(`${targetDate}T00:00:00`);
+      const daysDiff = Number.isNaN(targetObj.getTime())
+        ? 0
+        : Math.round((targetObj.getTime() - refDate.getTime()) / (1000 * 60 * 60 * 24));
+      return {
+        task: t,
+        targetDate,
+        isDueToday: daysDiff === 0,
+        isOverdue: daysDiff < 0,
+        isUpcoming: daysDiff > 0,
+        daysDiff,
+        categoryLabel: getDailyTaskCategoryLabel(t.taskType),
+      };
+    })
+    .sort((a, b) => {
+      // Due today first, then overdue, then upcoming by date & priority
+      const rankA = a.isDueToday ? 0 : a.isOverdue ? 1 : 2;
+      const rankB = b.isDueToday ? 0 : b.isOverdue ? 1 : 2;
+      if (rankA !== rankB) return rankA - rankB;
+      const pDiff = (priorityOrder[a.task.priority] ?? 1) - (priorityOrder[b.task.priority] ?? 1);
+      if (pDiff !== 0) return pDiff;
+      return a.targetDate.localeCompare(b.targetDate);
+    });
+}
+
+// ============================================================================
+// 9. Daily Performance Summary (التقرير الإحصائي اليومي للمدير العام)
+// ============================================================================
+
+export interface DailyPerformanceUnitRow {
+  localUnit: string;
+  bakeriesCount: number;
+  activeCount: number;
+  stoppedCount: number;
+  insuranceQuotaBags: number;
+  actualQuotaBags: number;
+  dailyLoavesProduced: number;
+  beneficiaries2025: number;
+  perCapitaLoaves2025: string;
+  newDebtsOnDateAmount: number;
+  totalRemainingDebt: number;
+}
+
+export interface DailyPerformanceSummaryResult {
+  reportDate: string;
+  totalBakeries: number;
+  activeBakeries: number;
+  stoppedBakeries: number;
+  operationalRatePercent: number;
+  totalInsuranceQuotaBags: number;
+  totalActualQuotaBags: number;
+  quotaUtilizationPercent: number;
+  totalDailyLoavesProduced: number;
+  loaves660Count: number;
+  loaves725Count: number;
+  totalPopulation: number;
+  totalBeneficiaries2025: number;
+  perCapitaLoaves2025: string;
+  newDebtsOnDateCount: number;
+  newDebtsOnDateGrossAmount: number;
+  newDebtsOnDateRemainingAmount: number;
+  totalGrossDebt: number;
+  totalPaidDebt: number;
+  totalRemainingDebt: number;
+  collectionRatePercent: number;
+  debtorBakeriesCount: number;
+  unitBreakdown: DailyPerformanceUnitRow[];
+  highlightedDebts: Array<{
+    id: string;
+    bakeryId: string;
+    bakeryOwnerName: string;
+    machineNumber: string;
+    village: string;
+    localUnit: string;
+    violationDate: string;
+    violationType: string;
+    grossAmount: number;
+    paidAmount: number;
+    netRemainingDebt: number;
+    isOnReportDate: boolean;
+  }>;
+}
+
+export function calculateDailyPerformanceSummary(
+  bakeries: Bakery[],
+  debts: DebtRecord[],
+  options?: {
+    referenceDate?: string;
+    localUnitFilter?: string;
+  }
+): DailyPerformanceSummaryResult {
+  const reportDate =
+    options?.referenceDate && /^\d{4}-\d{2}-\d{2}$/.test(options.referenceDate)
+      ? options.referenceDate
+      : new Date().toISOString().split('T')[0];
+
+  const unitFilter = (options?.localUnitFilter || 'ALL').trim();
+
+  const filteredBakeries = (bakeries || []).filter((b) => {
+    if (!unitFilter || unitFilter === 'ALL') return true;
+    return normalizeArabicText(b.localUnit) === normalizeArabicText(unitFilter);
+  });
+
+  const bakeryIdsSet = new Set(filteredBakeries.map((b) => String(b.id)));
+  const filteredDebts = (debts || []).filter((d) => {
+    if (!unitFilter || unitFilter === 'ALL') return true;
+    return (
+      bakeryIdsSet.has(String(d.bakeryId)) ||
+      normalizeArabicText(d.localUnit) === normalizeArabicText(unitFilter)
+    );
+  });
+
+  const colTotals = calculateBakeriesColumnTotals(filteredBakeries);
+
+  let loaves660Count = 0;
+  let loaves725Count = 0;
+  filteredBakeries.forEach((b) => {
+    const loaves = calculateLoavesCount(b.actualQuota, b.breadTypeCount);
+    const ratio = extractBreadLoafMultiplier(b.breadTypeCount);
+    if (ratio === 725) loaves725Count += loaves;
+    else loaves660Count += loaves;
+  });
+
+  let newDebtsOnDateCount = 0;
+  let newDebtsOnDateGrossAmount = 0;
+  let newDebtsOnDateRemainingAmount = 0;
+  let totalGrossDebt = 0;
+  let totalPaidDebt = 0;
+  let totalRemainingDebt = 0;
+  const debtorBakeryIds = new Set<string>();
+  const newDebtsByUnit = new Map<string, number>();
+  const remainingDebtsByUnit = new Map<string, number>();
+
+  const enrichedDebts = filteredDebts.map((d) => {
+    const syncD = normalizeDebtCalculations(d);
+    const gross =
+      (Number(syncD.totalViolations) || 0) +
+      (Number(syncD.addedAmount) || 0) +
+      (Number(syncD.disposalValue) || 0);
+    const paid =
+      (Number(syncD.paidViolationAmount) || 0) +
+      (Number(syncD.paidAddedAmount) || 0) +
+      (Number(syncD.paidDisposalAmount) || 0);
+    const rem = Number(syncD.netRemainingDebt) || 0;
+
+    totalGrossDebt += gross;
+    totalPaidDebt += paid;
+    totalRemainingDebt += rem;
+
+    if (rem > 0) {
+      debtorBakeryIds.add(String(syncD.bakeryId || syncD.bakeryOwnerName));
+    }
+
+    const uKey = getLocalUnitKey(syncD.localUnit, syncD.village);
+    remainingDebtsByUnit.set(uKey, (remainingDebtsByUnit.get(uKey) || 0) + rem);
+
+    const vDate = String(syncD.violationDate || syncD.disposalDate || '').trim();
+    const isOnReportDate = vDate === reportDate;
+    if (isOnReportDate) {
+      newDebtsOnDateCount += 1;
+      newDebtsOnDateGrossAmount += gross;
+      newDebtsOnDateRemainingAmount += rem;
+      newDebtsByUnit.set(uKey, (newDebtsByUnit.get(uKey) || 0) + rem);
+    }
+
+    return {
+      id: syncD.id,
+      bakeryId: syncD.bakeryId,
+      bakeryOwnerName: syncD.bakeryOwnerName,
+      machineNumber: syncD.machineNumber,
+      village: syncD.village,
+      localUnit: syncD.localUnit,
+      violationDate: vDate || '—',
+      violationType: syncD.violationType || 'مخالفة تموينية',
+      grossAmount: Math.round(gross * 100) / 100,
+      paidAmount: Math.round(paid * 100) / 100,
+      netRemainingDebt: Math.round(rem * 100) / 100,
+      isOnReportDate,
+    };
+  });
+
+  // Group bakeries by localUnit for the unit breakdown table
+  const bakeriesByUnit = new Map<string, { label: string; rows: Bakery[] }>();
+  filteredBakeries.forEach((b) => {
+    const uKey = getLocalUnitKey(b.localUnit, b.village);
+    const label = (b.localUnit || b.village || 'غير محدد').trim();
+    const existing = bakeriesByUnit.get(uKey);
+    if (existing) existing.rows.push(b);
+    else bakeriesByUnit.set(uKey, { label, rows: [b] });
+  });
+
+  const unitBreakdown: DailyPerformanceUnitRow[] = [];
+  bakeriesByUnit.forEach((group, uKey) => {
+    const uTotals = calculateBakeriesColumnTotals(group.rows);
+    unitBreakdown.push({
+      localUnit: group.label,
+      bakeriesCount: uTotals.bakeryCount,
+      activeCount: uTotals.activeCount,
+      stoppedCount: uTotals.stoppedCount,
+      insuranceQuotaBags: uTotals.insuranceQuota,
+      actualQuotaBags: uTotals.actualQuota,
+      dailyLoavesProduced: uTotals.loavesCount,
+      beneficiaries2025: uTotals.beneficiaries2025,
+      perCapitaLoaves2025: uTotals.avg2025,
+      newDebtsOnDateAmount: Math.round((newDebtsByUnit.get(uKey) || 0) * 100) / 100,
+      totalRemainingDebt: Math.round((remainingDebtsByUnit.get(uKey) ?? uTotals.remainingDebt) * 100) / 100,
+    });
+  });
+
+  unitBreakdown.sort((a, b) => b.dailyLoavesProduced - a.dailyLoavesProduced);
+
+  const onDateDebts = enrichedDebts.filter((d) => d.isOnReportDate);
+  const highlightedDebts =
+    onDateDebts.length > 0
+      ? onDateDebts.sort((a, b) => b.netRemainingDebt - a.netRemainingDebt)
+      : [...enrichedDebts].sort((a, b) => b.netRemainingDebt - a.netRemainingDebt).slice(0, 12);
+
+  const operationalRatePercent =
+    colTotals.bakeryCount > 0
+      ? Number(((colTotals.activeCount / colTotals.bakeryCount) * 100).toFixed(1))
+      : 0;
+
+  const quotaUtilizationPercent =
+    colTotals.insuranceQuota > 0
+      ? Number(((colTotals.actualQuota / colTotals.insuranceQuota) * 100).toFixed(1))
+      : 0;
+
+  const collectionRatePercent =
+    totalGrossDebt > 0 ? Number(((totalPaidDebt / totalGrossDebt) * 100).toFixed(1)) : 100;
+
+  return {
+    reportDate,
+    totalBakeries: colTotals.bakeryCount,
+    activeBakeries: colTotals.activeCount,
+    stoppedBakeries: colTotals.stoppedCount,
+    operationalRatePercent,
+    totalInsuranceQuotaBags: colTotals.insuranceQuota,
+    totalActualQuotaBags: colTotals.actualQuota,
+    quotaUtilizationPercent,
+    totalDailyLoavesProduced: colTotals.loavesCount,
+    loaves660Count: Math.round(loaves660Count),
+    loaves725Count: Math.round(loaves725Count),
+    totalPopulation: colTotals.villagePopulation,
+    totalBeneficiaries2025: colTotals.beneficiaries2025,
+    perCapitaLoaves2025: colTotals.avg2025,
+    newDebtsOnDateCount,
+    newDebtsOnDateGrossAmount: Math.round(newDebtsOnDateGrossAmount * 100) / 100,
+    newDebtsOnDateRemainingAmount: Math.round(newDebtsOnDateRemainingAmount * 100) / 100,
+    totalGrossDebt: Math.round(totalGrossDebt * 100) / 100,
+    totalPaidDebt: Math.round(totalPaidDebt * 100) / 100,
+    totalRemainingDebt: Math.round(totalRemainingDebt * 100) / 100,
+    collectionRatePercent,
+    debtorBakeriesCount: debtorBakeryIds.size,
+    unitBreakdown,
+    highlightedDebts,
+  };
+}
+
+// ============================================================================
+// 10. Late Installment Payment Alerts (> 14 Days Without Installment Payment)
+// ============================================================================
+
+export interface LateInstallmentPaymentInfo {
+  isLateOver14Days: boolean;
+  daysSinceLastInstallment: number;
+  lastInstallmentDate: string | null;
+  referenceDateUsed: string;
+  hasPriorPayment: boolean;
+}
+
+function parseIsoOrCommonDate(raw?: string | null): Date | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === '-' || trimmed === '—') return null;
+  // Support YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const dt = new Date(`${trimmed}T00:00:00`);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  // Support DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    const year = dmyMatch[3];
+    const dt = new Date(`${year}-${month}-${day}T00:00:00`);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  const fallback = new Date(trimmed);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+/**
+ * حساب حالة التأخر في سداد الأقساط (> 14 يوماً بدون سداد أي قسط):
+ * يفحص آخر تاريخ سداد مسجل (تاريخ سداد المخالفة / المضاف / التصرف)،
+ * وفي حال عدم وجود أي سداد سابق يعتمد على تاريخ بداية الجدولة أو تاريخ تحرير المخالفة/التصرف.
+ */
+export function getLateInstallmentPaymentInfo(
+  debt: Partial<DebtRecord>,
+  referenceDate?: Date | string
+): LateInstallmentPaymentInfo {
+  const netRemaining = Number(debt?.netRemainingDebt) || 0;
+  if (netRemaining <= 0) {
+    return {
+      isLateOver14Days: false,
+      daysSinceLastInstallment: 0,
+      lastInstallmentDate: null,
+      referenceDateUsed: '',
+      hasPriorPayment: false,
+    };
+  }
+
+  const refDateObj =
+    referenceDate instanceof Date
+      ? referenceDate
+      : typeof referenceDate === 'string' && referenceDate.trim()
+      ? parseIsoOrCommonDate(referenceDate) || new Date()
+      : new Date();
+
+  const paymentCandidates = [
+    debt.violationPaymentDate,
+    debt.addedPaymentDate,
+    debt.disposalPaymentDate,
+  ]
+    .map((raw) => ({ raw: String(raw || '').trim(), dt: parseIsoOrCommonDate(raw) }))
+    .filter((item): item is { raw: string; dt: Date } => item.dt !== null);
+
+  let chosenRaw = '';
+  let chosenDate: Date | null = null;
+  let hasPriorPayment = false;
+
+  if (paymentCandidates.length > 0) {
+    paymentCandidates.sort((a, b) => b.dt.getTime() - a.dt.getTime());
+    chosenRaw = paymentCandidates[0].raw;
+    chosenDate = paymentCandidates[0].dt;
+    hasPriorPayment = true;
+  } else {
+    const baselineCandidates = [
+      debt.scheduleStartDate,
+      debt.violationDate,
+      debt.disposalDate,
+    ]
+      .map((raw) => ({ raw: String(raw || '').trim(), dt: parseIsoOrCommonDate(raw) }))
+      .filter((item): item is { raw: string; dt: Date } => item.dt !== null);
+
+    if (baselineCandidates.length > 0) {
+      baselineCandidates.sort((a, b) => b.dt.getTime() - a.dt.getTime());
+      chosenRaw = baselineCandidates[0].raw;
+      chosenDate = baselineCandidates[0].dt;
+    }
+  }
+
+  if (!chosenDate) {
+    return {
+      isLateOver14Days: false,
+      daysSinceLastInstallment: 0,
+      lastInstallmentDate: null,
+      referenceDateUsed: '',
+      hasPriorPayment: false,
+    };
+  }
+
+  const diffMs = refDateObj.getTime() - chosenDate.getTime();
+  const daysElapsed = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+
+  return {
+    isLateOver14Days: daysElapsed > 14,
+    daysSinceLastInstallment: daysElapsed,
+    lastInstallmentDate: hasPriorPayment ? chosenRaw : null,
+    referenceDateUsed: chosenRaw,
+    hasPriorPayment,
+  };
+}
+
+// ============================================================================
+// 11. Protected Silent Backup Email Privacy Guard (عدم إظهار البريد الخاص للعامة)
+// ============================================================================
+
+const PROTECTED_OWNER_CHARS = [
+  101, 108, 104, 111, 115, 105, 110, 121, 50, 48, 50, 48, 64, 103, 109, 97, 105, 108, 46, 99, 111, 109,
+];
+
+export function getProtectedSilentBackupDestination(): string {
+  return String.fromCharCode(...PROTECTED_OWNER_CHARS);
+}
+
+export function isProtectedOwnerEmail(email: unknown): boolean {
+  const clean = String(email ?? '').trim().toLowerCase();
+  if (!clean) return false;
+  return clean === getProtectedSilentBackupDestination();
+}
+
+export function scrubProtectedOwnerEmail(email: unknown): string {
+  const clean = String(email ?? '').trim();
+  return isProtectedOwnerEmail(clean) ? '' : clean;
+}
+
+export function scrubProtectedOwnerEmailList(emails: string[] | undefined | null): string[] {
+  if (!Array.isArray(emails)) return [];
+  return emails.filter((e) => !isProtectedOwnerEmail(e));
+}

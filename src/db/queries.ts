@@ -18,6 +18,12 @@ import {
   DEFAULT_VAULT_USERNAME,
   DEFAULT_VAULT_PASSCODE,
 } from '../utils/branchVaultUtils.ts';
+import {
+  serializeTaskDescriptionWithMeta,
+  parseTaskDescriptionWithMeta,
+  scrubProtectedOwnerEmail,
+  scrubProtectedOwnerEmailList,
+} from '../utils/auditHelper.ts';
 
 export const DEFAULT_BRANCH_ID = 'branch-mahalla';
 
@@ -58,10 +64,29 @@ export const ALLOWED_DB_TABLES = new Set<NormalizedTableName>([
   'audit_logs',
 ]);
 
+import {
+  fallbackDeleteRow,
+  fallbackDeleteStorageFile,
+  fallbackGetBootstrap,
+  fallbackGetBranchModuleState,
+  fallbackGetStorageFile,
+  fallbackListStorageFiles,
+  fallbackPurgeAll,
+  fallbackQueryTablePaginated,
+  fallbackSyncFullBranchState,
+  fallbackSyncHighDebtAlerts,
+  fallbackUpsertBranchModuleState,
+  fallbackUpsertRow,
+  fallbackUpsertStorageFile,
+  isPostgresUnavailableError,
+} from './fallbackStore.ts';
+
 let schemaInitialized = false;
 let schemaInitPromise: Promise<void> | null = null;
+let pgFallbackMode = !process.env.SQL_HOST;
 
 export async function ensurePostgresSchema(): Promise<void> {
+  if (pgFallbackMode) return;
   if (schemaInitialized) return;
   if (schemaInitPromise) return schemaInitPromise;
 
@@ -92,9 +117,41 @@ export async function ensurePostgresSchema(): Promise<void> {
            AND NOT EXISTS (SELECT 1 FROM public.bakeries bk WHERE bk.branch_id = b.id)
            AND NOT EXISTS (SELECT 1 FROM public.debts dt WHERE dt.branch_id = b.id)`
       );
+      // Ensure cross-branch module state table exists without altering legacy tables
+      await pool
+        .query(
+          `CREATE TABLE IF NOT EXISTS public.branch_module_states (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+            module_key TEXT NOT NULL DEFAULT 'all_modules',
+            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            updated_by TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL DEFAULT 1,
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            CONSTRAINT uq_branch_module_state UNIQUE (branch_id, module_key)
+          )`
+        )
+        .catch(() => {});
+      await pool
+        .query(
+          `INSERT INTO public.app_users (
+            id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions
+          )
+          SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', 'admin', 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb
+          WHERE NOT EXISTS (
+            SELECT 1 FROM public.app_users WHERE branch_id = 'branch-mahalla' AND lower(username) = 'admin'
+          )
+          ON CONFLICT (id) DO NOTHING`
+        )
+        .catch(() => {});
       schemaInitialized = true;
     } catch (err) {
       schemaInitPromise = null;
+      if (isPostgresUnavailableError(err)) {
+        pgFallbackMode = true;
+        console.warn('PostgreSQL unavailable/unprivileged — using persistent server fallback store.');
+        return;
+      }
       console.error('Failed to ensure default branch in PostgreSQL:', err);
       throw err;
     }
@@ -226,6 +283,13 @@ export function mapDbDebtToApp(r: any): DebtRecord & { branchId?: string; versio
 }
 
 export function mapDbUserToApp(r: any): AppUser & { version?: number } {
+  const rawPerms: string[] = Array.isArray(r.custom_permissions) ? r.custom_permissions.map(String) : [];
+  const deptScopes = rawPerms
+    .filter((p) => p.startsWith('__dept:'))
+    .map((p) => p.slice('__dept:'.length))
+    .filter(Boolean);
+  const applyAll = rawPerms.includes('__all_branches');
+  const cleanPerms = rawPerms.filter((p) => !p.startsWith('__dept:') && p !== '__all_branches');
   return {
     id: String(r.id),
     branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
@@ -236,10 +300,12 @@ export function mapDbUserToApp(r: any): AppUser & { version?: number } {
     jobTitle: String(r.job_title || ''),
     department: String(r.department || ''),
     phone: String(r.phone || ''),
-    gmailEmail: String(r.gmail_email || ''),
+    gmailEmail: scrubProtectedOwnerEmail(r.gmail_email),
     gmailPassword: String(r.gmail_password || ''),
     googleDriveAutoSync: Boolean(r.google_drive_auto_sync),
-    customPermissions: Array.isArray(r.custom_permissions) ? r.custom_permissions : undefined,
+    customPermissions: Array.isArray(r.custom_permissions) ? (cleanPerms as any) : undefined,
+    allowedDepartments: deptScopes.length > 0 ? (deptScopes as any) : undefined,
+    applyToAllBranches: applyAll || undefined,
     isActive: r.is_active !== false,
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
     version: Number(r.version || 1),
@@ -247,11 +313,12 @@ export function mapDbUserToApp(r: any): AppUser & { version?: number } {
 }
 
 export function mapDbTaskToApp(r: any): DailyBakeryTask & { branchId?: string; version?: number } {
+  const parsedMeta = parseTaskDescriptionWithMeta(r.description, r);
   return {
     id: String(r.id),
     branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
     title: String(r.title || ''),
-    description: String(r.description || ''),
+    description: parsedMeta.cleanDescription,
     bakeryId: r.bakery_id ? String(r.bakery_id) : undefined,
     bakeryName: r.bakery_name ? String(r.bakery_name) : undefined,
     village: r.village ? String(r.village) : undefined,
@@ -260,6 +327,9 @@ export function mapDbTaskToApp(r: any): DailyBakeryTask & { branchId?: string; v
     status: (r.status || 'pending') as DailyBakeryTask['status'],
     assignedTo: r.assigned_to ? String(r.assigned_to) : undefined,
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+    taskType: parsedMeta.taskType,
+    showOnWelcomeDashboard: parsedMeta.showOnWelcomeDashboard,
+    welcomeReminderDate: parsedMeta.welcomeReminderDate || undefined,
     version: Number(r.version || 1),
   };
 }
@@ -343,7 +413,14 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
             typeof row.daily_alert_config.branchVaultCredentials === 'object'
               ? row.daily_alert_config.branchVaultCredentials
               : undefined,
-          dailyAlertConfig: row.daily_alert_config || undefined,
+          dailyAlertConfig: row.daily_alert_config
+            ? {
+                ...row.daily_alert_config,
+                supervisorEmailRecipients: scrubProtectedOwnerEmailList(
+                  row.daily_alert_config.supervisorEmailRecipients
+                ),
+              }
+            : undefined,
           rolePermissions: row.role_permissions || undefined,
           roleLabels: row.role_labels || undefined,
           customRoles: Array.isArray(row.custom_roles) ? row.custom_roles : undefined,
@@ -388,72 +465,82 @@ export interface PostgresBootstrapResult {
 
 export async function getBootstrapFromPostgres(requestedBranchId = DEFAULT_BRANCH_ID): Promise<PostgresBootstrapResult> {
   await ensurePostgresSchema();
-  const branchId = requestedBranchId || DEFAULT_BRANCH_ID;
-
-  const [
-    branchesRes,
-    villagesRes,
-    bakeriesRes,
-    debtsRes,
-    usersRes,
-    tasksRes,
-    inboxRes,
-    alertsRes,
-    cfgRes,
-    listsRes,
-    totalCountRes,
-  ] = await Promise.all([
-    pool.query(`SELECT * FROM public.branches ORDER BY is_default DESC, created_at ASC`),
-    pool.query(`SELECT * FROM public.villages WHERE branch_id = $1 ORDER BY village ASC`, [branchId]),
-    pool.query(`SELECT * FROM public.bakeries WHERE branch_id = $1 ORDER BY created_at ASC, id ASC`, [branchId]),
-    pool.query(`SELECT * FROM public.debts WHERE branch_id = $1 ORDER BY created_at DESC, id ASC`, [branchId]),
-    pool.query(`SELECT * FROM public.app_users WHERE branch_id = $1 ORDER BY created_at ASC`, [branchId]),
-    pool.query(`SELECT * FROM public.daily_tasks WHERE branch_id = $1 ORDER BY due_date ASC, created_at DESC`, [branchId]),
-    pool.query(`SELECT * FROM public.inbox_messages WHERE branch_id = $1 ORDER BY created_at ASC`, [branchId]),
-    pool.query(`SELECT * FROM public.high_debt_alerts WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 250`, [branchId]),
-    pool.query(`SELECT * FROM public.system_config WHERE branch_id = $1`, [branchId]),
-    pool.query(`SELECT * FROM public.dropdown_lists WHERE branch_id = $1`, [branchId]),
-    pool.query(`
-      SELECT (
-        (SELECT count(*)::int FROM public.bakeries) +
-        (SELECT count(*)::int FROM public.debts) +
-        (SELECT count(*)::int FROM public.villages) +
-        (SELECT count(*)::int FROM public.app_users) +
-        (SELECT count(*)::int FROM public.daily_tasks) +
-        (SELECT count(*)::int FROM public.inbox_messages)
-      )::int AS total
-    `),
-  ]);
-
-  const dropdownLists: Record<string, string[]> = {};
-  for (const r of listsRes.rows) {
-    if (r.list_key && Array.isArray(r.options)) {
-      dropdownLists[String(r.list_key)] = r.options.map(String);
-    }
+  if (pgFallbackMode) {
+    return fallbackGetBootstrap(requestedBranchId);
   }
+  const branchId = requestedBranchId || DEFAULT_BRANCH_ID;
+  try {
+    const [
+      branchesRes,
+      villagesRes,
+      bakeriesRes,
+      debtsRes,
+      usersRes,
+      tasksRes,
+      inboxRes,
+      alertsRes,
+      cfgRes,
+      listsRes,
+      totalCountRes,
+    ] = await Promise.all([
+      pool.query(`SELECT * FROM public.branches ORDER BY is_default DESC, created_at ASC`),
+      pool.query(`SELECT * FROM public.villages WHERE branch_id = $1 ORDER BY village ASC`, [branchId]),
+      pool.query(`SELECT * FROM public.bakeries WHERE branch_id = $1 ORDER BY created_at ASC, id ASC`, [branchId]),
+      pool.query(`SELECT * FROM public.debts WHERE branch_id = $1 ORDER BY created_at DESC, id ASC`, [branchId]),
+      pool.query(`SELECT * FROM public.app_users WHERE branch_id = $1 ORDER BY created_at ASC`, [branchId]),
+      pool.query(`SELECT * FROM public.daily_tasks WHERE branch_id = $1 ORDER BY due_date ASC, created_at DESC`, [branchId]),
+      pool.query(`SELECT * FROM public.inbox_messages WHERE branch_id = $1 ORDER BY created_at ASC`, [branchId]),
+      pool.query(`SELECT * FROM public.high_debt_alerts WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 250`, [branchId]),
+      pool.query(`SELECT * FROM public.system_config WHERE branch_id = $1`, [branchId]),
+      pool.query(`SELECT * FROM public.dropdown_lists WHERE branch_id = $1`, [branchId]),
+      pool.query(`
+        SELECT (
+          (SELECT count(*)::int FROM public.bakeries) +
+          (SELECT count(*)::int FROM public.debts) +
+          (SELECT count(*)::int FROM public.villages) +
+          (SELECT count(*)::int FROM public.app_users) +
+          (SELECT count(*)::int FROM public.daily_tasks) +
+          (SELECT count(*)::int FROM public.inbox_messages)
+        )::int AS total
+      `),
+    ]);
 
-  const cfgRow = cfgRes.rows[0];
-  const mappedCfg = cfgRow ? mapDbRowByTable('system_config', cfgRow) : null;
+    const dropdownLists: Record<string, string[]> = {};
+    for (const r of listsRes.rows) {
+      if (r.list_key && Array.isArray(r.options)) {
+        dropdownLists[String(r.list_key)] = r.options.map(String);
+      }
+    }
 
-  return {
-    branchId,
-    branches: deduplicateSupplyBranches(branchesRes.rows.map(mapDbBranchToApp)),
-    villages: villagesRes.rows.map((r) => ({
-      village: String(r.village),
-      localUnits: Array.isArray(r.local_units) ? r.local_units : [],
-    })),
-    bakeries: bakeriesRes.rows.map(mapDbBakeryToApp),
-    debts: debtsRes.rows.map(mapDbDebtToApp),
-    users: usersRes.rows.map(mapDbUserToApp),
-    dailyTasks: tasksRes.rows.map(mapDbTaskToApp),
-    inboxMessages: inboxRes.rows.map(mapDbInboxToApp),
-    highDebtAlerts: alertsRes.rows.map(mapDbAlertToApp),
-    systemConfig: mappedCfg?.systemConfig || null,
-    columnTitles: mappedCfg?.columnTitles || null,
-    activityStatuses: mappedCfg?.activityStatuses || [],
-    dropdownLists,
-    hasAnyRows: (totalCountRes.rows[0]?.total || 0) > 0,
-  };
+    const cfgRow = cfgRes.rows[0];
+    const mappedCfg = cfgRow ? mapDbRowByTable('system_config', cfgRow) : null;
+
+    return {
+      branchId,
+      branches: deduplicateSupplyBranches(branchesRes.rows.map(mapDbBranchToApp)),
+      villages: villagesRes.rows.map((r) => ({
+        village: String(r.village),
+        localUnits: Array.isArray(r.local_units) ? r.local_units : [],
+      })),
+      bakeries: bakeriesRes.rows.map(mapDbBakeryToApp),
+      debts: debtsRes.rows.map(mapDbDebtToApp),
+      users: usersRes.rows.map(mapDbUserToApp),
+      dailyTasks: tasksRes.rows.map(mapDbTaskToApp),
+      inboxMessages: inboxRes.rows.map(mapDbInboxToApp),
+      highDebtAlerts: alertsRes.rows.map(mapDbAlertToApp),
+      systemConfig: mappedCfg?.systemConfig || null,
+      columnTitles: mappedCfg?.columnTitles || null,
+      activityStatuses: mappedCfg?.activityStatuses || [],
+      dropdownLists,
+      hasAnyRows: (totalCountRes.rows[0]?.total || 0) > 0,
+    };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackGetBootstrap(requestedBranchId);
+    }
+    throw err;
+  }
 }
 
 export async function queryTablePaginated(
@@ -472,6 +559,9 @@ export async function queryTablePaginated(
   }
 ) {
   await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackQueryTablePaginated(table, options);
+  }
   const branchId = options.branchId || DEFAULT_BRANCH_ID;
   const page = Math.max(1, Number(options.page || 1));
   const pageSize = Math.min(1000, Math.max(1, Number(options.pageSize || 100)));
@@ -534,30 +624,38 @@ export async function queryTablePaginated(
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const countRes = await pool.query(`SELECT count(*)::int AS total FROM public.${table} ${whereClause}`, params);
-  const total = Number(countRes.rows[0]?.total || 0);
+  try {
+    const countRes = await pool.query(`SELECT count(*)::int AS total FROM public.${table} ${whereClause}`, params);
+    const total = Number(countRes.rows[0]?.total || 0);
 
-  const orderBy =
-    table === 'system_config'
-      ? 'ORDER BY branch_id ASC'
-      : table === 'audit_logs'
-      ? 'ORDER BY created_at DESC'
-      : 'ORDER BY updated_at DESC, id ASC';
+    const orderBy =
+      table === 'system_config'
+        ? 'ORDER BY branch_id ASC'
+        : table === 'audit_logs'
+        ? 'ORDER BY created_at DESC'
+        : 'ORDER BY updated_at DESC, id ASC';
 
-  const limitParam = pushParam(pageSize);
-  const offsetParam = pushParam(offset);
-  const rowsRes = await pool.query(
-    `SELECT * FROM public.${table} ${whereClause} ${orderBy} LIMIT ${limitParam} OFFSET ${offsetParam}`,
-    params
-  );
+    const limitParam = pushParam(pageSize);
+    const offsetParam = pushParam(offset);
+    const rowsRes = await pool.query(
+      `SELECT * FROM public.${table} ${whereClause} ${orderBy} LIMIT ${limitParam} OFFSET ${offsetParam}`,
+      params
+    );
 
-  return {
-    rows: rowsRes.rows.map((r) => mapDbRowByTable(table, r)),
-    total,
-    page,
-    pageSize,
-    totalPages: Math.max(1, Math.ceil(total / pageSize)),
-  };
+    return {
+      rows: rowsRes.rows.map((r) => mapDbRowByTable(table, r)),
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackQueryTablePaginated(table, options);
+    }
+    throw err;
+  }
 }
 
 // =========================================================================
@@ -950,8 +1048,37 @@ export async function upsertRowWithClient(
         );
         if (existingByUsername.rows.length > 0) {
           effectiveUserId = String(existingByUsername.rows[0].id);
+        } else {
+          const existingIdRow = await client.query(
+            `SELECT branch_id FROM public.app_users WHERE id = $1 LIMIT 1 FOR UPDATE`,
+            [effectiveUserId]
+          );
+          if (
+            existingIdRow.rows.length > 0 &&
+            String(existingIdRow.rows[0].branch_id) !== effectiveBranchId
+          ) {
+            effectiveUserId = `${recordId}__${effectiveBranchId}`;
+          }
+        }
+      } else {
+        const existingIdRow = await client.query(
+          `SELECT branch_id FROM public.app_users WHERE id = $1 LIMIT 1 FOR UPDATE`,
+          [effectiveUserId]
+        );
+        if (
+          existingIdRow.rows.length > 0 &&
+          String(existingIdRow.rows[0].branch_id) !== effectiveBranchId
+        ) {
+          effectiveUserId = `${recordId}__${effectiveBranchId}`;
         }
       }
+      const encodedPerms: string[] = [
+        ...(Array.isArray(u.customPermissions)
+          ? u.customPermissions.filter((p) => !String(p).startsWith('__dept:') && p !== '__all_branches')
+          : []),
+        ...(Array.isArray(u.allowedDepartments) ? u.allowedDepartments.map((d) => `__dept:${d}`) : []),
+        ...(u.applyToAllBranches ? ['__all_branches'] : []),
+      ];
       const res = await client.query(
         `INSERT INTO public.app_users (
           id, branch_id, username, full_name, password_hash, role, job_title, department,
@@ -986,7 +1113,7 @@ export async function upsertRowWithClient(
           String(u.gmailEmail || ''),
           String(u.gmailPassword || ''),
           Boolean(u.googleDriveAutoSync),
-          JSON.stringify(Array.isArray(u.customPermissions) ? u.customPermissions : []),
+          JSON.stringify(encodedPerms),
         ]
       );
       resultRow = mapDbRowByTable('app_users', res.rows[0]);
@@ -1016,7 +1143,7 @@ export async function upsertRowWithClient(
           recordId,
           effectiveBranchId,
           String(t.title || ''),
-          String(t.description || ''),
+          serializeTaskDescriptionWithMeta(t),
           String(t.bakeryId || ''),
           String(t.bakeryName || ''),
           String(t.village || ''),
@@ -1212,6 +1339,9 @@ export async function upsertRowInPostgres(
   expectedVersion?: number
 ): Promise<UpsertRowResult> {
   await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackUpsertRow(table, branchId, payload);
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1224,6 +1354,10 @@ export async function upsertRowInPostgres(
     return res;
   } catch (err: any) {
     await client.query('ROLLBACK').catch(() => {});
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackUpsertRow(table, branchId, payload);
+    }
     return {
       success: false,
       operation: 'UPDATE',
@@ -1240,6 +1374,9 @@ export async function deleteRowInPostgres(
   branchId?: string
 ): Promise<{ success: boolean; deletedRow?: any; error?: string }> {
   await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackDeleteRow(table, id, branchId);
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1250,10 +1387,17 @@ export async function deleteRowInPostgres(
       params.push(branchId);
       branchFilter = ` AND branch_id = $2`;
     }
-    const delRes = await client.query(
+    let delRes = await client.query(
       `DELETE FROM public.${table} WHERE ${pkColumn} = $1 ${branchFilter} RETURNING *`,
       params
     );
+    if (delRes.rows.length === 0 && table === 'app_users' && branchId) {
+      const scopedId = id.includes(`__${branchId}`) ? id.split(`__${branchId}`)[0] : `${id}__${branchId}`;
+      delRes = await client.query(
+        `DELETE FROM public.app_users WHERE id = $1 AND branch_id = $2 RETURNING *`,
+        [scopedId, branchId]
+      );
+    }
     await client.query('COMMIT');
     if (delRes.rows.length === 0) {
       return { success: true, deletedRow: null };
@@ -1261,6 +1405,10 @@ export async function deleteRowInPostgres(
     return { success: true, deletedRow: mapDbRowByTable(table, delRes.rows[0]) };
   } catch (err: any) {
     await client.query('ROLLBACK').catch(() => {});
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackDeleteRow(table, id, branchId);
+    }
     return { success: false, error: err?.message || 'فشل حذف السجل من قاعدة البيانات.' };
   } finally {
     client.release();
@@ -1273,6 +1421,9 @@ export async function syncFullBranchStateToPostgres(
   options?: { pruneRemoved?: boolean }
 ): Promise<{ success: boolean; syncedCounts: Record<string, number>; error?: string }> {
   await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackSyncFullBranchState(branchId, stateData, options);
+  }
   const effectiveBranchId = branchId || stateData?.activeBranchId || DEFAULT_BRANCH_ID;
   const client = await pool.connect();
   const syncedCounts: Record<string, number> = {
@@ -1476,6 +1627,10 @@ export async function syncFullBranchStateToPostgres(
     return { success: true, syncedCounts };
   } catch (err: any) {
     await client.query('ROLLBACK').catch(() => {});
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackSyncFullBranchState(branchId, stateData, options);
+    }
     console.error('syncFullBranchStateToPostgres error:', err);
     return { success: false, syncedCounts, error: err?.message || 'PG batch sync error' };
   } finally {
@@ -1489,6 +1644,10 @@ export async function syncHighDebtAlertsToPostgres(
   debtAlertThreshold?: number
 ) {
   await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    fallbackSyncHighDebtAlerts(branchId, alerts, debtAlertThreshold);
+    return;
+  }
   const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
   const client = await pool.connect();
   try {
@@ -1517,6 +1676,11 @@ export async function syncHighDebtAlertsToPostgres(
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      fallbackSyncHighDebtAlerts(branchId, alerts, debtAlertThreshold);
+      return;
+    }
     console.error('syncHighDebtAlertsToPostgres failed:', err);
   } finally {
     client.release();
@@ -1525,6 +1689,10 @@ export async function syncHighDebtAlertsToPostgres(
 
 export async function purgeAllPostgresData(): Promise<void> {
   await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    fallbackPurgeAll();
+    return;
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1557,6 +1725,11 @@ export async function purgeAllPostgresData(): Promise<void> {
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      fallbackPurgeAll();
+      return;
+    }
     throw err;
   } finally {
     client.release();
@@ -1566,11 +1739,20 @@ export async function purgeAllPostgresData(): Promise<void> {
 export async function recordAuditLog(userEmail: string, action: string, details: string, ipAddress?: string, branchId = DEFAULT_BRANCH_ID) {
   try {
     await ensurePostgresSchema();
+    if (pgFallbackMode) {
+      fallbackUpsertRow('audit_logs', branchId, { userEmail, action, details, ipAddress });
+      return;
+    }
     await pool.query(
       `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)`,
       [branchId, userEmail, action, details, ipAddress || '127.0.0.1']
     );
   } catch (error) {
+    if (isPostgresUnavailableError(error)) {
+      pgFallbackMode = true;
+      fallbackUpsertRow('audit_logs', branchId, { userEmail, action, details, ipAddress });
+      return;
+    }
     console.error('Failed to record audit log:', error);
   }
 }
@@ -1618,6 +1800,16 @@ export async function upsertStorageFileInPostgres(params: {
   const contentStr = String(params.content ?? '');
   const contentType = String(params.contentType || 'application/json');
   const sizeBytes = Buffer.byteLength(contentStr, 'utf-8');
+  if (pgFallbackMode) {
+    return fallbackUpsertStorageFile({
+      id,
+      fileName: cleanFileName,
+      branchId: effectiveBranchId,
+      contentType,
+      sizeBytes,
+      content: contentStr,
+    });
+  }
   const payload = {
     kind: 'storage_file',
     fileName: cleanFileName,
@@ -1625,48 +1817,74 @@ export async function upsertStorageFileInPostgres(params: {
     sizeBytes,
     content: contentStr,
   };
-  const res = await pool.query(
-    `INSERT INTO public.backup_snapshots (id, branch_id, payload, client_id, updated_at)
-     VALUES ($1, $2, $3::jsonb, $4, NOW())
-     ON CONFLICT (id) DO UPDATE SET
-       branch_id = EXCLUDED.branch_id,
-       payload = EXCLUDED.payload,
-       client_id = EXCLUDED.client_id,
-       updated_at = NOW()
-     RETURNING id, branch_id, updated_at`,
-    [id, effectiveBranchId, JSON.stringify(payload), String(params.clientId || '')]
-  );
-  return {
-    id: res.rows[0].id,
-    fileName: cleanFileName,
-    branchId: res.rows[0].branch_id || effectiveBranchId,
-    contentType,
-    sizeBytes,
-    updatedAt: res.rows[0].updated_at ? new Date(res.rows[0].updated_at).toISOString() : new Date().toISOString(),
-  };
+  try {
+    const res = await pool.query(
+      `INSERT INTO public.backup_snapshots (id, branch_id, payload, client_id, updated_at)
+       VALUES ($1, $2, $3::jsonb, $4, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         branch_id = EXCLUDED.branch_id,
+         payload = EXCLUDED.payload,
+         client_id = EXCLUDED.client_id,
+         updated_at = NOW()
+       RETURNING id, branch_id, updated_at`,
+      [id, effectiveBranchId, JSON.stringify(payload), String(params.clientId || '')]
+    );
+    return {
+      id: res.rows[0].id,
+      fileName: cleanFileName,
+      branchId: res.rows[0].branch_id || effectiveBranchId,
+      contentType,
+      sizeBytes,
+      updatedAt: res.rows[0].updated_at ? new Date(res.rows[0].updated_at).toISOString() : new Date().toISOString(),
+    };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackUpsertStorageFile({
+        id,
+        fileName: cleanFileName,
+        branchId: effectiveBranchId,
+        contentType,
+        sizeBytes,
+        content: contentStr,
+      });
+    }
+    throw err;
+  }
 }
 
 export async function listStorageFilesInPostgres(branchId?: string): Promise<StoredFileEntry[]> {
   await ensurePostgresSchema();
   const effectiveBranchId = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const res = await pool.query(
-    `SELECT id, branch_id, payload->>'fileName' AS file_name,
-            COALESCE(payload->>'contentType', 'application/json') AS content_type,
-            COALESCE((payload->>'sizeBytes')::int, 0) AS size_bytes,
-            updated_at
-     FROM public.backup_snapshots
-     WHERE id LIKE 'storage__%' AND branch_id = $1
-     ORDER BY updated_at DESC`,
-    [effectiveBranchId]
-  );
-  return res.rows.map((r) => ({
-    id: String(r.id),
-    fileName: String(r.file_name || r.id),
-    branchId: String(r.branch_id || effectiveBranchId),
-    contentType: String(r.content_type || 'application/json'),
-    sizeBytes: Number(r.size_bytes || 0),
-    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString(),
-  }));
+  if (pgFallbackMode) {
+    return fallbackListStorageFiles(effectiveBranchId);
+  }
+  try {
+    const res = await pool.query(
+      `SELECT id, branch_id, payload->>'fileName' AS file_name,
+              COALESCE(payload->>'contentType', 'application/json') AS content_type,
+              COALESCE((payload->>'sizeBytes')::int, 0) AS size_bytes,
+              updated_at
+       FROM public.backup_snapshots
+       WHERE id LIKE 'storage__%' AND branch_id = $1
+       ORDER BY updated_at DESC`,
+      [effectiveBranchId]
+    );
+    return res.rows.map((r) => ({
+      id: String(r.id),
+      fileName: String(r.file_name || r.id),
+      branchId: String(r.branch_id || effectiveBranchId),
+      contentType: String(r.content_type || 'application/json'),
+      sizeBytes: Number(r.size_bytes || 0),
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString(),
+    }));
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackListStorageFiles(effectiveBranchId);
+    }
+    throw err;
+  }
 }
 
 export async function getStorageFileFromPostgres(
@@ -1678,24 +1896,35 @@ export async function getStorageFileFromPostgres(
   const candidateId = fileNameOrId.startsWith('storage__')
     ? fileNameOrId
     : normalizeStorageFileKey(effectiveBranchId, fileNameOrId).id;
-  const res = await pool.query(
-    `SELECT id, branch_id, payload, updated_at
-     FROM public.backup_snapshots
-     WHERE id = $1`,
-    [candidateId]
-  );
-  if (res.rows.length === 0) return null;
-  const row = res.rows[0];
-  const p = row.payload || {};
-  return {
-    id: String(row.id),
-    fileName: String(p.fileName || row.id),
-    branchId: String(row.branch_id || effectiveBranchId),
-    contentType: String(p.contentType || 'application/json'),
-    sizeBytes: Number(p.sizeBytes || 0),
-    content: typeof p.content === 'string' ? p.content : JSON.stringify(p.content ?? ''),
-    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
-  };
+  if (pgFallbackMode) {
+    return fallbackGetStorageFile(candidateId);
+  }
+  try {
+    const res = await pool.query(
+      `SELECT id, branch_id, payload, updated_at
+       FROM public.backup_snapshots
+       WHERE id = $1`,
+      [candidateId]
+    );
+    if (res.rows.length === 0) return null;
+    const row = res.rows[0];
+    const p = row.payload || {};
+    return {
+      id: String(row.id),
+      fileName: String(p.fileName || row.id),
+      branchId: String(row.branch_id || effectiveBranchId),
+      contentType: String(p.contentType || 'application/json'),
+      sizeBytes: Number(p.sizeBytes || 0),
+      content: typeof p.content === 'string' ? p.content : JSON.stringify(p.content ?? ''),
+      updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+    };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackGetStorageFile(candidateId);
+    }
+    throw err;
+  }
 }
 
 export async function deleteStorageFileInPostgres(
@@ -1707,7 +1936,90 @@ export async function deleteStorageFileInPostgres(
   const candidateId = fileNameOrId.startsWith('storage__')
     ? fileNameOrId
     : normalizeStorageFileKey(effectiveBranchId, fileNameOrId).id;
-  const res = await pool.query(`DELETE FROM public.backup_snapshots WHERE id = $1 RETURNING id`, [candidateId]);
-  return res.rows.length > 0;
+  if (pgFallbackMode) {
+    return fallbackDeleteStorageFile(candidateId);
+  }
+  try {
+    const res = await pool.query(`DELETE FROM public.backup_snapshots WHERE id = $1 RETURNING id`, [candidateId]);
+    return res.rows.length > 0;
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackDeleteStorageFile(candidateId);
+    }
+    throw err;
+  }
+}
+
+export async function getBranchModuleStateFromPostgres(
+  branchId: string,
+  moduleKey = 'all_modules'
+): Promise<{ exists: boolean; payload: any; version: number; updatedAt: string | null }> {
+  await ensurePostgresSchema();
+  const cleanBranch = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  if (pgFallbackMode) {
+    return fallbackGetBranchModuleState(cleanBranch, moduleKey);
+  }
+  try {
+    const res = await pool.query(
+      `SELECT payload, version, updated_at
+       FROM public.branch_module_states
+       WHERE branch_id = $1 AND module_key = $2`,
+      [cleanBranch, moduleKey]
+    );
+    if (res.rows.length === 0) {
+      return { exists: false, payload: null, version: 0, updatedAt: null };
+    }
+    const row = res.rows[0];
+    return {
+      exists: true,
+      payload: row.payload,
+      version: Number(row.version || 1),
+      updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+    };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      return fallbackGetBranchModuleState(cleanBranch, moduleKey);
+    }
+    throw err;
+  }
+}
+
+export async function upsertBranchModuleStateInPostgres(
+  branchId: string,
+  payload: any,
+  updatedBy = '',
+  moduleKey = 'all_modules'
+): Promise<{ version: number; updatedAt: string }> {
+  await ensurePostgresSchema();
+  const cleanBranch = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  if (pgFallbackMode) {
+    return fallbackUpsertBranchModuleState(cleanBranch, payload, updatedBy, moduleKey);
+  }
+  const rowId = `mod__${cleanBranch}__${moduleKey}`;
+  try {
+    const res = await pool.query(
+      `INSERT INTO public.branch_module_states (id, branch_id, module_key, payload, updated_by, version, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5, 1, NOW())
+       ON CONFLICT (branch_id, module_key) DO UPDATE SET
+         payload = EXCLUDED.payload,
+         updated_by = EXCLUDED.updated_by,
+         version = public.branch_module_states.version + 1,
+         updated_at = NOW()
+       RETURNING version, updated_at`,
+      [rowId, cleanBranch, moduleKey, JSON.stringify(payload || {}), updatedBy || 'system']
+    );
+    return {
+      version: Number(res.rows[0]?.version || 1),
+      updatedAt: res.rows[0]?.updated_at
+        ? new Date(res.rows[0].updated_at).toISOString()
+        : new Date().toISOString(),
+    };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      return fallbackUpsertBranchModuleState(cleanBranch, payload, updatedBy, moduleKey);
+    }
+    throw err;
+  }
 }
 

@@ -4,6 +4,7 @@ import { SidebarNavId } from './RightSidebar';
 import {
   calculateAnnualWeightedAveragesReport,
   calculateBakeriesColumnTotals,
+  calculateVillageComparisonMetrics,
   extractBreadLoafMultiplier,
 } from '../utils/auditHelper';
 import {
@@ -61,22 +62,23 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
   onRecalculateEquations,
   onOpenLocalUnitsModal,
 }) => {
-  // Real-time aggregates from the database
-  const stats = useMemo(() => {
-    const totalBakeries = bakeries.length;
-    const totalActualQuota = bakeries.reduce((acc, b) => acc + (Number(b.actualQuota) || 0), 0);
-    const totalInsuranceQuota = Number(
-      bakeries.reduce((acc, b) => acc + (Number(b.insuranceQuota) || 0), 0).toFixed(2)
-    );
-    const totalLoaves = bakeries.reduce((acc, b) => acc + (Number(b.loavesCount) || 0), 0);
-    const totalInsuranceValue = bakeries.reduce((acc, b) => acc + (Number(b.insuranceValue) || 0), 0);
-    const totalBen2023 = bakeries.reduce((acc, b) => acc + (Number(b.beneficiaries2023) || 0), 0);
-    const totalBen2024 = bakeries.reduce((acc, b) => acc + (Number(b.beneficiaries2024) || 0), 0);
-    const totalBen2025 = bakeries.reduce((acc, b) => acc + (Number(b.beneficiaries2025) || 0), 0);
-    const overallPerCapita = totalBen2025 > 0 ? (totalLoaves / totalBen2025).toFixed(2) : '0.00';
+  const annualReport = useMemo(() => calculateAnnualWeightedAveragesReport(bakeries), [bakeries]);
+  const colTotals = useMemo(() => calculateBakeriesColumnTotals(bakeries), [bakeries]);
 
-    const activeBakeries = bakeries.filter((b) => b.activityStatus === 'يعمل').length;
-    const stoppedBakeries = totalBakeries - activeBakeries;
+  // Real-time aggregates from the database (beneficiaries deduplicated per local unit)
+  const stats = useMemo(() => {
+    const totalBakeries = colTotals.bakeryCount;
+    const totalActualQuota = colTotals.actualQuota;
+    const totalInsuranceQuota = colTotals.insuranceQuota;
+    const totalLoaves = colTotals.loavesCount;
+    const totalInsuranceValue = colTotals.insuranceValue;
+    const totalBen2023 = colTotals.beneficiaries2023;
+    const totalBen2024 = colTotals.beneficiaries2024;
+    const totalBen2025 = colTotals.beneficiaries2025;
+    const overallPerCapita = colTotals.perCapitaAverage;
+
+    const activeBakeries = colTotals.activeCount;
+    const stoppedBakeries = colTotals.stoppedCount;
     const totalDebts = debts.reduce((acc, d) => acc + (Number(d.netRemainingDebt) || 0), 0);
     const needsReviewCount = bakeries.filter(
       (b) =>
@@ -102,47 +104,13 @@ export const HomeDashboardView: React.FC<HomeDashboardViewProps> = ({
       totalDebts,
       needsReviewCount,
     };
-  }, [bakeries, debts]);
+  }, [bakeries, debts, colTotals]);
 
-  const annualReport = useMemo(() => calculateAnnualWeightedAveragesReport(bakeries), [bakeries]);
-  const colTotals = useMemo(() => calculateBakeriesColumnTotals(bakeries), [bakeries]);
-
-  // 3-Year comparison data by Village (top 8 villages)
-  const villageComparisonData = useMemo(() => {
-    const map: Record<
-      string,
-      {
-        village: string;
-        ben2023: number;
-        ben2024: number;
-        ben2025: number;
-        loaves: number;
-        count: number;
-      }
-    > = {};
-
-    for (const b of bakeries) {
-      const v = b.village || 'غير محدد';
-      if (!map[v]) {
-        map[v] = { village: v, ben2023: 0, ben2024: 0, ben2025: 0, loaves: 0, count: 0 };
-      }
-      map[v].ben2023 += Number(b.beneficiaries2023) || 0;
-      map[v].ben2024 += Number(b.beneficiaries2024) || 0;
-      map[v].ben2025 += Number(b.beneficiaries2025) || 0;
-      map[v].loaves += Number(b.loavesCount) || 0;
-      map[v].count += 1;
-    }
-
-    return Object.values(map)
-      .map((item) => ({
-        ...item,
-        avg2023: item.ben2023 > 0 ? Number((item.loaves / item.ben2023).toFixed(2)) : 0,
-        avg2024: item.ben2024 > 0 ? Number((item.loaves / item.ben2024).toFixed(2)) : 0,
-        avg2025: item.ben2025 > 0 ? Number((item.loaves / item.ben2025).toFixed(2)) : 0,
-      }))
-      .sort((a, b) => b.loaves - a.loaves)
-      .slice(0, 8);
-  }, [bakeries]);
+  // 3-Year comparison data by Village (top 8 villages, deduplicated per local unit)
+  const villageComparisonData = useMemo(
+    () => calculateVillageComparisonMetrics(bakeries, 8),
+    [bakeries]
+  );
 
   // Overall 3-Year summary chart data
   const threeYearOverviewData = useMemo(

@@ -14,25 +14,26 @@ import {
 } from './auditHelper';
 
 describe('اختبار وتدقيق المعادلات التموينية والحسابية', () => {
-  test('حساب الأرغفة التموينية = الحصة × 1350', () => {
-    assert.equal(calculateLoavesCount(20), 27000);
-    assert.equal(calculateLoavesCount(15.5), 20925);
+  test('حساب الأرغفة التموينية = الحصة × معامل عدد الخبز (660 أو 725)', () => {
+    assert.equal(calculateLoavesCount(20), 13200);
+    assert.equal(calculateLoavesCount(15.5, 660), 10230);
+    assert.equal(calculateLoavesCount(20, 725), 14500);
     assert.equal(calculateLoavesCount(0), 0);
   });
 
-  test('حساب متوسط نصيب الفرد = الأرغفة ÷ سكان القرية', () => {
-    assert.equal(calculatePerCapitaAverage(27000, 30000), '0.900');
-    assert.equal(calculatePerCapitaAverage(27000, 0), '0.000');
+  test('حساب متوسط نصيب الفرد = الأرغفة ÷ سكان القرية (مقرب لرقمين عشريين)', () => {
+    assert.equal(calculatePerCapitaAverage(27000, 30000), '0.90');
+    assert.equal(calculatePerCapitaAverage(27000, 0), '0.00');
   });
 
   test('حساب متوسطات المستفيدين للأعوام والفرق التراكمي', () => {
     const avg23 = calculateYearlyAverage(27000, 27000);
     const avg25 = calculateYearlyAverage(27000, 29800);
-    assert.equal(avg23, '1.000');
-    assert.equal(avg25, '0.906');
+    assert.equal(avg23, '1.00');
+    assert.equal(avg25, '0.91');
 
     const diff = calculateAverageDifference(avg25, avg23);
-    assert.equal(diff, '-0.094');
+    assert.equal(diff, '-0.09');
   });
 
   test('حساب مديونيات المخالفات والمتبقي', () => {

@@ -2233,6 +2233,13 @@ export function mapSqlRowToVillage(row: any): { id?: string; branchId?: string; 
 }
 
 export function mapUserToSqlRow(u: any, branchId: string, nowIso: string = new Date().toISOString()) {
+  const encodedPerms: string[] = [
+    ...(Array.isArray(u.customPermissions)
+      ? u.customPermissions.filter((p: string) => !String(p).startsWith('__dept:') && p !== '__all_branches')
+      : []),
+    ...(Array.isArray(u.allowedDepartments) ? u.allowedDepartments.map((d: string) => `__dept:${d}`) : []),
+    ...(u.applyToAllBranches ? ['__all_branches'] : []),
+  ];
   return {
     id: String(u.id),
     branch_id: u.branchId || branchId || 'branch-mahalla',
@@ -2246,7 +2253,7 @@ export function mapUserToSqlRow(u: any, branchId: string, nowIso: string = new D
     gmail_email: String(u.gmailEmail || ''),
     gmail_password: String(u.gmailPassword || ''),
     google_drive_auto_sync: Boolean(u.googleDriveAutoSync),
-    custom_permissions: Array.isArray(u.customPermissions) ? u.customPermissions : [],
+    custom_permissions: encodedPerms,
     updated_at: nowIso,
   };
 }
@@ -2254,6 +2261,13 @@ export function mapUserToSqlRow(u: any, branchId: string, nowIso: string = new D
 export function mapSqlRowToUser(row: any) {
   if (!row) return null;
   if (row.data_json && row.data_json.id) return row.data_json;
+  const rawPerms: string[] = Array.isArray(row.custom_permissions) ? row.custom_permissions.map(String) : [];
+  const deptScopes = rawPerms
+    .filter((p) => p.startsWith('__dept:'))
+    .map((p) => p.slice('__dept:'.length))
+    .filter(Boolean);
+  const applyAll = rawPerms.includes('__all_branches');
+  const cleanPerms = rawPerms.filter((p) => !p.startsWith('__dept:') && p !== '__all_branches');
   return {
     id: String(row.id),
     branchId: String(row.branch_id || 'branch-mahalla'),
@@ -2267,7 +2281,9 @@ export function mapSqlRowToUser(row: any) {
     gmailEmail: String(row.gmail_email || ''),
     gmailPassword: String(row.gmail_password || ''),
     googleDriveAutoSync: Boolean(row.google_drive_auto_sync),
-    customPermissions: Array.isArray(row.custom_permissions) ? row.custom_permissions : undefined,
+    customPermissions: Array.isArray(row.custom_permissions) ? cleanPerms : undefined,
+    allowedDepartments: deptScopes.length > 0 ? deptScopes : row.allowedDepartments,
+    applyToAllBranches: applyAll || row.applyToAllBranches || undefined,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
     version: Number(row.version || 1),
   };
@@ -3222,10 +3238,15 @@ type WsStateListener = (msg: {
     | 'config_updated'
     | 'diagnostic_pong'
     | 'row_change'
-    | 'batch_sync';
+    | 'batch_sync'
+    | 'module_state_update';
   table?: SupabaseRealtimeTableName;
   eventType?: 'INSERT' | 'UPDATE' | 'DELETE';
   branchId?: string;
+  moduleKey?: string;
+  payload?: any;
+  version?: number;
+  updatedAt?: string;
   newRow?: any;
   oldRow?: any;
   revision?: number;

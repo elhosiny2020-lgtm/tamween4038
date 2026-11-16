@@ -163,19 +163,43 @@ export const AuditModal: React.FC<AuditModalProps> = ({
         {/* Content Body */}
         <div className="p-5 space-y-4 overflow-y-auto flex-1 bg-slate-50">
           {/* Official Verification Banner */}
-          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-400 rounded-xl p-4 shadow-xs space-y-3">
+          <div
+            className={`border-2 rounded-xl p-4 shadow-xs space-y-3 ${
+              (auditResult?.failedChecks || 0) > 0
+                ? 'bg-gradient-to-r from-red-50 to-amber-50 border-red-400'
+                : 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400'
+            }`}
+          >
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-md shrink-0">
-                  <CheckCircle2 className="w-7 h-7" />
+                <div
+                  className={`w-12 h-12 rounded-full text-white flex items-center justify-center shadow-md shrink-0 ${
+                    (auditResult?.failedChecks || 0) > 0 ? 'bg-red-600' : 'bg-emerald-600'
+                  }`}
+                >
+                  {(auditResult?.failedChecks || 0) > 0 ? (
+                    <XCircle className="w-7 h-7" />
+                  ) : (
+                    <CheckCircle2 className="w-7 h-7" />
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-black text-emerald-950">
-                      شهادة سلامة المعادلات الحسابية والمحاسبية بنسبة 100%
+                    <h4
+                      className={`text-sm font-black ${
+                        (auditResult?.failedChecks || 0) > 0 ? 'text-red-950' : 'text-emerald-950'
+                      }`}
+                    >
+                      {(auditResult?.failedChecks || 0) > 0
+                        ? `تنبيه: تم رصد (${auditResult?.failedChecks}) اختلال حسابي أو اختلاف في السجلات الحية`
+                        : 'شهادة سلامة المعادلات الحسابية والمحاسبية بنسبة 100%'}
                     </h4>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white">
-                      معتمدة بالكامل
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black text-white ${
+                        (auditResult?.failedChecks || 0) > 0 ? 'bg-red-600' : 'bg-emerald-600'
+                      }`}
+                    >
+                      {(auditResult?.failedChecks || 0) > 0 ? 'يتطلب مراجعة' : 'معتمدة بالكامل'}
                     </span>
                   </div>
                   <p className="text-xs text-emerald-900 font-bold mt-1">
@@ -244,14 +268,34 @@ export const AuditModal: React.FC<AuditModalProps> = ({
               <CheckCircle2 className="w-7 h-7 text-emerald-600" />
             </div>
 
-            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+            <div
+              className={`p-3 rounded-xl border shadow-xs flex items-center justify-between ${
+                (auditResult?.failedChecks || 0) > 0
+                  ? 'bg-red-50/90 border-red-300'
+                  : 'bg-white border-slate-200'
+              }`}
+            >
               <div>
-                <span className="text-[11px] font-bold text-slate-500 block">الأخطاء المكتشفة (FAIL)</span>
-                <span className="text-xl font-black text-slate-900 font-mono">
+                <span
+                  className={`text-[11px] font-bold block ${
+                    (auditResult?.failedChecks || 0) > 0 ? 'text-red-800' : 'text-slate-500'
+                  }`}
+                >
+                  الأخطاء المكتشفة (FAIL)
+                </span>
+                <span
+                  className={`text-xl font-black font-mono ${
+                    (auditResult?.failedChecks || 0) > 0 ? 'text-red-700' : 'text-slate-900'
+                  }`}
+                >
                   {auditResult?.failedChecks || 0}
                 </span>
               </div>
-              <XCircle className="w-7 h-7 text-slate-400" />
+              <XCircle
+                className={`w-7 h-7 ${
+                  (auditResult?.failedChecks || 0) > 0 ? 'text-red-600' : 'text-slate-400'
+                }`}
+              />
             </div>
 
             <div className="bg-amber-50/80 p-3 rounded-xl border border-amber-300 shadow-xs flex items-center justify-between">
@@ -325,8 +369,14 @@ export const AuditModal: React.FC<AuditModalProps> = ({
               <span className="text-xs font-black text-slate-800">
                 سجل الفحص التفصيلي للاختبارات الحسابية والبرمجية
               </span>
-              <span className="text-[11px] font-bold text-slate-500">
-                الحالة المعتمدة: كل الاختبارات اجتازت الفحص بنجاح
+              <span
+                className={`text-[11px] font-bold ${
+                  (auditResult?.failedChecks || 0) > 0 ? 'text-red-700' : 'text-slate-500'
+                }`}
+              >
+                {(auditResult?.failedChecks || 0) > 0
+                  ? `تنبيه: يوجد ${auditResult?.failedChecks} فحص غير مطابق بالجدول`
+                  : 'الحالة المعتمدة: كل الاختبارات اجتازت الفحص بنجاح'}
               </span>
             </div>
 
@@ -343,28 +393,51 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {categorizedDetails.map((check, index) => (
-                    <tr key={index} className="hover:bg-slate-50/80 transition">
-                      <td className="py-2 px-3 text-center text-slate-500 font-mono">{index + 1}</td>
-                      <td className="py-2 px-3 text-slate-900 font-black flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>{check.checkName}</span>
-                      </td>
-                      <td className="py-2 px-3 text-slate-600 text-[11px]">{check.description}</td>
-                      <td className="py-2 px-3 text-center font-mono text-blue-700 font-black">
-                        {String(check.expected)}
-                      </td>
-                      <td className="py-2 px-3 text-center font-mono text-emerald-700 font-black">
-                        {String(check.actual)}
-                      </td>
-                      <td className="py-2 px-3 text-center">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          ناجح (PASS)
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {categorizedDetails.map((check, index) => {
+                    const isPass = check.status === 'PASS';
+                    return (
+                      <tr
+                        key={index}
+                        className={`transition ${
+                          isPass ? 'hover:bg-slate-50/80' : 'bg-red-50/60 hover:bg-red-50'
+                        }`}
+                      >
+                        <td className="py-2 px-3 text-center text-slate-500 font-mono">{index + 1}</td>
+                        <td className="py-2 px-3 text-slate-900 font-black flex items-center gap-2">
+                          {isPass ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          ) : (
+                            <XCircle className="w-4 h-4 text-red-600 shrink-0" />
+                          )}
+                          <span>{check.checkName}</span>
+                        </td>
+                        <td className="py-2 px-3 text-slate-600 text-[11px]">{check.description}</td>
+                        <td className="py-2 px-3 text-center font-mono text-blue-700 font-black">
+                          {String(check.expected)}
+                        </td>
+                        <td
+                          className={`py-2 px-3 text-center font-mono font-black ${
+                            isPass ? 'text-emerald-700' : 'text-red-700'
+                          }`}
+                        >
+                          {String(check.actual)}
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          {isPass ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              ناجح (PASS)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-red-100 text-red-800 border border-red-300">
+                              <XCircle className="w-3 h-3 text-red-600" />
+                              غير مطابق (FAIL)
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

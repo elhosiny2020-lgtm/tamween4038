@@ -28,6 +28,7 @@ import {
   Eye,
   ArrowUp,
   ArrowDown,
+  History,
 } from 'lucide-react';
 
 export type ReportTemplateId =
@@ -609,7 +610,16 @@ const ALL_REPORT_COLUMNS: ColumnMeta[] = [
   { key: 'avgDiff', label: 'الفرق التراكمي ∑', align: 'center', isNumeric: true, isCalculated: true },
   { key: 'remainingDebt', label: 'المديونية المتبقية (ج.م)', align: 'center', isNumeric: true },
   { key: 'phone', label: 'رقم التليفون', align: 'center', isNumeric: true },
+  { key: 'nationalId', label: 'الرقم القومي', align: 'center', isNumeric: true },
+  { key: 'responsibleManager', label: 'المدير المسئول', align: 'right' },
+  { key: 'bakeryLicenseNumber', label: 'رقم الرخصة', align: 'center' },
   { key: 'bakeryLicenseDate', label: 'تاريخ الرخصة', align: 'center' },
+  { key: 'commercialRegNumber', label: 'رقم السجل التجاري', align: 'center' },
+  { key: 'commercialRegDate', label: 'تاريخ السجل التجاري', align: 'center' },
+  { key: 'leaseContractType', label: 'عقد الإيجار / التمليك', align: 'center' },
+  { key: 'leaseAgreementDate', label: 'تاريخ عقد الإيجار', align: 'center' },
+  { key: 'taxCardNumber', label: 'رقم البطاقة الضريبية', align: 'center' },
+  { key: 'taxCardDate', label: 'تاريخ البطاقة الضريبية', align: 'center' },
 ];
 
 const FAVORITE_PRESET_KEY = 'tamween_favorite_report_preset_v1';
@@ -623,6 +633,8 @@ interface ReportsCenterViewProps {
   initialReportId?: ReportTemplateId;
   onSelectBakeryDetails?: (bakery: Bakery) => void;
   onOpenLegacyReportModal?: () => void;
+  onOpenDebtEmailHistory?: () => void;
+  onOpenDailyPerformanceSummary?: () => void;
 }
 
 const SHARED_INT_FORMATTER = new Intl.NumberFormat('en-US');
@@ -647,6 +659,8 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
   initialReportId = 'bak-all',
   onSelectBakeryDetails,
   onOpenLegacyReportModal,
+  onOpenDebtEmailHistory,
+  onOpenDailyPerformanceSummary,
 }) => {
   const [selectedReportId, setSelectedReportId] = useState<ReportTemplateId>(initialReportId);
   const [selectedGroupFilter, setSelectedGroupFilter] = useState<number | 'ALL'>('ALL');
@@ -974,7 +988,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     });
   };
 
-  // Export Excel (UTF-8 BOM CSV)
+  // Export Excel (UTF-8 BOM CSV) with complete footer summary row
   const handleExportExcel = () => {
     const headers = activeColumnsMeta.map((c) => `"${c.label}"`).join(',');
     const rows = filteredBakeries.map((b, idx) => {
@@ -985,7 +999,15 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
         })
         .join(',');
     });
-    const csvContent = '\uFEFF' + [headers, ...rows].join('\n');
+    const footerRow =
+      filteredBakeries.length > 0
+        ? [
+            activeColumnsMeta
+              .map((col, idx) => `"${String(renderFooterCell(col.key, idx)).replace(/"/g, '""')}"`)
+              .join(','),
+          ]
+        : [];
+    const csvContent = '\uFEFF' + [headers, ...rows, ...footerRow].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1008,6 +1030,8 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
         return b.village || '—';
       case 'localUnit':
         return b.localUnit || '—';
+      case 'responsibleManager':
+        return b.responsibleManager || 'نفسه';
       case 'activityStatus':
         return b.activityStatus || '—';
       case 'bakeryCategory':
@@ -1027,7 +1051,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
       case 'insuranceQuota':
         return safeFormatNum(b.insuranceQuota, Number(b.insuranceQuota) % 1 !== 0 ? 2 : 0);
       case 'actualQuota':
-        return safeFormatNum(b.actualQuota, 0);
+        return safeFormatNum(b.actualQuota, Number(b.actualQuota) % 1 !== 0 ? 2 : 0);
       case 'loavesCount':
         return safeFormatNum(b.loavesCount, 0);
       case 'villagePopulation':
@@ -1052,8 +1076,24 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
         return safeFormatNum(bakeryDebtMap[b.id] || 0, 0);
       case 'phone':
         return b.phone || '—';
+      case 'nationalId':
+        return b.nationalId || '—';
+      case 'bakeryLicenseNumber':
+        return b.bakeryLicenseNumber || '—';
       case 'bakeryLicenseDate':
         return formatDateDDMMYYYY(b.bakeryLicenseDate) || '—';
+      case 'commercialRegNumber':
+        return b.commercialRegNumber || '—';
+      case 'commercialRegDate':
+        return formatDateDDMMYYYY(b.commercialRegDate) || '—';
+      case 'leaseContractType':
+        return b.leaseContractType || '—';
+      case 'leaseAgreementDate':
+        return formatDateDDMMYYYY(b.leaseAgreementDate) || '—';
+      case 'taxCardNumber':
+        return b.taxCardNumber || '—';
+      case 'taxCardDate':
+        return formatDateDDMMYYYY(b.taxCardDate) || '—';
       default:
         return '—';
     }
@@ -1088,7 +1128,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
       case 'insuranceQuota':
         return safeFormatNum(totals.sumInsQuota, totals.sumInsQuota % 1 !== 0 ? 2 : 0);
       case 'actualQuota':
-        return safeFormatNum(totals.sumActualQuota, 0);
+        return safeFormatNum(totals.sumActualQuota, totals.sumActualQuota % 1 !== 0 ? 2 : 0);
       case 'loavesCount':
         return safeFormatNum(totals.sumLoaves, 0);
       case 'villagePopulation':
@@ -1113,8 +1153,16 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
         return safeFormatNum(totals.sumDebt, 0);
       case 'phone':
         return `${colTotals.validPhonesCount} رقم مسجل`;
+      case 'nationalId':
+        return `${colTotals.validNatIdsCount} رقم قومي`;
       case 'bakeryLicenseDate':
         return `${colTotals.validLicenseCount} رخصة`;
+      case 'commercialRegDate':
+        return `${colTotals.validCommRegCount} سجل`;
+      case 'leaseAgreementDate':
+        return `${colTotals.validLeaseCount} عقد`;
+      case 'taxCardDate':
+        return `${colTotals.validTaxCardCount} بطاقة`;
       default:
         return `${colTotals.bakeryCount} سجل`;
     }
@@ -1203,6 +1251,32 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-300" />
             <span>تصدير Excel</span>
           </button>
+
+          {onOpenDailyPerformanceSummary && (
+            <button
+              type="button"
+              data-testid="reports-open-daily-performance-btn"
+              onClick={onOpenDailyPerformanceSummary}
+              className="px-3 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-300 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+              title="فتح التقرير الإحصائي اليومي للمدير العام وتحميله PDF"
+            >
+              <BarChart3 className="w-3.5 h-3.5 text-slate-950" />
+              <span>التقرير الإحصائي اليومي للمدير العام (PDF)</span>
+            </button>
+          )}
+
+          {onOpenDebtEmailHistory && (
+            <button
+              type="button"
+              data-testid="reports-open-debt-email-history-btn"
+              onClick={onOpenDebtEmailHistory}
+              className="px-3 py-2.5 bg-rose-700/80 hover:bg-rose-600 text-white border border-rose-400/40 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
+              title="استعراض التقارير التاريخية لإرسال تنبيهات الديون الحرجة بالبريد"
+            >
+              <History className="w-3.5 h-3.5 text-amber-200" />
+              <span>سجل التقارير البريدية للديون</span>
+            </button>
+          )}
 
           {onOpenLegacyReportModal && (
             <button
@@ -1636,7 +1710,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
               <span className="text-[11px] font-bold text-slate-600 block">الحصص الفعلية</span>
               <span className="text-sm font-black text-[#0F2342] font-mono">
-                {safeFormatNum(totals.sumActualQuota)} شيكارة
+                {safeFormatNum(totals.sumActualQuota, totals.sumActualQuota % 1 !== 0 ? 2 : 0)} شيكارة
               </span>
             </div>
             <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-2.5">

@@ -9,7 +9,7 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   administrationTitle: 'إدارة تموين مركز المحلة الكبرى',
   englishSubtitle: 'MINISTRY OF SUPPLY AND INTERNAL TRADE',
   logoBase64: DEFAULT_OFFICIAL_LOGO,
-  gmailEmail: 'ELHOSINY2020@gmail.com',
+  gmailEmail: '',
   googleDriveAutoSync: true,
   debtAlertThreshold: 50000,
   dailyAlertConfig: {
@@ -19,7 +19,14 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
     notifySound: true,
     targetDocs: ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate'],
     daysThreshold: 0,
-    lastAlertDate: ''
+    lastAlertDate: '',
+    debtEmailEnabled: true,
+    debtEmailAlertTime: '09:00',
+    debtEmailCriticalThreshold: 50000,
+    supervisorEmailRecipients: [],
+    includeSystemSupervisors: true,
+    lastDebtEmailAlertDate: '',
+    debtEmailHistory: []
   }
 };
 
@@ -487,7 +494,7 @@ export const INITIAL_USERS: AppUser[] = [
     password: 'admin',
     role: 'admin',
     isActive: true,
-    gmailEmail: 'ELHOSINY2020@gmail.com',
+    gmailEmail: '',
     googleDriveAutoSync: true,
     createdAt: '2026-01-01'
   },
@@ -498,7 +505,7 @@ export const INITIAL_USERS: AppUser[] = [
     password: '123',
     role: 'inspector',
     isActive: true,
-    gmailEmail: 'ELHOSINY2020@gmail.com',
+    gmailEmail: '',
     googleDriveAutoSync: true,
     createdAt: '2026-02-15'
   },
@@ -522,36 +529,45 @@ export const INITIAL_DAILY_TASKS: DailyBakeryTask[] = [
     bakeryName: 'طارق مسعد الجوهري خضر',
     village: 'العامرية',
     priority: 'high',
-    dueDate: '2026-11-12',
+    dueDate: '2026-11-16',
     status: 'pending',
     assignedTo: 'مفتش أول رقابة تموينية',
-    createdAt: '2026-11-09'
+    createdAt: '2026-11-09',
+    taskType: 'license_followup',
+    showOnWelcomeDashboard: true,
+    welcomeReminderDate: '2026-11-16',
   },
   {
     id: 'task-2',
-    title: 'تحصيل الدفعة الأسبوعية المقررة من المديونية الكبرى',
+    title: 'مراجعة مديونية المخبز وتحصيل الدفعة الأسبوعية المقررة',
     description: 'استلام إيصال السداد الأسبوعي ومطابقته مع سجل المديونيات',
     bakeryId: 'b-101',
     bakeryName: 'أحمد محمود السعيد حسانين',
     village: 'بشبيش',
     priority: 'high',
-    dueDate: '2026-11-14',
+    dueDate: '2026-11-16',
     status: 'in_progress',
     assignedTo: 'مدير المنظومة التموينية',
-    createdAt: '2026-11-09'
+    createdAt: '2026-11-09',
+    taskType: 'debt_review',
+    showOnWelcomeDashboard: true,
+    welcomeReminderDate: '2026-11-16',
   },
   {
     id: 'task-3',
-    title: 'التفتيش الدوري على وزن ومواصفات الرغيف البلدي المدعم',
+    title: 'تفتيش المخبز الدوري على وزن ومواصفات الرغيف البلدي المدعم',
     description: 'مراجعة الموازين الحساسة ونظافة أدوات العجن ولوحة مواعيد التشغيل',
     bakeryId: 'b-102',
     bakeryName: 'إبراهيم علي عبدالفتاح رضوان',
     village: 'محلة حسن',
     priority: 'medium',
-    dueDate: '2026-11-16',
+    dueDate: '2026-11-17',
     status: 'pending',
     assignedTo: 'مفتش أول رقابة تموينية',
-    createdAt: '2026-11-09'
+    createdAt: '2026-11-09',
+    taskType: 'bakery_inspection',
+    showOnWelcomeDashboard: true,
+    welcomeReminderDate: '2026-11-17',
   },
   {
     id: 'task-4',
@@ -564,7 +580,9 @@ export const INITIAL_DAILY_TASKS: DailyBakeryTask[] = [
     dueDate: '2026-11-20',
     status: 'completed',
     assignedTo: 'مدير المنظومة التموينية',
-    createdAt: '2026-11-08'
+    createdAt: '2026-11-08',
+    taskType: 'quota_audit',
+    showOnWelcomeDashboard: false,
   }
 ];
 
