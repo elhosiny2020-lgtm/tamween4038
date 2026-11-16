@@ -8020,16 +8020,42 @@ export default function App() {
           });
         }}
         onDeleteBranch={async (branchId) => {
+          const currentActiveId = appState.activeBranchId || DEFAULT_BRANCH_ID;
           const deleted = deleteSupplyBranch(branchId);
           if (!deleted.success) return;
           const deduplicatedNext = deduplicateSupplyBranches(deleted.branches);
           saveBranchesList(deduplicatedNext);
+          const nextActiveId =
+            currentActiveId === branchId
+              ? deleted.nextActiveBranchId || deduplicatedNext[0]?.id || DEFAULT_BRANCH_ID
+              : currentActiveId;
+          setAppState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  activeBranchId: nextActiveId,
+                  branches: deduplicatedNext,
+                }
+              : prev
+          );
           await deleteRowFromDb({
             table: 'branches',
             id: branchId,
-            branchId,
+            branchId: nextActiveId,
           });
-          handleSwitchBranch(deleted.nextActiveBranchId || DEFAULT_BRANCH_ID, deduplicatedNext);
+          if (currentActiveId === branchId) {
+            handleSwitchBranch(nextActiveId, deduplicatedNext);
+          } else {
+            persistFullState({
+              ...appState,
+              branches: deduplicatedNext,
+            }).catch(() => {});
+            setSaveToast({
+              id: Date.now(),
+              message: deleted.message,
+              timestamp: getArabicTimestamp(),
+            });
+          }
         }}
       />
 

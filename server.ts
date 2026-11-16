@@ -1585,7 +1585,12 @@ async function startServer() {
         return;
       }
 
-      const effectiveBranchId = branchId || delRes.deletedRow?.branchId || DEFAULT_BRANCH_ID;
+      const effectiveBranchId =
+        table === 'branches'
+          ? branchId && branchId !== req.params.id
+            ? branchId
+            : DEFAULT_BRANCH_ID
+          : branchId || delRes.deletedRow?.branchId || DEFAULT_BRANCH_ID;
       const timestamp = new Date().toISOString();
       liveRevision += 1;
       await refreshCachedSnapshotFromPostgres(effectiveBranchId, {

@@ -66,6 +66,7 @@ import {
 export type HrSubView =
   | 'dashboard'
   | 'employees'
+  | 'public_service_contracts'
   | 'attendance'
   | 'leaves'
   | 'payroll'
@@ -1190,9 +1191,74 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
     notify('ok', 'تم حفظ نسخة جديدة من لائحة الضرائب والتأمينات دون التأثير على المسيرات المعتمدة سابقاً.');
   };
 
+  const getContractDaysRemaining = (endDateStr?: string) => {
+    if (!endDateStr) return 999;
+    const end = new Date(endDateStr).getTime();
+    const now = new Date().getTime();
+    return Math.ceil((end - now) / (1000 * 60 * 60 * 24));
+  };
+
+  const contractEmployees = useMemo(() => {
+    return state.employees.filter((e) => e.employeeType === 'خدمة عامة' || e.employeeType === 'استعانة');
+  }, [state.employees]);
+
+  const expiringContracts = useMemo(() => {
+    return contractEmployees.filter((e) => {
+      const days = getContractDaysRemaining(e.contractEndDate);
+      return days >= 0 && days <= 15;
+    });
+  }, [contractEmployees]);
+
+  const expiredContractsCount = useMemo(() => {
+    return contractEmployees.filter((e) => getContractDaysRemaining(e.contractEndDate) < 0).length;
+  }, [contractEmployees]);
+
+  const publicServiceCount = useMemo(() => {
+    return contractEmployees.filter((e) => e.employeeType === 'خدمة عامة').length;
+  }, [contractEmployees]);
+
+  const assistanceCount = useMemo(() => {
+    return contractEmployees.filter((e) => e.employeeType === 'استعانة').length;
+  }, [contractEmployees]);
+
+  const activeContractCount = useMemo(() => {
+    return contractEmployees.filter((e) => getContractDaysRemaining(e.contractEndDate) > 15).length;
+  }, [contractEmployees]);
+
+  const handleRenewContract = (employeeId: string) => {
+    const emp = state.employees.find((e) => e.id === employeeId);
+    if (!emp) return;
+    const currentEnd = emp.contractEndDate ? new Date(emp.contractEndDate) : new Date();
+    currentEnd.setFullYear(currentEnd.getFullYear() + 1);
+    const newEndStr = currentEnd.toISOString().split('T')[0];
+    const updatedEmployees = state.employees.map((e) =>
+      e.id === employeeId
+        ? {
+            ...e,
+            contractEndDate: newEndStr,
+            status: 'على رأس العمل' as const,
+            updatedAt: new Date().toISOString(),
+          }
+        : e
+    );
+    onChangeState(
+      {
+        ...state,
+        employees: updatedEmployees,
+        auditLogs: [
+          appendAudit('تعديل', 'موظفي الخدمة العامة والاستعانة', employeeId, `تجديد تعاقد ${emp.fullName} حتى ${newEndStr}`),
+          ...state.auditLogs,
+        ],
+      },
+      `تجديد تعاقد الموظف: ${emp.fullName}`
+    );
+    notify('ok', `تم تجديد تعاقد الموظف (${emp.fullName}) بنجاح حتى تاريخ ${newEndStr}.`);
+  };
+
   const navItems: { id: HrSubView; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'لوحة الموارد البشرية', icon: <Users className="w-3.5 h-3.5" /> },
     { id: 'employees', label: 'الموظفون والأقسام', icon: <Users className="w-3.5 h-3.5" /> },
+    { id: 'public_service_contracts', label: 'موظفو الخدمة العامة والاستعانة', icon: <Award className="w-3.5 h-3.5" /> },
     { id: 'attendance', label: 'الحضور والانصراف', icon: <Clock className="w-3.5 h-3.5" /> },
     { id: 'leaves', label: 'الأرصدة والإجازات', icon: <CalendarDays className="w-3.5 h-3.5" /> },
     { id: 'payroll', label: 'الرواتب والأجور', icon: <Wallet className="w-3.5 h-3.5" /> },
@@ -1318,6 +1384,32 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
 
       {subView === 'dashboard' && (
         <div className="space-y-4">
+          {expiringContracts.length > 0 && (
+            <div className="bg-amber-50 border-2 border-amber-400 p-4 rounded-2xl shadow-sm flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-amber-500 text-white shrink-0 mt-0.5">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-black text-amber-900">
+                  تنبيه هام: توجد ({expiringContracts.length}) عقود خدمة عامة أو استعانة ستنتهي خلال 15 يوماً القادمة!
+                </h4>
+                <p className="text-xs font-bold text-amber-800">
+                  يرجى مراجعة قسم موظفي الخدمة العامة والاستعانة لتجديد العقود المستحقة:
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {expiringContracts.map((ec) => {
+                    const days = getContractDaysRemaining(ec.contractEndDate);
+                    return (
+                      <span key={ec.id} className="px-2.5 py-1 bg-white border border-amber-300 rounded-xl text-xs font-black text-amber-900">
+                        {ec.fullName} ({ec.employeeType}) — متبقي {days} يوم (ينتهي في {ec.contractEndDate})
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
               <div className="text-xs font-bold text-slate-500">إجمالي العاملين على رأس العمل</div>
@@ -1360,6 +1452,330 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                 </BarChart>
               </ResponsiveContainer>
             </div>
+          </div>
+        </div>
+      )}
+
+      {subView === 'public_service_contracts' && (
+        <div className="space-y-4">
+          {expiringContracts.length > 0 && (
+            <div className="bg-amber-50 border-2 border-amber-400 p-4 rounded-2xl shadow-sm flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-amber-500 text-white shrink-0 mt-0.5">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-black text-amber-900">
+                  تنبيه هام: توجد ({expiringContracts.length}) عقود خدمة عامة أو استعانة اقترب موعد انتهائها خلال 15 يوماً القادمة!
+                </h4>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {expiringContracts.map((ec) => {
+                    const days = getContractDaysRemaining(ec.contractEndDate);
+                    return (
+                      <span key={ec.id} className="px-2.5 py-1 bg-white border border-amber-300 rounded-xl text-xs font-black text-amber-900">
+                        {ec.fullName} ({ec.employeeType}) — متبقي {days} يوم (ينتهي في {ec.contractEndDate})
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="text-xs font-bold text-slate-500">إجمالي موظفي الخدمة العامة</div>
+              <div className="text-2xl font-black text-[#0A1628] font-mono mt-1">{publicServiceCount}</div>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="text-xs font-bold text-slate-500">إجمالي موظفي الاستعانة</div>
+              <div className="text-2xl font-black text-[#1E40AF] font-mono mt-1">{assistanceCount}</div>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="text-xs font-bold text-slate-500">على رأس العمل (ساري)</div>
+              <div className="text-2xl font-black text-emerald-700 font-mono mt-1">{activeContractCount}</div>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="text-xs font-bold text-slate-500">اقترب موعد انتهاء التعاقد (≤15 يوم)</div>
+              <div className="text-2xl font-black text-amber-600 font-mono mt-1">{expiringContracts.length}</div>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="text-xs font-bold text-slate-500">العقود المنتهية</div>
+              <div className="text-2xl font-black text-rose-700 font-mono mt-1">{expiredContractsCount}</div>
+            </div>
+          </div>
+
+          {/* Toolbar & Actions */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-1 min-w-[260px]">
+              <div className="relative flex-1">
+                <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="بحث باسم الموظف، الرقم القومي، أو الوظيفة..."
+                  value={empSearch}
+                  onChange={(e) => setEmpSearch(e.target.value)}
+                  className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-[#0D9488]"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {!isViewer && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFormModalState({
+                      isOpen: true,
+                      mode: 'add',
+                      entityKey: 'employee',
+                      title: 'إضافة موظف خدمة عامة أو استعانة جديد',
+                      fields: [
+                        { key: 'employeeType', label: 'نوع الموظف', type: 'select', required: true, options: [{ value: 'خدمة عامة', label: 'خدمة عامة' }, { value: 'استعانة', label: 'استعانة' }] },
+                        { key: 'employeeCode', label: 'الكود الوظيفي / المسلسل', type: 'text', required: true, placeholder: 'EMP-PS-303' },
+                        { key: 'fullName', label: 'الاسم رباعي بالكامل', type: 'text', required: true },
+                        { key: 'nationalId', label: 'الرقم القومي (14 رقم)', type: 'text', required: true },
+                        { key: 'phone', label: 'رقم الهاتف', type: 'text', required: true },
+                        { key: 'qualification', label: 'المؤهل الدراسي', type: 'text', required: true, placeholder: 'بكالوريوس / ليسانس / دبلوم' },
+                        { key: 'jobTitle', label: 'الوظيفة أو طبيعة العمل', type: 'text', required: true },
+                        { key: 'departmentName', label: 'جهة العمل أو الإدارة التابع لها', type: 'select', required: true, options: state.departments.map(d => ({ value: d.name, label: d.name })) },
+                        { key: 'hireDate', label: 'تاريخ التعاقد / بداية العمل', type: 'date', required: true },
+                        { key: 'contractEndDate', label: 'تاريخ انتهاء التعاقد', type: 'date', required: true },
+                        { key: 'contractDurationText', label: 'مدة التعاقد', type: 'text', required: true, placeholder: 'سنة واحدة / 6 أشهر' },
+                        { key: 'functionalWage', label: 'الأجر / المكافأة الشهرية (ج.م)', type: 'number', required: true, min: 0 },
+                        { key: 'status', label: 'الحالة', type: 'select', required: true, options: [{ value: 'على رأس العمل', label: 'على رأس العمل' }, { value: 'اقترب موعد انتهاء التعاقد', label: 'اقترب موعد انتهاء التعاقد' }, { value: 'منتهي التعاقد', label: 'منتهي التعاقد' }] },
+                        { key: 'documentsNotes', label: 'ملاحظات', type: 'textarea', colSpan: 2 },
+                      ],
+                      initialValues: {
+                        employeeType: 'خدمة عامة',
+                        employeeCode: `EMP-PS-${100 + contractEmployees.length + 1}`,
+                        hireDate: new Date().toISOString().split('T')[0],
+                        contractEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                        contractDurationText: 'سنة واحدة',
+                        functionalWage: 3500,
+                        status: 'على رأس العمل',
+                      },
+                    })
+                  }
+                  className="px-3.5 py-2 bg-[#0A1628] hover:bg-[#13294B] text-[#D4AF37] rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Plus className="w-4 h-4 text-[#D4AF37]" />
+                  <span>إضافة موظف جديد</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() =>
+                  exportRowsToArabicCsv(
+                    `موظفو_الخدمة_العامة_والاستعانة_${branchName}`,
+                    ['المسلسل', 'الكود', 'الاسم', 'الرقم القومي', 'المؤهل', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'نهاية التعاقد', 'المدة', 'الأيام المتبقية', 'الحالة'],
+                    contractEmployees.map((e, idx) => [
+                      idx + 1,
+                      e.employeeCode,
+                      e.fullName,
+                      e.nationalId,
+                      e.qualification || 'غير محدد',
+                      e.jobTitle,
+                      e.departmentName,
+                      e.employeeType || 'خدمة عامة',
+                      e.hireDate,
+                      e.contractEndDate || 'غير محدد',
+                      e.contractDurationText || 'سنة',
+                      getContractDaysRemaining(e.contractEndDate),
+                      e.status,
+                    ])
+                  )
+                }
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>تصدير Excel</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  printModuleReportA4({
+                    title: 'تقرير موظفي الخدمة العامة وموظفي الاستعانة',
+                    subtitle: `سجل التعاقدات ومتابعة تواريخ انتهاء المدد — ${branchName}`,
+                    branchName,
+                    headers: ['م', 'الكود', 'اسم الموظف', 'الرقم القومي', 'المؤهل الدراسي', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'انتهاء التعاقد', 'المتبقي', 'الحالة'],
+                    rows: contractEmployees.map((e, idx) => [
+                      idx + 1,
+                      e.employeeCode,
+                      e.fullName,
+                      e.nationalId,
+                      e.qualification || '—',
+                      e.jobTitle,
+                      e.departmentName,
+                      e.employeeType || 'خدمة عامة',
+                      e.hireDate,
+                      e.contractEndDate || '—',
+                      `${getContractDaysRemaining(e.contractEndDate)} يوم`,
+                      e.status,
+                    ]),
+                    summaryItems: [
+                      { label: 'إجمالي الخدمة العامة', value: String(publicServiceCount) },
+                      { label: 'إجمالي الاستعانة', value: String(assistanceCount) },
+                      { label: 'العقود المنتهية', value: String(expiredContractsCount) },
+                    ],
+                    preparedBy: currentUser?.fullName,
+                  })
+                }
+                className="px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-4 h-4 text-[#D4AF37]" />
+                <span>طباعة تقرير A4</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+            <table className="w-full text-xs text-center border-collapse">
+              <thead className="bg-[#0A1628] text-white font-black">
+                <tr>
+                  <th className="py-2.5 px-2 border border-slate-700">م</th>
+                  <th className="py-2.5 px-2 border border-slate-700">الكود</th>
+                  <th className="py-2.5 px-2 border border-slate-700 text-right">اسم الموظف بالكامل</th>
+                  <th className="py-2.5 px-2 border border-slate-700 font-mono">الرقم القومي</th>
+                  <th className="py-2.5 px-2 border border-slate-700">المؤهل الدراسي</th>
+                  <th className="py-2.5 px-2 border border-slate-700">الوظيفة / طبيعة العمل</th>
+                  <th className="py-2.5 px-2 border border-slate-700">جهة العمل / الإدارة</th>
+                  <th className="py-2.5 px-2 border border-slate-700">نوع الموظف</th>
+                  <th className="py-2.5 px-2 border border-slate-700">بداية التعاقد</th>
+                  <th className="py-2.5 px-2 border border-slate-700">انتهاء التعاقد</th>
+                  <th className="py-2.5 px-2 border border-slate-700">المتبقي</th>
+                  <th className="py-2.5 px-2 border border-slate-700">الحالة</th>
+                  <th className="py-2.5 px-2 border border-slate-700">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 font-bold">
+                {contractEmployees
+                  .filter((e) => {
+                    if (!empSearch.trim()) return true;
+                    const q = empSearch.trim().toLowerCase();
+                    return `${e.fullName} ${e.employeeCode} ${e.nationalId} ${e.jobTitle} ${e.departmentName}`
+                      .toLowerCase()
+                      .includes(q);
+                  })
+                  .map((e, idx) => {
+                    const days = getContractDaysRemaining(e.contractEndDate);
+                    const isExpired = days < 0;
+                    const isExpiring = days >= 0 && days <= 15;
+                    return (
+                      <tr key={e.id} className={isExpired ? 'bg-rose-50/60' : isExpiring ? 'bg-amber-50/60' : 'hover:bg-slate-50'}>
+                        <td className="py-2.5 px-2 font-mono">{idx + 1}</td>
+                        <td className="py-2.5 px-2 font-mono text-[#1E40AF]">{e.employeeCode}</td>
+                        <td className="py-2.5 px-2 text-right font-black text-[#0A1628]">{e.fullName}</td>
+                        <td className="py-2.5 px-2 font-mono text-[11px]">{e.nationalId}</td>
+                        <td className="py-2.5 px-2">{e.qualification || '—'}</td>
+                        <td className="py-2.5 px-2 text-[#0D9488]">{e.jobTitle}</td>
+                        <td className="py-2.5 px-2">{e.departmentName}</td>
+                        <td className="py-2.5 px-2">
+                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${e.employeeType === 'استعانة' ? 'bg-indigo-100 text-indigo-800' : 'bg-teal-100 text-teal-800'}`}>
+                            {e.employeeType || 'خدمة عامة'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2 font-mono text-[11px]">{e.hireDate}</td>
+                        <td className="py-2.5 px-2 font-mono text-[11px]">{e.contractEndDate || '—'}</td>
+                        <td className="py-2.5 px-2 font-mono">
+                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${isExpired ? 'bg-rose-100 text-rose-800' : isExpiring ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                            {isExpired ? `منتهي (${Math.abs(days)} يوم)` : `${days} يوم`}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2">
+                          <span className={`px-2.5 py-1 rounded-xl text-[11px] font-black ${isExpired ? 'bg-rose-600 text-white' : isExpiring ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'}`}>
+                            {isExpired ? 'منتهي التعاقد' : isExpiring ? 'اقترب موعد الانتهاء' : 'على رأس العمل'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {!isViewer && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRenewContract(e.id)}
+                                  title="تجديد التعاقد لسنة جديدة"
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-black cursor-pointer shadow-sm"
+                                >
+                                  تجديد
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setFormModalState({
+                                      isOpen: true,
+                                      mode: 'edit',
+                                      entityKey: 'employee',
+                                      title: `تعديل بيانات الموظف: ${e.fullName}`,
+                                      fields: [
+                                        { key: 'employeeType', label: 'نوع الموظف', type: 'select', required: true, options: [{ value: 'خدمة عامة', label: 'خدمة عامة' }, { value: 'استعانة', label: 'استعانة' }] },
+                                        { key: 'employeeCode', label: 'الكود الوظيفي', type: 'text', required: true },
+                                        { key: 'fullName', label: 'الاسم رباعي بالكامل', type: 'text', required: true },
+                                        { key: 'nationalId', label: 'الرقم القومي (14 رقم)', type: 'text', required: true },
+                                        { key: 'phone', label: 'رقم الهاتف', type: 'text', required: true },
+                                        { key: 'qualification', label: 'المؤهل الدراسي', type: 'text', required: true },
+                                        { key: 'jobTitle', label: 'الوظيفة أو طبيعة العمل', type: 'text', required: true },
+                                        { key: 'departmentName', label: 'جهة العمل أو الإدارة', type: 'select', required: true, options: state.departments.map(d => ({ value: d.name, label: d.name })) },
+                                        { key: 'hireDate', label: 'تاريخ التعاقد', type: 'date', required: true },
+                                        { key: 'contractEndDate', label: 'تاريخ انتهاء التعاقد', type: 'date', required: true },
+                                        { key: 'contractDurationText', label: 'مدة التعاقد', type: 'text', required: true },
+                                        { key: 'functionalWage', label: 'الأجر / المكافأة (ج.م)', type: 'number', required: true, min: 0 },
+                                        { key: 'status', label: 'الحالة', type: 'select', required: true, options: [{ value: 'على رأس العمل', label: 'على رأس العمل' }, { value: 'اقترب موعد انتهاء التعاقد', label: 'اقترب موعد انتهاء التعاقد' }, { value: 'منتهي التعاقد', label: 'منتهي التعاقد' }] },
+                                      ],
+                                      initialValues: {
+                                        employeeType: e.employeeType || 'خدمة عامة',
+                                        employeeCode: e.employeeCode,
+                                        fullName: e.fullName,
+                                        nationalId: e.nationalId,
+                                        phone: e.phone || '',
+                                        qualification: e.qualification || '',
+                                        jobTitle: e.jobTitle,
+                                        departmentName: e.departmentName,
+                                        hireDate: e.hireDate,
+                                        contractEndDate: e.contractEndDate || '',
+                                        contractDurationText: e.contractDurationText || 'سنة واحدة',
+                                        functionalWage: e.functionalWage,
+                                        status: e.status,
+                                      },
+                                      targetId: e.id,
+                                    })
+                                  }
+                                  className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-black cursor-pointer"
+                                >
+                                  تعديل
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDeleteModalState({
+                                      isOpen: true,
+                                      entityType: 'employee',
+                                      entityTitle: e.fullName,
+                                      entityId: e.id,
+                                      recordSummary: [
+                                        { label: 'الكود', value: e.employeeCode },
+                                        { label: 'الاسم', value: e.fullName },
+                                        { label: 'النوع', value: e.employeeType || 'خدمة عامة' },
+                                        { label: 'تاريخ انتهاء التعاقد', value: e.contractEndDate || '—' },
+                                      ],
+                                    })
+                                  }
+                                  className="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg text-[11px] font-black cursor-pointer"
+                                >
+                                  حذف
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

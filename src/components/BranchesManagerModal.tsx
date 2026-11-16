@@ -157,8 +157,13 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   const handleRequestDelete = (branch: SupplyBranch) => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    if (branches.length <= 1) {
+      setErrorMsg('لا يمكن حذف جميع الفروع؛ يجب الإبقاء على فرع تمويني واحد على الأقل في المنظومة.');
+      return;
+    }
 
     const askConfirm = () => {
+      setEditingBranchId(null);
       setConfirmDeleteId(branch.id);
     };
 
@@ -171,10 +176,13 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   };
 
   const handleConfirmDelete = (branchId: string) => {
+    const branchObj = branches.find((b) => b.id === branchId);
     const executeDelete = () => {
       onDeleteBranch(branchId);
       setConfirmDeleteId(null);
-      setSuccessMsg('تم حذف الفرع من قائمة الفروع بنجاح.');
+      setSuccessMsg(
+        `تم حذف فرع "${branchObj?.name || branchId}" نهائياً من قائمة الفروع وقاعدة البيانات بنجاح.`
+      );
     };
 
     if (!isVaultUnlocked) {
@@ -306,7 +314,7 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                             <Pencil className="w-4 h-4" />
                           </button>
 
-                          {!branch.isDefault && branch.id !== 'branch_mahalla_center' && (
+                          {branches.length > 1 && (
                             <button
                               type="button"
                               onClick={() => handleRequestDelete(branch)}
@@ -319,6 +327,32 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                           )}
                         </div>
                       </div>
+
+                      {confirmDeleteId === branch.id && (
+                        <div className="mt-3 p-3 rounded-xl bg-rose-50 border border-rose-300 space-y-2">
+                          <p className="text-xs font-black text-rose-900 flex items-center gap-1.5">
+                            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                            هل أنت متأكد من حذف فرع &quot;{branch.name}&quot; نهائياً؟
+                          </p>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="px-3 py-1 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 cursor-pointer"
+                            >
+                              إلغاء
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`confirm-delete-branch-btn-${branch.id}`}
+                              onClick={() => handleConfirmDelete(branch.id)}
+                              className="px-3.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-xs cursor-pointer"
+                            >
+                              تأكيد الحذف
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       {isEditing ? (
                         <div className="mt-3 p-3 rounded-xl bg-[#F1F5F9] border border-[#0D9488]/30 space-y-2.5">
@@ -392,24 +426,7 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                         قاعدة بيانات مستقلة ومزامنة لحظية
                       </span>
 
-                      {confirmDeleteId === branch.id ? (
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleConfirmDelete(branch.id)}
-                            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-black cursor-pointer"
-                          >
-                            تأكيد الحذف
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteId(null)}
-                            className="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold cursor-pointer"
-                          >
-                            إلغاء
-                          </button>
-                        </div>
-                      ) : isActive ? (
+                      {isActive ? (
                         <span className="text-xs font-black text-[#0D9488] px-3 py-1.5 rounded-xl bg-[#0D9488]/10 border border-[#0D9488]/30">
                           أنت تعمل على هذا الفرع الآن
                         </span>

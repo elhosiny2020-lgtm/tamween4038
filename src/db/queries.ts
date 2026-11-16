@@ -15,6 +15,10 @@ import {
   deduplicateSupplyBranches,
   normalizeBranchNameKey,
   resolveCanonicalBranchIdentity,
+  markBranchDeleted,
+  unmarkBranchDeleted,
+  isBranchMarkedDeleted,
+  CANONICAL_DEFAULT_BRANCHES,
   DEFAULT_VAULT_USERNAME,
   DEFAULT_VAULT_PASSCODE,
 } from '../utils/branchVaultUtils.ts';
@@ -104,11 +108,13 @@ export async function ensurePostgresSchema(): Promise<void> {
           DEFAULT_BRANCH_ROW.description || '',
         ]
       );
-      await pool.query(
-        `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
-         VALUES ('branch-samanoud', 'إدارة تموين سمنود', 'محافظة الغربية', 'مديرية التموين والتجارة الداخلية بالغربية', 'الإدارة التموينية لمركز ومدينة سمنود (قاعدة بيانات مستقلة)', FALSE)
-         ON CONFLICT (id) DO UPDATE SET name = 'إدارة تموين سمنود'`
-      );
+      if (!isBranchMarkedDeleted('branch-samanoud', 'إدارة تموين سمنود')) {
+        await pool.query(
+          `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
+           VALUES ('branch-samanoud', 'إدارة تموين سمنود', 'محافظة الغربية', 'مديرية التموين والتجارة الداخلية بالغربية', 'الإدارة التموينية لمركز ومدينة سمنود (قاعدة بيانات مستقلة)', FALSE)
+           ON CONFLICT (id) DO UPDATE SET name = 'إدارة تموين سمنود'`
+        );
+      }
       // Clean up any orphaned synthetic duplicate branch rows that have no bakeries/debts
       await pool.query(
         `DELETE FROM public.branches b
@@ -672,10 +678,16 @@ export interface UpsertRowResult {
 }
 
 async function ensureBranchRecord(client: any, branchId: string, branchData?: Partial<SupplyBranch>) {
+  if (branchId !== DEFAULT_BRANCH_ID && isBranchMarkedDeleted(branchId, branchData?.name)) {
+    return;
+  }
   const { canonicalId, canonicalName, isCanonicalDefault } = resolveCanonicalBranchIdentity(
     branchId,
     branchData?.name
   );
+  if (branchId !== DEFAULT_BRANCH_ID && isBranchMarkedDeleted(canonicalId, canonicalName)) {
+    return;
+  }
   await client.query(
     `INSERT INTO public.branches (id, name, governorate_title, directorate_title, description, is_default)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -1338,6 +1350,10 @@ export async function upsertRowInPostgres(
   payload: any,
   expectedVersion?: number
 ): Promise<UpsertRowResult> {
+  if (table === 'branches') {
+    unmarkBranchDeleted(payload?.id || branchId, payload?.name);
+    fallbackUpsertRow('branches', branchId, payload);
+  }
   await ensurePostgresSchema();
   if (pgFallbackMode) {
     return fallbackUpsertRow(table, branchId, payload);
@@ -1373,6 +1389,11 @@ export async function deleteRowInPostgres(
   id: string,
   branchId?: string
 ): Promise<{ success: boolean; deletedRow?: any; error?: string }> {
+  if (table === 'branches') {
+    const canonicalMatch = CANONICAL_DEFAULT_BRANCHES.find((b) => b.id === id);
+    markBranchDeleted(id, canonicalMatch?.name);
+    fallbackDeleteRow('branches', id, branchId);
+  }
   await ensurePostgresSchema();
   if (pgFallbackMode) {
     return fallbackDeleteRow(table, id, branchId);
@@ -1380,10 +1401,43 @@ export async function deleteRowInPostgres(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (table === 'branches') {
+      const existingBranchRes = await client.query(
+        `SELECT * FROM public.branches WHERE id = $1`,
+        [id]
+      );
+      const existingRow = existingBranchRes.rows[0];
+      const canonicalMatch = CANONICAL_DEFAULT_BRANCHES.find((b) => b.id === id);
+      markBranchDeleted(id, existingRow?.name || canonicalMatch?.name);
+      fallbackDeleteRow('branches', id, branchId);
+
+      // Explicitly remove dependent branch rows before deleting branch record
+      await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.villages WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.app_users WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.daily_tasks WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.inbox_messages WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.high_debt_alerts WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.system_config WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.dropdown_lists WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM public.branch_module_states WHERE branch_id = $1`, [id]).catch(() => {});
+
+      const delBranchRes = await client.query(
+        `DELETE FROM public.branches WHERE id = $1 RETURNING *`,
+        [id]
+      );
+      await client.query('COMMIT');
+      const deletedObj = delBranchRes.rows[0]
+        ? mapDbRowByTable('branches', delBranchRes.rows[0])
+        : canonicalMatch || { id };
+      return { success: true, deletedRow: deletedObj };
+    }
+
     const pkColumn = table === 'system_config' ? 'branch_id' : 'id';
     const params: any[] = [id];
     let branchFilter = '';
-    if (branchId && table !== 'branches' && table !== 'system_config') {
+    if (branchId && table !== 'system_config') {
       params.push(branchId);
       branchFilter = ` AND branch_id = $2`;
     }
@@ -1443,7 +1497,7 @@ export async function syncFullBranchStateToPostgres(
     // 1. Branches
     const branchesList: SupplyBranch[] = Array.isArray(stateData?.branches) ? stateData.branches : [];
     for (const br of branchesList) {
-      if (br?.id) {
+      if (br?.id && !isBranchMarkedDeleted(br.id, br.name)) {
         await upsertRowWithClient(client, 'branches', br.id, br);
         syncedCounts.branches += 1;
       }

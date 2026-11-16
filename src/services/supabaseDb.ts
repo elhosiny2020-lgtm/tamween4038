@@ -10,6 +10,7 @@ import type {
   VillageHierarchy,
 } from '../types';
 import { synchronizeBakeryAndDebts } from '../utils/auditHelper';
+import { markBranchDeleted, unmarkBranchDeleted } from '../utils/branchVaultUtils';
 import {
   clearRowMutationQueue,
   enqueueRowMutation,
@@ -165,10 +166,12 @@ export function applyGranularRowChangeToState(
     const targetId = String(newRow?.id || oldRow?.id || '');
     if (!targetId) return prev;
     if (eventType === 'DELETE') {
+      markBranchDeleted(targetId, oldRow?.name);
       return { ...prev, branches: removeById(branches, targetId) };
     }
     const mapped = normalizeIncomingBranch(newRow);
     if (!mapped) return prev;
+    unmarkBranchDeleted(mapped.id, mapped.name);
     return { ...prev, branches: upsertById(branches, mapped) };
   }
 

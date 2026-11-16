@@ -84,6 +84,9 @@ describe('moduleCrudHelpers — RBAC & Relational Integrity & Audit', () => {
       inspections: [],
       complaints: [],
       auditLogs: [],
+      gasCylinders: [],
+      petroleumProducts: [],
+      rationOfficeAccounts: [],
     };
 
     const mBlocked = checkRationDeleteIntegrity(rationState, 'merchant', 'm-linked');

@@ -31,6 +31,8 @@ import {
   AlertTriangle,
   Search,
   Users,
+  Flame,
+  Fuel,
 } from 'lucide-react';
 import type {
   AppUser,
@@ -49,6 +51,9 @@ import type {
   MerchantFinancialEntry,
   RationInspectionCampaign,
   RationComplaintRecord,
+  GasCylinderRecord,
+  PetroleumProductRecord,
+  RationOfficeAccountingRecord,
   ModuleAuditLog,
   OutletType,
   MerchantActivityStatus,
@@ -86,6 +91,9 @@ export type RationSubView =
   | 'requisitions'
   | 'financial'
   | 'inspections'
+  | 'gas_cylinders'
+  | 'petroleum'
+  | 'ration_accounting'
   | 'settings'
   | 'audit';
 
@@ -1891,6 +1899,9 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     { id: 'warehouses', label: 'المخازن والجرد', icon: <Warehouse className="w-3.5 h-3.5" /> },
     { id: 'requisitions', label: 'الاستعاضات', icon: <Truck className="w-3.5 h-3.5" /> },
     { id: 'financial', label: 'الحسابات والعمولات', icon: <Receipt className="w-3.5 h-3.5" /> },
+    { id: 'gas_cylinders', label: 'أسطوانات الغاز والبوتاجاز', icon: <Flame className="w-3.5 h-3.5 text-amber-500" /> },
+    { id: 'petroleum', label: 'المواد البترولية', icon: <Fuel className="w-3.5 h-3.5 text-blue-500" /> },
+    { id: 'ration_accounting', label: 'محاسبة مكاتب التموين', icon: <Receipt className="w-3.5 h-3.5 text-emerald-500" /> },
     { id: 'inspections', label: 'الرقابة والشكاوى', icon: <ShieldAlert className="w-3.5 h-3.5" /> },
     { id: 'settings', label: 'إعدادات القرارات', icon: <Settings className="w-3.5 h-3.5" /> },
     { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" /> },

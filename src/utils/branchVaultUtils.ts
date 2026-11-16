@@ -152,6 +152,42 @@ export function normalizeBranchNameKey(rawName: string | undefined | null): stri
   return cleaned;
 }
 
+export const DELETED_BRANCHES_STORAGE_KEY = 'TAMWEEN_DELETED_BRANCH_KEYS_V1';
+const memoryDeletedBranchKeys = new Set<string>();
+
+function readDeletedKeysFromStorage(): Set<string> {
+  const combined = new Set<string>(memoryDeletedBranchKeys);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(DELETED_BRANCHES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (typeof item === 'string' && item.trim()) {
+              combined.add(item.trim());
+              memoryDeletedBranchKeys.add(item.trim());
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return combined;
+}
+
+function persistDeletedKeysToStorage(keys: Set<string>): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(DELETED_BRANCHES_STORAGE_KEY, JSON.stringify(Array.from(keys)));
+    }
+  } catch {}
+}
+
+export function getDeletedBranchKeys(): Set<string> {
+  return readDeletedKeysFromStorage();
+}
+
 /**
  * Resolves canonical ID and display name for known supply branches
  * so duplicate rows with random IDs are unified.
@@ -186,6 +222,19 @@ export function resolveCanonicalBranchIdentity(
     };
   }
 
+  const matchedCanonical = CANONICAL_DEFAULT_BRANCHES.find(
+    (c) =>
+      (cleanId && c.id === cleanId) ||
+      (normKey && normalizeBranchNameKey(c.name) === normKey)
+  );
+  if (matchedCanonical) {
+    return {
+      canonicalId: matchedCanonical.id,
+      canonicalName: matchedCanonical.name,
+      isCanonicalDefault: Boolean(matchedCanonical.isDefault),
+    };
+  }
+
   const finalName = cleanName || `إدارة تموين (${cleanId || 'فرع'})`;
   return {
     canonicalId: cleanId || `branch-${normKey.replace(/[^a-z0-9\u0600-\u06ff]+/g, '-')}`,
@@ -194,13 +243,118 @@ export function resolveCanonicalBranchIdentity(
   };
 }
 
+export function markBranchDeleted(
+  branchId?: string | null,
+  branchName?: string | null
+): void {
+  const keys = readDeletedKeysFromStorage();
+  const cleanId = String(branchId || '').trim();
+  const cleanName = String(branchName || '').trim();
+  if (cleanId) {
+    keys.add(cleanId);
+    memoryDeletedBranchKeys.add(cleanId);
+  }
+  const normName = normalizeBranchNameKey(cleanName);
+  if (normName) {
+    keys.add(`name:${normName}`);
+    memoryDeletedBranchKeys.add(`name:${normName}`);
+  }
+  if (cleanId || cleanName) {
+    const { canonicalId, canonicalName } = resolveCanonicalBranchIdentity(cleanId, cleanName);
+    if (canonicalId) {
+      keys.add(canonicalId);
+      memoryDeletedBranchKeys.add(canonicalId);
+    }
+    const canonicalNorm = normalizeBranchNameKey(canonicalName);
+    if (canonicalNorm) {
+      keys.add(`name:${canonicalNorm}`);
+      memoryDeletedBranchKeys.add(`name:${canonicalNorm}`);
+    }
+  }
+  persistDeletedKeysToStorage(keys);
+}
+
+export function unmarkBranchDeleted(
+  branchId?: string | null,
+  branchName?: string | null
+): void {
+  const keys = readDeletedKeysFromStorage();
+  const cleanId = String(branchId || '').trim();
+  const cleanName = String(branchName || '').trim();
+  if (cleanId) {
+    keys.delete(cleanId);
+    memoryDeletedBranchKeys.delete(cleanId);
+  }
+  const normName = normalizeBranchNameKey(cleanName);
+  if (normName) {
+    keys.delete(`name:${normName}`);
+    memoryDeletedBranchKeys.delete(`name:${normName}`);
+  }
+  if (cleanId || cleanName) {
+    const { canonicalId, canonicalName } = resolveCanonicalBranchIdentity(cleanId, cleanName);
+    if (canonicalId) {
+      keys.delete(canonicalId);
+      memoryDeletedBranchKeys.delete(canonicalId);
+    }
+    const canonicalNorm = normalizeBranchNameKey(canonicalName);
+    if (canonicalNorm) {
+      keys.delete(`name:${canonicalNorm}`);
+      memoryDeletedBranchKeys.delete(`name:${canonicalNorm}`);
+    }
+  }
+  persistDeletedKeysToStorage(keys);
+}
+
+export function clearDeletedBranchesRegistry(): void {
+  memoryDeletedBranchKeys.clear();
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(DELETED_BRANCHES_STORAGE_KEY);
+    }
+  } catch {}
+}
+
+export function isBranchMarkedDeleted(
+  branchId?: string | null,
+  branchName?: string | null,
+  extraDeletedKeys?: Iterable<string>
+): boolean {
+  const keys = readDeletedKeysFromStorage();
+  if (extraDeletedKeys) {
+    for (const k of extraDeletedKeys) {
+      if (k) keys.add(String(k).trim());
+    }
+  }
+  if (keys.size === 0) return false;
+
+  const cleanId = String(branchId || '').trim();
+  const cleanName = String(branchName || '').trim();
+  if (cleanId && keys.has(cleanId)) return true;
+
+  const normName = normalizeBranchNameKey(cleanName);
+  if (normName && (keys.has(normName) || keys.has(`name:${normName}`))) return true;
+
+  if (cleanId || cleanName) {
+    const { canonicalId, canonicalName } = resolveCanonicalBranchIdentity(cleanId, cleanName);
+    if (canonicalId && keys.has(canonicalId)) return true;
+    const canonicalNorm = normalizeBranchNameKey(canonicalName);
+    if (canonicalNorm && (keys.has(canonicalNorm) || keys.has(`name:${canonicalNorm}`))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Deduplicates an array of SupplyBranch records by both canonical ID and
- * normalized Arabic branch name. Ensures canonical branches always come first
- * and never repeat regardless of spelling variations or random IDs.
+ * normalized Arabic branch name. Ensures canonical branches always come first,
+ * respects any branches explicitly deleted by the user, and never repeats
+ * regardless of spelling variations or random IDs.
  */
 export function deduplicateSupplyBranches(
-  branches: SupplyBranch[] | undefined | null
+  branches: SupplyBranch[] | undefined | null,
+  extraDeletedKeys?: Iterable<string>
 ): SupplyBranch[] {
   const sourceList = Array.isArray(branches) && branches.length > 0
     ? branches
@@ -211,6 +365,9 @@ export function deduplicateSupplyBranches(
   const seenNormNames = new Set<string>();
 
   for (const canonical of CANONICAL_DEFAULT_BRANCHES) {
+    if (isBranchMarkedDeleted(canonical.id, canonical.name, extraDeletedKeys)) {
+      continue;
+    }
     const matching = sourceList.find(
       (b) =>
         b &&
@@ -244,10 +401,18 @@ export function deduplicateSupplyBranches(
       continue;
     }
 
+    if (isBranchMarkedDeleted(item.id, rawName, extraDeletedKeys)) {
+      continue;
+    }
+
     const { canonicalId, canonicalName, isCanonicalDefault } = resolveCanonicalBranchIdentity(
       item.id,
       rawName
     );
+    if (isBranchMarkedDeleted(canonicalId, canonicalName, extraDeletedKeys)) {
+      continue;
+    }
+
     const nameKey = normalizeBranchNameKey(canonicalName);
     if (!nameKey || seenIds.has(canonicalId) || seenNormNames.has(nameKey)) {
       continue;
@@ -267,7 +432,7 @@ export function deduplicateSupplyBranches(
     });
   }
 
-  return result.length > 0 ? result : CANONICAL_DEFAULT_BRANCHES;
+  return result.length > 0 ? result : [CANONICAL_DEFAULT_BRANCHES[0]];
 }
 
 /**

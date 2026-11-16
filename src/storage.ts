@@ -58,6 +58,10 @@ import {
   deduplicateSupplyBranches,
   normalizeBranchNameKey,
   resolveCanonicalBranchIdentity,
+  markBranchDeleted,
+  unmarkBranchDeleted,
+  isBranchMarkedDeleted,
+  CANONICAL_DEFAULT_BRANCHES,
 } from './utils/branchVaultUtils';
 
 export interface MergeConflictItem {
@@ -269,10 +273,12 @@ export function getBranchesList(): SupplyBranch[] {
           return sanitized;
         }
       }
-      localStorage.setItem(BRANCH_META_KEYS.BRANCHES_LIST, JSON.stringify(DEFAULT_SUPPLY_BRANCHES));
+      const initial = sanitizeAndDeduplicateBranches(DEFAULT_SUPPLY_BRANCHES);
+      localStorage.setItem(BRANCH_META_KEYS.BRANCHES_LIST, JSON.stringify(initial));
+      return initial;
     }
   } catch {}
-  return DEFAULT_SUPPLY_BRANCHES;
+  return sanitizeAndDeduplicateBranches(DEFAULT_SUPPLY_BRANCHES);
 }
 
 export function saveBranchesList(branches: SupplyBranch[]): void {
@@ -320,16 +326,21 @@ export function addSupplyBranch(
 ): SupplyBranch {
   const trimmedName = name.trim();
   const targetKey = normalizeBranchNameKey(trimmedName);
+
+  const { canonicalId, canonicalName } = resolveCanonicalBranchIdentity(
+    `branch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    trimmedName
+  );
+  // If this branch was previously deleted, unmark it so the user can restore/re-add it
+  unmarkBranchDeleted(canonicalId, canonicalName);
+  unmarkBranchDeleted(undefined, trimmedName);
+
   const branches = getBranchesList();
   const existing = branches.find((b) => normalizeBranchNameKey(b.name) === targetKey);
   if (existing) {
     return existing;
   }
 
-  const { canonicalId, canonicalName } = resolveCanonicalBranchIdentity(
-    `branch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    trimmedName
-  );
   const existingByCanonicalId = branches.find((b) => b.id === canonicalId);
   if (existingByCanonicalId) {
     return existingByCanonicalId;
@@ -405,10 +416,12 @@ export function deleteSupplyBranch(branchId: string): {
       success: false,
       message: 'لا يمكن حذف جميع الفروع؛ يجب الإبقاء على إدارة تموينية واحدة على الأقل في المنظومة.',
       branches,
-      nextActiveBranchId: branches[0].id,
+      nextActiveBranchId: branches[0]?.id || DEFAULT_BRANCH_ID,
     };
   }
-  const target = branches.find((b) => b.id === branchId);
+  const target =
+    branches.find((b) => b.id === branchId) ||
+    CANONICAL_DEFAULT_BRANCHES.find((b) => b.id === branchId);
   if (!target) {
     return {
       success: false,
@@ -418,8 +431,18 @@ export function deleteSupplyBranch(branchId: string): {
     };
   }
 
-  const remaining = branches.filter((b) => b.id !== branchId);
-  saveBranchesList(remaining);
+  // Permanently mark this branch as deleted so deduplicateSupplyBranches / cloud sync never resurrects it
+  markBranchDeleted(target.id, target.name);
+  if (branchId !== target.id) {
+    markBranchDeleted(branchId, target.name);
+  }
+
+  const targetNormName = normalizeBranchNameKey(target.name);
+  const remaining = branches.filter(
+    (b) => b.id !== branchId && b.id !== target.id && normalizeBranchNameKey(b.name) !== targetNormName
+  );
+  const safeRemaining = remaining.length > 0 ? remaining : [CANONICAL_DEFAULT_BRANCHES[0]];
+  saveBranchesList(safeRemaining);
 
   // Clean up isolated storage for deleted branch (never delete active session key)
   if (branchId !== DEFAULT_BRANCH_ID) {
@@ -432,6 +455,7 @@ export function deleteSupplyBranch(branchId: string): {
           }
         });
         localStorage.removeItem(`TAMWEEN_EXPLICIT_USER_SAVE__${branchId}`);
+        localStorage.removeItem(`TAMWEEN_BRANCH_AUTH_VAULT_V1__${branchId}`);
       }
     } catch {}
   } else {
@@ -446,13 +470,16 @@ export function deleteSupplyBranch(branchId: string): {
   }
 
   const currentActive = getActiveBranchId();
-  const nextActive = currentActive === branchId ? remaining[0].id : currentActive;
+  const nextActive =
+    currentActive === branchId || currentActive === target.id || !safeRemaining.some((b) => b.id === currentActive)
+      ? safeRemaining[0].id
+      : currentActive;
   setActiveBranchId(nextActive);
 
   return {
     success: true,
     message: `تم حذف "${target.name}" وجميع بياناته المنفصلة بنجاح.`,
-    branches: remaining,
+    branches: safeRemaining,
     nextActiveBranchId: nextActive,
   };
 }
@@ -1104,13 +1131,18 @@ export function syncAllBranchesFromCloudPayload(
 ): boolean {
   if (!cloudData) return false;
 
-  // 1. Sync branches list across all devices safely with zero duplicates
+  // 1. Sync branches list across all devices safely with zero duplicates (and never resurrect deleted branches)
   const currentBranches = getBranchesList();
-  const rawBranches: SupplyBranch[] = [...DEFAULT_SUPPLY_BRANCHES, ...currentBranches];
+  const rawBranches: SupplyBranch[] = [
+    ...DEFAULT_SUPPLY_BRANCHES.filter((b) => !isBranchMarkedDeleted(b.id, b.name)),
+    ...currentBranches.filter((b) => !isBranchMarkedDeleted(b.id, b.name)),
+  ];
 
   if (Array.isArray(cloudData.branches) && cloudData.branches.length > 0) {
     cloudData.branches.forEach((b) => {
-      if (b && b.id && b.name) rawBranches.push(b);
+      if (b && b.id && b.name && !isBranchMarkedDeleted(b.id, b.name)) {
+        rawBranches.push(b);
+      }
     });
   }
 
@@ -1122,11 +1154,11 @@ export function syncAllBranchesFromCloudPayload(
     (cloudData as unknown as { branchAuthVaults?: Record<string, BranchAuthVaultRecord> })
       .branchAuthVaults;
 
-  // Also include any branch ID present in branchPartitions
+  // Also include any branch ID present in branchPartitions (unless marked deleted)
   Object.keys(remotePartitions).forEach((bId) => {
     if (bId) {
       const pName = remotePartitions[bId]?.systemConfig?.administrationTitle;
-      if (pName) {
+      if (pName && !isBranchMarkedDeleted(bId, pName)) {
         rawBranches.push({
           id: bId,
           name: pName,
@@ -1152,7 +1184,7 @@ export function syncAllBranchesFromCloudPayload(
   // Only update DEFAULT_BRANCH_ID if explicitly present in remotePartitions;
   // for flat single-branch snapshots, route strictly to cloudData.activeBranchId || DEFAULT_BRANCH_ID.
   const payloadBranchId = cloudData.activeBranchId || DEFAULT_BRANCH_ID;
-  if (remotePartitions[DEFAULT_BRANCH_ID]) {
+  if (remotePartitions[DEFAULT_BRANCH_ID] && !isBranchMarkedDeleted(DEFAULT_BRANCH_ID)) {
     if (
       writeBranchPartitionToLocal(
         DEFAULT_BRANCH_ID,
@@ -1163,7 +1195,7 @@ export function syncAllBranchesFromCloudPayload(
     ) {
       appliedAny = true;
     }
-  } else if (!hasPartitionsMap) {
+  } else if (!hasPartitionsMap && !isBranchMarkedDeleted(payloadBranchId)) {
     const flatPartition: BranchPartitionPayload = {
       ...cloudData,
       activeBranchId: payloadBranchId,
@@ -1177,6 +1209,7 @@ export function syncAllBranchesFromCloudPayload(
   // 3. Sync every isolated branch partition in branchPartitions
   Object.entries(remotePartitions).forEach(([bId, part]) => {
     if (!bId || bId === DEFAULT_BRANCH_ID || !part) return;
+    if (isBranchMarkedDeleted(bId, part?.systemConfig?.administrationTitle)) return;
     if (writeBranchPartitionToLocal(bId, part, remoteTimestamp, options)) {
       appliedAny = true;
     }

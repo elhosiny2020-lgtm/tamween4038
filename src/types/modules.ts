@@ -395,6 +395,85 @@ export interface ModuleAuditLog {
   afterSummary?: string;
 }
 
+export interface GasCylinderRecord {
+  id: string;
+  branchId: string;
+  warehouseName: string;
+  licenseNumber: string;
+  ownerName: string;
+  governorate: string;
+  administration: string;
+  center: string;
+  localUnit: string;
+  village: string;
+  companyName: string; // 'دي بي جاز (DB Gas)' | 'مصر للبترول' | 'بتروتريد' | etc.
+  cylinderType: 'منزلي' | 'تجاري';
+  capacity: '12.5 كجم' | '25 كجم' | 'أخرى';
+  openingBalance: number;
+  receipts: number;
+  disbursements: number;
+  sales: number;
+  transferred: number;
+  returns: number;
+  damaged: number;
+  remainingBalance: number;
+  officialPrice: number;
+  salesValue: number;
+  assignedQuota: number;
+  actualStock: number;
+  inventoryDifference: number; // book - actual (0 = ok, + = deficit, - = surplus)
+  date: string;
+  receiptNoteNo: string;
+  notes: string;
+  updatedAt?: string;
+}
+
+export interface PetroleumProductRecord {
+  id: string;
+  branchId: string;
+  stationName: string;
+  licenseNumber: string;
+  ownerName: string;
+  productName: 'السولار' | 'بنزين 80' | 'بنزين 92' | 'بنزين 95' | 'مازوت' | string;
+  openingStock: number; // liters
+  receipts: number;
+  sales: number;
+  transferred: number;
+  returns: number;
+  authorizedLoss: number; // الفاقد المعتمد
+  bookStock: number;
+  actualStock: number;
+  inventoryDifference: number; // book - actual
+  officialPricePerLiter: number;
+  totalSalesValue: number;
+  assignedQuota: number;
+  date: string;
+  invoiceNumber: string;
+  notes: string;
+  updatedAt?: string;
+}
+
+export interface RationOfficeAccountingRecord {
+  id: string;
+  branchId: string;
+  officeName: string; // مكتب التموين
+  month: string; // '01' - '12'
+  year: string; // '2025'
+  commodityName: string; // 'سكر' | 'أرز' | 'زيت' | 'مكرونة' | etc.
+  openingBalance: number;
+  wholesaleReceipts: number; // الوارد من شركة الجملة
+  totalAvailable: number; // opening + receipts
+  smartCardDisbursements: number; // المنصرف من البطاقات الذكية
+  unitPrice: number;
+  financialValue: number; // disbursements * unitPrice
+  endingBalance: number; // totalAvailable - smartCardDisbursements
+  cardsCount: number;
+  beneficiariesCount: number;
+  notes: string;
+  isApproved: boolean;
+  updatedAt?: string;
+}
+
 export interface RationModuleState {
   merchants: RationMerchant[];
   commodities: RationCommodity[];
@@ -407,6 +486,9 @@ export interface RationModuleState {
   financialEntries: MerchantFinancialEntry[];
   inspections: RationInspectionCampaign[];
   complaints: RationComplaintRecord[];
+  gasCylinders: GasCylinderRecord[];
+  petroleumProducts: PetroleumProductRecord[];
+  rationOfficeAccounts: RationOfficeAccountingRecord[];
   settings: RationDecisionSettings;
   settingsHistory: RationDecisionSettings[];
   auditLogs: ModuleAuditLog[];
@@ -564,6 +646,8 @@ export interface GrainMaintenanceState {
 // =========================================================================
 export type HrEmploymentStatus =
   | 'على رأس العمل'
+  | 'اقترب موعد انتهاء التعاقد'
+  | 'منتهي التعاقد'
   | 'إجازة'
   | 'منتدب'
   | 'معار'
@@ -613,6 +697,11 @@ export interface HrEmployee {
   status: HrEmploymentStatus;
   directManager: string;
   fileNumber: string;
+  // Public Service & Contract Employees Specific Fields
+  employeeType?: 'خدمة عامة' | 'استعانة' | 'تعيين دائم' | string;
+  qualification?: string; // المؤهل الدراسي
+  contractEndDate?: string; // تاريخ انتهاء التعاقد YYYY-MM-DD
+  contractDurationText?: string; // مدة التعاقد
   // Financial structure
   functionalWage: number;
   complementaryWage: number;

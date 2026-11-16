@@ -16,6 +16,12 @@ import {
   deduplicateSupplyBranches,
   normalizeBranchNameKey,
   resolveCanonicalBranchIdentity,
+  markBranchDeleted,
+  unmarkBranchDeleted,
+  isBranchMarkedDeleted,
+  getDeletedBranchKeys,
+  clearDeletedBranchesRegistry,
+  CANONICAL_DEFAULT_BRANCHES,
   DEFAULT_VAULT_USERNAME,
   DEFAULT_VAULT_PASSCODE,
 } from '../utils/branchVaultUtils.ts';
@@ -53,6 +59,7 @@ const SAMANOUD_BRANCH: SupplyBranch & { version?: number } = {
 
 interface FallbackStoreData {
   branches: Array<SupplyBranch & { version?: number }>;
+  deleted_branch_keys?: string[];
   villages: Array<VillageHierarchy & { id: string; branchId: string; version?: number }>;
   bakeries: Array<Bakery & { branchId: string; version?: number }>;
   debts: Array<DebtRecord & { branchId: string; version?: number }>;
@@ -95,6 +102,7 @@ let memoryStore: FallbackStoreData | null = null;
 function createEmptyStore(): FallbackStoreData {
   return {
     branches: [{ ...DEFAULT_BRANCH }, { ...SAMANOUD_BRANCH }],
+    deleted_branch_keys: [],
     villages: [],
     bakeries: [],
     debts: [],
@@ -117,14 +125,22 @@ function loadStore(): FallbackStoreData {
       const raw = fs.readFileSync(FALLBACK_STORE_PATH, 'utf-8');
       if (raw && raw.trim()) {
         const parsed = JSON.parse(raw) as Partial<FallbackStoreData>;
+        if (Array.isArray(parsed.deleted_branch_keys)) {
+          for (const k of parsed.deleted_branch_keys) {
+            if (typeof k === 'string' && k.trim()) {
+              markBranchDeleted(k.trim());
+            }
+          }
+        }
         const base = createEmptyStore();
         memoryStore = {
           ...base,
           ...parsed,
+          deleted_branch_keys: Array.from(getDeletedBranchKeys()),
           branches:
             Array.isArray(parsed.branches) && parsed.branches.length > 0
               ? deduplicateSupplyBranches(parsed.branches)
-              : base.branches,
+              : deduplicateSupplyBranches(base.branches),
           storage_files: parsed.storage_files && typeof parsed.storage_files === 'object' ? parsed.storage_files : {},
           module_states: parsed.module_states && typeof parsed.module_states === 'object' ? parsed.module_states : {},
         };
@@ -139,6 +155,7 @@ function loadStore(): FallbackStoreData {
 }
 
 function persistStore(store: FallbackStoreData): void {
+  store.deleted_branch_keys = Array.from(getDeletedBranchKeys());
   memoryStore = store;
   try {
     const dir = path.dirname(FALLBACK_STORE_PATH);
@@ -153,8 +170,10 @@ function persistStore(store: FallbackStoreData): void {
 
 function ensureFallbackBranch(store: FallbackStoreData, branchId: string, branchName?: string) {
   const cleanId = branchId || DEFAULT_BRANCH_ID;
+  if (isBranchMarkedDeleted(cleanId, branchName)) return;
   if (store.branches.some((b) => b.id === cleanId)) return;
   const { canonicalName, isCanonicalDefault } = resolveCanonicalBranchIdentity(cleanId, branchName);
+  if (isBranchMarkedDeleted(cleanId, canonicalName)) return;
   store.branches.push({
     id: cleanId,
     name: canonicalName,
@@ -559,6 +578,9 @@ export function fallbackUpsertRow(
   payload: any
 ): UpsertRowResult {
   const store = loadStore();
+  if (table === 'branches') {
+    unmarkBranchDeleted(payload?.id || branchId, payload?.name);
+  }
   const res = upsertInStoreInternal(store, table, branchId, payload);
   if (res.success) {
     persistStore(store);
@@ -572,6 +594,30 @@ export function fallbackDeleteRow(
   branchId?: string
 ): { success: boolean; deletedRow?: any; error?: string } {
   const store = loadStore();
+  if (table === 'branches') {
+    const existing =
+      store.branches.find((b) => String(b.id) === String(id)) ||
+      CANONICAL_DEFAULT_BRANCHES.find((b) => String(b.id) === String(id));
+    markBranchDeleted(id, existing?.name);
+    const targetNorm = normalizeBranchNameKey(existing?.name);
+    store.branches = store.branches.filter(
+      (b) =>
+        String(b.id) !== String(id) &&
+        (!targetNorm || normalizeBranchNameKey(b.name) !== targetNorm)
+    );
+    // Clean up child rows for the deleted branch
+    store.villages = store.villages.filter((r) => r.branchId !== id);
+    store.bakeries = store.bakeries.filter((r) => r.branchId !== id);
+    store.debts = store.debts.filter((r) => r.branchId !== id);
+    store.app_users = store.app_users.filter((r) => r.branchId !== id);
+    store.daily_tasks = store.daily_tasks.filter((r) => r.branchId !== id);
+    store.inbox_messages = store.inbox_messages.filter((r) => r.branchId !== id);
+    store.high_debt_alerts = store.high_debt_alerts.filter((r) => r.branchId !== id);
+    store.system_config = store.system_config.filter((r) => r.branchId !== id);
+    store.dropdown_lists = store.dropdown_lists.filter((r) => r.branchId !== id);
+    persistStore(store);
+    return { success: true, deletedRow: existing || { id } };
+  }
   if (table === 'system_config') {
     const idx = store.system_config.findIndex((c) => c.branchId === id);
     if (idx < 0) return { success: true, deletedRow: null };
@@ -582,7 +628,7 @@ export function fallbackDeleteRow(
   const arr = (store as any)[table] as any[];
   if (!Array.isArray(arr)) return { success: true, deletedRow: null };
   const idx = arr.findIndex(
-    (r) => String(r.id) === String(id) && (!branchId || table === 'branches' || r.branchId === branchId)
+    (r) => String(r.id) === String(id) && (!branchId || r.branchId === branchId)
   );
   if (idx < 0) return { success: true, deletedRow: null };
   const [deleted] = arr.splice(idx, 1);
@@ -610,7 +656,7 @@ export function fallbackSyncFullBranchState(
 
   if (Array.isArray(stateData?.branches)) {
     for (const br of stateData.branches) {
-      if (br?.id) {
+      if (br?.id && !isBranchMarkedDeleted(br.id, br.name)) {
         upsertInStoreInternal(store, 'branches', br.id, br);
         syncedCounts.branches += 1;
       }
@@ -794,6 +840,7 @@ export function fallbackSyncHighDebtAlerts(
 }
 
 export function fallbackPurgeAll(): void {
+  clearDeletedBranchesRegistry();
   const fresh = createEmptyStore();
   persistStore(fresh);
 }
