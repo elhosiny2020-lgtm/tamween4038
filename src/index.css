@@ -10,12 +10,12 @@
     --color-emerald-green: #10B981;
     --color-coral-red: #F43F5E;
     --color-light-slate: #F1F5F9;
-    font-size: 17px; /* Increased font size one full degree across the entire interface */
+    font-size: 19px; /* Increased font size 2 steps across the entire interface */
   }
 
   body {
     font-family: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
-    font-size: 1.05rem;
+    font-size: 1.15rem;
     font-weight: 700;
     background-color: #FAF8F5;
     color: #0A1628;

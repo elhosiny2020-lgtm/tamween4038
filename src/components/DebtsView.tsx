@@ -1339,7 +1339,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
         {/* Debts Database Table (Enlarged +1 step to text-sm with bold fonts) */}
         <div className="bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-md">
-          <div className="overflow-x-auto max-h-[670px] relative custom-scrollbar">
+          <div className="overflow-x-visible relative">
             <table className="w-full text-center border-collapse text-sm font-extrabold">
               {/* Super Headers */}
               <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-black shadow-md text-xs sm:text-sm">

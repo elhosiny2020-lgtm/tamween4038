@@ -4380,7 +4380,7 @@ export default function App() {
 
               {/* Main Bakeries Data Table (Pure White & Light Gray with Sticky Navy Headers) */}
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-                <div className="overflow-x-auto max-h-[680px] relative">
+                <div className="overflow-x-visible relative">
                   <table className="w-full text-center border-collapse text-xs">
                     {/* Grouped Super Headers */}
                     <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-bold shadow-xs">
