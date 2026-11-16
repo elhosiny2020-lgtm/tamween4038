@@ -17,6 +17,7 @@ import {
   Lock,
   Sparkles
 } from 'lucide-react';
+import { playGentleAlertChime } from '../utils/audioNotifications';
 
 interface DailyAlertSettingsModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ interface DailyAlertSettingsModalProps {
   bakeries: Bakery[];
   currentUser: AppUser | null;
   onSaveConfig: (updatedConfig: DailyAlertConfig) => void;
+  onToggleMute?: (muted: boolean) => void;
   onTriggerTestAlert: (matchingBakeries: { bakery: Bakery; docName: string; expiryDate: string; daysDiff: number }[]) => void;
 }
 
@@ -50,6 +52,7 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
   bakeries,
   currentUser,
   onSaveConfig,
+  onToggleMute,
   onTriggerTestAlert,
 }) => {
   const isAdmin = currentUser?.role === 'admin';
@@ -68,6 +71,21 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
     typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported'
   );
   const [toastMsg, setToastMsg] = useState('');
+
+  useEffect(() => {
+    if (isOpen && config) {
+      setEnabled(config.enabled ?? true);
+      setAlertTime(config.alertTime || '09:00');
+      setNotifyBrowser(config.notifyBrowser ?? true);
+      setNotifySound(config.notifySound ?? true);
+      setTargetDocs(
+        config.targetDocs && config.targetDocs.length > 0
+          ? config.targetDocs
+          : ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate']
+      );
+      setDaysThreshold(config.daysThreshold ?? 0);
+    }
+  }, [isOpen, config]);
 
   // Escape key closing is intentionally disabled per user preference
 
@@ -185,13 +203,13 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
             </div>
             <div>
               <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                <span>إعدادات التذكير والتنبيه اليومي لتراخيص المخابز</span>
+                <span>التنبيه بمواعيد والإشعار الصوتي (تراخيص المخابز والمديونيات)</span>
                 <span className="text-[10px] bg-amber-400 text-slate-950 font-black px-2 py-0.5 rounded-full font-mono">
                   صلاحية الإدارة 👑
                 </span>
               </h3>
               <p className="text-xs text-amber-200/90 mt-0.5 font-medium">
-                تحديد عدد الأيام قبل انتهاء أي ترخيص (السجل التجاري، البطاقة الضريبية، رخصة المخبز، عقد الإيجار) ووقت الإخطار اليومي وإشعارات المتصفح
+                تحديد موعد الإخطار اليومي وعدد الأيام قبل انتهاء التراخيص (السجل التجاري، البطاقة الضريبية، رخصة المخبز، عقد الإيجار) وإعدادات الصوت للتراخيص والمديونيات
               </p>
             </div>
           </div>
@@ -470,29 +488,65 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
                 </div>
               </div>
 
-              {/* Sound Alert */}
-              <div className="p-3 bg-black/60 border border-slate-800 rounded-xl flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  {notifySound ? (
-                    <Volume2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  ) : (
-                    <VolumeX className="w-4 h-4 text-slate-500 shrink-0" />
-                  )}
-                  <div>
-                    <span className="text-xs font-black text-white block">نغمة تنبيه صوتية لطيفة</span>
-                    <span className="text-[10px] text-slate-400">
-                      تشغيل نغمة مسموعة عند حلول موعد التنبيه اليومي
-                    </span>
+              {/* Sound Alert & Mute Option */}
+              <div className="p-3 bg-black/60 border border-slate-800 rounded-xl flex flex-col justify-between gap-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    {notifySound ? (
+                      <Volume2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <VolumeX className="w-4 h-4 text-rose-400 shrink-0" />
+                    )}
+                    <div>
+                      <span className="text-xs font-black text-white block">
+                        الإشعار الصوتي للتنبيهات ({notifySound ? 'مفعّل' : 'مكتوم'})
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        تشغيل نغمة خفيفة عند فتح شاشات تنبيه المديونيات والتراخيص أو المداومة اليومية
+                      </span>
+                    </div>
                   </div>
+
+                  <button
+                    type="button"
+                    data-testid="toggle-alert-sound-mute"
+                    onClick={() => {
+                      const nextSound = !notifySound;
+                      setNotifySound(nextSound);
+                      if (onToggleMute) {
+                        onToggleMute(!nextSound);
+                      }
+                      if (nextSound) {
+                        playGentleAlertChime({ muted: false, type: 'test' });
+                        setToastMsg('تم تفعيل الإشعار الصوتي للتنبيهات');
+                      } else {
+                        setToastMsg('تم كتم صوت الإشعارات والتنبيهات');
+                      }
+                      setTimeout(() => setToastMsg(''), 2500);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-black transition cursor-pointer border shrink-0 ${
+                      !notifySound
+                        ? 'bg-rose-950/80 text-rose-200 border-rose-500/60 hover:bg-rose-900'
+                        : 'bg-emerald-950/80 text-emerald-200 border-emerald-500/60 hover:bg-emerald-900'
+                    }`}
+                  >
+                    {notifySound ? 'كتم الصوت' : 'إلغاء الكتم'}
+                  </button>
                 </div>
 
-                <input
-                  type="checkbox"
-                  checked={notifySound}
-                  disabled={!isAdmin || !enabled}
-                  onChange={(e) => setNotifySound(e.target.checked)}
-                  className="rounded border-slate-700 text-amber-500 focus:ring-amber-500 cursor-pointer shrink-0"
-                />
+                <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
+                  <span className="text-[10px] text-slate-400 font-bold">
+                    {notifySound ? 'صوت التنبيه اللطيف يعمل تلقائياً' : 'تم تفعيل كتم الصوت (Mute) لجميع التنبيهات'}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="test-alert-chime-btn"
+                    onClick={() => playGentleAlertChime({ muted: false, type: 'license' })}
+                    className="text-[10px] font-black text-amber-300 hover:text-amber-200 underline cursor-pointer"
+                  >
+                    سماع نغمة التنبيه الآن
+                  </button>
+                </div>
               </div>
             </div>
           </div>

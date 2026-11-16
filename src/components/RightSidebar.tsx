@@ -32,10 +32,13 @@ import {
   Lock,
   Award,
   Sparkles,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { CloudConnectionStatus } from '../lib/supabase';
 
 export type SidebarNavId =
+  | 'welcome-home'
   // 1. قسم إدارة المخابز
   | 'user-guide'
   | 'bakeries-all'
@@ -56,6 +59,7 @@ export type SidebarNavId =
   | 'calc-recalculate-all'
   | 'report-per-capita'
   | 'settings-alerts'
+  | 'alerts-scheduled-audio'
   // 2. قسم التعديلات
   | 'data-edit-bakery'
   | 'data-edit-master'
@@ -128,6 +132,8 @@ interface RightSidebarProps {
   connectionStatus?: CloudConnectionStatus;
   connectionLabel?: string;
   isVaultUnlocked?: boolean;
+  isAudioMuted?: boolean;
+  scheduledAlertsCount?: number;
   onOpenVaultGate?: (section: 'backup' | 'branches' | 'both', label: string) => void;
   onLockVault?: () => void;
 }
@@ -147,6 +153,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   connectionStatus = 'connected',
   connectionLabel = 'متصل بقاعدة البيانات',
   isVaultUnlocked = false,
+  isAudioMuted = false,
+  scheduledAlertsCount = 0,
   onOpenVaultGate,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -217,6 +225,17 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           icon: <AlertTriangle className="w-3.5 h-3.5" />,
           badge: alertsCount > 0 ? alertsCount : undefined,
           badgeVariant: 'warning',
+        },
+        {
+          id: 'alerts-scheduled-audio',
+          label: 'التنبيه بمواعيد وإشعار صوتي (تراخيص ومديونيات)',
+          icon: isAudioMuted ? (
+            <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+          ) : (
+            <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+          ),
+          badge: isAudioMuted ? 'مكتوم' : scheduledAlertsCount > 0 ? `${scheduledAlertsCount} صوتي` : 'صوتي',
+          badgeVariant: isAudioMuted ? 'danger' : 'teal',
         },
       ],
     },
@@ -431,6 +450,25 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         <div className="mt-3.5 space-y-1.5">
           <button
             type="button"
+            data-testid="sidebar-welcome-btn"
+            onClick={() => onSelectNav('welcome-home', 'الترحيب', 'الصفحة الترحيبية')}
+            title="الصفحة الترحيبية"
+            className={`w-full flex items-center ${
+              isCollapsed ? 'justify-center px-2' : 'justify-between px-3.5'
+            } py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+              activeNavId === 'welcome-home'
+                ? 'bg-gradient-to-l from-[#0D9488] to-[#0F766E] text-white border-[#D4AF37]/60 shadow-md'
+                : 'bg-[#0F1E36] text-[#5EEAD4] border-[#0D9488]/30 hover:bg-[#0D9488]/15'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 shrink-0 text-[#D4AF37]" />
+              {!isCollapsed && <span>الصفحة الترحيبية</span>}
+            </div>
+          </button>
+
+          <button
+            type="button"
             onClick={() => onSelectNav('dashboard-home', 'لوحة التحكم', 'الصفحة الرئيسية')}
             title="الصفحة الرئيسية"
             className={`w-full flex items-center ${
@@ -569,15 +607,17 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                             : 'text-slate-300 font-bold border-transparent hover:bg-white/[0.06] hover:text-white'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className={`icon-bounce-hover ${isActive ? 'text-[#D4AF37]' : 'text-[#5EEAD4]'}`}>
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span className={`shrink-0 icon-bounce-hover ${isActive ? 'text-[#D4AF37]' : 'text-[#5EEAD4]'}`}>
                             {item.icon}
                           </span>
-                          {!isCollapsed && <span className="truncate">{item.label}</span>}
+                          {!isCollapsed && (
+                            <span className="text-right leading-snug break-words">{item.label}</span>
+                          )}
                         </div>
                         {!isCollapsed && item.badge !== undefined && (
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-mono tabular-nums ${getBadgeClasses(
+                            className={`shrink-0 whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-mono tabular-nums ${getBadgeClasses(
                               item.badgeVariant
                             )}`}
                           >

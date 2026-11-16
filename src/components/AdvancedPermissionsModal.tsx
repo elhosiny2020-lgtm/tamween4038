@@ -16,6 +16,8 @@ import {
   Edit2,
   Plus,
   Briefcase,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { AppUser, CustomJobRole, SystemConfig, UserRoleType } from '../types';
 import {
@@ -163,6 +165,7 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
   const [newFullName, setNewFullName] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [newUserRole, setNewUserRole] = useState<UserRoleType>('inspector');
   const [newJobTitle, setNewJobTitle] = useState('مفتش تموين أول');
 
@@ -171,6 +174,7 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
   const [editFullName, setEditFullName] = useState('');
   const [editUsername, setEditUsername] = useState('');
   const [editPassword, setEditPassword] = useState('');
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [editUserRole, setEditUserRole] = useState<UserRoleType>('inspector');
   const [editJobTitle, setEditJobTitle] = useState('');
 
@@ -315,7 +319,8 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     setEditingUserId(u.id);
     setEditFullName(u.fullName || '');
     setEditUsername(u.username || '');
-    setEditPassword(u.password || 'admin');
+    setEditPassword('');
+    setShowEditPassword(false);
     setEditUserRole(u.role);
     setEditJobTitle(u.jobTitle || '');
   };
@@ -324,9 +329,9 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     if (!onUpdateUser) return;
     const cleanName = editFullName.trim();
     const cleanUser = editUsername.trim();
-    const cleanPass = editPassword.trim();
+    const cleanPass = editPassword.trim() || u.password || '';
     if (!cleanName || !cleanUser || !cleanPass) {
-      setErrorNotice('الاسم بالكامل واليوزر والباسورد حقول أساسية لا يمكن تركها فارغة');
+      setErrorNotice('الاسم بالكامل واليوزر حقول أساسية لا يمكن تركها فارغة');
       return;
     }
     const updatedUser: AppUser = {
@@ -530,15 +535,26 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
                       <label className="block text-[11px] font-black text-slate-800 mb-1">
                         كلمة المرور (الباسورد) *
                       </label>
-                      <input
-                        type="password"
-                        required
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="••••••••"
-                        autoComplete="new-password"
-                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900 font-mono text-left tracking-widest"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showNewPassword ? 'text' : 'password'}
+                          required
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="••••••••"
+                          autoComplete="new-password"
+                          className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900 font-mono text-left"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword((prev) => !prev)}
+                          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-800 cursor-pointer p-0.5"
+                          title={showNewPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                          aria-label={showNewPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                        >
+                          {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
                     <div>
                       <label className="block text-[11px] font-black text-slate-800 mb-1">
@@ -636,14 +652,25 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
                           </td>
                           <td className="p-2.5 border border-slate-200 text-center font-mono font-black text-slate-700">
                             {isEditing ? (
-                              <input
-                                type="password"
-                                value={editPassword}
-                                onChange={(e) => setEditPassword(e.target.value)}
-                                placeholder="••••••••"
-                                autoComplete="new-password"
-                                className="w-full px-2.5 py-1.5 bg-white border-2 border-amber-500 rounded-lg text-xs font-mono font-black text-left tracking-widest"
-                              />
+                              <div className="relative">
+                                <input
+                                  type={showEditPassword ? 'text' : 'password'}
+                                  value={editPassword}
+                                  onChange={(e) => setEditPassword(e.target.value)}
+                                  placeholder="اتركه فارغاً لعدم التغيير"
+                                  autoComplete="new-password"
+                                  className="w-full pl-8 pr-2.5 py-1.5 bg-white border-2 border-amber-500 rounded-lg text-xs font-mono font-black text-left"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowEditPassword((prev) => !prev)}
+                                  className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-800 cursor-pointer p-0.5"
+                                  title={showEditPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                                  aria-label={showEditPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                                >
+                                  {showEditPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
                             ) : (
                               <span className="bg-slate-100 border border-slate-300 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 text-slate-700">
                                 <Key className="w-3 h-3 text-slate-500" />

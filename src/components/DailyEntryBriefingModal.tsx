@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Bakery, DebtRecord } from '../types';
 import {
   X,
@@ -12,6 +12,7 @@ import {
   BellRing,
   Inbox
 } from 'lucide-react';
+import { playGentleAlertChime } from '../utils/audioNotifications';
 
 interface DailyEntryBriefingModalProps {
   isOpen: boolean;
@@ -19,6 +20,7 @@ interface DailyEntryBriefingModalProps {
   bakeries: Bakery[];
   debts: DebtRecord[];
   expiryLeadDays?: number;
+  muted?: boolean;
   onJumpToDebtsView: () => void;
   onOpenAlertsModal: () => void;
   onOpenInboxModal: () => void;
@@ -40,6 +42,7 @@ export const DailyEntryBriefingModal: React.FC<DailyEntryBriefingModalProps> = (
   bakeries,
   debts,
   expiryLeadDays = 30,
+  muted = false,
   onJumpToDebtsView,
   onOpenAlertsModal,
   onOpenInboxModal,
@@ -175,6 +178,15 @@ export const DailyEntryBriefingModal: React.FC<DailyEntryBriefingModalProps> = (
         item.docType.toLowerCase().includes(q)
     );
   }, [expiryAlerts, searchFilter]);
+
+  useEffect(() => {
+    if (isOpen && (bakeryDebtSummary.length > 0 || expiryAlerts.length > 0)) {
+      playGentleAlertChime({
+        muted,
+        type: expiryAlerts.length > 0 ? 'license' : 'debt',
+      });
+    }
+  }, [isOpen, muted, bakeryDebtSummary.length, expiryAlerts.length]);
 
   if (!isOpen) return null;
 

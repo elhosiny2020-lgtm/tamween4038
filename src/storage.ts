@@ -1307,17 +1307,17 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
   const isDefaultBranch = activeBranchId === DEFAULT_BRANCH_ID;
   const scopedKeys = getScopedKeysForBranch(activeBranchId);
 
-  // Session check helper scoped to active branch's users list
-  const resolveCurrentUser = (activeUsersList: AppUser[]): AppUser | null => {
+  // Session check helper: always require explicit authenticated sign-in on fresh boot and purge any cached session credentials
+  const resolveCurrentUser = (_activeUsersList: AppUser[]): AppUser | null => {
     try {
-      const savedSessionStr = sessionStorage.getItem(BASE_KEYS.SESSION);
-      localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
-      if (savedSessionStr) {
-        const parsedSession: AppUser = JSON.parse(savedSessionStr);
-        const match = activeUsersList.find(
-          (u) => u.id === parsedSession.id || u.username.toLowerCase() === parsedSession.username.toLowerCase()
-        );
-        if (match) return match;
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem(BASE_KEYS.SESSION);
+        sessionStorage.removeItem(KEYS.SESSION);
+      }
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(BASE_KEYS.SESSION);
+        localStorage.removeItem(KEYS.SESSION);
+        localStorage.removeItem('TAMWEEN_GMAIL_DRIVE_PASSWORD');
       }
     } catch {}
     return null;
@@ -1533,7 +1533,9 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
     villages = villages ?? (isDefaultBranch ? DEFAULT_VILLAGES_HIERARCHY : []);
     issuingEntities = issuingEntities ?? DEFAULT_ISSUING_ENTITIES;
     violationTypes = violationTypes ?? DEFAULT_VIOLATION_TYPES;
-    activityStatuses = activityStatuses ?? DEFAULT_ACTIVITY_STATUSES;
+    activityStatuses = (activityStatuses ?? DEFAULT_ACTIVITY_STATUSES).filter(
+      (s: string) => String(s).trim() !== 'يعمل'
+    );
     bakeryCategories = bakeryCategories ?? DEFAULT_BAKERY_CATEGORIES;
     breadTypes = breadTypes ?? DEFAULT_BREAD_TYPES;
     breadTypeCounts = breadTypeCounts ?? DEFAULT_BREAD_TYPE_COUNTS;
@@ -2030,10 +2032,14 @@ export async function mergeAutoSaveOntoCurrent(currentState: AppState): Promise<
 export function saveSessionUser(user: AppUser | null): void {
   try {
     if (user) {
-      sessionStorage.setItem(KEYS.SESSION, JSON.stringify(user));
+      // Never persist plaintext passwords or app passwords inside browser storage
+      const { password: _pwd, gmailPassword: _gpwd, ...safeUser } = user;
+      sessionStorage.setItem(KEYS.SESSION, JSON.stringify(safeUser));
     } else {
       sessionStorage.removeItem(KEYS.SESSION);
+      sessionStorage.removeItem(BASE_KEYS.SESSION);
       localStorage.removeItem(KEYS.SESSION);
+      localStorage.removeItem(BASE_KEYS.SESSION);
     }
   } catch {}
 }

@@ -43,25 +43,51 @@
   }
 }
 
-/* Custom Scrollbar - Midnight Navy & Royal Teal */
+/* Custom Scrollbar - Midnight Navy & Royal Teal (Enlarged bottom horizontal scrollbar for wide ERP tables) */
 ::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 11px;
+  height: 16px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #F1F5F9;
-  border-radius: 8px;
+  background: #E2E8F0;
+  border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #0A1628 0%, #0D9488 100%);
-  border-radius: 8px;
-  border: 2px solid #F1F5F9;
+  border-radius: 10px;
+  border: 2px solid #E2E8F0;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #0D9488 0%, #D4AF37 100%);
+}
+
+.custom-scrollbar {
+  scrollbar-width: auto;
+  scrollbar-color: #0D9488 #E2E8F0;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 12px;
+  height: 18px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #CBD5E1;
+  border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #0A1628 0%, #0D9488 60%, #0F766E 100%);
+  border-radius: 9999px;
+  border: 3px solid #CBD5E1;
+  min-width: 60px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, #0D9488 0%, #D4AF37 100%);
 }
 
 /* Keyframe Animations & Animated Badges ("رسوم متحركة وشارات متحركة") */

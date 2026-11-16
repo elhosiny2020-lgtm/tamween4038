@@ -11,11 +11,13 @@ import {
   ShieldCheck,
   CheckCircle2
 } from 'lucide-react';
+import { playGentleAlertChime } from '../utils/audioNotifications';
 
 interface DailyAlertNotificationModalProps {
   isOpen: boolean;
   onClose: () => void;
   alertTime: string;
+  muted?: boolean;
   expiredBakeries: {
     bakery: Bakery;
     docName: string;
@@ -30,31 +32,17 @@ export const DailyAlertNotificationModal: React.FC<DailyAlertNotificationModalPr
   isOpen,
   onClose,
   alertTime,
+  muted = false,
   expiredBakeries,
   onViewInBakeriesTable,
   onOpenAlertsCenter,
 }) => {
-  // Play alert chime when opened
+  // Play gentle alert chime when opened (respecting mute setting)
   useEffect(() => {
-    if (isOpen) {
-      try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
-        osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.12); // A5
-        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
-        osc.start(audioCtx.currentTime);
-        osc.stop(audioCtx.currentTime + 0.6);
-      } catch {
-        // fallback
-      }
+    if (isOpen && expiredBakeries.length > 0) {
+      playGentleAlertChime({ muted, type: 'license' });
     }
-  }, [isOpen]);
+  }, [isOpen, muted, expiredBakeries.length]);
 
   if (!isOpen) return null;
 

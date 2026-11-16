@@ -96,7 +96,6 @@ export const PAYMENT_METHODS: string[] = [
 ];
 
 export const DEFAULT_ACTIVITY_STATUSES: string[] = [
-  'يعمل',
   'متوقف جزئي',
   'متوقف كلي',
   'ملغى',

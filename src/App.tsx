@@ -141,6 +141,13 @@ import { GoogleWorkspaceModal } from './components/GoogleWorkspaceModal';
 import { BranchesManagerModal } from './components/BranchesManagerModal';
 import { VaultSecurityGateModal } from './components/VaultSecurityGateModal';
 import { InteractiveDashboardPage } from './components/InteractiveDashboardPage';
+import { WelcomeDashboardPage } from './components/WelcomeDashboardPage';
+import {
+  CommercialRegExpiryRange,
+  matchesCommercialRegFilter,
+  computeCommercialRegExpiryCounts,
+} from './utils/filterHelpers';
+import { playGentleAlertChime, shouldPlayAlertSound } from './utils/audioNotifications';
 import {
   deduplicateSupplyBranches,
   getStoredVaultPasscode,
@@ -220,6 +227,9 @@ import {
   Activity,
   KeyRound,
   Unlock,
+  Volume2,
+  VolumeX,
+  Sparkles,
 } from 'lucide-react';
 import { UserGuideView } from './components/UserGuideView';
 import { RealtimeDiagnosticsView } from './components/RealtimeDiagnosticsView';
@@ -288,7 +298,7 @@ export default function App() {
   const { isInstallable, install } = usePWAInstall();
   const [appState, setAppState] = useState<AppState | null>(null);
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'charts' | 'bakeries' | 'debts' | 'reports' | 'user-guide' | 'realtime-diagnostics'
+    'welcome' | 'dashboard' | 'charts' | 'bakeries' | 'debts' | 'reports' | 'user-guide' | 'realtime-diagnostics'
   >(() => {
     if (typeof window !== 'undefined') {
       const search = window.location.search.toLowerCase();
@@ -296,13 +306,31 @@ export default function App() {
       if (search.includes('debug=realtime') || hash.includes('diagnostics')) {
         return 'realtime-diagnostics';
       }
+      if (search.includes('autostart=1')) {
+        return 'bakeries';
+      }
     }
-    return 'bakeries';
+    return 'welcome';
   });
   const [activeReportId, setActiveReportId] = useState<ReportTemplateId>('bak-all');
-  const [activeSidebarNavId, setActiveSidebarNavId] = useState<SidebarNavId>('bakeries-all');
-  const [breadcrumbGroup, setBreadcrumbGroup] = useState<string>('إدارة المخابز');
-  const [breadcrumbItem, setBreadcrumbItem] = useState<string>('قاعدة بيانات المخابز');
+  const [activeSidebarNavId, setActiveSidebarNavId] = useState<SidebarNavId>(() => {
+    if (typeof window !== 'undefined' && window.location.search.toLowerCase().includes('autostart=1')) {
+      return 'bakeries-all';
+    }
+    return 'welcome-home';
+  });
+  const [breadcrumbGroup, setBreadcrumbGroup] = useState<string>(() => {
+    if (typeof window !== 'undefined' && window.location.search.toLowerCase().includes('autostart=1')) {
+      return 'إدارة المخابز';
+    }
+    return 'الترحيب';
+  });
+  const [breadcrumbItem, setBreadcrumbItem] = useState<string>(() => {
+    if (typeof window !== 'undefined' && window.location.search.toLowerCase().includes('autostart=1')) {
+      return 'قاعدة بيانات المخابز';
+    }
+    return 'الصفحة الترحيبية';
+  });
   const [columnViewMode, setColumnViewMode] = useState<
     'ALL' | 'BASIC' | 'BREAD' | 'QUOTAS' | 'INSURANCE' | 'BENEFICIARIES' | 'EQUATIONS'
   >('ALL');
@@ -381,6 +409,9 @@ export default function App() {
   const [selectedLicenseExpiryFilter, setSelectedLicenseExpiryFilter] = useState<
     'ALL' | 'EXPIRED' | 'WITHIN_30' | 'WITHIN_60' | 'WITHIN_90' | 'VALID'
   >('ALL');
+  // Dedicated Commercial Registration Expiry Range Filter (تاريخ انتهاء السجل التجاري)
+  const [selectedCommercialRegFilter, setSelectedCommercialRegFilter] =
+    useState<CommercialRegExpiryRange>('ALL');
   // Additional Dual/Multi-Filter Dropdowns (نوع الخبز + نوع الوقود وخط الإنتاج)
   const [selectedBreadTypeFilter, setSelectedBreadTypeFilter] = useState<string>('ALL');
   const [selectedFuelTypeFilter, setSelectedFuelTypeFilter] = useState<string>('ALL');
@@ -1020,18 +1051,7 @@ export default function App() {
     };
   }, []);
 
-  // Open Daily Entry Briefing Modal automatically once when user enters the database
-  const [hasShownDailyBriefingSession, setHasShownDailyBriefingSession] = useState(false);
-  useEffect(() => {
-    if (appState?.currentUser && !hasShownDailyBriefingSession) {
-      setHasShownDailyBriefingSession(true);
-      const isAutoStart =
-        typeof window !== 'undefined' && window.location.search.includes('autostart=1');
-      if (!isAutoStart) {
-        setIsDailyBriefingModalOpen(true);
-      }
-    }
-  }, [appState?.currentUser, hasShownDailyBriefingSession]);
+  // Welcome page renders automatically on login (no intrusive briefing popup blocking it)
 
   // Async Optimistic Save with Row-Level PostgreSQL/Supabase confirmation & conflict/error rollback
   const saveLockRef = React.useRef<Promise<void>>(Promise.resolve());
@@ -1322,6 +1342,51 @@ export default function App() {
     });
   };
 
+  const handleToggleAudioMute = (muted: boolean) => {
+    if (!appState) return;
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+    const existingDaily = appState.systemConfig?.dailyAlertConfig || {
+      enabled: true,
+      alertTime: '09:00',
+      notifyBrowser: true,
+      notifySound: true,
+      targetDocs: ['bakeryLicenseDate', 'commercialRegDate', 'leaseAgreementDate', 'taxCardDate'],
+      daysThreshold: 15,
+    };
+    const nextDaily: DailyAlertConfig = {
+      ...existingDaily,
+      notifySound: !muted,
+    };
+    const nextConfig: SystemConfig = {
+      ...appState.systemConfig,
+      dailyAlertConfig: nextDaily,
+    };
+    const updatedState: AppState = {
+      ...appState,
+      systemConfig: nextConfig,
+    };
+    commitRowMutation({
+      nextState: updatedState,
+      table: 'system_config',
+      branchId,
+      toastMessage: muted
+        ? 'تم كتم الصوت لإشعارات التراخيص والمديونيات بنجاح'
+        : 'تم تفعيل الإشعار الصوتي لتنبيهات التراخيص والمديونيات بنجاح',
+      executeDb: () =>
+        saveRowToDb({
+          table: 'system_config',
+          branchId,
+          row: {
+            branchId,
+            systemConfig: nextConfig,
+            columnTitles: appState.columnTitles,
+            activityStatuses: appState.activityStatuses,
+          },
+          operation: 'UPDATE',
+        }),
+    });
+  };
+
   const handleTriggerTestAlert = (matchingBakeries: { bakery: Bakery; docName: string; expiryDate: string; daysDiff: number }[]) => {
     const alertTime = appState?.systemConfig?.dailyAlertConfig?.alertTime || '09:00';
     setDailyNotificationData({
@@ -1460,6 +1525,13 @@ export default function App() {
     return { expired, within30, within60, within90, valid };
   }, [appState]);
 
+  const commercialRegCounts = useMemo(() => {
+    if (!appState) {
+      return { total: 0, expired: 0, within30: 0, within60: 0, within90: 0, valid: 0, missing: 0 };
+    }
+    return computeCommercialRegExpiryCounts(appState.bakeries);
+  }, [appState]);
+
   // Precompute bakery category counts
   const categoryCounts = useMemo(() => {
     if (!appState) return { baladi: 0, baladiMotawar: 0, tourist: 0, fino: 0, tabaqi: 0 };
@@ -1495,6 +1567,11 @@ export default function App() {
       const debt = bakeryRemainingDebtsMap[b.id] || 0;
       if (selectedDebtFilter === 'HAS_DEBT' && debt <= 0) return false;
       if (selectedDebtFilter === 'NO_DEBT' && debt > 0) return false;
+
+      // Filter by Commercial Registration Expiry Date (تاريخ انتهاء السجل التجاري)
+      if (!matchesCommercialRegFilter(b.commercialRegDate, selectedCommercialRegFilter)) {
+        return false;
+      }
 
       // Filter by License Expiry timeline
       if (selectedLicenseExpiryFilter !== 'ALL') {
@@ -1592,6 +1669,7 @@ export default function App() {
     selectedActivity,
     selectedDebtFilter,
     selectedCategoryFilter,
+    selectedCommercialRegFilter,
     selectedLicenseExpiryFilter,
     selectedBreadTypeFilter,
     selectedFuelTypeFilter,
@@ -1813,6 +1891,7 @@ export default function App() {
       setSelectedActivity('ALL');
       setSelectedDebtFilter('ALL');
       setSelectedCategoryFilter('ALL');
+      setSelectedCommercialRegFilter('ALL');
       setSelectedLicenseExpiryFilter('ALL');
       setSelectedBreadTypeFilter('ALL');
       setSelectedFuelTypeFilter('ALL');
@@ -1835,17 +1914,13 @@ export default function App() {
       setAppState((prev) => {
         if (!prev) return prev;
         const prevUser = prev.currentUser;
-        // Only keep user logged in if they actually exist in the target branch's isolated vault with matching credentials
+        // Keep already-authenticated users logged in smoothly when browsing/switching branch workspaces
         const resolvedBranchUser = prevUser
           ? immediateVault.users.find(
-              (u) =>
-                u.username.toLowerCase() === prevUser.username.toLowerCase() &&
-                (u.password || '') === (prevUser.password || '')
-            ) || null
+              (u) => u.username.toLowerCase() === prevUser.username.toLowerCase()
+            ) || { ...prevUser, branchId: targetBranchId }
           : null;
-        if (prevUser && !resolvedBranchUser) {
-          saveSessionUser(null);
-        } else if (resolvedBranchUser) {
+        if (resolvedBranchUser) {
           saveSessionUser(resolvedBranchUser);
         }
         return {
@@ -1874,14 +1949,9 @@ export default function App() {
         const prevUser = prev?.currentUser;
         const resolvedBranchUser = prevUser
           ? refreshedVault.users.find(
-              (u) =>
-                u.username.toLowerCase() === prevUser.username.toLowerCase() &&
-                (u.password || '') === (prevUser.password || '')
-            ) || null
+              (u) => u.username.toLowerCase() === prevUser.username.toLowerCase()
+            ) || { ...prevUser, branchId: targetBranchId }
           : null;
-        if (prevUser && !resolvedBranchUser) {
-          saveSessionUser(null);
-        }
         return {
           ...loaded,
           activeBranchId: targetBranchId,
@@ -1900,7 +1970,7 @@ export default function App() {
       });
       setSaveToast({
         id: Date.now(),
-        message: `تم الدخول إلى واجهة (${branchObj?.name || 'الإدارة التموينية'}) بقاعدة بيانات وصلاحيات مستقلة ومنفصلة تماماً`,
+        message: `تم الدخول إلى واجهة (${branchObj?.name || 'الإدارة التموينية'}) بنجاح`,
         timestamp: getArabicTimestamp(),
       });
     },
@@ -2116,12 +2186,15 @@ export default function App() {
             latestAppStateRef.current = finalState;
             return finalState;
           });
+          setActiveTab('welcome');
+          setActiveSidebarNavId('welcome-home');
+          setBreadcrumbGroup('الترحيب');
+          setBreadcrumbItem('الصفحة الترحيبية');
           setSaveToast({
             id: Date.now(),
             message: `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`,
             timestamp: getArabicTimestamp(),
           });
-          setIsDailyBriefingModalOpen(true);
         }}
         onRegisterUser={async (newUser) => {
           const scopedNewUser: AppUser = {
@@ -2440,6 +2513,10 @@ export default function App() {
         existingIndex >= 0 ? 'EDIT_DEBT' : 'ADD_DEBT',
         alertThreshold
       );
+      playGentleAlertChime({
+        muted: !shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig),
+        type: 'debt',
+      });
     }
 
     const alertSuffix = exceedsAlertThreshold
@@ -2631,6 +2708,9 @@ export default function App() {
     setBreadcrumbItem(itemLabel);
 
     switch (navId) {
+      case 'welcome-home':
+        setActiveTab('welcome');
+        break;
       // 1. قسم إدارة المخابز
       case 'user-guide':
         setActiveTab('user-guide');
@@ -2685,6 +2765,12 @@ export default function App() {
         break;
       case 'settings-alerts':
         setIsAlertsModalOpen(true);
+        break;
+      case 'alerts-scheduled-audio':
+        setIsDailySettingsModalOpen(true);
+        if (shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)) {
+          playGentleAlertChime({ muted: false, type: 'license' });
+        }
         break;
 
       // 2. قسم التعديلات
@@ -3191,16 +3277,10 @@ export default function App() {
                 value={appState.activeBranchId || DEFAULT_BRANCH_ID}
                 onChange={(e) => {
                   const targetBranchId = e.target.value;
-                  if (!isVaultUnlocked) {
-                    requireVaultAccess('branches', 'التنقل بين الفروع والإدارات التموينية', () => {
-                      handleSwitchBranch(targetBranchId, cleanBranchesList);
-                    });
-                  } else {
-                    handleSwitchBranch(targetBranchId, cleanBranchesList);
-                  }
+                  handleSwitchBranch(targetBranchId, cleanBranchesList);
                 }}
                 className="bg-[#0F1E36] text-white font-black text-xs cursor-pointer focus:outline-none pr-1"
-                title="اختيار الإدارة التموينية أو الفرع مباشرة من الواجهة (محمي بالحماية السرية)"
+                title="التبديل المباشر بين الفروع والإدارات التموينية في أي وقت"
               >
                 {cleanBranchesList.map((branch) => (
                   <option key={branch.id} value={branch.id} className="bg-[#0A1628] text-white font-bold">
@@ -3257,9 +3337,18 @@ export default function App() {
               <button
                 type="button"
                 data-testid="header-vault-close-btn"
-                onClick={() => setIsVaultUnlocked(false)}
+                onClick={() => {
+                  setIsVaultUnlocked(false);
+                  setSaveToast({
+                    id: Date.now(),
+                    message:
+                      'تم قفل الحماية السرية بنجاح: تعديل/إضافة/حذف الفروع وقسم الحفظ والنسخ مقفلان الآن، والتنقل بين الفروع متاح',
+                    timestamp: getArabicTimestamp(),
+                    variant: 'success',
+                  });
+                }}
                 className="px-2.5 py-1 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white transition cursor-pointer flex items-center gap-1 shadow-xs"
-                title="قفل فوري للحماية السرية"
+                title="قفل فوري للحماية السرية (يقفل قسم الحفظ والنسخ وإضافة/تعديل/حذف الفروع)"
               >
                 <Lock className="w-3 h-3" />
                 <span>اقفل</span>
@@ -3447,6 +3536,8 @@ export default function App() {
           connectionStatus={connectionSnapshot.status}
           connectionLabel={connectionSnapshot.label}
           isVaultUnlocked={isVaultUnlocked}
+          isAudioMuted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
+          scheduledAlertsCount={alertsList.length + largeDebtsList.length}
           onOpenVaultGate={(section, label) =>
             setVaultGateModal({
               isOpen: true,
@@ -3479,6 +3570,21 @@ export default function App() {
 
             {/* Primary View Mode Segmented Switcher */}
             <div className="flex items-center flex-wrap gap-1.5 bg-[#F1F5F9] p-1.5 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                data-testid="nav-welcome-tab"
+                onClick={() =>
+                  handleSelectSidebarNav('welcome-home', 'الترحيب', 'الصفحة الترحيبية')
+                }
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'welcome'
+                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                    : 'text-[#0A1628] hover:bg-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
+                <span>الصفحة الترحيبية</span>
+              </button>
               <button
                 type="button"
                 data-testid="nav-dashboard-charts-tab"
@@ -3664,26 +3770,6 @@ export default function App() {
                 <span>خروج وحفظ آمن</span>
               </button>
 
-              {/* 4. Recalculate Results */}
-              <button
-                type="button"
-                onClick={() =>
-                  runGuardedAction(() => {
-                    setPendingConfirm({
-                      title: 'إعادة احتساب نتائج المعادلات',
-                      message: 'هل ترغب في إعادة احتساب وتدقيق جميع المعادلات الحسابية لكافة المخابز والمديونيات الآن؟',
-                      confirmLabel: 'تنفيذ إعادة الاحتساب',
-                      variant: 'primary',
-                      onConfirm: () => handleRecalculateAllDatabaseEquations(),
-                    });
-                  })
-                }
-                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-[#0F2342] border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Calculator className="w-3.5 h-3.5 text-[#1E40AF]" />
-                <span>إعادة احتساب النتائج</span>
-              </button>
-
               {/* 5. Refresh Data */}
               <button
                 type="button"
@@ -3804,7 +3890,44 @@ export default function App() {
 
           {/* 3.3 Dynamic Active View Content */}
           <div key={activeTab} className="tab-content-enter">
-            {activeTab === 'dashboard' ? (
+            {activeTab === 'welcome' ? (
+              <WelcomeDashboardPage
+                currentUser={appState.currentUser}
+                branchName={appState.systemConfig.administrationTitle}
+                governorateTitle={appState.systemConfig.governorateTitle}
+                directorateTitle={appState.systemConfig.directorateTitle}
+                bakeries={appState.bakeries}
+                debts={appState.debts}
+                highDebtCount={highDebtNotifications.filter((n) => !n.isRead).length}
+                unreadInboxCount={unreadInboxCount}
+                pendingTasksCount={(appState.dailyTasks || []).filter((t) => t.status !== 'completed').length}
+                isAudioMuted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
+                alertTime={appState.systemConfig?.dailyAlertConfig?.alertTime || '09:00'}
+                onToggleAudioMute={() =>
+                  handleToggleAudioMute(shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig))
+                }
+                onRegisterNewBakery={() => {
+                  if (appState.currentUser?.role !== 'viewer') {
+                    setBakeryToEdit(null);
+                    setIsBakeryModalOpen(true);
+                  }
+                }}
+                onOpenAlerts={() => setIsAlertsModalOpen(true)}
+                onOpenDailyBriefing={() => setIsDailyBriefingModalOpen(true)}
+                onOpenAlertSettings={() => setIsDailySettingsModalOpen(true)}
+                onNavigateBakeries={() =>
+                  handleSelectSidebarNav('bakeries-all', '1. قسم إدارة المخابز', 'سجل بيانات المخابز')
+                }
+                onNavigateDebts={() =>
+                  handleSelectSidebarNav('debts-records', '3. قسم سجل المديونيات', 'جدول سجل المديونيات')
+                }
+                onNavigateReports={() =>
+                  handleSelectSidebarNav('reports-center', '5. التقارير والإدارة والأمان', 'مركز التقارير والطباعة الرسمية')
+                }
+                onOpenDailyTasks={() => setIsDailyTasksModalOpen(true)}
+                onOpenInbox={() => setIsInboxModalOpen(true)}
+              />
+            ) : activeTab === 'dashboard' ? (
               <HomeDashboardView
               bakeries={appState.bakeries}
               debts={appState.debts}
@@ -4157,7 +4280,7 @@ export default function App() {
                 {/* Collapsible Advanced Multi-Criteria Filter Panel */}
                 {showAdvancedSearchPanel && (
                   <div className="space-y-3 pt-1">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                       {/* 1. Village */}
                       <div>
                         <label className="block text-[11px] font-bold text-slate-600 mb-1">1. القرية / المنطقة</label>
@@ -4314,6 +4437,33 @@ export default function App() {
                           <option value="NO_DEBT">خالص المديونية (0 ج.م)</option>
                         </select>
                       </div>
+
+                      {/* 8. Commercial Registration Expiration Date Filter */}
+                      <div>
+                        <label
+                          htmlFor="commercial-reg-expiry-filter"
+                          className="block text-[11px] font-bold text-slate-600 mb-1"
+                        >
+                          8. انتهاء السجل التجاري
+                        </label>
+                        <select
+                          id="commercial-reg-expiry-filter"
+                          data-testid="commercial-reg-expiry-filter"
+                          value={selectedCommercialRegFilter}
+                          onChange={(e) => {
+                            setSelectedCommercialRegFilter(e.target.value as CommercialRegExpiryRange);
+                            setCurrentPage(1);
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800 focus:ring-1 focus:ring-[#1E40AF] cursor-pointer"
+                        >
+                          <option value="ALL">الكل ({commercialRegCounts.total})</option>
+                          <option value="EXPIRED">منتهي بالفعل ({commercialRegCounts.expired})</option>
+                          <option value="WITHIN_30">خلال 30 يوم ({commercialRegCounts.within30})</option>
+                          <option value="WITHIN_60">خلال 60 يوم ({commercialRegCounts.within60})</option>
+                          <option value="WITHIN_90">خلال 90 يوم ({commercialRegCounts.within90})</option>
+                          <option value="VALID">ساري &gt; 90 يوم ({commercialRegCounts.valid})</option>
+                        </select>
+                      </div>
                     </div>
 
                     {/* Quick Filter Status & Reset Row */}
@@ -4356,6 +4506,7 @@ export default function App() {
                           selectedActivity !== 'ALL' ||
                           selectedCategoryFilter !== 'ALL' ||
                           selectedDebtFilter !== 'ALL' ||
+                          selectedCommercialRegFilter !== 'ALL' ||
                           selectedBreadTypeFilter !== 'ALL' ||
                           selectedFuelTypeFilter !== 'ALL' ||
                           selectedLicenseExpiryFilter !== 'ALL' ||
@@ -4368,6 +4519,7 @@ export default function App() {
                               setSelectedActivity('ALL');
                               setSelectedCategoryFilter('ALL');
                               setSelectedDebtFilter('ALL');
+                              setSelectedCommercialRegFilter('ALL');
                               setSelectedBreadTypeFilter('ALL');
                               setSelectedFuelTypeFilter('ALL');
                               setSelectedLicenseExpiryFilter('ALL');
@@ -5581,6 +5733,7 @@ export default function App() {
           onClose={() => setIsAlertsModalOpen(false)}
           bakeries={appState.bakeries}
           debts={appState.debts}
+          muted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
           onOpenDailySettings={() => {
             setIsAlertsModalOpen(false);
             setIsDailySettingsModalOpen(true);
@@ -6112,6 +6265,7 @@ export default function App() {
           bakeries={appState.bakeries}
           currentUser={appState.currentUser}
           onSaveConfig={handleSaveDailyAlertConfig}
+          onToggleMute={handleToggleAudioMute}
           onTriggerTestAlert={handleTriggerTestAlert}
         />
       )}
@@ -6123,6 +6277,7 @@ export default function App() {
           onClose={() => setDailyNotificationData((prev) => ({ ...prev, isOpen: false }))}
           expiredBakeries={dailyNotificationData.expiredBakeries}
           alertTime={dailyNotificationData.alertTime}
+          muted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
           onViewInBakeriesTable={() => {
             setDailyNotificationData((prev) => ({ ...prev, isOpen: false }));
             setActiveTab('bakeries');
@@ -6154,6 +6309,7 @@ export default function App() {
         bakeries={appState.bakeries}
         debts={appState.debts}
         expiryLeadDays={appState.systemConfig?.dailyAlertConfig?.daysThreshold || 30}
+        muted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
         onJumpToDebtsView={() => {
           setActiveTab('debts');
           setDebtFilterBakeryId(undefined);
@@ -6340,6 +6496,41 @@ export default function App() {
                   </select>
                 </div>
               </div>
+
+              {/* 5. Audio Alert Mute Option inside Settings */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  {shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig) ? (
+                    <Volume2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  ) : (
+                    <VolumeX className="w-5 h-5 text-rose-600 shrink-0" />
+                  )}
+                  <div>
+                    <span className="font-black text-[#0F2342] block">
+                      5. الإشعارات الصوتية لتنبيهات التراخيص والمديونيات
+                    </span>
+                    <span className="text-[11px] font-bold text-slate-500">
+                      تشغيل صوت تنبيه خفيف عند فتح شاشة التنبيهات أو تفعيل المداومة اليومية (مع خيار كتم الصوت)
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="settings-mute-toggle-btn"
+                  onClick={() =>
+                    handleToggleAudioMute(shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig))
+                  }
+                  className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer border shrink-0 ${
+                    shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)
+                      ? 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
+                      : 'bg-rose-600 text-white border-rose-700 hover:bg-rose-700'
+                  }`}
+                >
+                  {shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)
+                    ? 'كتم الصوت (مفعّل الآن)'
+                    : 'تفعيل الصوت (مكتوم)'}
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center justify-between pt-3 border-t border-slate-200">
@@ -6433,6 +6624,7 @@ export default function App() {
         debtAlertThreshold={
           appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD
         }
+        muted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
         onUpdateThreshold={(newThreshold) => {
           const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
           const nextConfig: SystemConfig = {

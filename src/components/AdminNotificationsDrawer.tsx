@@ -13,12 +13,14 @@ import {
   SlidersHorizontal,
   Save
 } from 'lucide-react';
+import { playGentleAlertChime } from '../utils/audioNotifications';
 
 interface AdminNotificationsDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   notifications: HighDebtAlertNotification[];
   debtAlertThreshold?: number;
+  muted?: boolean;
   onUpdateThreshold?: (threshold: number) => void;
   onMarkAsRead: (id: string) => void;
   onMarkAllAsRead: () => void;
@@ -31,6 +33,7 @@ export const AdminNotificationsDrawer: React.FC<AdminNotificationsDrawerProps> =
   onClose,
   notifications,
   debtAlertThreshold = 50000,
+  muted = false,
   onUpdateThreshold,
   onMarkAsRead,
   onMarkAllAsRead,
@@ -43,6 +46,12 @@ export const AdminNotificationsDrawer: React.FC<AdminNotificationsDrawerProps> =
   useEffect(() => {
     setThresholdInput(String(debtAlertThreshold));
   }, [debtAlertThreshold, isOpen]);
+
+  useEffect(() => {
+    if (isOpen && notifications.length > 0) {
+      playGentleAlertChime({ muted, type: 'debt' });
+    }
+  }, [isOpen, muted, notifications.length]);
 
   if (!isOpen) return null;
 

@@ -46,7 +46,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
-  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -107,19 +106,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       const uPass = (u.password || '').trim();
       const uPassNorm = normalizePasscodeInput(uPass);
 
-      // Direct password match or normalized Arabic/English digits match
-      if (uPass === trimmedPass || uPassNorm === normalizedInputPass) {
-        return true;
-      }
-
-      // Built-in master/admin fallback so administrator is never locked out
-      if (
-        uName === 'admin' &&
-        (normalizedInputPass === 'admin' ||
-          normalizedInputPass === '2025' ||
-          normalizedInputPass === '123' ||
-          normalizedInputPass === 'admin123')
-      ) {
+      // Strict password match or normalized Arabic/English digits match (no hardcoded fallback backdoors)
+      if (uPass && (uPass === trimmedPass || uPassNorm === normalizedInputPass)) {
         return true;
       }
 
@@ -273,7 +261,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
             {/* Open Branch Selector on the Interface (No Password Required to Switch Branch) */}
             {branches.length > 0 && onSelectBranch && (
               <div className="p-3.5 rounded-2xl bg-white border-2 border-[#0D9488]/30 shadow-xs">
@@ -335,11 +323,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 <User className="w-4 h-4 text-[#0D9488] absolute right-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
+                  name="tamween_login_user"
                   data-testid="login-username-input"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="أدخل اسم المستخدم"
-                  autoComplete="username"
+                  autoComplete="off"
                   className="w-full pr-10 pl-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488] focus:border-[#0D9488] transition-all"
                 />
               </div>
@@ -353,11 +342,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 <Lock className="w-4 h-4 text-[#D4AF37] absolute right-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type={showPassword ? 'text' : 'password'}
+                  name="tamween_login_pass"
                   data-testid="login-password-input"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                   className="w-full pr-10 pl-11 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488] focus:border-[#0D9488] transition-all"
                 />
                 <button
@@ -365,6 +355,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   onClick={() => setShowPassword((prev) => !prev)}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer p-1"
                   title={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                  aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>

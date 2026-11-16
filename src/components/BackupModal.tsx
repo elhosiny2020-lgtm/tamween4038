@@ -144,6 +144,9 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [resetStep, setResetStep] = useState<0 | 1 | 2 | 3>(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showSupabaseKey, setShowSupabaseKey] = useState(false);
+  const [showSupaAuthPass, setShowSupaAuthPass] = useState(false);
+  const [showNewDrivePass, setShowNewDrivePass] = useState(false);
   const [pendingActionConfirm, setPendingActionConfirm] = useState<{
     title: string;
     message: string;
@@ -2006,15 +2009,25 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   <label className="block text-[10px] font-bold text-slate-300 mb-1">
                     المفتاح العام (anon / publishable public key)
                   </label>
-                  <input
-                    type="password"
-                    autoComplete="new-password"
-                    value={supabaseKeyInput}
-                    onChange={(e) => setSupabaseKeyInput(e.target.value)}
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs font-mono focus:border-emerald-500 focus:outline-hidden text-left"
-                    dir="ltr"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showSupabaseKey ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      value={supabaseKeyInput}
+                      onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      className="w-full px-3 py-1.5 pl-9 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs font-mono focus:border-emerald-500 focus:outline-hidden text-left"
+                      dir="ltr"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSupabaseKey((prev) => !prev)}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
+                      title={showSupabaseKey ? 'إخفاء المفتاح' : 'إظهار المفتاح'}
+                    >
+                      {showSupabaseKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between pt-1">
                   <button
@@ -2068,13 +2081,24 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                         dir="ltr"
                         className="px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs"
                       />
-                      <input
-                        type="password"
-                        value={supaAuthPassword}
-                        onChange={(e) => setSupaAuthPassword(e.target.value)}
-                        placeholder="كلمة مرور Supabase Auth"
-                        className="px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showSupaAuthPass ? 'text' : 'password'}
+                          value={supaAuthPassword}
+                          onChange={(e) => setSupaAuthPassword(e.target.value)}
+                          placeholder="كلمة مرور Supabase Auth"
+                          autoComplete="new-password"
+                          className="w-full px-2.5 py-1.5 pl-8 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowSupaAuthPass((prev) => !prev)}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
+                          title={showSupaAuthPass ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                        >
+                          {showSupaAuthPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
@@ -2639,14 +2663,22 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   </label>
                   <div className="relative">
                     <input
-                      type="password"
+                      type={showNewDrivePass ? 'text' : 'password'}
                       dir="ltr"
                       value={newAccPassword}
                       onChange={(e) => setNewAccPassword(e.target.value)}
                       placeholder="••••••••••••"
                       autoComplete="new-password"
-                      className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-cyan-400 outline-none tracking-widest"
+                      className="w-full px-3 py-1.5 pl-9 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-cyan-400 outline-none"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewDrivePass((prev) => !prev)}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
+                      title={showNewDrivePass ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                    >
+                      {showNewDrivePass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
                 </div>
 

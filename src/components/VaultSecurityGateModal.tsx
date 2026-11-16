@@ -54,16 +54,22 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
   // Unlock tab inputs
   const [selectedUnlockBranchId, setSelectedUnlockBranchId] = useState<string>(activeBranchId);
   const [usernameInput, setUsernameInput] = useState('');
+  const [showUnlockUsername, setShowUnlockUsername] = useState(false);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [showPasscode, setShowPasscode] = useState(false);
 
   // Change credentials tab inputs
   const [targetScope, setTargetScope] = useState<'all' | string>('all');
   const [oldUsernameInput, setOldUsernameInput] = useState('');
+  const [showOldUsername, setShowOldUsername] = useState(false);
   const [oldPasscodeInput, setOldPasscodeInput] = useState('');
+  const [showOldPasscode, setShowOldPasscode] = useState(false);
   const [newUsernameInput, setNewUsernameInput] = useState('');
+  const [showNewUsername, setShowNewUsername] = useState(false);
   const [newPasscodeInput, setNewPasscodeInput] = useState('');
+  const [showNewPasscode, setShowNewPasscode] = useState(false);
   const [confirmPasscodeInput, setConfirmPasscodeInput] = useState('');
+  const [showConfirmPasscode, setShowConfirmPasscode] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -307,16 +313,27 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
                     <EyeOff className="w-3 h-3" /> مخفي تماماً
                   </span>
                 </label>
-                <input
-                  type="password"
-                  data-testid="vault-username-input"
-                  value={usernameInput}
-                  onChange={(e) => setUsernameInput(e.target.value)}
-                  placeholder="••••••••"
-                  autoFocus
-                  autoComplete="new-password"
-                  className="w-full px-4 py-3 rounded-2xl bg-[#0F1E36] border border-white/15 text-white text-center text-base font-black tracking-[0.25em] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
-                />
+                <div className="relative">
+                  <input
+                    type={showUnlockUsername ? 'text' : 'password'}
+                    data-testid="vault-username-input"
+                    value={usernameInput}
+                    onChange={(e) => setUsernameInput(e.target.value)}
+                    placeholder="••••••••"
+                    autoFocus
+                    autoComplete="new-password"
+                    className="w-full px-4 py-3 pl-11 rounded-2xl bg-[#0F1E36] border border-white/15 text-white text-center text-base font-black tracking-[0.25em] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowUnlockUsername((prev) => !prev)}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-1"
+                    title={showUnlockUsername ? 'إخفاء اسم المستخدم' : 'إظهار اسم المستخدم'}
+                    aria-label={showUnlockUsername ? 'إخفاء اسم المستخدم' : 'إظهار اسم المستخدم'}
+                  >
+                    {showUnlockUsername ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               {/* Hidden/Masked Password Input */}
@@ -398,29 +415,49 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
                   <label className="block text-[11px] font-black text-slate-300 mb-1">
                     اسم المستخدم الحالي (Username)
                   </label>
-                  <input
-                    type="password"
-                    data-testid="vault-old-username-input"
-                    value={oldUsernameInput}
-                    onChange={(e) => setOldUsernameInput(e.target.value)}
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                    className="w-full px-3.5 py-2 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.2em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showOldUsername ? 'text' : 'password'}
+                      data-testid="vault-old-username-input"
+                      value={oldUsernameInput}
+                      onChange={(e) => setOldUsernameInput(e.target.value)}
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                      className="w-full px-3.5 py-2 pl-10 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.2em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowOldUsername((prev) => !prev)}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
+                      title={showOldUsername ? 'إخفاء' : 'إظهار'}
+                    >
+                      {showOldUsername ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[11px] font-black text-slate-300 mb-1">
                     الرقم السري الحالي (Password)
                   </label>
-                  <input
-                    type="password"
-                    data-testid="vault-old-passcode-input"
-                    value={oldPasscodeInput}
-                    onChange={(e) => setOldPasscodeInput(e.target.value)}
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                    className="w-full px-3.5 py-2 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.25em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showOldPasscode ? 'text' : 'password'}
+                      data-testid="vault-old-passcode-input"
+                      value={oldPasscodeInput}
+                      onChange={(e) => setOldPasscodeInput(e.target.value)}
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                      className="w-full px-3.5 py-2 pl-10 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.25em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowOldPasscode((prev) => !prev)}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
+                      title={showOldPasscode ? 'إخفاء' : 'إظهار'}
+                    >
+                      {showOldPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -428,15 +465,25 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
                 <label className="block text-[11px] font-black text-slate-300 mb-1">
                   اسم المستخدم السري الجديد (New Username)
                 </label>
-                <input
-                  type="password"
-                  data-testid="vault-new-username-input"
-                  value={newUsernameInput}
-                  onChange={(e) => setNewUsernameInput(e.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="new-password"
-                  className="w-full px-3.5 py-2 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.2em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewUsername ? 'text' : 'password'}
+                    data-testid="vault-new-username-input"
+                    value={newUsernameInput}
+                    onChange={(e) => setNewUsernameInput(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    className="w-full px-3.5 py-2 pl-10 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.2em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewUsername((prev) => !prev)}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
+                    title={showNewUsername ? 'إخفاء' : 'إظهار'}
+                  >
+                    {showNewUsername ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -444,30 +491,50 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
                   <label className="block text-[11px] font-black text-slate-300 mb-1">
                     الرقم السري الجديد (New Password)
                   </label>
-                  <input
-                    type="password"
-                    data-testid="vault-new-passcode-input"
-                    value={newPasscodeInput}
-                    onChange={(e) => setNewPasscodeInput(e.target.value)}
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                    className="w-full px-3.5 py-2 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.25em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showNewPasscode ? 'text' : 'password'}
+                      data-testid="vault-new-passcode-input"
+                      value={newPasscodeInput}
+                      onChange={(e) => setNewPasscodeInput(e.target.value)}
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                      className="w-full px-3.5 py-2 pl-10 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.25em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPasscode((prev) => !prev)}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
+                      title={showNewPasscode ? 'إخفاء' : 'إظهار'}
+                    >
+                      {showNewPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-black text-slate-300 mb-1">
                     تأكيد الرقم السري الجديد
                   </label>
-                  <input
-                    type="password"
-                    data-testid="vault-confirm-passcode-input"
-                    value={confirmPasscodeInput}
-                    onChange={(e) => setConfirmPasscodeInput(e.target.value)}
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                    className="w-full px-3.5 py-2 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.25em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showConfirmPasscode ? 'text' : 'password'}
+                      data-testid="vault-confirm-passcode-input"
+                      value={confirmPasscodeInput}
+                      onChange={(e) => setConfirmPasscodeInput(e.target.value)}
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                      className="w-full px-3.5 py-2 pl-10 rounded-xl bg-[#0F1E36] border border-white/15 text-white text-center text-sm font-black tracking-[0.25em] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPasscode((prev) => !prev)}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
+                      title={showConfirmPasscode ? 'إخفاء' : 'إظهار'}
+                    >
+                      {showConfirmPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 

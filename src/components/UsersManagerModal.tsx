@@ -15,6 +15,7 @@ import {
   Key,
   Check,
   Eye,
+  EyeOff,
   Edit2,
   Save,
   Briefcase,
@@ -99,6 +100,7 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [jobTitle, setJobTitle] = useState('مفتش تموين أول');
   const [department, setDepartment] = useState('قسم الرقابة التموينية والمخابز');
   const [phone, setPhone] = useState('');
@@ -113,6 +115,7 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   const [editFullName, setEditFullName] = useState('');
   const [editUsername, setEditUsername] = useState('');
   const [editPassword, setEditPassword] = useState('');
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [editJobTitle, setEditJobTitle] = useState('');
   const [editDepartment, setEditDepartment] = useState('');
   const [editPhone, setEditPhone] = useState('');
@@ -148,7 +151,8 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
     setEditingUserId(u.id);
     setEditFullName(u.fullName || '');
     setEditUsername(u.username || '');
-    setEditPassword(u.password || '');
+    setEditPassword('');
+    setShowEditPassword(false);
     setEditJobTitle(u.jobTitle || 'مسئول تمويني');
     setEditDepartment(u.department || 'إدارة تموين مركز المحلة الكبرى');
     setEditPhone(u.phone || '');
@@ -564,17 +568,27 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
 
                           <div>
                             <label className="block text-[11px] font-black text-slate-800 mb-1">
-                              كلمة المرور (Password) *
+                              كلمة المرور الجديدة (اتركها فارغة للإبقاء على الحالية)
                             </label>
-                            <input
-                              type="password"
-                              required
-                              value={editPassword}
-                              onChange={(e) => setEditPassword(e.target.value)}
-                              placeholder="••••••••"
-                              autoComplete="new-password"
-                              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900 font-mono text-left tracking-widest"
-                            />
+                            <div className="relative">
+                              <input
+                                type={showEditPassword ? 'text' : 'password'}
+                                value={editPassword}
+                                onChange={(e) => setEditPassword(e.target.value)}
+                                placeholder="اتركه فارغاً لعدم التغيير"
+                                autoComplete="new-password"
+                                className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900 font-mono text-left"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowEditPassword((prev) => !prev)}
+                                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-800 cursor-pointer p-0.5"
+                                title={showEditPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                                aria-label={showEditPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                              >
+                                {showEditPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
                           </div>
 
                           <div>
@@ -783,16 +797,25 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                   كلمة المرور (Password) *
                 </label>
                 <div className="relative">
-                  <Key className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <Key className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="password"
+                    type={showNewPassword ? 'text' : 'password'}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
                     autoComplete="new-password"
-                    className="w-full pl-8 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 text-left font-mono tracking-widest"
+                    className="w-full pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 text-left font-mono"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((prev) => !prev)}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-800 cursor-pointer p-0.5"
+                    title={showNewPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                    aria-label={showNewPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 

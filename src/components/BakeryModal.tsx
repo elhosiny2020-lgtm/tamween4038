@@ -74,7 +74,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   bakeryToEdit,
   existingBakeries = [],
   villages,
-  activityStatuses = ['يعمل', 'متوقف جزئي', 'متوقف كلي', 'ملغى'],
+  activityStatuses = ['متوقف جزئي', 'متوقف كلي', 'ملغى', 'مغلق بقرار تمويني', 'تجديد ورفع كفاءة'],
   bakeryCategories = ['مخبز بلدي مدعم', 'مخبز بلدي مطور', 'مخبز سياحي 72%', 'مخبز فينو وأفرنجي', 'مخبز طباقي'],
   breadTypes = ['بلدي مدعم ماو', 'بلدي مجر', 'خبز آلي', 'طباقي'],
   breadTypeCounts = ['1', '2', '3', '4', '5'],
@@ -144,7 +144,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
   const [unitSiblingCount, setUnitSiblingCount] = useState<number>(0);
 
   // Classification & Operations
-  const [activityStatus, setActivityStatus] = useState('يعمل');
+  const [activityStatus, setActivityStatus] = useState('');
   const [bakeryCategory, setBakeryCategory] = useState('مخبز بلدي مدعم');
   const [breadType, setBreadType] = useState('بلدي مدعم ماو');
   const [flourBagPrice, setFlourBagPrice] = useState<number>(950);
@@ -383,7 +383,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
         setAvgDiff(bakeryToEdit.avgDiff);
       }
 
-      setActivityStatus(bakeryToEdit.activityStatus || 'يعمل');
+      setActivityStatus(bakeryToEdit.activityStatus && bakeryToEdit.activityStatus !== 'يعمل' ? bakeryToEdit.activityStatus : '');
       setBakeryCategory(bakeryToEdit.bakeryCategory || 'مخبز بلدي مدعم');
       setBreadType(bakeryToEdit.breadType || 'بلدي مدعم ماو');
       setFlourBagPrice(bakeryToEdit.flourBagPrice !== undefined ? Number(bakeryToEdit.flourBagPrice) : 950);
@@ -449,7 +449,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
           : '0.00'
       );
 
-      setActivityStatus('يعمل');
+      setActivityStatus('');
       setBakeryCategory('مخبز بلدي مدعم');
       setBreadType('بلدي مدعم ماو');
       setFlourBagPrice(950);
@@ -697,7 +697,7 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       userRole: roleLabel,
       action: bakeryToEdit ? 'تعديل وتحديث بيانات المخبز' : 'إنشاء وتسجيل المخبز لأول مرة',
       details: bakeryToEdit
-        ? `الحصة الفعلية: ${actualQuota} شكارة | النشاط: ${activityStatus} | التصنيف: ${bakeryCategory}`
+        ? `الحصة الفعلية: ${actualQuota} شكارة | النشاط: ${activityStatus || 'غير محدد'} | التصنيف: ${bakeryCategory}`
         : `تسجيل جديد لصاحب المخبز (${ownerName.trim()}) بالحصة التأمينية ${insuranceQuota} شكارة`,
     };
 
@@ -1372,18 +1372,24 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                   )}
                 </div>
                 <select
+                  data-testid="bakery-activity-status-select"
                   value={activityStatus}
                   onChange={(e) => setActivityStatus(e.target.value)}
                   className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 focus:ring-2 focus:ring-amber-500"
                 >
-                  {activityStatuses.map((st) => (
-                    <option key={st} value={st}>
-                      {st}
-                    </option>
-                  ))}
-                  {activityStatus && !activityStatuses.includes(activityStatus) && (
-                    <option value={activityStatus}>{activityStatus}</option>
-                  )}
+                  <option value="">— اختر حالة النشاط —</option>
+                  {activityStatuses
+                    .filter((st) => String(st).trim() !== 'يعمل')
+                    .map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  {activityStatus &&
+                    activityStatus !== 'يعمل' &&
+                    !activityStatuses.includes(activityStatus) && (
+                      <option value={activityStatus}>{activityStatus}</option>
+                    )}
                 </select>
               </div>
 

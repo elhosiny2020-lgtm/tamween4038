@@ -10,12 +10,14 @@ import {
   DollarSign,
   Calendar
 } from 'lucide-react';
+import { playGentleAlertChime } from '../utils/audioNotifications';
 
 interface AlertsModalProps {
   isOpen: boolean;
   onClose: () => void;
   bakeries: Bakery[];
   debts?: DebtRecord[];
+  muted?: boolean;
   onOpenBakeryEdit: (bakeryId: string) => void;
   onOpenWeeklyInstallments?: (bakeryId?: string) => void;
   onOpenDailySettings?: () => void;
@@ -73,15 +75,12 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
   onClose,
   bakeries,
   debts = [],
+  muted = false,
   onOpenBakeryEdit,
   onOpenWeeklyInstallments,
   onOpenDailySettings,
 }) => {
   const [activeTab, setActiveTab] = useState<'docs' | 'debts'>('docs');
-
-  // Escape key closing is intentionally disabled per user preference
-
-  if (!isOpen) return null;
 
   const alerts = getExpirationAlerts(bakeries);
   const expiredCount = alerts.filter((a) => a.isExpired).length;
@@ -96,6 +95,19 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
   const largeDebtBakeries = bakeries.filter(
     (b) => (bakeryRemainingDebtsMap[b.id] || 0) > 20000
   );
+
+  useEffect(() => {
+    if (isOpen && (alerts.length > 0 || largeDebtBakeries.length > 0)) {
+      playGentleAlertChime({
+        muted,
+        type: largeDebtBakeries.length > 0 && alerts.length === 0 ? 'debt' : 'license',
+      });
+    }
+  }, [isOpen, muted, alerts.length, largeDebtBakeries.length]);
+
+  // Escape key closing is intentionally disabled per user preference
+
+  if (!isOpen) return null;
 
   return (
     <div
