@@ -124,6 +124,7 @@ export interface RationMerchant {
   wholesaleBranchName: string;
   lastRequisitionDate?: string;
   notes?: string;
+  updatedAt?: string;
 }
 
 export interface CommodityPriceHistoryEntry {
@@ -168,6 +169,7 @@ export interface RationCommodity {
   expiryDate?: string;
   decisionNumber: string;
   notes?: string;
+  updatedAt?: string;
 }
 
 export interface RationBeneficiaryMember {
@@ -192,6 +194,7 @@ export interface RationCardRecord {
   hasAdditionalGrant?: boolean; // مثل منحة 2026 الإضافية المنفصلة
   additionalGrantAmount?: number;
   members: RationBeneficiaryMember[];
+  updatedAt?: string;
 }
 
 export interface RationDecisionSettings {
@@ -226,6 +229,7 @@ export interface RationWarehouseBalance {
   lastMovementDate?: string;
   expiryDate?: string;
   stagnantDays?: number;
+  updatedAt?: string;
 }
 
 export interface RationInventoryMovement {
@@ -256,6 +260,7 @@ export interface RationInventoryMovement {
   isReversed?: boolean;
   reversedByDoc?: string;
   notes?: string;
+  updatedAt?: string;
 }
 
 export interface RationRequisitionLine {
@@ -286,6 +291,7 @@ export interface RationRequisition {
   lines: RationRequisitionLine[];
   totalValue: number;
   notes?: string;
+  updatedAt?: string;
 }
 
 export interface RationDisbursementRecord {
@@ -307,6 +313,7 @@ export interface RationDisbursementRecord {
   employeeName: string;
   isReversed?: boolean;
   reversalRef?: string;
+  updatedAt?: string;
 }
 
 export interface MerchantFinancialEntry {
@@ -334,6 +341,7 @@ export interface MerchantFinancialEntry {
   isApproved: boolean;
   isReversed?: boolean;
   createdBy: string;
+  updatedAt?: string;
 }
 
 export interface RationInspectionCampaign {
@@ -354,6 +362,7 @@ export interface RationInspectionCampaign {
   inspectionResult: 'مطابق' | 'مخالف' | 'إنذار إداري';
   legalAction: string;
   attachmentName?: string;
+  updatedAt?: string;
 }
 
 export interface RationComplaintRecord {
@@ -369,6 +378,7 @@ export interface RationComplaintRecord {
   details: string;
   status: 'جديدة' | 'قيد الفحص' | 'تم الحل' | 'مغلقة';
   resolution?: string;
+  updatedAt?: string;
 }
 
 export interface ModuleAuditLog {
@@ -442,6 +452,7 @@ export interface GrainAsset {
   energyConsumptionKwh: number;
   fuelConsumptionLiters: number;
   technicalNotes?: string;
+  updatedAt?: string;
 }
 
 export interface SparePartItem {
@@ -459,6 +470,7 @@ export interface SparePartItem {
   supplyLeadDays: number;
   safetyStock: number;
   targetStockLevel: number;
+  updatedAt?: string;
 }
 
 export interface MaintenanceTechnician {
@@ -469,6 +481,7 @@ export interface MaintenanceTechnician {
   hourlyWage: number;
   phone: string;
   isActive: boolean;
+  updatedAt?: string;
 }
 
 export interface MaintenanceOrderPartUsage {
@@ -507,6 +520,7 @@ export interface MaintenanceOrder {
   totalRepairCost: number;
   status: MaintenanceOrderStatus;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface GrainMovementRecord {
@@ -524,6 +538,7 @@ export interface GrainMovementRecord {
   actualPhysicalCountTons?: number;
   recordedLossTons?: number;
   notes?: string;
+  updatedAt?: string;
 }
 
 export interface GrainMaintenanceSettings {
@@ -562,6 +577,7 @@ export interface HrDepartment {
   branchId: string;
   name: string;
   managerName: string;
+  updatedAt?: string;
 }
 
 export interface HrEmployee {
@@ -614,6 +630,7 @@ export interface HrEmployee {
   endOfServiceDate?: string;
   endOfServiceReason?: string;
   documentsNotes?: string;
+  updatedAt?: string;
 }
 
 export interface HrAttendanceRecord {
@@ -631,6 +648,7 @@ export interface HrAttendanceRecord {
   earlyLeaveMinutes: number;
   netWorkedMinutes: number;
   status: 'حضور' | 'غياب' | 'مأمورية' | 'إذن' | 'عطلة رسمية';
+  updatedAt?: string;
 }
 
 export interface HrLeaveBalance {
@@ -639,6 +657,7 @@ export interface HrLeaveBalance {
   previousBalance: number;
   entitledDays: number;
   usedDays: number;
+  updatedAt?: string;
 }
 
 export interface HrLeaveRequest {
@@ -652,6 +671,7 @@ export interface HrLeaveRequest {
   approvalDecisionNo?: string;
   status: 'جديد' | 'معتمد' | 'مرفوض';
   notes?: string;
+  updatedAt?: string;
 }
 
 export interface HrLoanRecord {
@@ -666,6 +686,7 @@ export interface HrLoanRecord {
   paidInstallments: number;
   remainingAmount: number;
   status: 'سارية' | 'مسددة بالكامل';
+  updatedAt?: string;
 }
 
 export interface HrTaxBracket {
@@ -738,6 +759,7 @@ export interface HrPromotionRecord {
   raiseAmount: number;
   decisionNumber: string;
   applied: boolean;
+  updatedAt?: string;
 }
 
 export interface HrModuleState {

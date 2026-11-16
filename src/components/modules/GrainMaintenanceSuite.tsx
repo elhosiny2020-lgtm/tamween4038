@@ -29,6 +29,8 @@ import type {
   MaintenanceOrder,
   MaintenanceOrderStatus,
   GrainMovementRecord,
+  SparePartItem,
+  MaintenanceTechnician,
   ModuleAuditLog,
 } from '../../types/modules';
 import {
@@ -40,6 +42,17 @@ import {
   computeCostPerTon,
 } from '../../utils/grainMaintenanceMath';
 import { exportRowsToArabicCsv, printModuleReportA4 } from '../../services/modulesStorage';
+import {
+  resolveModuleCrudPermissions,
+  checkGrainDeleteIntegrity,
+} from '../../utils/moduleCrudHelpers';
+import {
+  ModuleTableToolbar,
+  ModuleRowActions,
+  ModuleFormModal,
+  ModuleDeleteConfirmModal,
+  type CrudFieldDefinition,
+} from './ModuleCrudShared';
 
 export type GrainSubView =
   | 'dashboard'
@@ -57,7 +70,7 @@ interface GrainMaintenanceSuiteProps {
   branchName: string;
   currentUser: AppUser | null;
   initialSubView?: GrainSubView;
-  onChangeState: (next: GrainMaintenanceState) => void;
+  onChangeState: (next: GrainMaintenanceState, actionSummary?: string) => void;
 }
 
 const ORDER_STATUSES: MaintenanceOrderStatus[] = [
@@ -80,15 +93,16 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
 }) => {
   const [subView, setSubView] = useState<GrainSubView>(initialSubView);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-  const isViewer = currentUser?.role === 'viewer';
+  const permissions = useMemo(() => resolveModuleCrudPermissions(currentUser), [currentUser]);
+  const isViewer = permissions.isReadOnly;
 
-  // Add Asset form
+  // Add Asset quick form
   const [assetCode, setAssetCode] = useState('');
   const [assetName, setAssetName] = useState('');
   const [assetType, setAssetType] = useState<GrainAsset['assetType']>('صومعة');
   const [assetSite, setAssetSite] = useState(`مجمع صوامع ${branchName}`);
 
-  // Add Order form
+  // Add Order quick form
   const [orderAssetId, setOrderAssetId] = useState(state.assets[0]?.id || '');
   const [orderType, setOrderType] = useState<MaintenanceOrder['maintenanceType']>('علاجية طارئة');
   const [orderFault, setOrderFault] = useState('');
@@ -98,16 +112,37 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
   const [orderPartQty, setOrderPartQty] = useState<number>(1);
   const [orderConsumables, setOrderConsumables] = useState<number>(250);
 
-  // Grain Moisture Correction & Movement form
+  // Grain Moisture Correction & Movement quick form
   const [gmDocNo, setGmDocNo] = useState('');
   const [gmSilo, setGmSilo] = useState(state.assets[0]?.siloOrWarehouseName || 'صومعة حبوب رقم 1');
   const [gmType, setGmType] = useState<GrainMovementRecord['movementType']>('وارد');
   const [gmOriginalTons, setGmOriginalTons] = useState<number>(500);
   const [gmActualMoisture, setGmActualMoisture] = useState<number>(13.5);
-  const [gmRefMoisture, setGmRefMoisture] = useState<number>(state.settings.defaultReferenceMoisturePct || 12);
+  const [gmRefMoisture, setGmRefMoisture] = useState<number>(
+    state.settings.defaultReferenceMoisturePct || 12
+  );
   const [gmPhysicalCount, setGmPhysicalCount] = useState<number>(0);
 
   const [settingsDraft, setSettingsDraft] = useState(state.settings);
+
+  // Unified CRUD modal state
+  const [formModalState, setFormModalState] = useState<{
+    isOpen: boolean;
+    mode: 'add' | 'edit';
+    entityKey: 'asset' | 'order' | 'part' | 'technician' | 'grain_movement';
+    title: string;
+    fields: CrudFieldDefinition[];
+    initialValues: Record<string, any>;
+    targetId?: string;
+  } | null>(null);
+
+  const [deleteModalState, setDeleteModalState] = useState<{
+    isOpen: boolean;
+    entityType: 'asset' | 'order' | 'part' | 'technician' | 'grain_movement';
+    entityTitle: string;
+    entityId: string;
+    recordSummary: { label: string; value: string | number }[];
+  } | null>(null);
 
   const notify = (type: 'ok' | 'err', text: string) => {
     setFeedback({ type, text });
@@ -118,7 +153,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
     actionType: ModuleAuditLog['actionType'],
     entityName: string,
     entityId: string,
-    afterSummary: string
+    afterSummary: string,
+    beforeSummary?: string
   ): ModuleAuditLog => ({
     id: `aud-gm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     branchId,
@@ -129,6 +165,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
     actionType,
     entityName,
     entityId,
+    beforeSummary,
     afterSummary,
   });
 
@@ -196,12 +233,556 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
     [gmOriginalTons, gmActualMoisture, gmRefMoisture]
   );
 
+  // Field definitions for Unified CRUD Modal
+  const getAssetFields = (): CrudFieldDefinition[] => [
+    { key: 'assetCode', label: 'كود الصومعة / المعدة', type: 'text', required: true, placeholder: 'مثال: SILO-101' },
+    { key: 'name', label: 'اسم الصومعة / المعدة', type: 'text', required: true, placeholder: 'صومعة حبوب معدنية 1' },
+    {
+      key: 'assetType',
+      label: 'نوع الأصل',
+      type: 'select',
+      required: true,
+      options: [
+        { value: 'صومعة', label: 'صومعة' },
+        { value: 'شونة', label: 'شونة' },
+        { value: 'مصعد', label: 'مصعد' },
+        { value: 'سير ناقل', label: 'سير ناقل' },
+        { value: 'غربال ومنقي', label: 'غربال ومنقي' },
+        { value: 'ميزان', label: 'ميزان' },
+        { value: 'لوحة تحكم', label: 'لوحة تحكم' },
+        { value: 'مولد', label: 'مولد' },
+        { value: 'شفاط غبار', label: 'شفاط غبار' },
+        { value: 'مروحة تهوية', label: 'مروحة تهوية' },
+        { value: 'حساس رطوبة وحرارة', label: 'حساس رطوبة وحرارة' },
+      ],
+    },
+    { key: 'locationSite', label: 'الموقع الهندسي', type: 'text', required: true },
+    { key: 'siloOrWarehouseName', label: 'اسم الصومعة / المخزن التابع', type: 'text', required: true },
+    {
+      key: 'operationalStatus',
+      label: 'الحالة التشغيلية',
+      type: 'select',
+      required: true,
+      options: [
+        { value: 'عاملة', label: 'عاملة' },
+        { value: 'تحت الصيانة', label: 'تحت الصيانة' },
+        { value: 'متوقفة جزئياً', label: 'متوقفة جزئياً' },
+        { value: 'متوقفة كلياً', label: 'متوقفة كلياً' },
+        { value: 'مكهنة', label: 'مكهنة' },
+      ],
+    },
+    { key: 'ratedCapacityTonPerHour', label: 'القدرة التصميمية (طن/ساعة)', type: 'number', required: true, min: 0 },
+    { key: 'purchaseValue', label: 'القيمة الدفترية / الشراء (ج.م)', type: 'number', required: true, min: 0 },
+    { key: 'plannedHoursPerPeriod', label: 'ساعات التشغيل المخططة', type: 'number', required: true, min: 1 },
+    { key: 'downtimeHours', label: 'ساعات التوقف والأعطال', type: 'number', required: true, min: 0 },
+    { key: 'actualProductionTons', label: 'الإنتاج الفعلي (طن)', type: 'number', required: true, min: 0 },
+    { key: 'designProductionTons', label: 'الإنتاج التصميمي (طن)', type: 'number', required: true, min: 1 },
+    { key: 'conformingTons', label: 'الكمية المطابقة للمواصفات (طن)', type: 'number', required: true, min: 0 },
+    { key: 'nextMaintenanceDate', label: 'تاريخ الصيانة الدورية القادمة', type: 'date', required: true },
+  ];
+
+  const getOrderFields = (): CrudFieldDefinition[] => [
+    { key: 'orderNumber', label: 'رقم أمر الصيانة', type: 'text', required: true },
+    { key: 'requestDate', label: 'تاريخ الطلب', type: 'date', required: true },
+    {
+      key: 'assetId',
+      label: 'الصومعة / المعدة',
+      type: 'select',
+      required: true,
+      options: state.assets.map((a) => ({ value: a.id, label: `${a.assetCode} — ${a.name}` })),
+    },
+    {
+      key: 'maintenanceType',
+      label: 'نوع الصيانة',
+      type: 'select',
+      required: true,
+      options: [
+        { value: 'وقائية', label: 'وقائية' },
+        { value: 'دورية', label: 'دورية' },
+        { value: 'علاجية طارئة', label: 'علاجية طارئة' },
+        { value: 'تنبؤية', label: 'تنبؤية' },
+        { value: 'عمرة شاملة', label: 'عمرة شاملة' },
+        { value: 'معايرة موازين', label: 'معايرة موازين' },
+        { value: 'معايرة حساسات رطوبة وحرارة', label: 'معايرة حساسات رطوبة وحرارة' },
+      ],
+    },
+    { key: 'faultDescription', label: 'وصف العطل / الأعمال المنفذة', type: 'textarea', required: true, colSpan: 2 },
+    {
+      key: 'severity',
+      label: 'درجة الخطورة',
+      type: 'select',
+      required: true,
+      options: [
+        { value: 'منخفضة', label: 'منخفضة' },
+        { value: 'متوسطة', label: 'متوسطة' },
+        { value: 'عالية', label: 'عالية' },
+        { value: 'حرجة', label: 'حرجة' },
+      ],
+    },
+    {
+      key: 'status',
+      label: 'حالة أمر الصيانة',
+      type: 'select',
+      required: true,
+      options: ORDER_STATUSES.map((s) => ({ value: s, label: s })),
+    },
+    { key: 'technicianNames', label: 'المهندسون والفنيون المكلفون', type: 'text', required: true },
+    { key: 'technicianCount', label: 'عدد الفنيين', type: 'number', required: true, min: 1 },
+    { key: 'laborHours', label: 'ساعات العمل', type: 'number', required: true, min: 0 },
+    { key: 'hourlyRate', label: 'تكلفة الساعة (ج.م)', type: 'number', required: true, min: 0 },
+    {
+      key: 'partId',
+      label: 'قطعة الغيار المستخدمة',
+      type: 'select',
+      options: [
+        { value: '', label: 'بدون قطع غيار' },
+        ...state.spareParts.map((p) => ({
+          value: p.id,
+          label: `${p.partCode} — ${p.partName} (${p.unitCost} ج.م)`,
+        })),
+      ],
+    },
+    { key: 'partQty', label: 'كمية قطع الغيار', type: 'number', min: 0 },
+    { key: 'consumablesCost', label: 'تكلفة المستهلكات والزيوت (ج.م)', type: 'number', required: true, min: 0 },
+    { key: 'transportAndOpCost', label: 'تكلفة النقل والتشغيل (ج.م)', type: 'number', required: true, min: 0 },
+  ];
+
+  const getPartFields = (): CrudFieldDefinition[] => [
+    { key: 'partCode', label: 'كود قطعة الغيار', type: 'text', required: true, placeholder: 'SP-201' },
+    { key: 'partName', label: 'اسم قطعة الغيار', type: 'text', required: true, placeholder: 'رولمان بلي محوري' },
+    { key: 'unit', label: 'وحدة القياس', type: 'text', required: true, placeholder: 'قطعة / متر / طقم' },
+    { key: 'unitCost', label: 'سعر الوحدة (ج.م)', type: 'number', required: true, min: 0 },
+    { key: 'openingStock', label: 'رصيد أول المدة', type: 'number', required: true, min: 0 },
+    { key: 'inboundQty', label: 'الكمية الواردة', type: 'number', required: true, min: 0 },
+    { key: 'outboundQty', label: 'الكمية المنصرفة', type: 'number', required: true, min: 0 },
+    { key: 'damagedQty', label: 'التالف / المرتجع', type: 'number', required: true, min: 0 },
+    { key: 'avgDailyConsumption', label: 'معدل الاستهلاك اليومي', type: 'number', required: true, min: 0, step: '0.1' },
+    { key: 'supplyLeadDays', label: 'فترة التوريد (أيام)', type: 'number', required: true, min: 1 },
+    { key: 'safetyStock', label: 'مخزون الأمان', type: 'number', required: true, min: 0 },
+    { key: 'targetStockLevel', label: 'المستوى المستهدف للمخزون', type: 'number', required: true, min: 1 },
+  ];
+
+  const getTechnicianFields = (): CrudFieldDefinition[] => [
+    { key: 'name', label: 'اسم المهندس / الفني', type: 'text', required: true, placeholder: 'م. أحمد محمود' },
+    { key: 'specialty', label: 'التخصص الفني', type: 'text', required: true, placeholder: 'ميكانيكا صوامع / تحكم آلي PLC' },
+    { key: 'hourlyWage', label: 'أجر الساعة القياسي (ج.م)', type: 'number', required: true, min: 0 },
+    { key: 'phone', label: 'رقم الهاتف', type: 'text', required: true, placeholder: '01012345678' },
+    { key: 'isActive', label: 'نشط بالخدمة', type: 'checkbox' },
+  ];
+
+  const getGrainMovementFields = (): CrudFieldDefinition[] => [
+    { key: 'documentNumber', label: 'رقم المستند المخزني', type: 'text', required: true, placeholder: 'GRN-2026-01' },
+    { key: 'date', label: 'تاريخ الحركة', type: 'date', required: true },
+    { key: 'siloName', label: 'الصومعة / الشونة', type: 'text', required: true },
+    { key: 'grainType', label: 'نوع الحبوب', type: 'text', required: true, placeholder: 'قمح تمويني محلي / مستورد' },
+    {
+      key: 'movementType',
+      label: 'نوع الحركة',
+      type: 'select',
+      required: true,
+      options: [
+        { value: 'رصيد افتتاحي', label: 'رصيد افتتاحي' },
+        { value: 'وارد', label: 'وارد' },
+        { value: 'منصرف', label: 'منصرف' },
+        { value: 'فاقد طبيعي', label: 'فاقد طبيعي' },
+        { value: 'فاقد تشغيلي', label: 'فاقد تشغيلي' },
+        { value: 'جرد فعلي', label: 'جرد فعلي' },
+      ],
+    },
+    { key: 'originalWeightTons', label: 'الوزن الأصلي القائم (طن)', type: 'number', required: true, min: 0, step: '0.01' },
+    { key: 'actualMoisturePct', label: 'نسبة الرطوبة الفعلية %', type: 'number', required: true, min: 0, step: '0.1' },
+    { key: 'referenceMoisturePct', label: 'نسبة الرطوبة المرجعية %', type: 'number', required: true, min: 0, step: '0.1' },
+    { key: 'actualPhysicalCountTons', label: 'الجرد الفعلي إن وجد (طن)', type: 'number', min: 0, step: '0.01' },
+    { key: 'notes', label: 'ملاحظات اللجنة الفنية', type: 'textarea', colSpan: 2 },
+  ];
+
+  const handleModalSubmit = (values: Record<string, any>): string | null => {
+    if (!formModalState) return null;
+    const nowIso = new Date().toISOString();
+    const { mode, entityKey, targetId } = formModalState;
+
+    if (entityKey === 'asset') {
+      const code = String(values.assetCode || '').trim();
+      const name = String(values.name || '').trim();
+      if (!code || !name) return 'يرجى إدخال كود واسم الصومعة أو المعدة.';
+      const duplicate = state.assets.some(
+        (a) => a.assetCode === code && (mode === 'add' || a.id !== targetId)
+      );
+      if (duplicate) return `كود الأصل (${code}) مسجل مسبقاً في هذا الفرع.`;
+
+      if (mode === 'add') {
+        const created: GrainAsset = {
+          id: `${branchId}-asset-${Date.now()}`,
+          branchId,
+          assetCode: code,
+          name,
+          assetType: values.assetType as GrainAsset['assetType'],
+          locationSite: String(values.locationSite || `مجمع صوامع ${branchName}`).trim(),
+          siloOrWarehouseName: String(values.siloOrWarehouseName || name).trim(),
+          manufacturer: 'معتمد محلياً',
+          model: 'STD-2026',
+          serialNumber: `SN-${Date.now().toString().slice(-6)}`,
+          supplyDate: nowIso.split('T')[0],
+          installDate: nowIso.split('T')[0],
+          purchaseValue: Number(values.purchaseValue) || 0,
+          ratedCapacityTonPerHour: Number(values.ratedCapacityTonPerHour) || 0,
+          operationalStatus: values.operationalStatus as GrainAsset['operationalStatus'],
+          lastMaintenanceDate: nowIso.split('T')[0],
+          nextMaintenanceDate: String(values.nextMaintenanceDate || '2027-01-01'),
+          operatingLifeYears: 15,
+          warrantyEndDate: '2028-01-01',
+          plannedHoursPerPeriod: Math.max(1, Number(values.plannedHoursPerPeriod) || 200),
+          downtimeHours: Math.max(0, Number(values.downtimeHours) || 0),
+          actualProductionTons: Math.max(0, Number(values.actualProductionTons) || 0),
+          designProductionTons: Math.max(1, Number(values.designProductionTons) || 1000),
+          conformingTons: Math.max(0, Number(values.conformingTons) || 0),
+          energyConsumptionKwh: 1200,
+          fuelConsumptionLiters: 50,
+          updatedAt: nowIso,
+        };
+        onChangeState(
+          {
+            ...state,
+            assets: [created, ...state.assets],
+            auditLogs: [appendAudit('إضافة', 'سجل الأصول والصوامع', created.id, created.name), ...state.auditLogs],
+          },
+          `إضافة أصل: ${created.name}`
+        );
+        notify('ok', `تم إضافة الأصل (${created.name}) وحفظه في قاعدة البيانات بنجاح.`);
+      } else {
+        const existing = state.assets.find((a) => a.id === targetId);
+        if (!existing) return 'السجل غير موجود.';
+        const updated: GrainAsset = {
+          ...existing,
+          assetCode: code,
+          name,
+          assetType: values.assetType as GrainAsset['assetType'],
+          locationSite: String(values.locationSite || existing.locationSite).trim(),
+          siloOrWarehouseName: String(values.siloOrWarehouseName || name).trim(),
+          purchaseValue: Number(values.purchaseValue) || 0,
+          ratedCapacityTonPerHour: Number(values.ratedCapacityTonPerHour) || 0,
+          operationalStatus: values.operationalStatus as GrainAsset['operationalStatus'],
+          nextMaintenanceDate: String(values.nextMaintenanceDate || existing.nextMaintenanceDate),
+          plannedHoursPerPeriod: Math.max(1, Number(values.plannedHoursPerPeriod) || 200),
+          downtimeHours: Math.max(0, Number(values.downtimeHours) || 0),
+          actualProductionTons: Math.max(0, Number(values.actualProductionTons) || 0),
+          designProductionTons: Math.max(1, Number(values.designProductionTons) || 1000),
+          conformingTons: Math.max(0, Number(values.conformingTons) || 0),
+          updatedAt: nowIso,
+        };
+        onChangeState(
+          {
+            ...state,
+            assets: state.assets.map((a) => (a.id === targetId ? updated : a)),
+            auditLogs: [
+              appendAudit('تعديل', 'سجل الأصول والصوامع', updated.id, `${updated.name} (${updated.operationalStatus})`, existing.name),
+              ...state.auditLogs,
+            ],
+          },
+          `تعديل أصل: ${updated.name}`
+        );
+        notify('ok', `تم تعديل بيانات (${updated.name}) وتحديث مؤشرات OEE تلقائياً.`);
+      }
+      return null;
+    }
+
+    if (entityKey === 'order') {
+      const asset = state.assets.find((a) => a.id === values.assetId);
+      if (!asset) return 'يرجى اختيار المعدة / الصومعة.';
+      const part = state.spareParts.find((p) => p.id === values.partId);
+      const partQty = Math.max(0, Number(values.partQty) || 0);
+      const partsUsed =
+        part && partQty > 0
+          ? [{ partId: part.id, partName: part.partName, quantity: partQty, unitCost: part.unitCost }]
+          : [];
+      const techCount = Math.max(1, Number(values.technicianCount) || 1);
+      const laborHours = Math.max(0, Number(values.laborHours) || 0);
+      const hourlyRate = Math.max(0, Number(values.hourlyRate) || 0);
+      const consumablesCost = Math.max(0, Number(values.consumablesCost) || 0);
+      const transportAndOpCost = Math.max(0, Number(values.transportAndOpCost) || 0);
+
+      const costs = computeMaintenanceOrderCost({
+        technicianCount: techCount,
+        laborHours,
+        hourlyRate,
+        partsUsed,
+        consumablesCost,
+        transportAndOpCost,
+        indirectOverheadPercent: state.settings.defaultIndirectOverheadPct,
+        taxPercent: state.settings.defaultTaxPct,
+      });
+
+      if (mode === 'add') {
+        const order: MaintenanceOrder = {
+          id: `${branchId}-mo-${Date.now()}`,
+          branchId,
+          orderNumber: String(values.orderNumber || `MNT-${Date.now().toString().slice(-5)}`).trim(),
+          requestDate: String(values.requestDate || nowIso.split('T')[0]),
+          siteName: asset.locationSite,
+          assetId: asset.id,
+          maintenanceType: values.maintenanceType as MaintenanceOrder['maintenanceType'],
+          faultDescription: String(values.faultDescription || '').trim(),
+          severity: values.severity as MaintenanceOrder['severity'],
+          stopStartDate: nowIso.slice(0, 16),
+          technicianCount: techCount,
+          technicianNames: String(values.technicianNames || 'مهندس الصيانة').trim(),
+          laborHours,
+          hourlyRate,
+          consumablesCost,
+          transportAndOpCost,
+          indirectOverheadPercent: state.settings.defaultIndirectOverheadPct,
+          taxPercent: state.settings.defaultTaxPct,
+          partsUsed,
+          ...costs,
+          status: (values.status as MaintenanceOrderStatus) || 'جديد',
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        const nextParts =
+          part && partQty > 0
+            ? state.spareParts.map((sp) =>
+                sp.id === part.id ? { ...sp, outboundQty: sp.outboundQty + partQty, updatedAt: nowIso } : sp
+              )
+            : state.spareParts;
+        onChangeState(
+          {
+            ...state,
+            orders: [order, ...state.orders],
+            spareParts: nextParts,
+            auditLogs: [
+              appendAudit('إضافة', 'أوامر الصيانة', order.id, `${order.orderNumber} — ${order.totalRepairCost} ج.م`),
+              ...state.auditLogs,
+            ],
+          },
+          `إضافة أمر صيانة: ${order.orderNumber}`
+        );
+        notify('ok', `تم إضافة أمر الصيانة (${order.orderNumber}) واحتساب التكلفة (${order.totalRepairCost} ج.م).`);
+      } else {
+        const existing = state.orders.find((o) => o.id === targetId);
+        if (!existing) return 'أمر الصيانة غير موجود.';
+        const updated: MaintenanceOrder = {
+          ...existing,
+          orderNumber: String(values.orderNumber || existing.orderNumber).trim(),
+          requestDate: String(values.requestDate || existing.requestDate),
+          siteName: asset.locationSite,
+          assetId: asset.id,
+          maintenanceType: values.maintenanceType as MaintenanceOrder['maintenanceType'],
+          faultDescription: String(values.faultDescription || '').trim(),
+          severity: values.severity as MaintenanceOrder['severity'],
+          technicianCount: techCount,
+          technicianNames: String(values.technicianNames || existing.technicianNames).trim(),
+          laborHours,
+          hourlyRate,
+          consumablesCost,
+          transportAndOpCost,
+          partsUsed: partsUsed.length > 0 ? partsUsed : existing.partsUsed,
+          ...costs,
+          status: (values.status as MaintenanceOrderStatus) || existing.status,
+          updatedAt: nowIso,
+        };
+        onChangeState(
+          {
+            ...state,
+            orders: state.orders.map((o) => (o.id === targetId ? updated : o)),
+            auditLogs: [
+              appendAudit('تعديل', 'أوامر الصيانة', updated.id, `${updated.orderNumber} — ${updated.totalRepairCost} ج.م`),
+              ...state.auditLogs,
+            ],
+          },
+          `تعديل أمر صيانة: ${updated.orderNumber}`
+        );
+        notify('ok', `تم تحديث أمر الصيانة (${updated.orderNumber}) وإعادة حساب التكاليف.`);
+      }
+      return null;
+    }
+
+    if (entityKey === 'part') {
+      const partCode = String(values.partCode || '').trim();
+      const partName = String(values.partName || '').trim();
+      if (!partCode || !partName) return 'يرجى إدخال كود واسم قطعة الغيار.';
+      const item: SparePartItem = {
+        id: mode === 'add' ? `${branchId}-sp-${Date.now()}` : String(targetId),
+        branchId,
+        partCode,
+        partName,
+        unit: String(values.unit || 'قطعة').trim(),
+        unitCost: Math.max(0, Number(values.unitCost) || 0),
+        openingStock: Math.max(0, Number(values.openingStock) || 0),
+        inboundQty: Math.max(0, Number(values.inboundQty) || 0),
+        outboundQty: Math.max(0, Number(values.outboundQty) || 0),
+        damagedQty: Math.max(0, Number(values.damagedQty) || 0),
+        avgDailyConsumption: Math.max(0, Number(values.avgDailyConsumption) || 0),
+        supplyLeadDays: Math.max(1, Number(values.supplyLeadDays) || 1),
+        safetyStock: Math.max(0, Number(values.safetyStock) || 0),
+        targetStockLevel: Math.max(1, Number(values.targetStockLevel) || 20),
+        updatedAt: nowIso,
+      };
+      onChangeState(
+        {
+          ...state,
+          spareParts:
+            mode === 'add'
+              ? [item, ...state.spareParts]
+              : state.spareParts.map((sp) => (sp.id === targetId ? item : sp)),
+          auditLogs: [
+            appendAudit(mode === 'add' ? 'إضافة' : 'تعديل', 'مخزون قطع الغيار', item.id, `${item.partCode} — ${item.partName}`),
+            ...state.auditLogs,
+          ],
+        },
+        `${mode === 'add' ? 'إضافة' : 'تعديل'} قطعة غيار: ${item.partName}`
+      );
+      notify('ok', `تم ${mode === 'add' ? 'إضافة' : 'تعديل'} قطعة الغيار (${item.partName}) بنجاح.`);
+      return null;
+    }
+
+    if (entityKey === 'technician') {
+      const name = String(values.name || '').trim();
+      if (!name) return 'يرجى إدخال اسم المهندس أو الفني.';
+      const tech: MaintenanceTechnician = {
+        id: mode === 'add' ? `${branchId}-tech-${Date.now()}` : String(targetId),
+        branchId,
+        name,
+        specialty: String(values.specialty || 'صيانة عامة').trim(),
+        hourlyWage: Math.max(0, Number(values.hourlyWage) || 0),
+        phone: String(values.phone || '').trim(),
+        isActive: values.isActive !== false,
+        updatedAt: nowIso,
+      };
+      onChangeState(
+        {
+          ...state,
+          technicians:
+            mode === 'add'
+              ? [tech, ...state.technicians]
+              : state.technicians.map((t) => (t.id === targetId ? tech : t)),
+          auditLogs: [
+            appendAudit(mode === 'add' ? 'إضافة' : 'تعديل', 'سجل الفنيين والمهندسين', tech.id, `${tech.name} (${tech.specialty})`),
+            ...state.auditLogs,
+          ],
+        },
+        `${mode === 'add' ? 'إضافة' : 'تعديل'} فني/مهندس: ${tech.name}`
+      );
+      notify('ok', `تم ${mode === 'add' ? 'إضافة' : 'تعديل'} بيانات الفني/المهندس (${tech.name}).`);
+      return null;
+    }
+
+    if (entityKey === 'grain_movement') {
+      const origTons = Math.max(0, Number(values.originalWeightTons) || 0);
+      const actMoist = Math.max(0, Number(values.actualMoisturePct) || 0);
+      const refMoist = Math.max(0, Number(values.referenceMoisturePct) || state.settings.defaultReferenceMoisturePct || 12);
+      const corrected = computeMoistureCorrectedWeight(origTons, actMoist, refMoist);
+      const mType = values.movementType as GrainMovementRecord['movementType'];
+      const rec: GrainMovementRecord = {
+        id: mode === 'add' ? `${branchId}-gm-${Date.now()}` : String(targetId),
+        branchId,
+        documentNumber: String(values.documentNumber || '').trim(),
+        date: String(values.date || nowIso.split('T')[0]),
+        siloName: String(values.siloName || '').trim(),
+        grainType: String(values.grainType || 'قمح تمويني').trim(),
+        movementType: mType,
+        originalWeightTons: origTons,
+        actualMoisturePct: actMoist,
+        referenceMoisturePct: refMoist,
+        correctedWeightTons: corrected,
+        actualPhysicalCountTons:
+          mType === 'جرد فعلي' || Number(values.actualPhysicalCountTons) > 0
+            ? Number(values.actualPhysicalCountTons)
+            : undefined,
+        notes: String(values.notes || 'احتساب رطوبة آلي بالمعادلة المرجعية'),
+        updatedAt: nowIso,
+      };
+      onChangeState(
+        {
+          ...state,
+          grainMovements:
+            mode === 'add'
+              ? [rec, ...state.grainMovements]
+              : state.grainMovements.map((g) => (g.id === targetId ? rec : g)),
+          auditLogs: [
+            appendAudit(
+              mode === 'add' ? 'إضافة' : 'تعديل',
+              'حركات الحبوب والرطوبة',
+              rec.id,
+              `${rec.documentNumber} — مصحح ${corrected} طن`
+            ),
+            ...state.auditLogs,
+          ],
+        },
+        `${mode === 'add' ? 'إضافة' : 'تعديل'} حركة حبوب: ${rec.documentNumber}`
+      );
+      notify('ok', `تم ${mode === 'add' ? 'تسجيل' : 'تعديل'} حركة الحبوب (${rec.documentNumber}) بالوزن المصحح (${corrected} طن).`);
+      return null;
+    }
+
+    return null;
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deleteModalState) return;
+    const { entityType, entityId, entityTitle } = deleteModalState;
+    const check = checkGrainDeleteIntegrity(state, entityType, entityId);
+    if (!check.canDelete) {
+      notify('err', check.reason || 'لا يمكن حذف هذا السجل لارتباطه بسجلات أخرى.');
+      return;
+    }
+
+    if (entityType === 'asset') {
+      onChangeState(
+        {
+          ...state,
+          assets: state.assets.filter((a) => a.id !== entityId),
+          auditLogs: [appendAudit('حذف', 'سجل الأصول والصوامع', entityId, entityTitle), ...state.auditLogs],
+        },
+        `حذف أصل: ${entityTitle}`
+      );
+    } else if (entityType === 'order') {
+      onChangeState(
+        {
+          ...state,
+          orders: state.orders.filter((o) => o.id !== entityId),
+          auditLogs: [appendAudit('حذف', 'أوامر الصيانة', entityId, entityTitle), ...state.auditLogs],
+        },
+        `حذف أمر صيانة: ${entityTitle}`
+      );
+    } else if (entityType === 'part') {
+      onChangeState(
+        {
+          ...state,
+          spareParts: state.spareParts.filter((p) => p.id !== entityId),
+          auditLogs: [appendAudit('حذف', 'مخزون قطع الغيار', entityId, entityTitle), ...state.auditLogs],
+        },
+        `حذف قطعة غيار: ${entityTitle}`
+      );
+    } else if (entityType === 'technician') {
+      onChangeState(
+        {
+          ...state,
+          technicians: state.technicians.filter((t) => t.id !== entityId),
+          auditLogs: [appendAudit('حذف', 'سجل الفنيين والمهندسين', entityId, entityTitle), ...state.auditLogs],
+        },
+        `حذف فني/مهندس: ${entityTitle}`
+      );
+    } else if (entityType === 'grain_movement') {
+      onChangeState(
+        {
+          ...state,
+          grainMovements: state.grainMovements.filter((g) => g.id !== entityId),
+          auditLogs: [appendAudit('حذف', 'حركات الحبوب والرطوبة', entityId, entityTitle), ...state.auditLogs],
+        },
+        `حذف حركة حبوب: ${entityTitle}`
+      );
+    }
+
+    notify('ok', `تم حذف (${entityTitle}) وتحديث الجداول والمؤشرات في قاعدة البيانات.`);
+  };
+
   const handleAddAsset = (e: React.FormEvent) => {
     e.preventDefault();
     if (!assetCode.trim() || !assetName.trim()) {
       notify('err', 'يرجى إدخال كود واسم الأصل/الصومعة.');
       return;
     }
+    const nowIso = new Date().toISOString();
     const created: GrainAsset = {
       id: `${branchId}-asset-${Date.now()}`,
       branchId,
@@ -213,12 +794,12 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       manufacturer: 'معتمد محلياً',
       model: 'STD-2026',
       serialNumber: `SN-${Date.now().toString().slice(-6)}`,
-      supplyDate: new Date().toISOString().split('T')[0],
-      installDate: new Date().toISOString().split('T')[0],
+      supplyDate: nowIso.split('T')[0],
+      installDate: nowIso.split('T')[0],
       purchaseValue: 1000000,
       ratedCapacityTonPerHour: 80,
       operationalStatus: 'عاملة',
-      lastMaintenanceDate: new Date().toISOString().split('T')[0],
+      lastMaintenanceDate: nowIso.split('T')[0],
       nextMaintenanceDate: '2027-01-01',
       operatingLifeYears: 15,
       warrantyEndDate: '2028-01-01',
@@ -229,12 +810,16 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       conformingTons: 995,
       energyConsumptionKwh: 1200,
       fuelConsumptionLiters: 50,
+      updatedAt: nowIso,
     };
-    onChangeState({
-      ...state,
-      assets: [...state.assets, created],
-      auditLogs: [appendAudit('إضافة', 'سجل الأصول والصوامع', created.id, created.name), ...state.auditLogs],
-    });
+    onChangeState(
+      {
+        ...state,
+        assets: [...state.assets, created],
+        auditLogs: [appendAudit('إضافة', 'سجل الأصول والصوامع', created.id, created.name), ...state.auditLogs],
+      },
+      `إضافة أصل: ${created.name}`
+    );
     setAssetCode('');
     setAssetName('');
     notify('ok', `تم إضافة الأصل (${created.name}) إلى سجل الصوامع والمعدات.`);
@@ -248,6 +833,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       notify('err', 'يرجى اختيار المعدة ووصف العطل.');
       return;
     }
+    const nowIso = new Date().toISOString();
     const partsUsed =
       part && orderPartQty > 0
         ? [{ partId: part.id, partName: part.partName, quantity: orderPartQty, unitCost: part.unitCost }]
@@ -266,13 +852,13 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       id: `${branchId}-mo-${Date.now()}`,
       branchId,
       orderNumber: `MNT-${Date.now().toString().slice(-5)}`,
-      requestDate: new Date().toISOString().split('T')[0],
+      requestDate: nowIso.split('T')[0],
       siteName: asset.locationSite,
       assetId: asset.id,
       maintenanceType: orderType,
       faultDescription: orderFault.trim(),
       severity: 'متوسطة',
-      stopStartDate: new Date().toISOString().slice(0, 16),
+      stopStartDate: nowIso.slice(0, 16),
       technicianCount: 1,
       technicianNames: state.technicians[0]?.name || 'مهندس الصيانة',
       laborHours: orderHours,
@@ -284,34 +870,44 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       partsUsed,
       ...costs,
       status: 'جديد',
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
     const nextParts =
       part && orderPartQty > 0
         ? state.spareParts.map((sp) =>
-            sp.id === part.id ? { ...sp, outboundQty: sp.outboundQty + orderPartQty } : sp
+            sp.id === part.id ? { ...sp, outboundQty: sp.outboundQty + orderPartQty, updatedAt: nowIso } : sp
           )
         : state.spareParts;
 
-    onChangeState({
-      ...state,
-      orders: [order, ...state.orders],
-      spareParts: nextParts,
-      auditLogs: [
-        appendAudit('إضافة', 'أوامر الصيانة', order.id, `${order.orderNumber} — تكلفة ${order.totalRepairCost} ج.م`),
-        ...state.auditLogs,
-      ],
-    });
+    onChangeState(
+      {
+        ...state,
+        orders: [order, ...state.orders],
+        spareParts: nextParts,
+        auditLogs: [
+          appendAudit('إضافة', 'أوامر الصيانة', order.id, `${order.orderNumber} — تكلفة ${order.totalRepairCost} ج.م`),
+          ...state.auditLogs,
+        ],
+      },
+      `إضافة أمر صيانة: ${order.orderNumber}`
+    );
     setOrderFault('');
     notify('ok', `تم إنشاء أمر الصيانة (${order.orderNumber}) وحساب التكلفة الكلية آلياً.`);
   };
 
   const handleAdvanceOrderStatus = (orderId: string, nextStatus: MaintenanceOrderStatus) => {
-    onChangeState({
-      ...state,
-      orders: state.orders.map((o) => (o.id === orderId ? { ...o, status: nextStatus } : o)),
-      auditLogs: [appendAudit('تعديل', 'حالة أمر الصيانة', orderId, nextStatus), ...state.auditLogs],
-    });
+    const nowIso = new Date().toISOString();
+    onChangeState(
+      {
+        ...state,
+        orders: state.orders.map((o) =>
+          o.id === orderId ? { ...o, status: nextStatus, updatedAt: nowIso } : o
+        ),
+        auditLogs: [appendAudit('تعديل', 'حالة أمر الصيانة', orderId, nextStatus), ...state.auditLogs],
+      },
+      `تحديث حالة أمر صيانة إلى ${nextStatus}`
+    );
     notify('ok', `تم تحديث حالة أمر الصيانة إلى (${nextStatus}).`);
   };
 
@@ -321,11 +917,12 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       notify('err', 'يرجى إدخال رقم المستند المخزني للحبوب.');
       return;
     }
+    const nowIso = new Date().toISOString();
     const rec: GrainMovementRecord = {
       id: `${branchId}-gm-${Date.now()}`,
       branchId,
       documentNumber: gmDocNo.trim(),
-      date: new Date().toISOString().split('T')[0],
+      date: nowIso.split('T')[0],
       siloName: gmSilo,
       grainType: 'قمح تمويني',
       movementType: gmType,
@@ -335,15 +932,19 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       correctedWeightTons: previewCorrectedWeight,
       actualPhysicalCountTons: gmType === 'جرد فعلي' ? gmPhysicalCount : undefined,
       notes: 'احتساب رطوبة آلي بالمعادلة المرجعية',
+      updatedAt: nowIso,
     };
-    onChangeState({
-      ...state,
-      grainMovements: [rec, ...state.grainMovements],
-      auditLogs: [
-        appendAudit('إضافة', 'حركات الحبوب والرطوبة', rec.id, `${rec.documentNumber} — مصحح ${previewCorrectedWeight} طن`),
-        ...state.auditLogs,
-      ],
-    });
+    onChangeState(
+      {
+        ...state,
+        grainMovements: [rec, ...state.grainMovements],
+        auditLogs: [
+          appendAudit('إضافة', 'حركات الحبوب والرطوبة', rec.id, `${rec.documentNumber} — مصحح ${previewCorrectedWeight} طن`),
+          ...state.auditLogs,
+        ],
+      },
+      `إضافة حركة حبوب: ${rec.documentNumber}`
+    );
     setGmDocNo('');
     notify('ok', `تم تسجيل حركة الحبوب (${rec.documentNumber}) بالوزن المصحح (${previewCorrectedWeight} طن).`);
   };
@@ -352,12 +953,17 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
     { id: 'dashboard', label: 'لوحة الأداء OEE', icon: <Wrench className="w-3.5 h-3.5" /> },
     { id: 'assets', label: 'الصوامع والأصول', icon: <Warehouse className="w-3.5 h-3.5" /> },
     { id: 'orders', label: 'أوامر الصيانة والتكلفة', icon: <Cog className="w-3.5 h-3.5" /> },
-    { id: 'parts', label: 'قطع الغيار وإعادة الطلب', icon: <Cog className="w-3.5 h-3.5" /> },
+    { id: 'parts', label: 'قطع الغيار والفنيون', icon: <Cog className="w-3.5 h-3.5" /> },
     { id: 'grain_moisture', label: 'الحبوب والرطوبة والفاقد', icon: <Droplets className="w-3.5 h-3.5" /> },
     { id: 'alerts', label: `التنبيهات (${smartAlerts.length})`, icon: <AlertTriangle className="w-3.5 h-3.5" /> },
     { id: 'settings', label: 'الإعدادات', icon: <Settings className="w-3.5 h-3.5" /> },
     { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" /> },
   ];
+
+  const activeDeleteCheck = useMemo(() => {
+    if (!deleteModalState) return { canDelete: true };
+    return checkGrainDeleteIntegrity(state, deleteModalState.entityType, deleteModalState.entityId);
+  }, [deleteModalState, state]);
 
   return (
     <div className="space-y-4" dir="rtl" data-testid="grain-maintenance-suite">
@@ -436,6 +1042,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
 
       {feedback && (
         <div
+          data-testid="grain-feedback-banner"
           className={`p-3 rounded-xl border text-xs font-black flex items-center gap-2 ${
             feedback.type === 'ok'
               ? 'bg-emerald-50 border-emerald-400 text-emerald-950'
@@ -454,6 +1061,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             key={tab.id}
             type="button"
             onClick={() => setSubView(tab.id)}
+            data-testid={`grain-nav-${tab.id}`}
             className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer ${
               subView === tab.id ? 'bg-[#0A1628] text-[#D4AF37]' : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
             }`}
@@ -520,6 +1128,40 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
 
       {subView === 'assets' && (
         <div className="space-y-4">
+          <ModuleTableToolbar
+            title="سجل الصوامع والشون والمعدات الهندسية"
+            subtitle="إدارة كاملة للأصول ومؤشرات الكفاءة الكلية للمعدات (OEE) والاعتمادية"
+            count={state.assets.length}
+            addLabel="إضافة صومعة / معدة جديدة"
+            permissions={permissions}
+            testIdPrefix="grain-assets"
+            onAddClick={() =>
+              setFormModalState({
+                isOpen: true,
+                mode: 'add',
+                entityKey: 'asset',
+                title: 'إضافة صومعة أو معدة جديدة',
+                fields: getAssetFields(),
+                initialValues: {
+                  assetCode: `SILO-${100 + state.assets.length + 1}`,
+                  name: '',
+                  assetType: 'صومعة',
+                  locationSite: `مجمع صوامع ${branchName}`,
+                  siloOrWarehouseName: `صومعة ${branchName}`,
+                  operationalStatus: 'عاملة',
+                  ratedCapacityTonPerHour: 80,
+                  purchaseValue: 1200000,
+                  plannedHoursPerPeriod: 200,
+                  downtimeHours: 4,
+                  actualProductionTons: 1100,
+                  designProductionTons: 1200,
+                  conformingTons: 1090,
+                  nextMaintenanceDate: '2027-01-01',
+                },
+              })
+            }
+          />
+
           {!isViewer && (
             <form onSubmit={handleAddAsset} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-5 gap-2.5 text-xs">
               <input type="text" value={assetCode} onChange={(e) => setAssetCode(e.target.value)} placeholder="كود الأصل *" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
@@ -535,35 +1177,72 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
               <input type="text" value={assetSite} onChange={(e) => setAssetSite(e.target.value)} placeholder="الموقع" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold" />
               <button type="submit" className="px-4 py-2 bg-[#0D9488] text-white rounded-xl font-black cursor-pointer flex items-center justify-center gap-1">
                 <Plus className="w-4 h-4" />
-                <span>إضافة أصل</span>
+                <span>إضافة سريعة</span>
               </button>
             </form>
           )}
+
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
             <table className="w-full text-xs text-center border-collapse">
               <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
                   <th className="py-2 px-2 border border-slate-700">الكود</th>
                   <th className="py-2 px-2 border border-slate-700 text-right">المعدة / الصومعة</th>
+                  <th className="py-2 px-2 border border-slate-700">النوع والموقع</th>
                   <th className="py-2 px-2 border border-slate-700">الإتاحة %</th>
                   <th className="py-2 px-2 border border-slate-700">OEE %</th>
                   <th className="py-2 px-2 border border-slate-700">MTBF / MTTR</th>
                   <th className="py-2 px-2 border border-slate-700">الحالة التشغيلية</th>
+                  <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
                 {state.assets.map((a) => {
                   const kpi = computeEquipmentKpis(a, state.orders);
                   return (
-                    <tr key={a.id}>
+                    <tr key={a.id} className="hover:bg-slate-50">
                       <td className="py-2 px-2 font-mono">{a.assetCode}</td>
                       <td className="py-2 px-2 text-right font-black text-[#0A1628]">{a.name}</td>
+                      <td className="py-2 px-2 text-slate-600">{a.assetType} — {a.locationSite}</td>
                       <td className="py-2 px-2 font-mono text-[#1E40AF]">{kpi.availabilityPct ?? '—'}%</td>
                       <td className="py-2 px-2 font-mono text-[#0D9488] font-black">{kpi.oeePct ?? '—'}%</td>
                       <td className="py-2 px-2 font-mono">
                         {kpi.mtbfHours ?? '—'} س / {kpi.mttrHours ?? '—'} س
                       </td>
                       <td className="py-2 px-2">{a.operationalStatus}</td>
+                      <td className="py-2 px-2">
+                        <ModuleRowActions
+                          entityLabel={a.name}
+                          updatedAt={a.updatedAt}
+                          permissions={permissions}
+                          testIdPrefix={`grain-asset-${a.id}`}
+                          onEdit={() =>
+                            setFormModalState({
+                              isOpen: true,
+                              mode: 'edit',
+                              entityKey: 'asset',
+                              targetId: a.id,
+                              title: `تعديل بيانات الأصل: ${a.name}`,
+                              fields: getAssetFields(),
+                              initialValues: { ...a },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModalState({
+                              isOpen: true,
+                              entityType: 'asset',
+                              entityTitle: a.name,
+                              entityId: a.id,
+                              recordSummary: [
+                                { label: 'كود الأصل', value: a.assetCode },
+                                { label: 'الاسم', value: a.name },
+                                { label: 'النوع', value: a.assetType },
+                                { label: 'الحالة التشغيلية', value: a.operationalStatus },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   );
                 })}
@@ -575,6 +1254,41 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
 
       {subView === 'orders' && (
         <div className="space-y-4">
+          <ModuleTableToolbar
+            title="سجل أوامر الصيانة الوقائية والعلاجية والتكاليف"
+            subtitle="حساب آلي لتكلفة العمالة، قطع الغيار، التكاليف المباشرة وغير المباشرة والضرائب"
+            count={state.orders.length}
+            addLabel="إضافة أمر صيانة جديد"
+            permissions={permissions}
+            testIdPrefix="grain-orders"
+            onAddClick={() =>
+              setFormModalState({
+                isOpen: true,
+                mode: 'add',
+                entityKey: 'order',
+                title: 'فتح أمر صيانة هندسي جديد',
+                fields: getOrderFields(),
+                initialValues: {
+                  orderNumber: `MNT-${Date.now().toString().slice(-5)}`,
+                  requestDate: new Date().toISOString().split('T')[0],
+                  assetId: state.assets[0]?.id || '',
+                  maintenanceType: 'علاجية طارئة',
+                  faultDescription: '',
+                  severity: 'متوسطة',
+                  status: 'جديد',
+                  technicianNames: state.technicians[0]?.name || 'مهندس الصيانة',
+                  technicianCount: 1,
+                  laborHours: 6,
+                  hourlyRate: 120,
+                  partId: state.spareParts[0]?.id || '',
+                  partQty: 1,
+                  consumablesCost: 250,
+                  transportAndOpCost: 0,
+                },
+              })
+            }
+          />
+
           {!isViewer && (
             <form onSubmit={handleAddOrder} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-7 gap-2 text-xs">
               <select value={orderAssetId} onChange={(e) => setOrderAssetId(e.target.value)} className="px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold">
@@ -591,10 +1305,11 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                 {state.spareParts.map((p) => <option key={p.id} value={p.id}>{p.partName}</option>)}
               </select>
               <button type="submit" className="px-4 py-2 bg-[#0D9488] text-white rounded-xl font-black cursor-pointer">
-                فتح أمر صيانة
+                فتح أمر سريع
               </button>
             </form>
           )}
+
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
             <table className="w-full text-xs text-center border-collapse">
               <thead className="bg-[#0A1628] text-white font-black">
@@ -605,13 +1320,14 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                   <th className="py-2 px-2 border border-slate-700">المباشرة / غير المباشرة</th>
                   <th className="py-2 px-2 border border-slate-700">الإجمالي النهائي</th>
                   <th className="py-2 px-2 border border-slate-700">الحالة</th>
+                  <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
                 {state.orders.map((o) => {
                   const asset = state.assets.find((a) => a.id === o.assetId);
                   return (
-                    <tr key={o.id}>
+                    <tr key={o.id} className="hover:bg-slate-50">
                       <td className="py-2 px-2 font-mono">{o.orderNumber}</td>
                       <td className="py-2 px-2 text-right">
                         <div className="font-black text-[#0A1628]">{asset?.name || o.assetId}</div>
@@ -630,6 +1346,43 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                           {ORDER_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
                         </select>
                       </td>
+                      <td className="py-2 px-2">
+                        <ModuleRowActions
+                          entityLabel={o.orderNumber}
+                          updatedAt={o.updatedAt}
+                          permissions={permissions}
+                          testIdPrefix={`grain-order-${o.id}`}
+                          onEdit={() =>
+                            setFormModalState({
+                              isOpen: true,
+                              mode: 'edit',
+                              entityKey: 'order',
+                              targetId: o.id,
+                              title: `تعديل أمر الصيانة: ${o.orderNumber}`,
+                              fields: getOrderFields(),
+                              initialValues: {
+                                ...o,
+                                partId: o.partsUsed[0]?.partId || '',
+                                partQty: o.partsUsed[0]?.quantity || 0,
+                              },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModalState({
+                              isOpen: true,
+                              entityType: 'order',
+                              entityTitle: o.orderNumber,
+                              entityId: o.id,
+                              recordSummary: [
+                                { label: 'رقم الأمر', value: o.orderNumber },
+                                { label: 'المعدة', value: asset?.name || o.assetId },
+                                { label: 'التكلفة الكلية', value: `${o.totalRepairCost} ج.م` },
+                                { label: 'الحالة', value: o.status },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   );
                 })}
@@ -640,51 +1393,237 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       )}
 
       {subView === 'parts' && (
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table className="w-full text-xs text-center border-collapse">
-            <thead className="bg-[#0A1628] text-white font-black">
-              <tr>
-                <th className="py-2 px-2 border border-slate-700">الكود</th>
-                <th className="py-2 px-2 border border-slate-700 text-right">اسم قطعة الغيار</th>
-                <th className="py-2 px-2 border border-slate-700">سعر الوحدة</th>
-                <th className="py-2 px-2 border border-slate-700">الرصيد المتاح</th>
-                <th className="py-2 px-2 border border-slate-700">حد إعادة الطلب</th>
-                <th className="py-2 px-2 border border-slate-700">الكمية المطلوب شراؤها</th>
-                <th className="py-2 px-2 border border-slate-700">حالة التنبيه</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 font-bold">
-              {state.spareParts.map((sp) => {
-                const st = computeSparePartStatus(sp);
-                return (
-                  <tr key={sp.id}>
-                    <td className="py-2 px-2 font-mono">{sp.partCode}</td>
-                    <td className="py-2 px-2 text-right font-black text-[#0A1628]">{sp.partName}</td>
-                    <td className="py-2 px-2 font-mono">{sp.unitCost} ج.م</td>
-                    <td className="py-2 px-2 font-mono font-black text-[#0D9488]">{st.availableBalance}</td>
-                    <td className="py-2 px-2 font-mono">{st.reorderPoint}</td>
-                    <td className="py-2 px-2 font-mono">{st.neededQty}</td>
-                    <td className="py-2 px-2">
-                      {st.needsReorder ? (
-                        <span className="px-2 py-0.5 bg-rose-100 text-rose-900 rounded-full text-[11px] font-black">
-                          يلزم إعادة طلب
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-900 rounded-full text-[11px] font-black">
-                          متوافر
-                        </span>
-                      )}
-                    </td>
+        <div className="space-y-5">
+          {/* Spare Parts Table */}
+          <div className="space-y-3">
+            <ModuleTableToolbar
+              title="مخزون قطع الغيار ونقطة إعادة الطلب"
+              subtitle="متابعة الرصيد المتاح، حد إعادة الطلب، والكميات المطلوب شراؤها"
+              count={state.spareParts.length}
+              addLabel="إضافة قطعة غيار جديدة"
+              permissions={permissions}
+              testIdPrefix="grain-parts"
+              onAddClick={() =>
+                setFormModalState({
+                  isOpen: true,
+                  mode: 'add',
+                  entityKey: 'part',
+                  title: 'إضافة قطعة غيار جديدة للمخزن الهندسي',
+                  fields: getPartFields(),
+                  initialValues: {
+                    partCode: `SP-${200 + state.spareParts.length + 1}`,
+                    partName: '',
+                    unit: 'قطعة',
+                    unitCost: 450,
+                    openingStock: 10,
+                    inboundQty: 5,
+                    outboundQty: 2,
+                    damagedQty: 0,
+                    avgDailyConsumption: 0.5,
+                    supplyLeadDays: 7,
+                    safetyStock: 3,
+                    targetStockLevel: 25,
+                  },
+                })
+              }
+            />
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+              <table className="w-full text-xs text-center border-collapse">
+                <thead className="bg-[#0A1628] text-white font-black">
+                  <tr>
+                    <th className="py-2 px-2 border border-slate-700">الكود</th>
+                    <th className="py-2 px-2 border border-slate-700 text-right">اسم قطعة الغيار</th>
+                    <th className="py-2 px-2 border border-slate-700">سعر الوحدة</th>
+                    <th className="py-2 px-2 border border-slate-700">الرصيد المتاح</th>
+                    <th className="py-2 px-2 border border-slate-700">حد إعادة الطلب</th>
+                    <th className="py-2 px-2 border border-slate-700">الكمية المطلوب شراؤها</th>
+                    <th className="py-2 px-2 border border-slate-700">حالة التنبيه</th>
+                    <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody className="divide-y divide-slate-200 font-bold">
+                  {state.spareParts.map((sp) => {
+                    const st = computeSparePartStatus(sp);
+                    return (
+                      <tr key={sp.id} className="hover:bg-slate-50">
+                        <td className="py-2 px-2 font-mono">{sp.partCode}</td>
+                        <td className="py-2 px-2 text-right font-black text-[#0A1628]">{sp.partName}</td>
+                        <td className="py-2 px-2 font-mono">{sp.unitCost} ج.م</td>
+                        <td className="py-2 px-2 font-mono font-black text-[#0D9488]">{st.availableBalance}</td>
+                        <td className="py-2 px-2 font-mono">{st.reorderPoint}</td>
+                        <td className="py-2 px-2 font-mono">{st.neededQty}</td>
+                        <td className="py-2 px-2">
+                          {st.needsReorder ? (
+                            <span className="px-2 py-0.5 bg-rose-100 text-rose-900 rounded-full text-[11px] font-black">
+                              يلزم إعادة طلب
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-900 rounded-full text-[11px] font-black">
+                              متوافر
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-2">
+                          <ModuleRowActions
+                            entityLabel={sp.partName}
+                            updatedAt={sp.updatedAt}
+                            permissions={permissions}
+                            testIdPrefix={`grain-part-${sp.id}`}
+                            onEdit={() =>
+                              setFormModalState({
+                                isOpen: true,
+                                mode: 'edit',
+                                entityKey: 'part',
+                                targetId: sp.id,
+                                title: `تعديل قطعة الغيار: ${sp.partName}`,
+                                fields: getPartFields(),
+                                initialValues: { ...sp },
+                              })
+                            }
+                            onDelete={() =>
+                              setDeleteModalState({
+                                isOpen: true,
+                                entityType: 'part',
+                                entityTitle: sp.partName,
+                                entityId: sp.id,
+                                recordSummary: [
+                                  { label: 'الكود', value: sp.partCode },
+                                  { label: 'الاسم', value: sp.partName },
+                                  { label: 'الرصيد المتاح', value: st.availableBalance },
+                                ],
+                              })
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Maintenance Technicians Table */}
+          <div className="space-y-3">
+            <ModuleTableToolbar
+              title="سجل المهندسين والفنيين المختصين بالصيانة"
+              subtitle="متابعة التخصصات الهندسية، أجر الساعة، وأرقام التواصل"
+              count={state.technicians.length}
+              addLabel="إضافة مهندس / فني جديد"
+              permissions={permissions}
+              testIdPrefix="grain-technicians"
+              onAddClick={() =>
+                setFormModalState({
+                  isOpen: true,
+                  mode: 'add',
+                  entityKey: 'technician',
+                  title: 'إضافة مهندس أو فني صيانة جديد',
+                  fields: getTechnicianFields(),
+                  initialValues: {
+                    name: '',
+                    specialty: 'ميكانيكا صوامع وموازين',
+                    hourlyWage: 125,
+                    phone: '01012345678',
+                    isActive: true,
+                  },
+                })
+              }
+            />
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+              <table className="w-full text-xs text-center border-collapse">
+                <thead className="bg-[#0A1628] text-white font-black">
+                  <tr>
+                    <th className="py-2 px-2 border border-slate-700 text-right">اسم المهندس / الفني</th>
+                    <th className="py-2 px-2 border border-slate-700">التخصص</th>
+                    <th className="py-2 px-2 border border-slate-700">أجر الساعة</th>
+                    <th className="py-2 px-2 border border-slate-700">رقم الهاتف</th>
+                    <th className="py-2 px-2 border border-slate-700">الحالة</th>
+                    <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 font-bold">
+                  {state.technicians.map((tech) => (
+                    <tr key={tech.id} className="hover:bg-slate-50">
+                      <td className="py-2 px-2 text-right font-black text-[#0A1628]">{tech.name}</td>
+                      <td className="py-2 px-2">{tech.specialty}</td>
+                      <td className="py-2 px-2 font-mono text-[#0D9488]">{tech.hourlyWage} ج.م</td>
+                      <td className="py-2 px-2 font-mono">{tech.phone}</td>
+                      <td className="py-2 px-2">{tech.isActive ? 'نشط' : 'غير نشط'}</td>
+                      <td className="py-2 px-2">
+                        <ModuleRowActions
+                          entityLabel={tech.name}
+                          updatedAt={tech.updatedAt}
+                          permissions={permissions}
+                          testIdPrefix={`grain-tech-${tech.id}`}
+                          onEdit={() =>
+                            setFormModalState({
+                              isOpen: true,
+                              mode: 'edit',
+                              entityKey: 'technician',
+                              targetId: tech.id,
+                              title: `تعديل بيانات الفني: ${tech.name}`,
+                              fields: getTechnicianFields(),
+                              initialValues: { ...tech },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModalState({
+                              isOpen: true,
+                              entityType: 'technician',
+                              entityTitle: tech.name,
+                              entityId: tech.id,
+                              recordSummary: [
+                                { label: 'الاسم', value: tech.name },
+                                { label: 'التخصص', value: tech.specialty },
+                                { label: 'أجر الساعة', value: `${tech.hourlyWage} ج.م` },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
       {subView === 'grain_moisture' && (
         <div className="space-y-4">
+          <ModuleTableToolbar
+            title="دفتر حركات الحبوب وتصحيح الرطوبة والفاقد"
+            subtitle="الوزن المصحح = الوزن الأصلي × (100 - الرطوبة الفعلية) ÷ (100 - الرطوبة المرجعية)"
+            count={state.grainMovements.length}
+            addLabel="إضافة حركة حبوب جديدة"
+            permissions={permissions}
+            testIdPrefix="grain-movements"
+            onAddClick={() =>
+              setFormModalState({
+                isOpen: true,
+                mode: 'add',
+                entityKey: 'grain_movement',
+                title: 'تسجيل حركة حبوب وتصحيح الرطوبة',
+                fields: getGrainMovementFields(),
+                initialValues: {
+                  documentNumber: `GRN-${Date.now().toString().slice(-5)}`,
+                  date: new Date().toISOString().split('T')[0],
+                  siloName: state.assets[0]?.siloOrWarehouseName || 'صومعة حبوب رقم 1',
+                  grainType: 'قمح تمويني',
+                  movementType: 'وارد',
+                  originalWeightTons: 500,
+                  actualMoisturePct: 13.5,
+                  referenceMoisturePct: state.settings.defaultReferenceMoisturePct || 12,
+                  actualPhysicalCountTons: 0,
+                  notes: 'احتساب رطوبة آلي بالمعادلة المرجعية',
+                },
+              })
+            }
+          />
+
           {!isViewer && (
             <form onSubmit={handleAddGrainMovement} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
               <div className="text-xs font-black text-[#0A1628]">
@@ -703,32 +1642,72 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                   المصحح: {previewCorrectedWeight} طن
                 </div>
                 <button type="submit" className="px-4 py-2 bg-[#0D9488] text-white rounded-xl font-black cursor-pointer">
-                  تسجيل الحركة
+                  تسجيل سريع
                 </button>
               </div>
             </form>
           )}
+
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
             <table className="w-full text-xs text-center border-collapse">
               <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
                   <th className="py-2 px-2 border border-slate-700">رقم المستند</th>
+                  <th className="py-2 px-2 border border-slate-700">التاريخ</th>
                   <th className="py-2 px-2 border border-slate-700">الصومعة / الشونة</th>
                   <th className="py-2 px-2 border border-slate-700">الحركة</th>
                   <th className="py-2 px-2 border border-slate-700">الوزن الأصلي</th>
-                  <th className="py-2 px-2 border border-slate-700">الرطوبة الفعلية %</th>
+                  <th className="py-2 px-2 border border-slate-700">الرطوبة الفعلية / المرجعية</th>
                   <th className="py-2 px-2 border border-slate-700">الوزن المصحح (طن)</th>
+                  <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
                 {state.grainMovements.map((g) => (
-                  <tr key={g.id}>
+                  <tr key={g.id} className="hover:bg-slate-50">
                     <td className="py-2 px-2 font-mono">{g.documentNumber}</td>
+                    <td className="py-2 px-2 font-mono">{g.date}</td>
                     <td className="py-2 px-2">{g.siloName}</td>
                     <td className="py-2 px-2">{g.movementType}</td>
                     <td className="py-2 px-2 font-mono">{g.originalWeightTons} طن</td>
-                    <td className="py-2 px-2 font-mono">{g.actualMoisturePct}%</td>
+                    <td className="py-2 px-2 font-mono">{g.actualMoisturePct}% / {g.referenceMoisturePct}%</td>
                     <td className="py-2 px-2 font-mono font-black text-[#0D9488]">{g.correctedWeightTons} طن</td>
+                    <td className="py-2 px-2">
+                      <ModuleRowActions
+                        entityLabel={g.documentNumber}
+                        updatedAt={g.updatedAt}
+                        permissions={permissions}
+                        testIdPrefix={`grain-mov-${g.id}`}
+                        onEdit={() =>
+                          setFormModalState({
+                            isOpen: true,
+                            mode: 'edit',
+                            entityKey: 'grain_movement',
+                            targetId: g.id,
+                            title: `تعديل حركة الحبوب: ${g.documentNumber}`,
+                            fields: getGrainMovementFields(),
+                            initialValues: {
+                              ...g,
+                              actualPhysicalCountTons: g.actualPhysicalCountTons ?? 0,
+                            },
+                          })
+                        }
+                        onDelete={() =>
+                          setDeleteModalState({
+                            isOpen: true,
+                            entityType: 'grain_movement',
+                            entityTitle: g.documentNumber,
+                            entityId: g.id,
+                            recordSummary: [
+                              { label: 'رقم المستند', value: g.documentNumber },
+                              { label: 'الصومعة', value: g.siloName },
+                              { label: 'نوع الحركة', value: g.movementType },
+                              { label: 'الوزن المصحح', value: `${g.correctedWeightTons} طن` },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -759,11 +1738,14 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            onChangeState({
-              ...state,
-              settings: settingsDraft,
-              auditLogs: [appendAudit('تحديث إعدادات', 'إعدادات صيانة الحبوب', branchId, settingsDraft.decisionNote), ...state.auditLogs],
-            });
+            onChangeState(
+              {
+                ...state,
+                settings: settingsDraft,
+                auditLogs: [appendAudit('تحديث إعدادات', 'إعدادات صيانة الحبوب', branchId, settingsDraft.decisionNote), ...state.auditLogs],
+              },
+              'تحديث إعدادات صيانة الحبوب'
+            );
             notify('ok', 'تم حفظ إعدادات ومعادلات صيانة الحبوب والصوامع.');
           }}
           className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3 text-xs"
@@ -802,6 +1784,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                 <th className="py-2 px-2 border border-slate-700">الوقت</th>
                 <th className="py-2 px-2 border border-slate-700">المستخدم</th>
                 <th className="py-2 px-2 border border-slate-700">الإجراء</th>
+                <th className="py-2 px-2 border border-slate-700">الجدول</th>
                 <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
               </tr>
             </thead>
@@ -811,12 +1794,39 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                   <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
                   <td className="py-2 px-2">{a.userFullName}</td>
                   <td className="py-2 px-2 text-[#0D9488]">{a.actionType}</td>
+                  <td className="py-2 px-2">{a.entityName}</td>
                   <td className="py-2 px-2 text-right">{a.afterSummary}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Unified Add/Edit Modal */}
+      {formModalState && (
+        <ModuleFormModal
+          isOpen={formModalState.isOpen}
+          mode={formModalState.mode}
+          title={formModalState.title}
+          fields={formModalState.fields}
+          initialValues={formModalState.initialValues}
+          onClose={() => setFormModalState(null)}
+          onSubmit={handleModalSubmit}
+        />
+      )}
+
+      {/* Unified Delete Confirmation Modal */}
+      {deleteModalState && (
+        <ModuleDeleteConfirmModal
+          isOpen={deleteModalState.isOpen}
+          entityTitle={deleteModalState.entityTitle}
+          recordSummary={deleteModalState.recordSummary}
+          canDelete={activeDeleteCheck.canDelete}
+          blockReason={activeDeleteCheck.reason}
+          onClose={() => setDeleteModalState(null)}
+          onConfirmDelete={handleConfirmDelete}
+        />
       )}
     </div>
   );

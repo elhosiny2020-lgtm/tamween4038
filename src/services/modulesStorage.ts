@@ -1127,6 +1127,13 @@ export function writeLocalBranchModulesBundle(branchId: string, bundle: BranchMo
   }
 }
 
+export interface ModuleSaveResult {
+  success: boolean;
+  syncedAt: string;
+  version?: number;
+  error?: string;
+}
+
 export async function loadBranchModulesBundle(
   branchId: string,
   branchName: string,
@@ -1149,12 +1156,12 @@ export async function loadBranchModulesBundle(
       }
     }
   } catch {
-    // fallback cleanly to local or seed
+    // fallback cleanly to Supabase or local seed
   }
 
-  // Also check Supabase if configured
+  // Check Supabase directly if configured
   const sb = getSupabaseClient();
-  if (sb && !local) {
+  if (sb) {
     try {
       const { data } = await sb
         .from('backup_snapshots')
@@ -1171,61 +1178,163 @@ export async function loadBranchModulesBundle(
     }
   }
 
-  if (local) return local;
+  if (local) {
+    // Ensure server & Supabase have the local state persisted
+    void saveBranchModulesBundle(branchId, local, 'مزامنة تلقائية');
+    return local;
+  }
 
   const initial = createInitialBranchModulesBundle(branchId, branchName, villages);
   writeLocalBranchModulesBundle(branchId, initial);
-  // Seed asynchronously to backend so other devices see the same branch seed
+  // Seed asynchronously to backend & Supabase so all devices see the same branch data
   void saveBranchModulesBundle(branchId, initial, 'النظام الرئيسي');
   return initial;
 }
+
+let inFlightSavePromise: Promise<ModuleSaveResult> | null = null;
 
 export async function saveBranchModulesBundle(
   branchId: string,
   bundle: BranchModulesBundle,
   updatedBy = 'مستخدم المنظومة'
-): Promise<void> {
+): Promise<ModuleSaveResult> {
+  const nowIso = new Date().toISOString();
   const withTimestamp: BranchModulesBundle = {
     ...bundle,
     branchId,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso,
   };
   writeLocalBranchModulesBundle(branchId, withTimestamp);
 
-  try {
-    await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getSecurityShieldHeaders(),
-      },
-      body: JSON.stringify({
-        moduleKey: 'all_modules',
-        payload: withTimestamp,
-        updatedBy,
-        clientId: SESSION_CLIENT_ID,
-      }),
-    });
-  } catch {
-    // silent offline resilience; local copy already saved
-  }
+  const runSave = async (): Promise<ModuleSaveResult> => {
+    let serverOk = false;
+    let supaOk = false;
+    let version = 1;
+    let lastErr = '';
 
-  const sb = getSupabaseClient();
-  if (sb) {
     try {
-      await sb.from('backup_snapshots').upsert(
-        {
-          id: `mod__${branchId}__all_modules`,
-          branch_id: branchId,
-          payload: withTimestamp,
-          updated_at: withTimestamp.updatedAt,
+      const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getSecurityShieldHeaders(),
         },
-        { onConflict: 'id' }
-      );
-    } catch {
-      // ignore if offline or RLS prevents snapshot write
+        body: JSON.stringify({
+          moduleKey: 'all_modules',
+          payload: withTimestamp,
+          updatedBy,
+          clientId: SESSION_CLIENT_ID,
+        }),
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        serverOk = Boolean(json?.success);
+        if (typeof json?.version === 'number') version = json.version;
+      } else {
+        lastErr = `HTTP ${resp.status}`;
+      }
+    } catch (e: any) {
+      lastErr = e?.message || 'تعذر الاتصال بالخادم';
     }
+
+    const sb = getSupabaseClient();
+    if (sb) {
+      try {
+        const { error } = await sb.from('backup_snapshots').upsert(
+          {
+            id: `mod__${branchId}__all_modules`,
+            branch_id: branchId,
+            payload: withTimestamp,
+            updated_at: withTimestamp.updatedAt,
+          },
+          { onConflict: 'id' }
+        );
+        if (!error) {
+          supaOk = true;
+        }
+        // Broadcast via Supabase Realtime channel for instant multi-device sync
+        const ch = sb.channel(`tamween-modules-${branchId}`);
+        void ch.send({
+          type: 'broadcast',
+          event: 'module_bundle_sync',
+          payload: {
+            branchId,
+            clientId: SESSION_CLIENT_ID,
+            updatedBy,
+            updatedAt: withTimestamp.updatedAt,
+            bundle: withTimestamp,
+          },
+        });
+      } catch {
+        // ignore if offline or RLS prevents snapshot write
+      }
+    }
+
+    return {
+      success: serverOk || supaOk,
+      syncedAt: withTimestamp.updatedAt,
+      version,
+      error: serverOk || supaOk ? undefined : lastErr || undefined,
+    };
+  };
+
+  if (inFlightSavePromise) {
+    inFlightSavePromise = inFlightSavePromise.then(() => runSave(), () => runSave());
+  } else {
+    inFlightSavePromise = runSave();
   }
+  return inFlightSavePromise;
+}
+
+/**
+ * الاشتراك في تحديثات Supabase Realtime الفورية للأقسام الفرعية والرئيسية
+ */
+export function subscribeBranchModulesRealtime(
+  branchId: string,
+  onRemoteUpdate: (bundle: BranchModulesBundle) => void
+): () => void {
+  const sb = getSupabaseClient();
+  if (!sb) return () => {};
+
+  const snapshotRowId = `mod__${branchId}__all_modules`;
+  const channel = sb
+    .channel(`tamween-modules-${branchId}`)
+    .on(
+      'broadcast',
+      { event: 'module_bundle_sync' },
+      (msg: any) => {
+        const data = msg?.payload;
+        if (!data || data.clientId === SESSION_CLIENT_ID || data.branchId !== branchId) return;
+        const incoming = data.bundle as BranchModulesBundle;
+        if (incoming?.ration && incoming?.grainMaintenance && incoming?.hr) {
+          writeLocalBranchModulesBundle(branchId, incoming);
+          onRemoteUpdate(incoming);
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'backup_snapshots',
+        filter: `id=eq.${snapshotRowId}`,
+      },
+      (payload: any) => {
+        const incoming = payload?.new?.payload as BranchModulesBundle | undefined;
+        if (incoming?.ration && incoming?.grainMaintenance && incoming?.hr) {
+          writeLocalBranchModulesBundle(branchId, incoming);
+          onRemoteUpdate(incoming);
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    try {
+      void sb.removeChannel(channel);
+    } catch {}
+  };
 }
 
 /**

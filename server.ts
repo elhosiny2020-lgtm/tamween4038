@@ -2020,6 +2020,11 @@ async function startServer() {
         updatedAt: saved.updatedAt,
         clientId,
       });
+      scheduleSilentRealtimeServerBackup(cachedLiveSnapshot || payload, {
+        branchId,
+        sqlOperation: 'MODULE_CRUD',
+        affectedTable: moduleKey,
+      });
       res.json({ success: true, branchId, version: saved.version, updatedAt: saved.updatedAt });
     } catch {
       const prev = cachedBranchModules.get(cacheKey);
@@ -2038,6 +2043,11 @@ async function startServer() {
         version: nextVersion,
         updatedAt: nowIso,
         clientId,
+      });
+      scheduleSilentRealtimeServerBackup(cachedLiveSnapshot || payload, {
+        branchId,
+        sqlOperation: 'MODULE_CRUD',
+        affectedTable: moduleKey,
       });
       res.json({ success: true, branchId, version: nextVersion, updatedAt: nowIso, memoryFallback: true });
     }

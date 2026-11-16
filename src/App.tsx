@@ -151,7 +151,11 @@ import { RationCommoditiesSuite, RationSubView } from './components/modules/Rati
 import { GrainMaintenanceSuite, GrainSubView } from './components/modules/GrainMaintenanceSuite';
 import { HrPersonnelSuite, HrSubView } from './components/modules/HrPersonnelSuite';
 import type { BranchModulesBundle } from './types/modules';
-import { loadBranchModulesBundle, saveBranchModulesBundle } from './services/modulesStorage';
+import {
+  loadBranchModulesBundle,
+  saveBranchModulesBundle,
+  subscribeBranchModulesRealtime,
+} from './services/modulesStorage';
 import {
   canUserAccessTab,
   getDefaultTabForUser,
@@ -1126,8 +1130,15 @@ export default function App() {
         if (!cancelled) setModulesBundle(bundle);
       })
       .catch(() => {});
+    const unsubSupaRt = subscribeBranchModulesRealtime(
+      activeBranchIdForModules,
+      (incoming) => {
+        if (!cancelled) setModulesBundle(incoming);
+      }
+    );
     return () => {
       cancelled = true;
+      unsubSupaRt();
     };
   }, [isAppStateReady, activeBranchIdForModules, activeBranchNameForModules]);
 
@@ -5024,8 +5035,11 @@ export default function App() {
                 currentUser={appState.currentUser}
                 initialMode={activeTab === 'internal-trade' ? 'internal_trade' : 'commodities'}
                 initialSubView={rationSubView}
-                onChangeState={(nextRation) =>
-                  handleUpdateModulesBundle((prev) => ({ ...prev, ration: nextRation }))
+                onChangeState={(nextRation, actionSummary) =>
+                  handleUpdateModulesBundle(
+                    (prev) => ({ ...prev, ration: nextRation }),
+                    actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
+                  )
                 }
               />
             ) : (
@@ -5042,8 +5056,11 @@ export default function App() {
                 branchName={appState.systemConfig.administrationTitle}
                 currentUser={appState.currentUser}
                 initialSubView={grainSubView}
-                onChangeState={(nextGrain) =>
-                  handleUpdateModulesBundle((prev) => ({ ...prev, grainMaintenance: nextGrain }))
+                onChangeState={(nextGrain, actionSummary) =>
+                  handleUpdateModulesBundle(
+                    (prev) => ({ ...prev, grainMaintenance: nextGrain }),
+                    actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
+                  )
                 }
               />
             ) : (
@@ -5060,8 +5077,11 @@ export default function App() {
                 branchName={appState.systemConfig.administrationTitle}
                 currentUser={appState.currentUser}
                 initialSubView={hrSubView}
-                onChangeState={(nextHr) =>
-                  handleUpdateModulesBundle((prev) => ({ ...prev, hr: nextHr }))
+                onChangeState={(nextHr, actionSummary) =>
+                  handleUpdateModulesBundle(
+                    (prev) => ({ ...prev, hr: nextHr }),
+                    actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
+                  )
                 }
               />
             ) : (
