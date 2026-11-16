@@ -3189,9 +3189,18 @@ export default function App() {
                 id="header-branch-select"
                 data-testid="header-branch-select"
                 value={appState.activeBranchId || DEFAULT_BRANCH_ID}
-                onChange={(e) => handleSwitchBranch(e.target.value, cleanBranchesList)}
+                onChange={(e) => {
+                  const targetBranchId = e.target.value;
+                  if (!isVaultUnlocked) {
+                    requireVaultAccess('branches', 'التنقل بين الفروع والإدارات التموينية', () => {
+                      handleSwitchBranch(targetBranchId, cleanBranchesList);
+                    });
+                  } else {
+                    handleSwitchBranch(targetBranchId, cleanBranchesList);
+                  }
+                }}
                 className="bg-[#0F1E36] text-white font-black text-xs cursor-pointer focus:outline-none pr-1"
-                title="اختيار الإدارة التموينية أو الفرع مباشرة من الواجهة"
+                title="اختيار الإدارة التموينية أو الفرع مباشرة من الواجهة (محمي بالحماية السرية)"
               >
                 {cleanBranchesList.map((branch) => (
                   <option key={branch.id} value={branch.id} className="bg-[#0A1628] text-white font-bold">
@@ -4380,7 +4389,7 @@ export default function App() {
 
               {/* Main Bakeries Data Table (Pure White & Light Gray with Sticky Navy Headers) */}
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-                <div className="overflow-x-visible relative">
+                <div className="overflow-x-auto relative custom-scrollbar">
                   <table className="w-full text-center border-collapse text-xs">
                     {/* Grouped Super Headers */}
                     <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-bold shadow-xs">

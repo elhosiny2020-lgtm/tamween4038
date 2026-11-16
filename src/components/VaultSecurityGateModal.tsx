@@ -10,6 +10,7 @@ import {
   RefreshCw,
   UserCheck,
   Building2,
+  Eye,
 } from 'lucide-react';
 import { SupplyBranch, BranchVaultCredential } from '../types';
 import {
@@ -54,6 +55,7 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
   const [selectedUnlockBranchId, setSelectedUnlockBranchId] = useState<string>(activeBranchId);
   const [usernameInput, setUsernameInput] = useState('');
   const [passcodeInput, setPasscodeInput] = useState('');
+  const [showPasscode, setShowPasscode] = useState(false);
 
   // Change credentials tab inputs
   const [targetScope, setTargetScope] = useState<'all' | string>('all');
@@ -328,15 +330,25 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
                     <EyeOff className="w-3 h-3" /> مخفي تماماً
                   </span>
                 </label>
-                <input
-                  type="password"
-                  data-testid="vault-passcode-input"
-                  value={passcodeInput}
-                  onChange={(e) => setPasscodeInput(e.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="new-password"
-                  className="w-full px-4 py-3 rounded-2xl bg-[#0F1E36] border border-white/15 text-white text-center text-base font-black tracking-[0.35em] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
-                />
+                <div className="relative">
+                  <input
+                    type={showPasscode ? 'text' : 'password'}
+                    data-testid="vault-passcode-input"
+                    value={passcodeInput}
+                    onChange={(e) => setPasscodeInput(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    className="w-full px-4 py-3 pl-11 rounded-2xl bg-[#0F1E36] border border-white/15 text-white text-center text-base font-black tracking-[0.35em] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasscode((prev) => !prev)}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-1"
+                    title={showPasscode ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                  >
+                    {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center gap-3 pt-1">
