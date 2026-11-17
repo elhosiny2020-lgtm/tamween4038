@@ -473,3 +473,99 @@ export function computeMerchantFinancialStatement(
     closingBalance,
   };
 }
+
+export interface WarehouseControlAnalysisResult {
+  warehouseId: string;
+  warehouseName: string;
+  systemStock: number;
+  physicalStock: number;
+  inventoryDifference: number; // فرق الجرد = الرصيد الفعلي − الرصيد في النظام
+  inventoryDifferencePct: number; // نسبة الفرق %
+  totalHandled: number;
+  damagedQty: number;
+  damagePercentage: number; // نسبة التلف = (عدد الأسطوانات التالفة ÷ إجمالي الأسطوانات) × 100
+  assignedQuota: number;
+  coveragePercentage: number; // نسبة التغطية = (الرصيد الفعلي ÷ الحصة) × 100
+  alerts: {
+    type: 'DIFF_EXCEEDED' | 'DAMAGE_EXCEEDED' | 'COVERAGE_LOW' | 'COVERAGE_HIGH';
+    severity: 'بسيطة' | 'متوسطة' | 'جسيمة';
+    message: string;
+  }[];
+}
+
+/**
+ * محرك معادلات الرقابة التموينية:
+ * يحسب فرق الجرد، نسبة التلف، ونسبة التغطية لكل مستودع/منفذ، ويولد تنبيهات فورية عند تجاوز الحدود.
+ */
+export function computeWarehouseControlEngine(params: {
+  warehouseId: string;
+  warehouseName: string;
+  systemStock: number;
+  physicalStock: number;
+  damagedQty: number;
+  totalHandled: number;
+  assignedQuota: number;
+  maxDiffTolerancePct?: number; // default 5%
+  maxDamageTolerancePct?: number; // default 2%
+  minCoveragePct?: number; // default 50%
+}): WarehouseControlAnalysisResult {
+  const systemStock = round2(params.systemStock);
+  const physicalStock = round2(params.physicalStock);
+  const damagedQty = round2(params.damagedQty);
+  const totalHandled = Math.max(1, round2(params.totalHandled));
+  const assignedQuota = Math.max(1, round2(params.assignedQuota));
+
+  // 1. فرق الجرد = الرصيد الفعلي − الرصيد في النظام
+  const inventoryDifference = round2(physicalStock - systemStock);
+  const inventoryDifferencePct = round2((inventoryDifference / Math.max(1, systemStock)) * 100);
+
+  // 2. نسبة التلف = (عدد الأسطوانات التالفة ÷ إجمالي الأسطوانات المتداولة) × 100
+  const damagePercentage = round2((damagedQty / totalHandled) * 100);
+
+  // 3. نسبة التغطية = (الرصيد الفعلي ÷ الحصة) × 100
+  const coveragePercentage = round2((physicalStock / assignedQuota) * 100);
+
+  const alerts: WarehouseControlAnalysisResult['alerts'] = [];
+  const maxDiffPct = params.maxDiffTolerancePct ?? 5.0;
+  const maxDmgPct = params.maxDamageTolerancePct ?? 2.0;
+  const minCovPct = params.minCoveragePct ?? 50.0;
+
+  if (Math.abs(inventoryDifferencePct) > maxDiffPct) {
+    alerts.push({
+      type: 'DIFF_EXCEEDED',
+      severity: Math.abs(inventoryDifferencePct) > 15 ? 'جسيمة' : 'متوسطة',
+      message: `تنبيه رقابي: فرق الجرد في (${params.warehouseName}) بلغ ${inventoryDifference} (${inventoryDifferencePct}%) متجاوزاً الحد المسموح (${maxDiffPct}%).`,
+    });
+  }
+
+  if (damagePercentage > maxDmgPct) {
+    alerts.push({
+      type: 'DAMAGE_EXCEEDED',
+      severity: damagePercentage > 5 ? 'جسيمة' : 'متوسطة',
+      message: `تنبيه رقابي: نسبة التلف في (${params.warehouseName}) بلغت ${damagePercentage}% متجاوزة الحد الأقصى المسموح (${maxDmgPct}%).`,
+    });
+  }
+
+  if (coveragePercentage < minCovPct) {
+    alerts.push({
+      type: 'COVERAGE_LOW',
+      severity: 'جسيمة',
+      message: `تنبيه رقابي: انخفاض نسبة التغطية في (${params.warehouseName}) إلى ${coveragePercentage}% (أقل من الحد الأدنى ${minCovPct}%).`,
+    });
+  }
+
+  return {
+    warehouseId: params.warehouseId,
+    warehouseName: params.warehouseName,
+    systemStock,
+    physicalStock,
+    inventoryDifference,
+    inventoryDifferencePct,
+    totalHandled,
+    damagedQty,
+    damagePercentage,
+    assignedQuota,
+    coveragePercentage,
+    alerts,
+  };
+}

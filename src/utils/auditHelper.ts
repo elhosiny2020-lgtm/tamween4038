@@ -2076,3 +2076,80 @@ export function scrubProtectedOwnerEmailList(emails: string[] | undefined | null
   if (!Array.isArray(emails)) return [];
   return emails.filter((e) => !isProtectedOwnerEmail(e));
 }
+
+// ============================================================================
+// 12. محرك معادلات الرقابة (Warehouse Control Equations Engine)
+// ============================================================================
+
+export interface WarehouseControlRecord {
+  warehouseId?: string;
+  warehouseName?: string;
+  systemStock?: number;
+  physicalStock?: number;
+  damagedQuantity?: number;
+  totalQuantityOrHandled?: number;
+  actualStockOrDisbursed?: number;
+  assignedQuotaOrRequirement?: number;
+}
+
+/**
+ * فرق الجرد = الرصيد الفعلي − الرصيد في النظام
+ */
+export function calculateInventoryVariance(
+  warehouseOrPhysical: WarehouseControlRecord | number,
+  systemStock?: number
+): number {
+  if (typeof warehouseOrPhysical === 'object' && warehouseOrPhysical !== null) {
+    const physical = Number(warehouseOrPhysical.physicalStock ?? 0);
+    const system = Number(warehouseOrPhysical.systemStock ?? 0);
+    return Math.round((physical - system) * 100) / 100;
+  }
+  const physical = Number(warehouseOrPhysical ?? 0);
+  const system = Number(systemStock ?? 0);
+  return Math.round((physical - system) * 100) / 100;
+}
+
+/**
+ * نسبة التلف = (عدد الأسطوانات التالفة ÷ إجمالي الكمية المتداولة) × 100
+ */
+export function calculateDamageRatio(
+  warehouseOrDamaged: WarehouseControlRecord | number,
+  totalQuantity?: number
+): number {
+  let damaged = 0;
+  let total = 0;
+
+  if (typeof warehouseOrDamaged === 'object' && warehouseOrDamaged !== null) {
+    damaged = Number(warehouseOrDamaged.damagedQuantity ?? 0);
+    total = Number(warehouseOrDamaged.totalQuantityOrHandled ?? warehouseOrDamaged.systemStock ?? 1);
+  } else {
+    damaged = Number(warehouseOrDamaged ?? 0);
+    total = Number(totalQuantity ?? 1);
+  }
+
+  if (total <= 0) return 0;
+  return Math.round(((damaged / Math.max(1, total)) * 100 + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * نسبة التغطية = (الرصيد الفعلي أو الكمية المصروفة ÷ الحصة المستحقة أو الاحتياج) × 100
+ */
+export function calculateCoverageRatio(
+  warehouseOrActual: WarehouseControlRecord | number,
+  assignedQuota?: number
+): number {
+  let actual = 0;
+  let quota = 0;
+
+  if (typeof warehouseOrActual === 'object' && warehouseOrActual !== null) {
+    actual = Number(warehouseOrActual.actualStockOrDisbursed ?? warehouseOrActual.physicalStock ?? 0);
+    quota = Number(warehouseOrActual.assignedQuotaOrRequirement ?? 1);
+  } else {
+    actual = Number(warehouseOrActual ?? 0);
+    quota = Number(assignedQuota ?? 1);
+  }
+
+  if (quota <= 0) return 0;
+  return Math.round(((actual / Math.max(1, quota)) * 100 + Number.EPSILON) * 100) / 100;
+}
+

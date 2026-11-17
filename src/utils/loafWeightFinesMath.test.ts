@@ -2,6 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateLoafWeightShortageFine } from './loafWeightFinesMath.ts';
 
+test('calculateLoafWeightShortageFine matches the user test case example (9g shortage, 600 EGP bag price, 20 quota = 1200 EGP)', () => {
+  const res = calculateLoafWeightShortageFine({
+    prescribedWeightGrams: 90,
+    actualWeightGrams: 81, // 9g shortage
+    bagPriceAtViolation: 600,
+    insuranceQuotaAtViolation: 20,
+  });
+  assert.equal(res.valid, true);
+  assert.equal(res.isViolation, true);
+  assert.equal(res.record?.shortageGrams, 9);
+  assert.equal(res.record?.baseFineAmount, 1200);
+  assert.equal(res.record?.finalFineAmount, 1200);
+});
+
 test('calculateLoafWeightShortageFine matches the official 9g shortage example (235 EGP)', () => {
   const res = calculateLoafWeightShortageFine({
     prescribedWeightGrams: 90,
