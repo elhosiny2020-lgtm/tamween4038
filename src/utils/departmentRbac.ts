@@ -6,7 +6,7 @@ import {
   type DepartmentScopeId,
   type PermissionAction,
   type SystemDepartmentKey,
-} from '../types';
+} from '../types.ts';
 
 export const FULL_DEPARTMENT_FLAGS: DepartmentPermissionFlags = {
   view: true,

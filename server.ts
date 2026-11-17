@@ -198,6 +198,9 @@ async function startServer() {
 
   // WebSocket Server attached to port 3000 for genuine sub-50ms cross-device real-time sync
   const wss = new WebSocketServer({ server: httpServer, path: '/ws/supabase-realtime' });
+  wss.on('error', (err) => {
+    console.warn('WebSocket server event:', (err as Error)?.message || err);
+  });
   const sseClients = new Set<express.Response>();
 
   const broadcastWs = (payload: Record<string, any>) => {
@@ -3021,7 +3024,11 @@ async function startServer() {
     const rootIndexHtml = path.resolve(__dirname, 'index.html');
 
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api/')) {
+        res.status(404).json({ success: false, error: 'Not found' });
+        return;
+      }
       if (fs.existsSync(distIndexHtml)) {
         res.sendFile(distIndexHtml);
       } else if (fs.existsSync(rootIndexHtml)) {

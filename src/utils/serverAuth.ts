@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { AppUser } from '../types';
+import type { AppUser } from '../types.ts';
 
 const SCRYPT_PREFIX = 'scrypt$';
 const TOKEN_VERSION = 'v1';
