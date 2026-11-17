@@ -2955,20 +2955,7 @@ async function startServer() {
     }
   });
 
-  // Bind port 3000 immediately so health checks and control-plane probes succeed in <50ms
-  httpServer.on('error', (err: any) => {
-    if (err?.code === 'EADDRINUSE') {
-      console.warn(`Port ${PORT} is already in use by active server process.`);
-    } else {
-      console.error('HTTP Server startup event:', err);
-    }
-  });
-
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`Tamween Supabase Realtime Server running on http://localhost:${PORT}`);
-  });
-
-  // Vite development middleware vs Static Production files
+  // Vite development middleware vs Static Production files (mounted BEFORE listening so first probe has routes ready)
   const isProd =
     process.env.NODE_ENV === 'production' ||
     process.env.npm_lifecycle_event === 'start';
@@ -3023,7 +3010,7 @@ async function startServer() {
     const distIndexHtml = path.resolve(distPath, 'index.html');
     const rootIndexHtml = path.resolve(__dirname, 'index.html');
 
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, { maxAge: '1d', etag: true }));
     app.get('*', (req, res) => {
       if (req.path.startsWith('/api/')) {
         res.status(404).json({ success: false, error: 'Not found' });
@@ -3038,6 +3025,19 @@ async function startServer() {
       }
     });
   }
+
+  // Bind port immediately so health checks and control-plane probes succeed in <50ms
+  httpServer.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.warn(`Port ${PORT} is already in use by active server process.`);
+    } else {
+      console.error('HTTP Server startup event:', err);
+    }
+  });
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`Tamween Supabase Realtime Server running on http://localhost:${PORT}`);
+  });
 }
 
 startServer();

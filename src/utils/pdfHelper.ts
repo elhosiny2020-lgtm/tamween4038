@@ -405,12 +405,30 @@ export async function exportElementToPdf(
       from: (el: HTMLElement) => { set: (o: unknown) => { save: () => Promise<void> } };
     };
     loadHtml2PdfOnDemand?: () => Promise<unknown>;
+    __html2pdfLoadPromise?: Promise<unknown> | null;
   };
 
-  if (typeof win.html2pdf !== 'function' && typeof win.loadHtml2PdfOnDemand === 'function') {
+  if (typeof win.html2pdf !== 'function') {
     try {
       options.onProgress?.('جاري تهيئة محرك PDF...');
-      await win.loadHtml2PdfOnDemand();
+      if (typeof win.loadHtml2PdfOnDemand === 'function') {
+        await win.loadHtml2PdfOnDemand();
+      } else if (typeof document !== 'undefined') {
+        if (!win.__html2pdfLoadPromise) {
+          win.__html2pdfLoadPromise = new Promise((resolve) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+            script.async = true;
+            script.onload = () => resolve(win.html2pdf ?? null);
+            script.onerror = () => {
+              win.__html2pdfLoadPromise = null;
+              resolve(null);
+            };
+            document.head.appendChild(script);
+          });
+        }
+        await win.__html2pdfLoadPromise;
+      }
       await new Promise((resolve) => setTimeout(resolve, 50));
     } catch (e) {
       console.warn('html2pdf dynamic loading notice:', e);

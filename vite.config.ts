@@ -26,20 +26,29 @@ export default defineConfig(() => {
       rollupOptions: {
         output: {
           manualChunks(id) {
-            if (id.includes('node_modules')) {
-              if (id.includes('react') || id.includes('react-dom') || id.includes('scheduler')) {
+            const normalized = id.replace(/\\/g, '/');
+            if (normalized.includes('/node_modules/')) {
+              if (
+                normalized.includes('/node_modules/react/') ||
+                normalized.includes('/node_modules/react-dom/') ||
+                normalized.includes('/node_modules/scheduler/')
+              ) {
                 return 'vendor-react';
               }
-              if (id.includes('recharts') || id.includes('d3')) {
-                return 'vendor-charts';
-              }
-              if (id.includes('firebase') || id.includes('@supabase')) {
-                return 'vendor-cloud';
-              }
-              if (id.includes('lucide-react')) {
+              if (normalized.includes('/node_modules/lucide-react/')) {
                 return 'vendor-icons';
               }
-              if (id.includes('motion')) {
+              if (
+                normalized.includes('/node_modules/firebase') ||
+                normalized.includes('/node_modules/@firebase') ||
+                normalized.includes('/node_modules/@supabase')
+              ) {
+                return 'vendor-cloud';
+              }
+              if (
+                normalized.includes('/node_modules/motion') ||
+                normalized.includes('/node_modules/framer-motion')
+              ) {
                 return 'vendor-motion';
               }
             }

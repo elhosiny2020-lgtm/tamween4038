@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.playwright-cli
+coverage
+*.log
+.env
+.env.local
+verify_home.png
+tamween_latest_backup.json
+tamween-system.html
+tamween-cloudflare-vercel-deployment.zip

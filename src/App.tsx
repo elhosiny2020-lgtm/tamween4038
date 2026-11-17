@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense, lazy } from 'react';
 import {
   Bakery,
   DebtRecord,
@@ -112,50 +112,158 @@ import {
   shouldApplyIncomingCloudStateForBranch,
 } from './services/supabaseDb';
 import type { RowMutationTable } from './services/offlineMutationQueue';
-import { getExpirationAlerts } from './components/AlertsModal';
+import { getExpirationAlerts, AlertsModal } from './components/AlertsModal';
 import { LoginModal } from './components/LoginModal';
-import { HeaderCustomizerModal } from './components/HeaderCustomizerModal';
-import { VillageManagerModal } from './components/VillageManagerModal';
-import { BakeryModal } from './components/BakeryModal';
-import { ColumnTitlesModal } from './components/ColumnTitlesModal';
-import { AlertsModal } from './components/AlertsModal';
-import { DebtsView } from './components/DebtsView';
-import { ReportModal } from './components/ReportModal';
-import { BackupModal } from './components/BackupModal';
-import { PublishModal } from './components/PublishModal';
-import { UsersManagerModal } from './components/UsersManagerModal';
-import { ActivityStatusModal } from './components/ActivityStatusModal';
-import { WeeklyInstallmentsModal } from './components/WeeklyInstallmentsModal';
-import { AuditModal } from './components/AuditModal';
-import { BakeryAnalyticsCharts } from './components/BakeryAnalyticsCharts';
-import { BakeryDebtsPieChart } from './components/BakeryDebtsPieChart';
-import { LocalUnitsSummaryModal } from './components/LocalUnitsSummaryModal';
-import { DailyAlertSettingsModal } from './components/DailyAlertSettingsModal';
-import { DailyDebtEmailHistoryModal } from './components/DailyDebtEmailHistoryModal';
-import { DailyAlertNotificationModal } from './components/DailyAlertNotificationModal';
-import { AnnualBudgetFrequencyModal } from './components/AnnualBudgetFrequencyModal';
-import { AdminNotificationsDrawer } from './components/AdminNotificationsDrawer';
-import { DailyTasksModal } from './components/DailyTasksModal';
-import { DailyPerformanceSummaryModal } from './components/DailyPerformanceSummaryModal';
-import { SystemMasterEditorModal, DropdownCategoryKey } from './components/SystemMasterEditorModal';
-import { AdvancedPermissionsModal } from './components/AdvancedPermissionsModal';
-import { InboxChatModal } from './components/InboxChatModal';
-import { DailyEntryBriefingModal } from './components/DailyEntryBriefingModal';
 import { RightSidebar, SidebarNavId } from './components/RightSidebar';
-import { ReportsCenterView, ReportTemplateId } from './components/ReportsCenterView';
-import { HomeDashboardView } from './components/HomeDashboardView';
-import { BakeryDetailsModal } from './components/BakeryDetailsModal';
-import { GoogleWorkspaceModal } from './components/GoogleWorkspaceModal';
-import { BranchesManagerModal } from './components/BranchesManagerModal';
-import { VaultSecurityGateModal } from './components/VaultSecurityGateModal';
-import { InteractiveDashboardPage } from './components/InteractiveDashboardPage';
 import { WelcomeDashboardPage } from './components/WelcomeDashboardPage';
-import { ExecutiveAnalyticsDashboard } from './components/ExecutiveAnalyticsDashboard';
-import { RationCommoditiesSuite, RationSubView } from './components/modules/RationCommoditiesSuite';
-import { InternalTradeSuite, InternalTradeSubView } from './components/modules/InternalTradeSuite';
-import { GrainMaintenanceSuite, GrainSubView } from './components/modules/GrainMaintenanceSuite';
-import { HrPersonnelSuite, HrSubView } from './components/modules/HrPersonnelSuite';
+import type { DropdownCategoryKey } from './components/SystemMasterEditorModal';
+import type { ReportTemplateId } from './components/ReportsCenterView';
+import type { RationSubView } from './components/modules/RationCommoditiesSuite';
+import type { InternalTradeSubView } from './components/modules/InternalTradeSuite';
+import type { GrainSubView } from './components/modules/GrainMaintenanceSuite';
+import type { HrSubView } from './components/modules/HrPersonnelSuite';
 import type { BranchModulesBundle } from './types/modules';
+
+const HeaderCustomizerModal = lazy(() =>
+  import('./components/HeaderCustomizerModal').then((m) => ({ default: m.HeaderCustomizerModal }))
+);
+const VillageManagerModal = lazy(() =>
+  import('./components/VillageManagerModal').then((m) => ({ default: m.VillageManagerModal }))
+);
+const BakeryModal = lazy(() =>
+  import('./components/BakeryModal').then((m) => ({ default: m.BakeryModal }))
+);
+const ColumnTitlesModal = lazy(() =>
+  import('./components/ColumnTitlesModal').then((m) => ({ default: m.ColumnTitlesModal }))
+);
+const DebtsView = lazy(() =>
+  import('./components/DebtsView').then((m) => ({ default: m.DebtsView }))
+);
+const ReportModal = lazy(() =>
+  import('./components/ReportModal').then((m) => ({ default: m.ReportModal }))
+);
+const BackupModal = lazy(() =>
+  import('./components/BackupModal').then((m) => ({ default: m.BackupModal }))
+);
+const PublishModal = lazy(() =>
+  import('./components/PublishModal').then((m) => ({ default: m.PublishModal }))
+);
+const UsersManagerModal = lazy(() =>
+  import('./components/UsersManagerModal').then((m) => ({ default: m.UsersManagerModal }))
+);
+const ActivityStatusModal = lazy(() =>
+  import('./components/ActivityStatusModal').then((m) => ({ default: m.ActivityStatusModal }))
+);
+const WeeklyInstallmentsModal = lazy(() =>
+  import('./components/WeeklyInstallmentsModal').then((m) => ({
+    default: m.WeeklyInstallmentsModal,
+  }))
+);
+const AuditModal = lazy(() =>
+  import('./components/AuditModal').then((m) => ({ default: m.AuditModal }))
+);
+const LocalUnitsSummaryModal = lazy(() =>
+  import('./components/LocalUnitsSummaryModal').then((m) => ({ default: m.LocalUnitsSummaryModal }))
+);
+const DailyAlertSettingsModal = lazy(() =>
+  import('./components/DailyAlertSettingsModal').then((m) => ({
+    default: m.DailyAlertSettingsModal,
+  }))
+);
+const DailyDebtEmailHistoryModal = lazy(() =>
+  import('./components/DailyDebtEmailHistoryModal').then((m) => ({
+    default: m.DailyDebtEmailHistoryModal,
+  }))
+);
+const DailyAlertNotificationModal = lazy(() =>
+  import('./components/DailyAlertNotificationModal').then((m) => ({
+    default: m.DailyAlertNotificationModal,
+  }))
+);
+const AnnualBudgetFrequencyModal = lazy(() =>
+  import('./components/AnnualBudgetFrequencyModal').then((m) => ({
+    default: m.AnnualBudgetFrequencyModal,
+  }))
+);
+const AdminNotificationsDrawer = lazy(() =>
+  import('./components/AdminNotificationsDrawer').then((m) => ({
+    default: m.AdminNotificationsDrawer,
+  }))
+);
+const DailyTasksModal = lazy(() =>
+  import('./components/DailyTasksModal').then((m) => ({ default: m.DailyTasksModal }))
+);
+const DailyPerformanceSummaryModal = lazy(() =>
+  import('./components/DailyPerformanceSummaryModal').then((m) => ({
+    default: m.DailyPerformanceSummaryModal,
+  }))
+);
+const SystemMasterEditorModal = lazy(() =>
+  import('./components/SystemMasterEditorModal').then((m) => ({
+    default: m.SystemMasterEditorModal,
+  }))
+);
+const AdvancedPermissionsModal = lazy(() =>
+  import('./components/AdvancedPermissionsModal').then((m) => ({
+    default: m.AdvancedPermissionsModal,
+  }))
+);
+const InboxChatModal = lazy(() =>
+  import('./components/InboxChatModal').then((m) => ({ default: m.InboxChatModal }))
+);
+const DailyEntryBriefingModal = lazy(() =>
+  import('./components/DailyEntryBriefingModal').then((m) => ({
+    default: m.DailyEntryBriefingModal,
+  }))
+);
+const ReportsCenterView = lazy(() =>
+  import('./components/ReportsCenterView').then((m) => ({ default: m.ReportsCenterView }))
+);
+const HomeDashboardView = lazy(() =>
+  import('./components/HomeDashboardView').then((m) => ({ default: m.HomeDashboardView }))
+);
+const BakeryDetailsModal = lazy(() =>
+  import('./components/BakeryDetailsModal').then((m) => ({ default: m.BakeryDetailsModal }))
+);
+const GoogleWorkspaceModal = lazy(() =>
+  import('./components/GoogleWorkspaceModal').then((m) => ({ default: m.GoogleWorkspaceModal }))
+);
+const BranchesManagerModal = lazy(() =>
+  import('./components/BranchesManagerModal').then((m) => ({ default: m.BranchesManagerModal }))
+);
+const VaultSecurityGateModal = lazy(() =>
+  import('./components/VaultSecurityGateModal').then((m) => ({
+    default: m.VaultSecurityGateModal,
+  }))
+);
+const InteractiveDashboardPage = lazy(() =>
+  import('./components/InteractiveDashboardPage').then((m) => ({
+    default: m.InteractiveDashboardPage,
+  }))
+);
+const ExecutiveAnalyticsDashboard = lazy(() =>
+  import('./components/ExecutiveAnalyticsDashboard').then((m) => ({
+    default: m.ExecutiveAnalyticsDashboard,
+  }))
+);
+const RationCommoditiesSuite = lazy(() =>
+  import('./components/modules/RationCommoditiesSuite').then((m) => ({
+    default: m.RationCommoditiesSuite,
+  }))
+);
+const InternalTradeSuite = lazy(() =>
+  import('./components/modules/InternalTradeSuite').then((m) => ({
+    default: m.InternalTradeSuite,
+  }))
+);
+const GrainMaintenanceSuite = lazy(() =>
+  import('./components/modules/GrainMaintenanceSuite').then((m) => ({
+    default: m.GrainMaintenanceSuite,
+  }))
+);
+const HrPersonnelSuite = lazy(() =>
+  import('./components/modules/HrPersonnelSuite').then((m) => ({ default: m.HrPersonnelSuite }))
+);
 import {
   loadBranchModulesBundle,
   saveBranchModulesBundle,
@@ -276,8 +384,25 @@ import {
   Briefcase,
   Mail,
 } from 'lucide-react';
-import { UserGuideView } from './components/UserGuideView';
-import { RealtimeDiagnosticsView } from './components/RealtimeDiagnosticsView';
+const UserGuideView = lazy(() =>
+  import('./components/UserGuideView').then((m) => ({ default: m.UserGuideView }))
+);
+const RealtimeDiagnosticsView = lazy(() =>
+  import('./components/RealtimeDiagnosticsView').then((m) => ({
+    default: m.RealtimeDiagnosticsView,
+  }))
+);
+
+const LazyViewLoadingFallback: React.FC = () => (
+  <div
+    dir="rtl"
+    className="bg-white/95 rounded-2xl border border-slate-200 p-10 text-center shadow-sm flex flex-col items-center justify-center gap-3 min-h-[260px]"
+  >
+    <div className="w-10 h-10 rounded-full border-4 border-[#0A1628]/20 border-t-[#0D9488] animate-spin" />
+    <p className="text-sm font-black text-[#0A1628]">جاري تحميل الوحدة والرسوم البيانية...</p>
+    <p className="text-xs font-bold text-slate-500">يتم التحميل عند الطلب لضمان سرعة فتح المنظومة</p>
+  </div>
+);
 
 const BAKERY_COLUMN_TOOLTIPS: Record<string, string> = {
   index: 'الرقم المسلسل للمخبز في السجل العام للإدارة',
@@ -4876,7 +5001,8 @@ export default function App() {
                 onOpenInbox={() => setIsInboxModalOpen(true)}
               />
             ) : activeTab === 'dashboard' ? (
-              <HomeDashboardView
+              <Suspense fallback={<LazyViewLoadingFallback />}>
+                <HomeDashboardView
               bakeries={appState.bakeries}
               debts={appState.debts}
               villages={appState.villages}
@@ -4893,35 +5019,39 @@ export default function App() {
               onRecalculateEquations={handleRecalculateAllDatabaseEquations}
               onOpenLocalUnitsModal={() => setIsLocalUnitsModalOpen(true)}
             />
+              </Suspense>
           ) : activeTab === 'charts' ? (
             /* NEW INTERACTIVE RECHARTS DASHBOARD VIEW */
-            <InteractiveDashboardPage
-              bakeries={appState.bakeries}
-              debts={appState.debts}
-              villages={appState.villages}
-              debtAlertThreshold={
-                appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD
-              }
-              unreadAlertsCount={highDebtNotifications.filter((n) => !n.isRead).length}
-              administrationTitle={appState.systemConfig.administrationTitle}
-              onNavigateToBakeries={(opts) => {
-                setActiveTab('bakeries');
-                if (opts?.village) setSelectedVillage(opts.village);
-                if (opts?.activityStatus) setSelectedActivity(opts.activityStatus);
-                setBreadcrumbGroup('إدارة المخابز');
-                setBreadcrumbItem('قاعدة بيانات المخابز');
-              }}
-              onNavigateToDebts={(bakeryId) => {
-                setDebtFilterBakeryId(bakeryId);
-                setActiveTab('debts');
-                setBreadcrumbGroup('إدارة المخابز');
-                setBreadcrumbItem('سجل مديونيات المخابز');
-              }}
-              onOpenAlertsDrawer={() => setIsAdminDrawerOpen(true)}
-            />
+            <Suspense fallback={<LazyViewLoadingFallback />}>
+              <InteractiveDashboardPage
+                bakeries={appState.bakeries}
+                debts={appState.debts}
+                villages={appState.villages}
+                debtAlertThreshold={
+                  appState.systemConfig?.debtAlertThreshold ?? DEFAULT_DEBT_ALERT_THRESHOLD
+                }
+                unreadAlertsCount={highDebtNotifications.filter((n) => !n.isRead).length}
+                administrationTitle={appState.systemConfig.administrationTitle}
+                onNavigateToBakeries={(opts) => {
+                  setActiveTab('bakeries');
+                  if (opts?.village) setSelectedVillage(opts.village);
+                  if (opts?.activityStatus) setSelectedActivity(opts.activityStatus);
+                  setBreadcrumbGroup('إدارة المخابز');
+                  setBreadcrumbItem('قاعدة بيانات المخابز');
+                }}
+                onNavigateToDebts={(bakeryId) => {
+                  setDebtFilterBakeryId(bakeryId);
+                  setActiveTab('debts');
+                  setBreadcrumbGroup('إدارة المخابز');
+                  setBreadcrumbItem('سجل مديونيات المخابز');
+                }}
+                onOpenAlertsDrawer={() => setIsAdminDrawerOpen(true)}
+              />
+            </Suspense>
           ) : activeTab === 'user-guide' ? (
             /* USER GUIDE VIEW (دليل المستخدم المصور والفيديو) */
-            <UserGuideView
+            <Suspense fallback={<LazyViewLoadingFallback />}>
+              <UserGuideView
               onNavigateTab={(tab) => {
                 setActiveTab(tab);
                 if (tab === 'bakeries') {
@@ -4965,9 +5095,11 @@ export default function App() {
               debtsCount={appState.debts.length}
               villagesCount={appState.villages.length}
             />
+            </Suspense>
           ) : activeTab === 'realtime-diagnostics' ? (
             /* HIDDEN REALTIME DIAGNOSTICS VIEW (صفحة التشخيص المخفية لـ Supabase Realtime و WebSockets) */
-            <RealtimeDiagnosticsView
+            <Suspense fallback={<LazyViewLoadingFallback />}>
+              <RealtimeDiagnosticsView
               appState={appState}
               saveTimestamp={saveTimestamp}
               onForceReconnect={handleRetryConnection}
@@ -5008,21 +5140,25 @@ export default function App() {
                 setBreadcrumbItem('إدارة المخابز');
               }}
             />
+            </Suspense>
           ) : activeTab === 'reports' ? (
             /* REPORTS CENTER VIEW */
-            <ReportsCenterView
-              bakeries={appState.bakeries}
-              debts={appState.debts}
-              villages={appState.villages}
-              systemConfig={appState.systemConfig}
-              currentUser={appState.currentUser}
-              initialReportId={activeReportId}
-              onOpenDebtEmailHistory={() => setIsDebtEmailHistoryOpen(true)}
-              onOpenDailyPerformanceSummary={() => setIsDailyPerformanceModalOpen(true)}
-            />
+            <Suspense fallback={<LazyViewLoadingFallback />}>
+              <ReportsCenterView
+                bakeries={appState.bakeries}
+                debts={appState.debts}
+                villages={appState.villages}
+                systemConfig={appState.systemConfig}
+                currentUser={appState.currentUser}
+                initialReportId={activeReportId}
+                onOpenDebtEmailHistory={() => setIsDebtEmailHistoryOpen(true)}
+                onOpenDailyPerformanceSummary={() => setIsDailyPerformanceModalOpen(true)}
+              />
+            </Suspense>
           ) : activeTab === 'debts' ? (
             /* DEBTS VIEW */
-            <DebtsView
+            <Suspense fallback={<LazyViewLoadingFallback />}>
+              <DebtsView
               bakeries={appState.bakeries}
               debts={appState.debts}
               villages={appState.villages}
@@ -5207,41 +5343,46 @@ export default function App() {
                 });
               }}
             />
+            </Suspense>
           ) : activeTab === 'executive-analytics' ? (
-            <ExecutiveAnalyticsDashboard
-              bakeries={appState.bakeries}
-              debts={appState.debts}
-              villages={appState.villages}
-              branchName={appState.systemConfig.administrationTitle}
-              onSelectBakeryForDebts={(bakeryId) => {
-                setDebtFilterBakeryId(bakeryId);
-                setActiveTab('debts');
-              }}
-              onNavigateTab={(t) => setActiveTab(t)}
-            />
+            <Suspense fallback={<LazyViewLoadingFallback />}>
+              <ExecutiveAnalyticsDashboard
+                bakeries={appState.bakeries}
+                debts={appState.debts}
+                villages={appState.villages}
+                branchName={appState.systemConfig.administrationTitle}
+                onSelectBakeryForDebts={(bakeryId) => {
+                  setDebtFilterBakeryId(bakeryId);
+                  setActiveTab('debts');
+                }}
+                onNavigateTab={(t) => setActiveTab(t)}
+              />
+            </Suspense>
           ) : activeTab === 'commodities' ? (
             modulesBundle ? (
-              <RationCommoditiesSuite
-                key={`${activeTab}-${modulesBundle.branchId}-${rationSubView}`}
-                state={modulesBundle.ration}
-                branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
-                branchName={appState.systemConfig.administrationTitle}
-                villages={appState.villages}
-                currentUser={appState.currentUser}
-                initialMode="commodities"
-                initialSubView={rationSubView}
-                bakeriesCount={appState.bakeries.length}
-                totalBakeryDebts={appState.debts.reduce(
-                  (sum, d) => sum + (Number(d.netRemainingDebt) || 0),
-                  0
-                )}
-                onChangeState={(nextRation, actionSummary) =>
-                  handleUpdateModulesBundle(
-                    (prev) => ({ ...prev, ration: nextRation }),
-                    actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
-                  )
-                }
-              />
+              <Suspense fallback={<LazyViewLoadingFallback />}>
+                <RationCommoditiesSuite
+                  key={`${activeTab}-${modulesBundle.branchId}-${rationSubView}`}
+                  state={modulesBundle.ration}
+                  branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                  branchName={appState.systemConfig.administrationTitle}
+                  villages={appState.villages}
+                  currentUser={appState.currentUser}
+                  initialMode="commodities"
+                  initialSubView={rationSubView}
+                  bakeriesCount={appState.bakeries.length}
+                  totalBakeryDebts={appState.debts.reduce(
+                    (sum, d) => sum + (Number(d.netRemainingDebt) || 0),
+                    0
+                  )}
+                  onChangeState={(nextRation, actionSummary) =>
+                    handleUpdateModulesBundle(
+                      (prev) => ({ ...prev, ration: nextRation }),
+                      actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
+                    )
+                  }
+                />
+              </Suspense>
             ) : (
               <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
                 جاري تحميل وحدة السلع التموينية...
@@ -5249,22 +5390,24 @@ export default function App() {
             )
           ) : activeTab === 'internal-trade' ? (
             modulesBundle ? (
-              <InternalTradeSuite
-                key={`internal-trade-${modulesBundle.branchId}-${internalTradeSubView}`}
-                state={modulesBundle.internalTrade}
-                branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
-                branchName={appState.systemConfig.administrationTitle}
-                villages={appState.villages}
-                bakeries={appState.bakeries}
-                currentUser={appState.currentUser}
-                initialSubView={internalTradeSubView}
-                onChangeState={(nextInternalTrade, actionSummary) =>
-                  handleUpdateModulesBundle(
-                    (prev) => ({ ...prev, internalTrade: nextInternalTrade }),
-                    actionSummary || 'تم حفظ تعديلات قسم التجارة الداخلية ومزامنتها مع Supabase'
-                  )
-                }
-              />
+              <Suspense fallback={<LazyViewLoadingFallback />}>
+                <InternalTradeSuite
+                  key={`internal-trade-${modulesBundle.branchId}-${internalTradeSubView}`}
+                  state={modulesBundle.internalTrade}
+                  branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                  branchName={appState.systemConfig.administrationTitle}
+                  villages={appState.villages}
+                  bakeries={appState.bakeries}
+                  currentUser={appState.currentUser}
+                  initialSubView={internalTradeSubView}
+                  onChangeState={(nextInternalTrade, actionSummary) =>
+                    handleUpdateModulesBundle(
+                      (prev) => ({ ...prev, internalTrade: nextInternalTrade }),
+                      actionSummary || 'تم حفظ تعديلات قسم التجارة الداخلية ومزامنتها مع Supabase'
+                    )
+                  }
+                />
+              </Suspense>
             ) : (
               <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
                 جاري تحميل منظومة التجارة الداخلية والرقابة الموحدة...
@@ -5272,22 +5415,24 @@ export default function App() {
             )
           ) : activeTab === 'grain-maintenance' ? (
             modulesBundle ? (
-              <GrainMaintenanceSuite
-                key={`grain-${modulesBundle.branchId}-${grainSubView}`}
-                state={modulesBundle.grainMaintenance}
-                branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
-                branchName={appState.systemConfig.administrationTitle}
-                currentUser={appState.currentUser}
-                bakeries={appState.bakeries}
-                villages={appState.villages}
-                initialSubView={grainSubView}
-                onChangeState={(nextGrain, actionSummary) =>
-                  handleUpdateModulesBundle(
-                    (prev) => ({ ...prev, grainMaintenance: nextGrain }),
-                    actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
-                  )
-                }
-              />
+              <Suspense fallback={<LazyViewLoadingFallback />}>
+                <GrainMaintenanceSuite
+                  key={`grain-${modulesBundle.branchId}-${grainSubView}`}
+                  state={modulesBundle.grainMaintenance}
+                  branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                  branchName={appState.systemConfig.administrationTitle}
+                  currentUser={appState.currentUser}
+                  bakeries={appState.bakeries}
+                  villages={appState.villages}
+                  initialSubView={grainSubView}
+                  onChangeState={(nextGrain, actionSummary) =>
+                    handleUpdateModulesBundle(
+                      (prev) => ({ ...prev, grainMaintenance: nextGrain }),
+                      actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
+                    )
+                  }
+                />
+              </Suspense>
             ) : (
               <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
                 جاري تحميل وحدة صيانة الحبوب والصوامع...
@@ -5295,20 +5440,22 @@ export default function App() {
             )
           ) : activeTab === 'hr-personnel' ? (
             modulesBundle ? (
-              <HrPersonnelSuite
-                key={`hr-${modulesBundle.branchId}-${hrSubView}`}
-                state={modulesBundle.hr}
-                branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
-                branchName={appState.systemConfig.administrationTitle}
-                currentUser={appState.currentUser}
-                initialSubView={hrSubView}
-                onChangeState={(nextHr, actionSummary) =>
-                  handleUpdateModulesBundle(
-                    (prev) => ({ ...prev, hr: nextHr }),
-                    actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
-                  )
-                }
-              />
+              <Suspense fallback={<LazyViewLoadingFallback />}>
+                <HrPersonnelSuite
+                  key={`hr-${modulesBundle.branchId}-${hrSubView}`}
+                  state={modulesBundle.hr}
+                  branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                  branchName={appState.systemConfig.administrationTitle}
+                  currentUser={appState.currentUser}
+                  initialSubView={hrSubView}
+                  onChangeState={(nextHr, actionSummary) =>
+                    handleUpdateModulesBundle(
+                      (prev) => ({ ...prev, hr: nextHr }),
+                      actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
+                    )
+                  }
+                />
+              </Suspense>
             ) : (
               <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
                 جاري تحميل وحدة الموارد البشرية وشؤون العاملين...
@@ -6609,23 +6756,26 @@ export default function App() {
         </div>
       </footer>
 
+      <Suspense fallback={null}>
       {/* Detailed Bakery Profile Modal (عرض تفصيلي لكل مخبز) */}
-      <BakeryDetailsModal
-        isOpen={!!detailsBakery}
-        onClose={() => setDetailsBakery(null)}
-        bakery={detailsBakery}
-        debts={appState.debts}
-        columnTitles={appState.columnTitles}
-        canEdit={appState.currentUser?.role !== 'viewer'}
-        onEditBakery={(bakery) => {
-          setBakeryToEdit(bakery);
-          setIsBakeryModalOpen(true);
-        }}
-        onJumpToDebts={(bakeryId) => {
-          setDebtFilterBakeryId(bakeryId);
-          setActiveTab('debts');
-        }}
-      />
+      {!!detailsBakery && (
+        <BakeryDetailsModal
+          isOpen={!!detailsBakery}
+          onClose={() => setDetailsBakery(null)}
+          bakery={detailsBakery}
+          debts={appState.debts}
+          columnTitles={appState.columnTitles}
+          canEdit={appState.currentUser?.role !== 'viewer'}
+          onEditBakery={(bakery) => {
+            setBakeryToEdit(bakery);
+            setIsBakeryModalOpen(true);
+          }}
+          onJumpToDebts={(bakeryId) => {
+            setDebtFilterBakeryId(bakeryId);
+            setActiveTab('debts');
+          }}
+        />
+      )}
 
       {/* MODALS */}
       {/* 1. Add / Edit Bakery Modal */}
@@ -7755,38 +7905,42 @@ export default function App() {
       )}
 
       {/* 14. Inbox Chat & Administrative Instructions Modal (صندوق الوارد) */}
-      <InboxChatModal
-        isOpen={isInboxModalOpen}
-        onClose={() => setIsInboxModalOpen(false)}
-        currentUser={appState.currentUser}
-        users={appState.users}
-        bakeries={appState.bakeries}
-        messages={inboxMessages}
-        onSendMessage={handleSendInboxMessage}
-        onDeleteMessage={handleDeleteInboxMessage}
-        onMarkAllRead={handleMarkAllInboxRead}
-      />
+      {isInboxModalOpen && (
+        <InboxChatModal
+          isOpen={isInboxModalOpen}
+          onClose={() => setIsInboxModalOpen(false)}
+          currentUser={appState.currentUser}
+          users={appState.users}
+          bakeries={appState.bakeries}
+          messages={inboxMessages}
+          onSendMessage={handleSendInboxMessage}
+          onDeleteMessage={handleDeleteInboxMessage}
+          onMarkAllRead={handleMarkAllInboxRead}
+        />
+      )}
 
       {/* 15. Daily Database Entry Comprehensive Briefing Modal (شاشة التنبيه اليومي للمديونيات والتراخيص والعقود المنتهية) */}
-      <DailyEntryBriefingModal
-        isOpen={isDailyBriefingModalOpen}
-        onClose={() => setIsDailyBriefingModalOpen(false)}
-        bakeries={appState.bakeries}
-        debts={appState.debts}
-        expiryLeadDays={appState.systemConfig?.dailyAlertConfig?.daysThreshold || 30}
-        muted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
-        onJumpToDebtsView={() => {
-          setActiveTab('debts');
-          setDebtFilterBakeryId(undefined);
-        }}
-        onOpenAlertsModal={() => setIsAlertsModalOpen(true)}
-        onOpenInboxModal={() => setIsInboxModalOpen(true)}
-        onEditBakery={(bakery) => {
-          setBakeryToEdit(bakery);
-          setIsBakeryModalOpen(true);
-        }}
-        unreadInboxCount={unreadInboxCount}
-      />
+      {isDailyBriefingModalOpen && (
+        <DailyEntryBriefingModal
+          isOpen={isDailyBriefingModalOpen}
+          onClose={() => setIsDailyBriefingModalOpen(false)}
+          bakeries={appState.bakeries}
+          debts={appState.debts}
+          expiryLeadDays={appState.systemConfig?.dailyAlertConfig?.daysThreshold || 30}
+          muted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
+          onJumpToDebtsView={() => {
+            setActiveTab('debts');
+            setDebtFilterBakeryId(undefined);
+          }}
+          onOpenAlertsModal={() => setIsAlertsModalOpen(true)}
+          onOpenInboxModal={() => setIsInboxModalOpen(true)}
+          onEditBakery={(bakery) => {
+            setBakeryToEdit(bakery);
+            setIsBakeryModalOpen(true);
+          }}
+          unreadInboxCount={unreadInboxCount}
+        />
+      )}
 
       {/* 16. ERP Display & Column Group Settings Modal (إعدادات العرض تحت قسم التعديلات) */}
       {isDisplaySettingsModalOpen && (
@@ -8083,7 +8237,8 @@ export default function App() {
       )}
 
       {/* Admin Manager Notifications Drawer Sidebar */}
-      <AdminNotificationsDrawer
+      {isAdminDrawerOpen && (
+        <AdminNotificationsDrawer
         isOpen={isAdminDrawerOpen}
         onClose={() => setIsAdminDrawerOpen(false)}
         notifications={highDebtNotifications}
@@ -8170,19 +8325,23 @@ export default function App() {
           setActiveTab('debts');
         }}
       />
+      )}
 
       {/* Google Workspace Integration Modal (Google Calendar, Google Tasks, Google Forms) */}
-      <GoogleWorkspaceModal
-        isOpen={isGoogleWorkspaceModalOpen}
-        onClose={() => setIsGoogleWorkspaceModalOpen(false)}
-        bakeries={appState.bakeries}
-        debts={appState.debts}
-        dailyTasks={appState.dailyTasks || []}
-        initialTab={googleWorkspaceInitialTab}
-      />
+      {isGoogleWorkspaceModalOpen && (
+        <GoogleWorkspaceModal
+          isOpen={isGoogleWorkspaceModalOpen}
+          onClose={() => setIsGoogleWorkspaceModalOpen(false)}
+          bakeries={appState.bakeries}
+          debts={appState.debts}
+          dailyTasks={appState.dailyTasks || []}
+          initialTab={googleWorkspaceInitialTab}
+        />
+      )}
 
       {/* Multi-Branch / Supply Departments Manager Modal (قسم الفروع والإدارات التموينية) */}
-      <BranchesManagerModal
+      {isBranchesModalOpen && (
+        <BranchesManagerModal
         isOpen={isBranchesModalOpen}
         onClose={() => setIsBranchesModalOpen(false)}
         branches={cleanBranchesList}
@@ -8290,34 +8449,38 @@ export default function App() {
           }
         }}
       />
+      )}
 
       {/* Master Secret Passcode Gate Modal for Backup & Copy and Branch Modifications */}
-      <VaultSecurityGateModal
-        isOpen={vaultGateModal.isOpen}
-        onClose={() => setVaultGateModal((prev) => ({ ...prev, isOpen: false }))}
-        mode={vaultGateModal.initialMode === 'change' ? 'change_passcode' : 'unlock'}
-        targetLabel={vaultGateModal.label || 'بوابة الحماية السرية'}
-        activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
-        branches={cleanBranchesList}
-        branchCredentialsMap={configuredBranchCredentialsMap}
-        globalUsername={configuredVaultUsername}
-        currentPasscode={configuredVaultPasscode}
-        onUnlockSuccess={() => {
-          setIsVaultUnlocked(true);
-          const pendingFn = vaultGateModal.onAfterUnlock;
-          setVaultGateModal((prev) => ({ ...prev, isOpen: false, onAfterUnlock: undefined }));
-          if (pendingFn) {
-            pendingFn();
-          }
-        }}
-        onChangeCredentials={async ({ targetScope, newUsername, newPasscode }) => {
-          await handleUpdateVaultPasscode(
-            newPasscode,
-            newUsername,
-            targetScope === 'all' ? 'ALL' : targetScope
-          );
-        }}
-      />
+      {vaultGateModal.isOpen && (
+        <VaultSecurityGateModal
+          isOpen={vaultGateModal.isOpen}
+          onClose={() => setVaultGateModal((prev) => ({ ...prev, isOpen: false }))}
+          mode={vaultGateModal.initialMode === 'change' ? 'change_passcode' : 'unlock'}
+          targetLabel={vaultGateModal.label || 'بوابة الحماية السرية'}
+          activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+          branches={cleanBranchesList}
+          branchCredentialsMap={configuredBranchCredentialsMap}
+          globalUsername={configuredVaultUsername}
+          currentPasscode={configuredVaultPasscode}
+          onUnlockSuccess={() => {
+            setIsVaultUnlocked(true);
+            const pendingFn = vaultGateModal.onAfterUnlock;
+            setVaultGateModal((prev) => ({ ...prev, isOpen: false, onAfterUnlock: undefined }));
+            if (pendingFn) {
+              pendingFn();
+            }
+          }}
+          onChangeCredentials={async ({ targetScope, newUsername, newPasscode }) => {
+            await handleUpdateVaultPasscode(
+              newPasscode,
+              newUsername,
+              targetScope === 'all' ? 'ALL' : targetScope
+            );
+          }}
+        />
+      )}
+      </Suspense>
 
       {/* In-App Accessible Confirmation Modal (Replaces window.confirm) */}
       {pendingConfirm && (

@@ -21,25 +21,29 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <script>
-      // Non-blocking on-demand loader for html2pdf to accelerate page load & publishing
+      // Strict on-demand loader for html2pdf (zero network fetch on Welcome/Login boot)
       window.loadHtml2PdfOnDemand = function() {
-        return new Promise(function(resolve) {
-          if (typeof (window).html2pdf === 'function') {
-            return resolve((window).html2pdf);
-          }
+        if (typeof window.html2pdf === 'function') {
+          return Promise.resolve(window.html2pdf);
+        }
+        if (window.__html2pdfLoadPromise) {
+          return window.__html2pdfLoadPromise;
+        }
+        window.__html2pdfLoadPromise = new Promise(function(resolve) {
           var s = document.createElement('script');
           s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
           s.async = true;
-          s.onload = function() { resolve((window).html2pdf); };
-          s.onerror = function() { resolve(null); };
+          s.onload = function() {
+            resolve(typeof window.html2pdf === 'function' ? window.html2pdf : null);
+          };
+          s.onerror = function() {
+            window.__html2pdfLoadPromise = null;
+            resolve(null);
+          };
           document.head.appendChild(s);
         });
+        return window.__html2pdfLoadPromise;
       };
-      if ('requestIdleCallback' in window) {
-        window.requestIdleCallback(function() { window.loadHtml2PdfOnDemand(); });
-      } else {
-        setTimeout(function() { window.loadHtml2PdfOnDemand(); }, 2500);
-      }
     </script>
   </head>
   <body class="bg-[#F4F6F9] text-slate-800 font-sans antialiased selection:bg-[#1E3A8A] selection:text-white">

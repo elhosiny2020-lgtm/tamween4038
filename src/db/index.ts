@@ -16,7 +16,7 @@ export const createPool = () => {
       database: process.env.SQL_DB_NAME,
       max: 10,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 2500,
     });
 
     global._postgresPool.on('error', (err: any) => {

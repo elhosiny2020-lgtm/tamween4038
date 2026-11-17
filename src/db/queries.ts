@@ -139,80 +139,85 @@ export async function ensurePostgresSchema(): Promise<void> {
            AND NOT EXISTS (SELECT 1 FROM public.bakeries bk WHERE bk.branch_id = b.id)
            AND NOT EXISTS (SELECT 1 FROM public.debts dt WHERE dt.branch_id = b.id)`
       );
-      // Ensure cross-branch module state table exists without altering legacy tables
-      await pool
-        .query(
-          `CREATE TABLE IF NOT EXISTS public.branch_module_states (
-            id TEXT PRIMARY KEY,
-            branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
-            module_key TEXT NOT NULL DEFAULT 'all_modules',
-            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-            updated_by TEXT NOT NULL DEFAULT '',
-            version INTEGER NOT NULL DEFAULT 1,
-            updated_at TIMESTAMPTZ DEFAULT NOW(),
-            CONSTRAINT uq_branch_module_state UNIQUE (branch_id, module_key)
-          )`
-        )
-        .catch(() => {});
-      await pool
-        .query(
-          `ALTER TABLE public.app_users
-             ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
-             ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE,
-             ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '',
-             ADD COLUMN IF NOT EXISTS department_permissions JSONB DEFAULT NULL`
-        )
-        .catch(() => {});
-      await pool
-        .query(
-          `CREATE TABLE IF NOT EXISTS public.app_departments (
-            id TEXT PRIMARY KEY,
-            name_ar TEXT NOT NULL,
-            display_order INTEGER NOT NULL DEFAULT 1,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-          )`
-        )
-        .catch(() => {});
-      for (let i = 0; i < SYSTEM_DEPARTMENT_KEYS.length; i++) {
-        const deptId = SYSTEM_DEPARTMENT_KEYS[i];
-        const scope = DEPARTMENT_SCOPES.find((d) => d.id === deptId);
-        await pool
+      // Ensure cross-branch module state table, schema columns, and departments exist concurrently
+      await Promise.all([
+        pool
           .query(
-            `INSERT INTO public.app_departments (id, name_ar, display_order)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (id) DO UPDATE SET name_ar = EXCLUDED.name_ar, display_order = EXCLUDED.display_order`,
-            [deptId, scope?.label || deptId, i + 1]
+            `CREATE TABLE IF NOT EXISTS public.branch_module_states (
+              id TEXT PRIMARY KEY,
+              branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+              module_key TEXT NOT NULL DEFAULT 'all_modules',
+              payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+              updated_by TEXT NOT NULL DEFAULT '',
+              version INTEGER NOT NULL DEFAULT 1,
+              updated_at TIMESTAMPTZ DEFAULT NOW(),
+              CONSTRAINT uq_branch_module_state UNIQUE (branch_id, module_key)
+            )`
           )
-          .catch(() => {});
-      }
-      await pool
-        .query(
-          `CREATE TABLE IF NOT EXISTS public.user_department_permissions (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
-            branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
-            department_id TEXT NOT NULL REFERENCES public.app_departments(id) ON DELETE CASCADE,
-            can_view BOOLEAN NOT NULL DEFAULT FALSE,
-            can_insert BOOLEAN NOT NULL DEFAULT FALSE,
-            can_update BOOLEAN NOT NULL DEFAULT FALSE,
-            can_delete BOOLEAN NOT NULL DEFAULT FALSE,
-            can_print BOOLEAN NOT NULL DEFAULT FALSE,
-            can_export BOOLEAN NOT NULL DEFAULT FALSE,
-            updated_at TIMESTAMPTZ DEFAULT NOW(),
-            CONSTRAINT uq_user_dept_perm UNIQUE (user_id, department_id)
-          )`
-        )
-        .catch(() => {});
-      await pool
-        .query(
-          `ALTER TABLE public.audit_logs
-             ADD COLUMN IF NOT EXISTS username TEXT DEFAULT '',
-             ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
-             ADD COLUMN IF NOT EXISTS operation TEXT DEFAULT '',
-             ADD COLUMN IF NOT EXISTS record_id TEXT DEFAULT '',
-             ADD COLUMN IF NOT EXISTS result TEXT DEFAULT 'SUCCESS'`
-        )
-        .catch(() => {});
+          .catch(() => {}),
+        pool
+          .query(
+            `ALTER TABLE public.app_users
+               ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+               ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE,
+               ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS department_permissions JSONB DEFAULT NULL`
+          )
+          .catch(() => {}),
+        pool
+          .query(
+            `CREATE TABLE IF NOT EXISTS public.app_departments (
+              id TEXT PRIMARY KEY,
+              name_ar TEXT NOT NULL,
+              display_order INTEGER NOT NULL DEFAULT 1,
+              created_at TIMESTAMPTZ DEFAULT NOW()
+            )`
+          )
+          .catch(() => {}),
+        pool
+          .query(
+            `ALTER TABLE public.audit_logs
+               ADD COLUMN IF NOT EXISTS username TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS operation TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS record_id TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS result TEXT DEFAULT 'SUCCESS'`
+          )
+          .catch(() => {}),
+      ]);
+
+      await Promise.all([
+        ...SYSTEM_DEPARTMENT_KEYS.map((deptId, i) => {
+          const scope = DEPARTMENT_SCOPES.find((d) => d.id === deptId);
+          return pool
+            .query(
+              `INSERT INTO public.app_departments (id, name_ar, display_order)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (id) DO UPDATE SET name_ar = EXCLUDED.name_ar, display_order = EXCLUDED.display_order`,
+              [deptId, scope?.label || deptId, i + 1]
+            )
+            .catch(() => {});
+        }),
+        pool
+          .query(
+            `CREATE TABLE IF NOT EXISTS public.user_department_permissions (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
+              branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+              department_id TEXT NOT NULL REFERENCES public.app_departments(id) ON DELETE CASCADE,
+              can_view BOOLEAN NOT NULL DEFAULT FALSE,
+              can_insert BOOLEAN NOT NULL DEFAULT FALSE,
+              can_update BOOLEAN NOT NULL DEFAULT FALSE,
+              can_delete BOOLEAN NOT NULL DEFAULT FALSE,
+              can_print BOOLEAN NOT NULL DEFAULT FALSE,
+              can_export BOOLEAN NOT NULL DEFAULT FALSE,
+              updated_at TIMESTAMPTZ DEFAULT NOW(),
+              CONSTRAINT uq_user_dept_perm UNIQUE (user_id, department_id)
+            )`
+          )
+          .catch(() => {}),
+      ]);
+
       const hashedAdminPass = hashPasswordScrypt('admin');
       await pool
         .query(
@@ -231,17 +236,21 @@ export async function ensurePostgresSchema(): Promise<void> {
       const legacyUsersRes = await pool
         .query(`SELECT id, password_hash FROM public.app_users`)
         .catch(() => ({ rows: [] as any[] }));
-      for (const row of legacyUsersRes.rows) {
-        const rawHash = String(row.password_hash || '');
-        if (rawHash && !isScryptHash(rawHash)) {
-          await pool
-            .query(`UPDATE public.app_users SET password_hash = $1 WHERE id = $2`, [
-              hashPasswordScrypt(rawHash),
-              row.id,
-            ])
-            .catch(() => {});
-        }
-      }
+      await Promise.all(
+        legacyUsersRes.rows
+          .filter((row) => {
+            const rawHash = String(row.password_hash || '');
+            return rawHash && !isScryptHash(rawHash);
+          })
+          .map((row) =>
+            pool
+              .query(`UPDATE public.app_users SET password_hash = $1 WHERE id = $2`, [
+                hashPasswordScrypt(String(row.password_hash || '')),
+                row.id,
+              ])
+              .catch(() => {})
+          )
+      );
       schemaInitialized = true;
     } catch (err) {
       schemaInitPromise = null;
