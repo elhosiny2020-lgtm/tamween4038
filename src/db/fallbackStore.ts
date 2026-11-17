@@ -31,6 +31,14 @@ import type {
   StoredFileEntry,
   UpsertRowResult,
 } from './queries.ts';
+import {
+  hashPasswordScrypt,
+  isScryptHash,
+  sanitizeUserForClient,
+  sanitizeUsersForClient,
+  verifyPasswordScrypt,
+} from '../utils/serverAuth.ts';
+import { INITIAL_USERS } from '../defaultData.ts';
 
 const FALLBACK_STORE_PATH = '/tmp/tamween_pg_fallback_store.json';
 const DEFAULT_BRANCH_ID = 'branch-mahalla';
@@ -85,6 +93,11 @@ interface FallbackStoreData {
     id: string;
     branchId: string;
     userEmail: string;
+    username?: string;
+    department?: string;
+    operation?: string;
+    recordId?: string;
+    result?: string;
     action: string;
     details: string;
     ipAddress: string;
@@ -234,7 +247,7 @@ export function fallbackGetBootstrap(requestedBranchId = DEFAULT_BRANCH_ID): Pos
       .map((v) => ({ village: v.village, localUnits: Array.isArray(v.localUnits) ? v.localUnits : [] })),
     bakeries: store.bakeries.filter((b) => b.branchId === branchId),
     debts: store.debts.filter((d) => d.branchId === branchId),
-    users: store.app_users.filter((u) => u.branchId === branchId),
+    users: sanitizeUsersForClient(store.app_users.filter((u) => u.branchId === branchId)) as AppUser[],
     dailyTasks: store.daily_tasks.filter((t) => t.branchId === branchId),
     inboxMessages: store.inbox_messages.filter((m) => m.branchId === branchId),
     highDebtAlerts: store.high_debt_alerts.filter((a) => a.branchId === branchId).slice(0, 250),
@@ -270,6 +283,8 @@ export function fallbackQueryTablePaginated(
   let rows: any[] = [];
   if (table === 'branches') {
     rows = deduplicateSupplyBranches(store.branches);
+  } else if (table === 'audit_logs' && branchId === 'ALL') {
+    rows = [...(store.audit_logs || [])];
   } else {
     rows = ((store as any)[table] || []).filter((r: any) => (r.branchId || DEFAULT_BRANCH_ID) === branchId);
   }
@@ -319,12 +334,28 @@ export function fallbackQueryTablePaginated(
           .some((f) => String(f).toLowerCase().includes(search))
       );
     }
+  } else if (table === 'audit_logs') {
+    if (options.status && options.status !== 'all') {
+      if (options.status === 'SUCCESS') {
+        rows = rows.filter((a) => ['SUCCESS', 'ALLOWED'].includes(String(a.result || 'ALLOWED')));
+      } else {
+        rows = rows.filter((a) => String(a.result || 'ALLOWED') === options.status);
+      }
+    }
+    if (search) {
+      rows = rows.filter((a) =>
+        [a.username, a.userEmail, a.department, a.operation, a.action, a.details, a.recordId, a.result]
+          .filter(Boolean)
+          .some((f) => String(f).toLowerCase().includes(search))
+      );
+    }
   }
 
   const total = rows.length;
   const offset = (page - 1) * pageSize;
+  const paged = rows.slice(offset, offset + pageSize);
   return {
-    rows: rows.slice(offset, offset + pageSize),
+    rows: table === 'app_users' ? sanitizeUsersForClient(paged) : paged,
     total,
     page,
     pageSize,
@@ -446,19 +477,46 @@ function upsertInStoreInternal(
         : -1;
       const idx = idxById >= 0 ? idxById : idxByName;
       const existing = idx >= 0 ? store.app_users[idx] : null;
+      const incomingPass = typeof payload.password === 'string' ? payload.password.trim() : '';
+      const resolvedPassword = incomingPass
+        ? isScryptHash(incomingPass)
+          ? incomingPass
+          : hashPasswordScrypt(incomingPass)
+        : existing?.password || '';
+      const resolvedRole = String(payload.role || existing?.role || 'inspector');
       const nextRow: AppUser & { branchId: string; version?: number } = {
+        ...existing,
         ...payload,
         id: existing ? existing.id : recordId,
         branchId: effectiveBranchId,
         username: cleanUsername || existing?.username || '',
-        password: payload.password ? String(payload.password) : existing?.password || '',
-        isActive: payload.isActive !== false,
+        fullName: String(payload.fullName ?? existing?.fullName ?? ''),
+        password: resolvedPassword,
+        role: resolvedRole,
+        isSuperAdmin:
+          typeof payload.isSuperAdmin === 'boolean'
+            ? payload.isSuperAdmin
+            : resolvedRole === 'super_admin' || (resolvedRole === 'admin' && existing?.isSuperAdmin !== false),
+        isActive: payload.isActive !== undefined ? payload.isActive !== false : existing?.isActive !== false,
+        notes: String(payload.notes ?? existing?.notes ?? ''),
+        departmentPermissions:
+          payload.departmentPermissions !== undefined
+            ? payload.departmentPermissions
+            : existing?.departmentPermissions,
+        allowedDepartments:
+          Array.isArray(payload.allowedDepartments)
+            ? payload.allowedDepartments
+            : existing?.allowedDepartments,
         createdAt: existing?.createdAt || payload.createdAt || new Date().toISOString(),
         version: existing ? Number(existing.version || 1) + 1 : 1,
       };
       if (idx >= 0) store.app_users[idx] = nextRow;
       else store.app_users.push(nextRow);
-      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+      return {
+        success: true,
+        operation: idx >= 0 ? 'UPDATE' : 'INSERT',
+        row: sanitizeUserForClient(nextRow),
+      };
     }
 
     case 'daily_tasks': {
@@ -559,14 +617,19 @@ function upsertInStoreInternal(
       const nextRow = {
         id: recordId,
         branchId: effectiveBranchId,
-        userEmail: String(payload.userEmail || 'system'),
+        userEmail: String(payload.userEmail || payload.username || 'system'),
+        username: String(payload.username || payload.userEmail || 'system'),
+        department: String(payload.department || 'system'),
+        operation: String(payload.operation || payload.action || 'ACTION'),
+        recordId: String(payload.recordId || ''),
+        result: String(payload.result || 'ALLOWED'),
         action: String(payload.action || 'ACTION'),
         details: String(payload.details || ''),
         ipAddress: String(payload.ipAddress || '127.0.0.1'),
         createdAt: new Date().toISOString(),
       };
       store.audit_logs.unshift(nextRow);
-      if (store.audit_logs.length > 500) store.audit_logs.length = 500;
+      if (store.audit_logs.length > 2000) store.audit_logs.length = 2000;
       return { success: true, operation: 'INSERT', row: nextRow };
     }
   }
@@ -843,6 +906,157 @@ export function fallbackPurgeAll(): void {
   clearDeletedBranchesRegistry();
   const fresh = createEmptyStore();
   persistStore(fresh);
+}
+
+export function fallbackAuthenticateUser(
+  branchId: string,
+  usernameOrName: string,
+  password: string
+): { ok: boolean; user?: AppUser; error?: string; status?: number } {
+  const store = loadStore();
+  const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
+  const branchUsers = store.app_users.filter((u) => u.branchId === effectiveBranchId);
+
+  // Seed initial users into branch store if none exist yet
+  if (branchUsers.length === 0) {
+    for (const seed of INITIAL_USERS) {
+      upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
+        ...seed,
+        id: effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`,
+        branchId: effectiveBranchId,
+        isSuperAdmin: seed.role === 'admin',
+        isActive: seed.isActive !== false,
+      });
+    }
+    persistStore(store);
+  }
+
+  const target = usernameOrName.trim().toLowerCase();
+  const matched = store.app_users.find(
+    (u) =>
+      u.branchId === effectiveBranchId &&
+      (u.username.trim().toLowerCase() === target || u.fullName.trim().toLowerCase() === target)
+  );
+  if (!matched) {
+    return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
+  }
+  if (!verifyPasswordScrypt(password, matched.password)) {
+    return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
+  }
+  if (matched.isActive === false) {
+    return { ok: false, status: 403, error: 'هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.' };
+  }
+  // Auto-upgrade legacy un-hashed password to scrypt upon successful verification
+  if (matched.password && !isScryptHash(matched.password)) {
+    matched.password = hashPasswordScrypt(password);
+    persistStore(store);
+  }
+  return { ok: true, user: sanitizeUserForClient(matched) as AppUser };
+}
+
+export function fallbackGetUserByIdAndBranch(branchId: string, userId: string): AppUser | null {
+  const store = loadStore();
+  const found = store.app_users.find(
+    (u) => u.id === userId && (!branchId || u.branchId === branchId)
+  );
+  return found ? (sanitizeUserForClient(found) as AppUser) : null;
+}
+
+export function fallbackResetNonMahallaBranches(actorUsername = 'super_admin'): {
+  success: boolean;
+  backupFileName: string;
+  removedBranchesCount: number;
+  preservedMahallaCounts: { bakeries: number; debts: number; villages: number; users: number };
+} {
+  const store = loadStore();
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupFileName = `pre_reset_non_mahalla_branches_${ts}.json`;
+  const nonMahallaBranches = store.branches.filter((b) => b.id !== DEFAULT_BRANCH_ID);
+  const nonMahallaSnapshot = {
+    createdAt: new Date().toISOString(),
+    createdBy: actorUsername,
+    branches: nonMahallaBranches,
+    villages: store.villages.filter((r) => r.branchId !== DEFAULT_BRANCH_ID),
+    bakeries: store.bakeries.filter((r) => r.branchId !== DEFAULT_BRANCH_ID),
+    debts: store.debts.filter((r) => r.branchId !== DEFAULT_BRANCH_ID),
+    app_users: store.app_users
+      .filter((r) => r.branchId !== DEFAULT_BRANCH_ID)
+      .map((u) => sanitizeUserForClient(u)),
+    daily_tasks: store.daily_tasks.filter((r) => r.branchId !== DEFAULT_BRANCH_ID),
+    inbox_messages: store.inbox_messages.filter((r) => r.branchId !== DEFAULT_BRANCH_ID),
+    high_debt_alerts: store.high_debt_alerts.filter((r) => r.branchId !== DEFAULT_BRANCH_ID),
+    system_config: store.system_config.filter((r) => r.branchId !== DEFAULT_BRANCH_ID),
+    dropdown_lists: store.dropdown_lists.filter((r) => r.branchId !== DEFAULT_BRANCH_ID),
+    module_states: Object.fromEntries(
+      Object.entries(store.module_states || {}).filter(([, v]) => v.branchId !== DEFAULT_BRANCH_ID)
+    ),
+  };
+
+  const jsonStr = JSON.stringify(nonMahallaSnapshot);
+  store.storage_files[`storage__${DEFAULT_BRANCH_ID}__${backupFileName}`] = {
+    id: `storage__${DEFAULT_BRANCH_ID}__${backupFileName}`,
+    fileName: backupFileName,
+    branchId: DEFAULT_BRANCH_ID,
+    contentType: 'application/json',
+    sizeBytes: Buffer.byteLength(jsonStr, 'utf-8'),
+    content: jsonStr,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Preserve branch-mahalla 100%, remove/reset all other branches and mark them deleted
+  for (const b of nonMahallaBranches) {
+    markBranchDeleted(b.id, b.name);
+  }
+  for (const c of CANONICAL_DEFAULT_BRANCHES) {
+    if (c.id !== DEFAULT_BRANCH_ID) {
+      markBranchDeleted(c.id, c.name);
+    }
+  }
+  store.branches = store.branches.filter((b) => b.id === DEFAULT_BRANCH_ID);
+  store.villages = store.villages.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  store.bakeries = store.bakeries.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  store.debts = store.debts.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  store.app_users = store.app_users.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  store.daily_tasks = store.daily_tasks.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  store.inbox_messages = store.inbox_messages.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  store.high_debt_alerts = store.high_debt_alerts.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  store.system_config = store.system_config.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  store.dropdown_lists = store.dropdown_lists.filter((r) => r.branchId === DEFAULT_BRANCH_ID);
+  for (const key of Object.keys(store.module_states || {})) {
+    if (store.module_states[key]?.branchId !== DEFAULT_BRANCH_ID) {
+      delete store.module_states[key];
+    }
+  }
+
+  const preservedMahallaCounts = {
+    bakeries: store.bakeries.filter((b) => b.branchId === DEFAULT_BRANCH_ID).length,
+    debts: store.debts.filter((d) => d.branchId === DEFAULT_BRANCH_ID).length,
+    villages: store.villages.filter((v) => v.branchId === DEFAULT_BRANCH_ID).length,
+    users: store.app_users.filter((u) => u.branchId === DEFAULT_BRANCH_ID).length,
+  };
+
+  store.audit_logs.unshift({
+    id: `aud-${Date.now()}`,
+    branchId: DEFAULT_BRANCH_ID,
+    userEmail: actorUsername,
+    username: actorUsername,
+    department: 'branches',
+    operation: 'RESET_NON_MAHALLA_BRANCHES',
+    recordId: 'non-mahalla',
+    result: 'ALLOWED',
+    action: 'RESET_NON_MAHALLA_BRANCHES',
+    details: `تم أخذ نسخة احتياطية (${backupFileName}) وتصفير (${nonMahallaBranches.length}) إدارات/فروع غير المحلة الكبرى مع الحفاظ الكامل على إدارة تموين مركز المحلة الكبرى (${preservedMahallaCounts.bakeries} مخبز، ${preservedMahallaCounts.debts} مديونية).`,
+    ipAddress: '127.0.0.1',
+    createdAt: new Date().toISOString(),
+  });
+
+  persistStore(store);
+  return {
+    success: true,
+    backupFileName,
+    removedBranchesCount: nonMahallaBranches.length,
+    preservedMahallaCounts,
+  };
 }
 
 export function fallbackUpsertStorageFile(params: {

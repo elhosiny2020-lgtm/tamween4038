@@ -129,7 +129,7 @@ describe('Internal Trade, LPG & Petroleum, and May 2026 Ration Merchants Math En
       assert.ok(merchants.some((m) => m.reviewStatus === 'بيانات غير مكتملة'));
     });
 
-    it('detects new merchants, stopped merchants, and insurance changes between monthly sheets', () => {
+    it('detects new merchants, stopped/removed merchants, insurance changes, and traderCode/POS changes between monthly sheets', () => {
       const prev = [
         {
           traderCode: '1001',
@@ -141,11 +141,21 @@ describe('Internal Trade, LPG & Petroleum, and May 2026 Ration Merchants Math En
           cashInsuranceAmount: 12000,
           activityStatus: 'نشط',
         },
+        {
+          traderCode: '1003',
+          posMachineNumber: '316003',
+          merchantName: 'سعيد عبد الله',
+          nationalId: '27901011603333',
+          phone: '01033333333',
+          detailedAddress: 'دمرو',
+          cashInsuranceAmount: 9000,
+          activityStatus: 'نشط',
+        },
       ];
       const next = [
         {
-          traderCode: '1001',
-          posMachineNumber: '316001',
+          traderCode: '1001-MOD',
+          posMachineNumber: '316099',
           merchantName: 'أحمد محمد علي',
           nationalId: '28001011601111',
           phone: '01011111111',
@@ -167,9 +177,13 @@ describe('Internal Trade, LPG & Petroleum, and May 2026 Ration Merchants Math En
 
       const diff = compareMerchantArchiveSnapshots(prev, next);
       assert.equal(diff.newMerchants.length, 1);
-      assert.equal(diff.stoppedMerchants.length, 1);
+      assert.equal(diff.stoppedMerchants.length, 2); // 1 status changed to متوقف + 1 removed from sheet
       assert.equal(diff.insuranceChanged.length, 1);
       assert.equal(diff.insuranceChanged[0].diff, 3000);
+      assert.equal(diff.posOrCodeChanged.length, 1);
+      assert.equal(diff.posOrCodeChanged[0].prev.traderCode, '1001');
+      assert.equal(diff.posOrCodeChanged[0].curr.traderCode, '1001-MOD');
     });
   });
 });
+

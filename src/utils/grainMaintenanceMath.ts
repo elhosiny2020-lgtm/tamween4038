@@ -13,6 +13,11 @@ import type {
 } from '../types/modules';
 import { round2 } from './rationMathEngine';
 
+export function safeNum(val: unknown, fallback = 0): number {
+  const n = Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export function round3(val: number): number {
   if (!Number.isFinite(val)) return 0;
   return Math.round((val + Number.EPSILON) * 1000) / 1000;
@@ -36,25 +41,27 @@ export function computeMaintenanceOrderCost(params: {
   totalRepairCost: number;
 } {
   const laborCost = round2(
-    Math.max(0, params.technicianCount) *
-      Math.max(0, params.laborHours) *
-      Math.max(0, params.hourlyRate)
+    Math.max(0, safeNum(params.technicianCount)) *
+      Math.max(0, safeNum(params.laborHours)) *
+      Math.max(0, safeNum(params.hourlyRate))
   );
   const partsCost = round2(
     (params.partsUsed || []).reduce(
-      (sum, p) => sum + Math.max(0, p.quantity) * Math.max(0, p.unitCost),
+      (sum, p) => sum + Math.max(0, safeNum(p?.quantity)) * Math.max(0, safeNum(p?.unitCost)),
       0
     )
   );
   const directCost = round2(
     laborCost +
       partsCost +
-      Math.max(0, params.consumablesCost) +
-      Math.max(0, params.transportAndOpCost)
+      Math.max(0, safeNum(params.consumablesCost)) +
+      Math.max(0, safeNum(params.transportAndOpCost))
   );
-  const indirectCost = round2((directCost * Math.max(0, params.indirectOverheadPercent || 0)) / 100);
+  const indirectCost = round2(
+    (directCost * Math.max(0, safeNum(params.indirectOverheadPercent))) / 100
+  );
   const taxAmount = round2(
-    ((directCost + indirectCost) * Math.max(0, params.taxPercent || 0)) / 100
+    ((directCost + indirectCost) * Math.max(0, safeNum(params.taxPercent))) / 100
   );
   const totalRepairCost = round2(directCost + indirectCost + taxAmount);
 
@@ -74,30 +81,30 @@ export function computeEquipmentKpis(
   asset: GrainAsset,
   assetOrders: MaintenanceOrder[]
 ): EquipmentKpisResult {
-  const planned = Math.max(0, asset.plannedHoursPerPeriod || 0);
-  const downtime = Math.max(0, asset.downtimeHours || 0);
+  const planned = Math.max(0, safeNum(asset.plannedHoursPerPeriod));
+  const downtime = Math.max(0, safeNum(asset.downtimeHours));
   const operatingHours = Math.max(0, planned - downtime);
+  const designTons = Math.max(0, safeNum(asset.designProductionTons));
+  const actualTons = Math.max(0, safeNum(asset.actualProductionTons));
+  const conformingTons = Math.max(0, safeNum(asset.conformingTons));
 
   const availabilityPct = planned > 0 ? round2((operatingHours / planned) * 100) : null;
-  const performancePct =
-    asset.designProductionTons > 0
-      ? round2((asset.actualProductionTons / asset.designProductionTons) * 100)
-      : null;
-  const qualityPct =
-    asset.actualProductionTons > 0
-      ? round2((asset.conformingTons / asset.actualProductionTons) * 100)
-      : null;
+  const performancePct = designTons > 0 ? round2((actualTons / designTons) * 100) : null;
+  const qualityPct = actualTons > 0 ? round2((conformingTons / actualTons) * 100) : null;
 
   const oeePct =
     availabilityPct !== null && performancePct !== null && qualityPct !== null
       ? round2((availabilityPct / 100) * (performancePct / 100) * (qualityPct / 100) * 100)
       : null;
 
-  const breakdownOrders = assetOrders.filter(
+  const breakdownOrders = (assetOrders || []).filter(
     (o) => o.assetId === asset.id && o.maintenanceType === 'علاجية طارئة'
   );
   const faultCount = breakdownOrders.length;
-  const totalRepairHours = breakdownOrders.reduce((s, o) => s + Math.max(0, o.laborHours || 0), 0);
+  const totalRepairHours = breakdownOrders.reduce(
+    (s, o) => s + Math.max(0, safeNum(o.laborHours)),
+    0
+  );
 
   const mtbfHours = faultCount > 0 ? round2(operatingHours / faultCount) : null;
   const mttrHours = faultCount > 0 ? round2(totalRepairHours / faultCount) : null;
@@ -122,18 +129,18 @@ export function computeSparePartStatus(part: SparePartItem): {
   const availableBalance = Math.max(
     0,
     round2(
-      (part.openingStock || 0) +
-        (part.inboundQty || 0) -
-        (part.outboundQty || 0) -
-        (part.damagedQty || 0)
+      safeNum(part.openingStock) +
+        safeNum(part.inboundQty) -
+        safeNum(part.outboundQty) -
+        safeNum(part.damagedQty)
     )
   );
-  const stockValue = round2(availableBalance * Math.max(0, part.unitCost || 0));
+  const stockValue = round2(availableBalance * Math.max(0, safeNum(part.unitCost)));
   const reorderPoint = round2(
-    Math.max(0, part.avgDailyConsumption || 0) * Math.max(0, part.supplyLeadDays || 0) +
-      Math.max(0, part.safetyStock || 0)
+    Math.max(0, safeNum(part.avgDailyConsumption)) * Math.max(0, safeNum(part.supplyLeadDays)) +
+      Math.max(0, safeNum(part.safetyStock))
   );
-  const neededQty = round2(Math.max(0, (part.targetStockLevel || 0) - availableBalance));
+  const neededQty = round2(Math.max(0, safeNum(part.targetStockLevel) - availableBalance));
   const needsReorder = availableBalance <= reorderPoint;
 
   return { availableBalance, stockValue, reorderPoint, neededQty, needsReorder };
@@ -148,10 +155,13 @@ export function computeMoistureCorrectedWeight(
   actualMoisturePct: number,
   referenceMoisturePct: number
 ): number {
-  if (!(originalWeightTons >= 0)) return 0;
-  const denom = 100 - referenceMoisturePct;
-  if (denom <= 0) return round2(originalWeightTons);
-  return round2((originalWeightTons * (100 - actualMoisturePct)) / denom);
+  const orig = safeNum(originalWeightTons);
+  const actM = Math.min(100, Math.max(0, safeNum(actualMoisturePct)));
+  const refM = Math.min(99.9, Math.max(0, safeNum(referenceMoisturePct)));
+  if (!(orig >= 0)) return 0;
+  const denom = 100 - refM;
+  if (denom <= 0) return round2(orig);
+  return round2((orig * (100 - actM)) / denom);
 }
 
 export function computeGrainStockAndLossSummary(movements: GrainMovementRecord[]): {
@@ -171,16 +181,17 @@ export function computeGrainStockAndLossSummary(movements: GrainMovementRecord[]
   let recordedLossTons = 0;
   let latestPhysicalCountTons: number | null = null;
 
-  for (const m of movements) {
-    const qty = m.correctedWeightTons || m.originalWeightTons || 0;
+  for (const m of movements || []) {
+    const qty = Math.max(0, safeNum(m.correctedWeightTons) || safeNum(m.originalWeightTons));
     if (m.movementType === 'رصيد أول المدة') openingTons += qty;
     else if (m.movementType === 'وارد') inboundTons += qty;
     else if (m.movementType === 'منصرف') outboundTons += qty;
-    else if (m.movementType === 'جرد فعلي' && typeof m.actualPhysicalCountTons === 'number') {
-      latestPhysicalCountTons = m.actualPhysicalCountTons;
+    else if (m.movementType === 'جرد فعلي' && Number.isFinite(Number(m.actualPhysicalCountTons))) {
+      latestPhysicalCountTons = Number(m.actualPhysicalCountTons);
     }
-    if (typeof m.recordedLossTons === 'number' && m.recordedLossTons > 0) {
-      recordedLossTons += m.recordedLossTons;
+    const recLoss = safeNum(m.recordedLossTons);
+    if (recLoss > 0) {
+      recordedLossTons += recLoss;
     }
   }
 
@@ -208,8 +219,10 @@ export function computeGrainStockAndLossSummary(movements: GrainMovementRecord[]
 }
 
 export function computeCostPerTon(totalValue: number, handledTons: number): number | null {
-  if (!(handledTons > 0)) return null;
-  return round2(totalValue / handledTons);
+  const val = safeNum(totalValue);
+  const tons = safeNum(handledTons);
+  if (!(tons > 0) || !Number.isFinite(val)) return null;
+  return round2(val / tons);
 }
 
 // =========================================================================

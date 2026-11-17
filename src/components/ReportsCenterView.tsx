@@ -10,6 +10,10 @@ import {
 } from '../utils/auditHelper';
 import { exportElementToPdf, printHtmlElementA4 } from '../utils/pdfHelper';
 import {
+  canUserPrintDepartment,
+  canUserExportDepartment,
+} from '../utils/departmentRbac';
+import {
   FileText,
   Printer,
   FileSpreadsheet,
@@ -931,8 +935,12 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
     }
   };
 
+  const canPrintReports = canUserPrintDepartment(currentUser, 'reports');
+  const canExportReports = canUserExportDepartment(currentUser, 'reports');
+
   // Export PDF Handler
   const handleExportPdf = async () => {
+    if (!canExportReports && !canPrintReports) return;
     if (isExportingPdf || !reportPrintRef.current) return;
     setIsExportingPdf(true);
     setPdfStageMessage('بدء تجهيز ملف PDF...');
@@ -968,6 +976,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
 
   // Print Handler
   const handlePrintReport = (mode: 'CURRENT' | 'ALL_BAKERIES' = 'CURRENT') => {
+    if (!canPrintReports) return;
     if (mode === 'ALL_BAKERIES' && (filterVillage !== 'ALL' || filterBakeryId !== 'ALL' || searchQuery)) {
       setFilterVillage('ALL');
       setFilterBakeryId('ALL');
@@ -990,6 +999,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
 
   // Export Excel (UTF-8 BOM CSV) with complete footer summary row
   const handleExportExcel = () => {
+    if (!canExportReports) return;
     const headers = activeColumnsMeta.map((c) => `"${c.label}"`).join(',');
     const rows = filteredBakeries.map((b, idx) => {
       return activeColumnsMeta
@@ -1211,46 +1221,54 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
 
         {/* Primary Export PDF & Print Action Buttons */}
         <div className="flex items-center flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={isExportingPdf}
-            onClick={handleExportPdf}
-            className="px-4 py-2.5 bg-[#1D4ED8] hover:bg-[#2563EB] active:scale-[0.98] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm border border-blue-400/40 transition cursor-pointer"
-          >
-            {isExportingPdf ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <FileText className="w-4 h-4" />
-            )}
-            <span>{isExportingPdf ? pdfStageMessage || 'جاري تجهيز PDF...' : 'تصدير التقرير PDF'}</span>
-          </button>
+          {(canExportReports || canPrintReports) && (
+            <button
+              type="button"
+              disabled={isExportingPdf}
+              onClick={handleExportPdf}
+              className="px-4 py-2.5 bg-[#1D4ED8] hover:bg-[#2563EB] active:scale-[0.98] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm border border-blue-400/40 transition cursor-pointer"
+            >
+              {isExportingPdf ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileText className="w-4 h-4" />
+              )}
+              <span>{isExportingPdf ? pdfStageMessage || 'جاري تجهيز PDF...' : 'تصدير التقرير PDF'}</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() => handlePrintReport('CURRENT')}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm transition cursor-pointer"
-          >
-            <Printer className="w-4 h-4" />
-            <span>طباعة التقرير الحالي</span>
-          </button>
+          {canPrintReports && (
+            <>
+              <button
+                type="button"
+                onClick={() => handlePrintReport('CURRENT')}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm transition cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>طباعة التقرير الحالي</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => handlePrintReport('ALL_BAKERIES')}
-            className="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>طباعة جميع المخابز</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => handlePrintReport('ALL_BAKERIES')}
+                className="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>طباعة جميع المخابز</span>
+              </button>
+            </>
+          )}
 
-          <button
-            type="button"
-            onClick={handleExportExcel}
-            className="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-300" />
-            <span>تصدير Excel</span>
-          </button>
+          {canExportReports && (
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-300" />
+              <span>تصدير Excel</span>
+            </button>
+          )}
 
           {onOpenDailyPerformanceSummary && (
             <button

@@ -188,13 +188,17 @@ export const appUsers = pgTable(
     fullName: text('full_name').notNull(),
     passwordHash: text('password_hash').notNull(),
     role: text('role').notNull().default('inspector'),
+    isActive: boolean('is_active').notNull().default(true),
+    isSuperAdmin: boolean('is_super_admin').notNull().default(false),
     jobTitle: text('job_title').notNull().default(''),
     department: text('department').notNull().default(''),
     phone: text('phone').notNull().default(''),
     gmailEmail: text('gmail_email').notNull().default(''),
     gmailPassword: text('gmail_password').notNull().default(''),
     googleDriveAutoSync: boolean('google_drive_auto_sync').notNull().default(false),
+    notes: text('notes').notNull().default(''),
     customPermissions: jsonb('custom_permissions').default([]),
+    departmentPermissions: jsonb('department_permissions').default({}),
     version: integer('version').notNull().default(1),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
@@ -202,6 +206,42 @@ export const appUsers = pgTable(
   (t) => [
     uniqueIndex('uq_app_users_branch_username').on(t.branchId, t.username),
     index('idx_app_users_branch_id').on(t.branchId),
+  ]
+);
+
+export const appDepartments = pgTable('app_departments', {
+  id: text('id').primaryKey(),
+  nameAr: text('name_ar').notNull(),
+  description: text('description').notNull().default(''),
+  sortOrder: integer('sort_order').notNull().default(0),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const userDepartmentPermissions = pgTable(
+  'user_department_permissions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => appUsers.id, { onDelete: 'cascade' }),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    departmentId: text('department_id')
+      .notNull()
+      .references(() => appDepartments.id, { onDelete: 'cascade' }),
+    canView: boolean('can_view').notNull().default(false),
+    canInsert: boolean('can_insert').notNull().default(false),
+    canUpdate: boolean('can_update').notNull().default(false),
+    canDelete: boolean('can_delete').notNull().default(false),
+    canPrint: boolean('can_print').notNull().default(false),
+    canExport: boolean('can_export').notNull().default(false),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_user_dept_perm').on(t.userId, t.departmentId),
+    index('idx_user_dept_perm_user').on(t.userId),
   ]
 );
 
@@ -327,6 +367,11 @@ export const auditLogs = pgTable('audit_logs', {
   id: serial('id').primaryKey(),
   branchId: text('branch_id').default(''),
   userEmail: text('user_email').notNull(),
+  username: text('username').notNull().default('system'),
+  department: text('department').notNull().default('system'),
+  operation: text('operation').notNull().default('ACTION'),
+  recordId: text('record_id').notNull().default(''),
+  result: text('result').notNull().default('ALLOWED'),
   action: text('action').notNull(),
   details: text('details').notNull(),
   ipAddress: text('ip_address'),

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { SupplyBranch } from '../types';
+import { AppUser, SupplyBranch } from '../types';
+import { DEFAULT_BRANCH_ID } from '../storage';
+import { isSuperAdmin } from '../utils/departmentRbac';
 import {
   Building2,
   Plus,
@@ -13,6 +15,7 @@ import {
   Pencil,
   Check,
   Lock,
+  RotateCcw,
 } from 'lucide-react';
 
 interface BranchesManagerModalProps {
@@ -20,10 +23,12 @@ interface BranchesManagerModalProps {
   onClose: () => void;
   branches: SupplyBranch[];
   activeBranchId: string;
+  currentUser?: AppUser | null;
   onSelectBranch: (branchId: string) => void;
   onCreateBranch: (name: string, directorate: string, governorate: string, description: string) => void;
   onRenameBranch: (branchId: string, name: string, directorate: string, governorate: string, description: string) => void;
   onDeleteBranch: (branchId: string) => void;
+  onResetNonMahallaBranches?: () => Promise<{ success: boolean; resetCount?: number; error?: string }>;
   isVaultUnlocked: boolean;
   onRequireVaultUnlock: (label: string, onUnlocked: () => void) => void;
 }
@@ -33,18 +38,26 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   onClose,
   branches,
   activeBranchId,
+  currentUser,
   onSelectBranch,
   onCreateBranch,
   onRenameBranch,
   onDeleteBranch,
+  onResetNonMahallaBranches,
   isVaultUnlocked,
   onRequireVaultUnlock,
 }) => {
+  const canManageBranches = isSuperAdmin(currentUser);
+  const nonMahallaBranches = branches.filter(
+    (b) => b.id !== DEFAULT_BRANCH_ID && !b.isDefault
+  );
   const [newName, setNewName] = useState('');
   const [newDirectorate, setNewDirectorate] = useState('مديرية التموين والتجارة الداخلية بالغربية');
   const [newGovernorate, setNewGovernorate] = useState('محافظة الغربية');
   const [newDescription, setNewDescription] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmResetNonMahalla, setConfirmResetNonMahalla] = useState(false);
+  const [isResettingBranches, setIsResettingBranches] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -61,6 +74,10 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
+    if (!canManageBranches) {
+      setErrorMsg('إنشاء الإدارات والفروع الجديدة مقصور على مدير النظام (Super Admin) فقط.');
+      return;
+    }
 
     const trimmedName = newName.trim();
     if (!trimmedName) {
@@ -97,6 +114,10 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   const handleStartEditBranch = (branch: SupplyBranch) => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    if (!canManageBranches) {
+      setErrorMsg('تعديل بيانات الإدارات مقصور على مدير النظام (Super Admin) فقط.');
+      return;
+    }
 
     const openEditor = () => {
       setEditingBranchId(branch.id);
@@ -119,6 +140,7 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   const handleSaveEditBranch = (branchId: string) => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    if (!canManageBranches) return;
 
     const trimmedName = editName.trim();
     if (!trimmedName) {
@@ -157,6 +179,14 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   const handleRequestDelete = (branch: SupplyBranch) => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    if (!canManageBranches) {
+      setErrorMsg('حذف الإدارات مقصور على مدير النظام (Super Admin) فقط.');
+      return;
+    }
+    if (branch.id === DEFAULT_BRANCH_ID || branch.isDefault) {
+      setErrorMsg('لا يمكن حذف الإدارة الرئيسية «إدارة تموين مركز المحلة الكبرى»؛ محمية من المسح والحذف.');
+      return;
+    }
     if (branches.length <= 1) {
       setErrorMsg('لا يمكن حذف جميع الفروع؛ يجب الإبقاء على فرع تمويني واحد على الأقل في المنظومة.');
       return;
@@ -176,7 +206,9 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   };
 
   const handleConfirmDelete = (branchId: string) => {
+    if (!canManageBranches || branchId === DEFAULT_BRANCH_ID) return;
     const branchObj = branches.find((b) => b.id === branchId);
+    if (branchObj?.isDefault) return;
     const executeDelete = () => {
       onDeleteBranch(branchId);
       setConfirmDeleteId(null);
@@ -191,6 +223,28 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
     }
 
     executeDelete();
+  };
+
+  const handleExecuteResetNonMahalla = async () => {
+    if (!canManageBranches || !onResetNonMahallaBranches) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setIsResettingBranches(true);
+    try {
+      const res = await onResetNonMahallaBranches();
+      setConfirmResetNonMahalla(false);
+      if (res?.success) {
+        setSuccessMsg(
+          `تم تصفير الإدارات غير الرئيسية بنجاح (${res.resetCount ?? 0} إدارة) مع الاحتفاظ الكامل ببيانات «إدارة تموين مركز المحلة الكبرى».`
+        );
+      } else {
+        setErrorMsg(res?.error || 'تعذر تنفيذ التصفير الانتقائي للإدارات.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'حدث خطأ أثناء التصفير الانتقائي للإدارات.');
+    } finally {
+      setIsResettingBranches(false);
+    }
   };
 
   return (
@@ -304,27 +358,39 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditBranch(branch)}
-                            data-testid={`rename-branch-btn-${branch.id}`}
-                            className="text-slate-500 hover:text-[#0D9488] p-1.5 rounded-lg hover:bg-[#0D9488]/10 transition-colors cursor-pointer"
-                            title="تعديل اسم الفرع (يتطلب Username & Password)"
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
+                          {(branch.id === DEFAULT_BRANCH_ID || branch.isDefault) && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-black">
+                              <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                              إدارة رئيسية محمية
+                            </span>
+                          )}
 
-                          {branches.length > 1 && (
+                          {canManageBranches && (
                             <button
                               type="button"
-                              onClick={() => handleRequestDelete(branch)}
-                              data-testid={`delete-branch-btn-${branch.id}`}
-                              className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                              title="حذف الفرع (يتطلب Username & Password)"
+                              onClick={() => handleStartEditBranch(branch)}
+                              data-testid={`rename-branch-btn-${branch.id}`}
+                              className="text-slate-500 hover:text-[#0D9488] p-1.5 rounded-lg hover:bg-[#0D9488]/10 transition-colors cursor-pointer"
+                              title="تعديل اسم الفرع (يتطلب Username & Password)"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Pencil className="w-4 h-4" />
                             </button>
                           )}
+
+                          {canManageBranches &&
+                            branches.length > 1 &&
+                            branch.id !== DEFAULT_BRANCH_ID &&
+                            !branch.isDefault && (
+                              <button
+                                type="button"
+                                onClick={() => handleRequestDelete(branch)}
+                                data-testid={`delete-branch-btn-${branch.id}`}
+                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="حذف الفرع (يتطلب Username & Password)"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                         </div>
                       </div>
 
@@ -451,93 +517,163 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
             </div>
           </div>
 
-          {/* Add New Branch Form */}
-          <form
-            onSubmit={handleAddBranch}
-            className="bg-white rounded-2xl border border-[#D4AF37]/40 p-5 space-y-4 shadow-sm"
-          >
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-[#0A1628] text-[#D4AF37] flex items-center justify-center">
-                  <Plus className="w-5 h-5" />
-                </div>
+          {/* Selective Non-Mahalla Reset Card (Super Admin only) */}
+          {canManageBranches && onResetNonMahallaBranches && (
+            <div className="bg-amber-50/90 border-2 border-amber-300 rounded-2xl p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-sm font-black text-[#0A1628]">
-                    إضافة فرع أو إدارة تموينية جديدة بنسخة مستقلة
+                  <h3 className="text-sm font-black text-amber-950 flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                    تصفير الإدارات غير الرئيسية مع حماية إدارة تموين مركز المحلة الكبرى
                   </h3>
-                  <p className="text-[11px] font-bold text-slate-500">
-                    يتطلب إدخال Username & Password عند الضغط على زر الإنشاء
+                  <p className="text-xs font-bold text-amber-900 mt-0.5">
+                    يتم أخذ نسخة احتياطية فورية ثم مسح/تصفير الإدارات الفرعية الإضافية ({nonMahallaBranches.length} إدارة) مع الإبقاء التام على كافة بيانات «إدارة تموين مركز المحلة الكبرى» دون مساس.
                   </p>
                 </div>
+
+                {!confirmResetNonMahalla && (
+                  <button
+                    type="button"
+                    data-testid="branches-reset-non-mahalla-btn"
+                    onClick={() => setConfirmResetNonMahalla(true)}
+                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer transition shrink-0"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>تصفير الإدارات غير الرئيسية</span>
+                  </button>
+                )}
               </div>
+
+              {confirmResetNonMahalla && (
+                <div className="p-3 bg-white rounded-xl border border-amber-400 flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-xs font-black text-rose-800">
+                    تأكيد التصفير الانتقائي: ستبقى «إدارة تموين مركز المحلة الكبرى» سليمة 100% وسيتم مسح وتصفير باقي الإدارات الفرعية فقط.
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmResetNonMahalla(false)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                    >
+                      إلغاء
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isResettingBranches}
+                      data-testid="confirm-branches-reset-non-mahalla-btn"
+                      onClick={() => {
+                        if (!isVaultUnlocked) {
+                          onRequireVaultUnlock('تصفير الإدارات غير الرئيسية', () => {
+                            void handleExecuteResetNonMahalla();
+                          });
+                          return;
+                        }
+                        void handleExecuteResetNonMahalla();
+                      }}
+                      className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-black cursor-pointer disabled:opacity-50"
+                    >
+                      {isResettingBranches ? 'جاري النسخ والتصفير...' : 'نعم، تصفير الإدارات غير الرئيسية'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+          )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-black text-[#0A1628] mb-1">
-                  اسم الإدارة / الفرع الجديد *
-                </label>
-                <input
-                  type="text"
-                  data-testid="new-branch-name-input"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="مثال: إدارة تموين سمنود"
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
-                />
+          {/* Add New Branch Form (Super Admin only) */}
+          {canManageBranches ? (
+            <form
+              onSubmit={handleAddBranch}
+              className="bg-white rounded-2xl border border-[#D4AF37]/40 p-5 space-y-4 shadow-sm"
+            >
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-[#0A1628] text-[#D4AF37] flex items-center justify-center">
+                    <Plus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-[#0A1628]">
+                      إضافة فرع أو إدارة تموينية جديدة بنسخة مستقلة
+                    </h3>
+                    <p className="text-[11px] font-bold text-slate-500">
+                      يتطلب إدخال Username & Password عند الضغط على زر الإنشاء
+                    </p>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-black text-[#0A1628] mb-1">
-                  المديرية التابع لها
-                </label>
-                <input
-                  type="text"
-                  value={newDirectorate}
-                  onChange={(e) => setNewDirectorate(e.target.value)}
-                  placeholder="مديرية التموين والتجارة الداخلية بالغربية"
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-black text-[#0A1628] mb-1">
+                    اسم الإدارة / الفرع الجديد *
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="new-branch-name-input"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="مثال: إدارة تموين سمنود"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-[#0A1628] mb-1">
+                    المديرية التابع لها
+                  </label>
+                  <input
+                    type="text"
+                    value={newDirectorate}
+                    onChange={(e) => setNewDirectorate(e.target.value)}
+                    placeholder="مديرية التموين والتجارة الداخلية بالغربية"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-[#0A1628] mb-1">
+                    المحافظة
+                  </label>
+                  <input
+                    type="text"
+                    value={newGovernorate}
+                    onChange={(e) => setNewGovernorate(e.target.value)}
+                    placeholder="محافظة الغربية"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-black text-[#0A1628] mb-1">
-                  المحافظة
-                </label>
-                <input
-                  type="text"
-                  value={newGovernorate}
-                  onChange={(e) => setNewGovernorate(e.target.value)}
-                  placeholder="محافظة الغربية"
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
-                />
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs font-black text-[#0A1628] mb-1">
+                    وصف أو ملاحظات عن نطاق الفرع (اختياري)
+                  </label>
+                  <input
+                    type="text"
+                    value={newDescription}
+                    onChange={(e) => setNewDescription(e.target.value)}
+                    placeholder="مثال: قاعدة بيانات مخبز بلدي ومديونيات وسجل المستخدمين الخاصة بهذا الفرع"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  data-testid="create-branch-submit-btn"
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-l from-[#0A1628] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] text-white font-black text-sm shadow-md transition-all flex items-center justify-center gap-2 shrink-0 border border-[#D4AF37]/30 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 text-[#D4AF37]" />
+                  إنشاء الفرع وتفعيل نسخته المستقلة
+                </button>
               </div>
+            </form>
+          ) : (
+            <div className="bg-slate-100 border border-slate-200 rounded-2xl p-4 text-xs font-black text-slate-700 flex items-center gap-2">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>إنشاء أو تعديل أو حذف أو تصفير الإدارات مقصور على مدير النظام (Super Admin) فقط.</span>
             </div>
-
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
-              <div className="flex-1">
-                <label className="block text-xs font-black text-[#0A1628] mb-1">
-                  وصف أو ملاحظات عن نطاق الفرع (اختياري)
-                </label>
-                <input
-                  type="text"
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder="مثال: قاعدة بيانات مخبز بلدي ومديونيات وسجل المستخدمين الخاصة بهذا الفرع"
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-[#FAF8F5] text-sm font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
-                />
-              </div>
-
-              <button
-                type="submit"
-                data-testid="create-branch-submit-btn"
-                className="px-5 py-2.5 rounded-xl bg-gradient-to-l from-[#0A1628] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] text-white font-black text-sm shadow-md transition-all flex items-center justify-center gap-2 shrink-0 border border-[#D4AF37]/30 cursor-pointer"
-              >
-                <Plus className="w-4 h-4 text-[#D4AF37]" />
-                إنشاء الفرع وتفعيل نسخته المستقلة
-              </button>
-            </div>
-          </form>
+          )}
         </div>
       </div>
     </div>

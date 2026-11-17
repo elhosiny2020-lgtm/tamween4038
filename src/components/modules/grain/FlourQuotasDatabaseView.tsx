@@ -32,6 +32,9 @@ interface FlourQuotasDatabaseViewProps {
   branchName: string;
   currentUserFullName: string;
   isViewer: boolean;
+  canAdd?: boolean;
+  canPrint?: boolean;
+  canExport?: boolean;
   bakeries: Bakery[];
   onUpdateState: (updater: (prev: GrainMaintenanceState) => GrainMaintenanceState, summary: string) => void;
   onNotify: (type: 'ok' | 'err', text: string) => void;
@@ -42,6 +45,9 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
   branchName,
   currentUserFullName,
   isViewer,
+  canAdd = !isViewer,
+  canPrint = !isViewer,
+  canExport = !isViewer,
   bakeries,
   onUpdateState,
   onNotify,
@@ -448,7 +454,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {!isViewer && (
+              {canAdd && (
                 <button
                   type="button"
                   onClick={() => setShowAddQuotaModal(true)}
@@ -459,105 +465,109 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                   <span>ربط وتخصيص حصة لمخبز</span>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() =>
-                  exportRowsToArabicCsv(
-                    'flour_quota_master',
-                    [
-                      'م',
-                      'كود الحصة',
-                      'رقم قرار التخصيص',
-                      'تاريخ القرار',
-                      'كود المطحن',
-                      'اسم المطحن',
-                      'كود المخبز',
-                      'اسم المخبز',
-                      'اسم صاحب المخبز',
-                      'القرية',
-                      'الوحدة المحلية',
-                      'نوع الدقيق',
-                      'درجة الاستخراج',
-                      'الحصة اليومية (طن)',
-                      'الحصة اليومية (شيكارة)',
-                      'الحصة الأسبوعية (طن)',
-                      'الحصة الشهرية (طن)',
-                      'الحصة السنوية (طن)',
-                      'بداية السريان',
-                      'نهاية السريان',
-                      'حالة الحصة',
-                      'سبب التخصيص/التعديل',
-                    ],
-                    quotaMaster.map((q) => [
-                      q.serialNo,
-                      q.quotaCode,
-                      q.allocationDecisionNumber,
-                      q.decisionDate,
-                      q.millCode,
-                      q.millName,
-                      q.bakeryCode,
-                      q.bakeryName,
-                      q.ownerName,
-                      q.village,
-                      q.localUnit,
-                      q.flourType,
-                      q.extractionGrade,
-                      q.dailyQuotaTons,
-                      q.dailyQuotaSacks,
-                      q.weeklyQuotaTons,
-                      q.monthlyQuotaTons,
-                      q.annualQuotaTons,
-                      q.effectiveStartDate,
-                      q.effectiveEndDate,
-                      q.quotaStatus,
-                      q.allocationOrAmendmentReason,
-                    ])
-                  )
-                }
-                className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1.5"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>تصدير Excel</span>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  printModuleReportA4({
-                    title: 'سجل حصص الدقيق التموينية المخصصة للمخابز',
-                    subtitle: 'مربوط بالمطاحن التموينية وقاعدة بيانات المخابز بالمركز',
-                    branchName,
-                    headers: [
-                      'كود الحصة',
-                      'قرار التخصيص',
-                      'المطحن',
-                      'المخبز والقرية',
-                      'الاستخراج',
-                      'يومي (طن / شيكارة)',
-                      'أسبوعي (طن)',
-                      'شهري (طن)',
-                      'سنوي (طن)',
-                      'الحالة',
-                    ],
-                    rows: quotaMaster.map((q) => [
-                      q.quotaCode,
-                      q.allocationDecisionNumber,
-                      q.millName,
-                      `${q.bakeryName} (${q.village})`,
-                      q.extractionGrade,
-                      `${q.dailyQuotaTons} طن (${q.dailyQuotaSacks} ش)`,
-                      `${q.weeklyQuotaTons} طن`,
-                      `${q.monthlyQuotaTons} طن`,
-                      `${q.annualQuotaTons} طن`,
-                      q.quotaStatus,
-                    ]),
-                    preparedBy: currentUserFullName,
-                  })
-                }
-                className="px-3 py-2 rounded-xl bg-[#0f2342] text-white text-xs font-black flex items-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                <span>طباعة A4</span>
-              </button>
+              {canExport && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportRowsToArabicCsv(
+                      'flour_quota_master',
+                      [
+                        'م',
+                        'كود الحصة',
+                        'رقم قرار التخصيص',
+                        'تاريخ القرار',
+                        'كود المطحن',
+                        'اسم المطحن',
+                        'كود المخبز',
+                        'اسم المخبز',
+                        'اسم صاحب المخبز',
+                        'القرية',
+                        'الوحدة المحلية',
+                        'نوع الدقيق',
+                        'درجة الاستخراج',
+                        'الحصة اليومية (طن)',
+                        'الحصة اليومية (شيكارة)',
+                        'الحصة الأسبوعية (طن)',
+                        'الحصة الشهرية (طن)',
+                        'الحصة السنوية (طن)',
+                        'بداية السريان',
+                        'نهاية السريان',
+                        'حالة الحصة',
+                        'سبب التخصيص/التعديل',
+                      ],
+                      quotaMaster.map((q) => [
+                        q.serialNo,
+                        q.quotaCode,
+                        q.allocationDecisionNumber,
+                        q.decisionDate,
+                        q.millCode,
+                        q.millName,
+                        q.bakeryCode,
+                        q.bakeryName,
+                        q.ownerName,
+                        q.village,
+                        q.localUnit,
+                        q.flourType,
+                        q.extractionGrade,
+                        q.dailyQuotaTons,
+                        q.dailyQuotaSacks,
+                        q.weeklyQuotaTons,
+                        q.monthlyQuotaTons,
+                        q.annualQuotaTons,
+                        q.effectiveStartDate,
+                        q.effectiveEndDate,
+                        q.quotaStatus,
+                        q.allocationOrAmendmentReason,
+                      ])
+                    )
+                  }
+                  className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1.5"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>تصدير Excel</span>
+                </button>
+              )}
+              {canPrint && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    printModuleReportA4({
+                      title: 'سجل حصص الدقيق التموينية المخصصة للمخابز',
+                      subtitle: 'مربوط بالمطاحن التموينية وقاعدة بيانات المخابز بالمركز',
+                      branchName,
+                      headers: [
+                        'كود الحصة',
+                        'قرار التخصيص',
+                        'المطحن',
+                        'المخبز والقرية',
+                        'الاستخراج',
+                        'يومي (طن / شيكارة)',
+                        'أسبوعي (طن)',
+                        'شهري (طن)',
+                        'سنوي (طن)',
+                        'الحالة',
+                      ],
+                      rows: quotaMaster.map((q) => [
+                        q.quotaCode,
+                        q.allocationDecisionNumber,
+                        q.millName,
+                        `${q.bakeryName} (${q.village})`,
+                        q.extractionGrade,
+                        `${q.dailyQuotaTons} طن (${q.dailyQuotaSacks} ش)`,
+                        `${q.weeklyQuotaTons} طن`,
+                        `${q.monthlyQuotaTons} طن`,
+                        `${q.annualQuotaTons} طن`,
+                        q.quotaStatus,
+                      ]),
+                      preparedBy: currentUserFullName,
+                    })
+                  }
+                  className="px-3 py-2 rounded-xl bg-[#0f2342] text-white text-xs font-black flex items-center gap-1.5"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>طباعة A4</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -782,7 +792,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                 الرصيد بعد الصرف = الرصيد قبل الصرف - الكمية المصروفة المعتمدة، مع منع صرف حصة أكبر من المقرر إلا بتجاوز إداري مسبب
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddIssueModal(true)}
@@ -870,7 +880,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                 مقدار التغيير = الحصة الجديدة - الحصة السابقة، مع حفظ السجل التاريخي للحصة قبل وبعد التعديل
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddAmendModal(true)}

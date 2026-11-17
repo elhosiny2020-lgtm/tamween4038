@@ -178,6 +178,7 @@ const PURE_HEX_REPORT_STYLES = `
   }
   thead th, th {
     display: table-cell !important;
+    position: static !important;
     background-color: #0f2342 !important;
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
@@ -317,17 +318,29 @@ export function printHtmlElementA4(
       (n as HTMLElement).style.display = 'block';
     });
 
+    const safeTitle = String(documentTitle || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
     iframeDoc.open();
     iframeDoc.write(`
       <!DOCTYPE html>
       <html dir="rtl" lang="ar">
       <head>
         <meta charset="utf-8">
-        <title>${documentTitle}</title>
+        <title>${safeTitle}</title>
         <style>
           @page {
             size: ${size} ${orient};
             margin: ${marginMm};
+            @bottom-center {
+              content: "صفحة " counter(page) " من " counter(pages);
+              font-size: 8pt;
+              font-weight: 700;
+              color: #334155;
+              font-family: 'Cairo', 'Tajawal', Arial, sans-serif;
+            }
           }
           ${PURE_HEX_REPORT_STYLES}
         </style>

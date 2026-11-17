@@ -25,6 +25,9 @@ interface GrainFinancialsAndReportsViewProps {
   branchName: string;
   currentUserFullName: string;
   isViewer: boolean;
+  canAdd?: boolean;
+  canPrint?: boolean;
+  canExport?: boolean;
   initialMode?: 'financials' | 'reports';
   onUpdateState: (updater: (prev: GrainMaintenanceState) => GrainMaintenanceState, summary: string) => void;
   onNotify: (type: 'ok' | 'err', text: string) => void;
@@ -44,6 +47,9 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
   branchName,
   currentUserFullName,
   isViewer,
+  canAdd = !isViewer,
+  canPrint = !isViewer,
+  canExport = !isViewer,
   initialMode = 'financials',
   onUpdateState,
   onNotify,
@@ -536,7 +542,7 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
                   يفصل بين قيود تقييم الأصول الثابتة، تقييم المخزون السلعي، والإيرادات والمصروفات الفعلية
                 </p>
               </div>
-              {!isViewer && (
+              {canAdd && (
                 <button
                   type="button"
                   onClick={() => setShowAddFinModal(true)}
@@ -619,37 +625,41 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    exportRowsToArabicCsv(
-                      `grain_report_${selectedReport}`,
-                      visibleHeaders,
-                      visibleRows
-                    )
-                  }
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span>تصدير التقرير المعروض Excel</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    printModuleReportA4({
-                      title: currentReportData.title,
-                      subtitle: currentReportData.subtitle,
-                      branchName,
-                      headers: visibleHeaders,
-                      rows: visibleRows,
-                      preparedBy: currentUserFullName,
-                    })
-                  }
-                  className="px-4 py-2 rounded-xl bg-[#0f2342] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5 shadow-sm"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>طباعة رسمية A4 بالهيدر والتوقيعات</span>
-                </button>
+                {canExport && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      exportRowsToArabicCsv(
+                        `grain_report_${selectedReport}`,
+                        visibleHeaders,
+                        visibleRows
+                      )
+                    }
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>تصدير التقرير المعروض Excel</span>
+                  </button>
+                )}
+                {canPrint && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      printModuleReportA4({
+                        title: currentReportData.title,
+                        subtitle: currentReportData.subtitle,
+                        branchName,
+                        headers: visibleHeaders,
+                        rows: visibleRows,
+                        preparedBy: currentUserFullName,
+                      })
+                    }
+                    className="px-4 py-2 rounded-xl bg-[#0f2342] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>طباعة رسمية A4 بالهيدر والتوقيعات</span>
+                  </button>
+                )}
               </div>
             </div>
 

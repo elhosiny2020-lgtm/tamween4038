@@ -45,8 +45,17 @@ export interface LicenseSummaryCounts {
   alerts: LicenseDocumentAlert[];
 }
 
+function safeNum(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function isBakeryStoppedStatus(status?: string): boolean {
+  return /متوقف|موقوف|مغلق|ملغ/.test(String(status || '').trim());
+}
+
 export function formatCurrencyCompact(value: number): string {
-  const num = Number(value) || 0;
+  const num = safeNum(value);
   if (Math.abs(num) >= 1_000_000) {
     return `${(num / 1_000_000).toFixed(2)} م`;
   }
@@ -57,7 +66,7 @@ export function formatCurrencyCompact(value: number): string {
 }
 
 export function formatLoavesCompact(value: number): string {
-  const num = Number(value) || 0;
+  const num = safeNum(value);
   if (Math.abs(num) >= 1_000_000) {
     return `${(num / 1_000_000).toFixed(2)} مليون`;
   }
@@ -76,12 +85,12 @@ export function computeExecutiveSummary(
   let totalPaidDebt = 0;
   const debtByBakery = new Map<string, number>();
 
-  for (const d of filteredDebts) {
-    const remaining = Number(d.netRemainingDebt) || 0;
+  for (const d of filteredDebts || []) {
+    const remaining = Math.max(0, safeNum(d.netRemainingDebt));
     const paid =
-      (Number(d.paidViolationAmount) || 0) +
-      (Number(d.paidAddedAmount) || 0) +
-      (Number(d.paidDisposalAmount) || 0);
+      Math.max(0, safeNum(d.paidViolationAmount)) +
+      Math.max(0, safeNum(d.paidAddedAmount)) +
+      Math.max(0, safeNum(d.paidDisposalAmount));
     totalRemainingDebt += remaining;
     totalPaidDebt += paid;
     const key = String(d.bakeryId || d.id);
@@ -94,21 +103,22 @@ export function computeExecutiveSummary(
   let totalInsuranceQuota = 0;
   let totalLoaves = 0;
 
-  for (const b of filteredBakeries) {
+  for (const b of filteredBakeries || []) {
     const status = (b.activityStatus || '').trim();
-    if (status === 'يعمل') {
+    if (!isBakeryStoppedStatus(status)) {
       activeCount++;
     } else {
       stoppedCount++;
     }
-    totalActualQuota += Number(b.actualQuota) || 0;
-    totalInsuranceQuota += Number(b.insuranceQuota) || 0;
-    totalLoaves += Number(b.loavesCount) || 0;
+    totalActualQuota += Math.max(0, safeNum(b.actualQuota));
+    totalInsuranceQuota += Math.max(0, safeNum(b.insuranceQuota));
+    totalLoaves += Math.max(0, safeNum(b.loavesCount));
   }
 
   let thresholdExceededCount = 0;
+  const safeThreshold = Math.max(0, safeNum(debtAlertThreshold));
   debtByBakery.forEach((amount) => {
-    if (amount >= debtAlertThreshold) thresholdExceededCount++;
+    if (amount >= safeThreshold) thresholdExceededCount++;
   });
 
   const totalDebtTurnover = totalRemainingDebt + totalPaidDebt;
@@ -221,9 +231,9 @@ export function analyzeOperationalAndLicenseAlerts(
     { key: 'taxCardDate', label: 'البطاقة الضريبية' },
   ];
 
-  for (const b of bakeries) {
+  for (const b of bakeries || []) {
     const status = (b.activityStatus || '').trim();
-    if (status && status !== 'يعمل') {
+    if (status && isBakeryStoppedStatus(status)) {
       alerts.push({
         bakeryId: b.id,
         bakeryOwnerName: b.bakeryOwnerName || 'مخبز غير مسمى',

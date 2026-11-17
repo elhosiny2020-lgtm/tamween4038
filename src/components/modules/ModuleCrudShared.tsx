@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Plus,
   Edit3,
@@ -167,6 +167,7 @@ interface ModuleFormModalProps {
   initialValues: Record<string, any>;
   onClose: () => void;
   onSubmit: (values: Record<string, any>) => string | null | void;
+  onFieldChange?: (key: string, value: any, currentValues: Record<string, any>) => Record<string, any> | void;
 }
 
 export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
@@ -178,18 +179,37 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
   initialValues,
   onClose,
   onSubmit,
+  onFieldChange,
 }) => {
   const [values, setValues] = useState<Record<string, any>>(initialValues);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const prevOpenRef = useRef<boolean>(false);
+  const prevIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (isOpen) {
+    const currentId = initialValues?.id ? String(initialValues.id) : undefined;
+    if (isOpen && (!prevOpenRef.current || prevIdRef.current !== currentId)) {
       setValues({ ...initialValues });
       setErrorMsg(null);
       setIsSubmitting(false);
     }
+    prevOpenRef.current = isOpen;
+    prevIdRef.current = currentId;
   }, [isOpen, initialValues]);
+
+  const updateFieldValue = (key: string, nextVal: any) => {
+    setValues((prev) => {
+      const updated = { ...prev, [key]: nextVal };
+      if (onFieldChange) {
+        const extra = onFieldChange(key, nextVal, updated);
+        if (extra && typeof extra === 'object') {
+          return { ...updated, ...extra };
+        }
+      }
+      return updated;
+    });
+  };
 
   if (!isOpen) return null;
 
@@ -297,9 +317,7 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
                       id={`crud-field-${f.key}`}
                       disabled={f.readOnly}
                       value={String(val)}
-                      onChange={(e) =>
-                        setValues((prev) => ({ ...prev, [f.key]: e.target.value }))
-                      }
+                      onChange={(e) => updateFieldValue(f.key, e.target.value)}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 focus:border-[#0A1628] rounded-xl font-bold text-slate-900"
                     >
                       {(f.options || []).map((opt) => (
@@ -315,9 +333,7 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
                       rows={3}
                       value={String(val)}
                       placeholder={f.placeholder}
-                      onChange={(e) =>
-                        setValues((prev) => ({ ...prev, [f.key]: e.target.value }))
-                      }
+                      onChange={(e) => updateFieldValue(f.key, e.target.value)}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 focus:border-[#0A1628] rounded-xl font-bold text-slate-900"
                     />
                   ) : f.type === 'checkbox' ? (
@@ -327,9 +343,7 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
                         type="checkbox"
                         disabled={f.readOnly}
                         checked={Boolean(val)}
-                        onChange={(e) =>
-                          setValues((prev) => ({ ...prev, [f.key]: e.target.checked }))
-                        }
+                        onChange={(e) => updateFieldValue(f.key, e.target.checked)}
                       />
                       <span>{f.placeholder || f.label}</span>
                     </label>
@@ -343,15 +357,14 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
                       value={val}
                       placeholder={f.placeholder}
                       onChange={(e) =>
-                        setValues((prev) => ({
-                          ...prev,
-                          [f.key]:
-                            f.type === 'number'
-                              ? e.target.value === ''
-                                ? ''
-                                : Number(e.target.value)
-                              : e.target.value,
-                        }))
+                        updateFieldValue(
+                          f.key,
+                          f.type === 'number'
+                            ? e.target.value === ''
+                              ? ''
+                              : Number(e.target.value)
+                            : e.target.value
+                        )
                       }
                       className={`w-full px-3 py-2 bg-slate-50 border border-slate-300 focus:border-[#0A1628] rounded-xl font-bold text-slate-900 ${
                         f.type === 'number' || f.type === 'date' || f.type === 'time'

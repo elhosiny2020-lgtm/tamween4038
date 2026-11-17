@@ -13,6 +13,8 @@ import {
   syncAllBranchesFromCloudPayload,
   readBranchPartitionFromLocal,
 } from '../storage';
+import { AppUser } from '../types';
+import { isSuperAdmin } from '../utils/departmentRbac';
 import { isProtectedOwnerEmail, scrubProtectedOwnerEmail } from '../utils/auditHelper';
 import {
   signInWithGoogleWorkspace,
@@ -129,17 +131,22 @@ interface BackupModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentState: AppState;
+  currentUser?: AppUser | null;
   onRestoreState: (restored: AppState) => void;
   onFactoryReset: () => void;
+  onResetNonMahallaBranches?: () => Promise<{ success: boolean; resetCount?: number; error?: string }>;
 }
 
 export const BackupModal: React.FC<BackupModalProps> = ({
   isOpen,
   onClose,
   currentState,
+  currentUser,
   onRestoreState,
   onFactoryReset,
+  onResetNonMahallaBranches,
 }) => {
+  const canResetBranchesOrFactory = isSuperAdmin(currentUser);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [resetStep, setResetStep] = useState<0 | 1 | 2 | 3>(0);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1319,8 +1326,15 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     });
   };
 
-  // Delete Supabase Cloud Database Data & Reset Local State for Fresh Registration
+  // Delete Supabase Cloud Database Data & Reset Local State for Fresh Registration (Super Admin only)
   const handleDeleteSupabaseCloudData = async () => {
+    if (!canResetBranchesOrFactory) {
+      setStatusMsg({
+        text: 'مسح قواعد البيانات السحابية مقصور على مدير النظام (Super Admin) فقط.',
+        type: 'error',
+      });
+      return;
+    }
     setPendingActionConfirm({
       title: 'تأكيد المسح الشامل لقاعدة بيانات Supabase وبدء التسجيل من جديد',
       message: 'هل أنت متأكد من تنفيذ مسح شامل لجميع قواعد البيانات الموجودة حالياً على Supabase والذاكرة المحلية لتسجيل وكتابة البيانات من أول وجديد؟',
@@ -1486,7 +1500,61 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
+  const handleSelectiveResetNonMahalla = () => {
+    if (!canResetBranchesOrFactory || !onResetNonMahallaBranches) {
+      setStatusMsg({
+        text: 'التصفير الانتقائي للإدارات مقصور على مدير النظام (Super Admin) فقط.',
+        type: 'error',
+      });
+      return;
+    }
+    setPendingActionConfirm({
+      title: 'تأكيد التصفير الانتقائي للإدارات غير الرئيسية (حماية المحلة الكبرى)',
+      message:
+        'سيتم أخذ نسخة احتياطية كاملة أولاً، ثم تصفير ومسح بيانات الإدارات الفرعية غير الرئيسية فقط. ستبقى «إدارة تموين مركز المحلة الكبرى» سليمة 100% دون مساس. هل تريد المتابعة؟',
+      confirmLabel: 'نسخ احتياطي ثم تصفير غير الرئيسية',
+      variant: 'danger',
+      onConfirm: async () => {
+        setIsProcessing(true);
+        setStatusMsg({
+          text: 'جاري أخذ النسخة الاحتياطية وتصفير الإدارات غير الرئيسية مع حماية إدارة المحلة الكبرى...',
+          type: 'info',
+        });
+        try {
+          await saveBackupToPartition(currentState);
+          const res = await onResetNonMahallaBranches();
+          if (res?.success) {
+            setStatusMsg({
+              text: `تم التصفير الانتقائي بنجاح (${res.resetCount ?? 0} إدارة فرعية) وبقيت إدارة تموين مركز المحلة الكبرى سليمة تماماً.`,
+              type: 'success',
+            });
+          } else {
+            setStatusMsg({
+              text: res?.error || 'تعذر إتمام التصفير الانتقائي للإدارات.',
+              type: 'error',
+            });
+          }
+        } catch (err: any) {
+          setStatusMsg({
+            text: `خطأ أثناء التصفير الانتقائي: ${err?.message || 'غير معروف'}`,
+            type: 'error',
+          });
+        } finally {
+          setIsProcessing(false);
+        }
+      },
+    });
+  };
+
   const executeConfirmedFactoryReset = async () => {
+    if (!canResetBranchesOrFactory) {
+      setFactoryResetModalStep(0);
+      setStatusMsg({
+        text: 'إعادة ضبط المصنع مقصورة على مدير النظام (Super Admin) فقط.',
+        type: 'error',
+      });
+      return;
+    }
     setFactoryResetModalStep(0);
     setIsProcessing(true);
     setStatusMsg({
@@ -1516,6 +1584,13 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   const handleReset = () => {
+    if (!canResetBranchesOrFactory) {
+      setStatusMsg({
+        text: 'إعادة ضبط المصنع مقصورة على مدير النظام (Super Admin) فقط.',
+        type: 'error',
+      });
+      return;
+    }
     setFactoryResetModalStep(1);
   };
 
@@ -3162,31 +3237,64 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             </div>
           </div>
 
-          {/* SECTION 7: Factory Reset */}
-          <div className="p-3.5 bg-red-50/80 border-2 border-red-300 rounded-2xl space-y-2.5 shadow-xs">
-            <div className="flex items-center justify-between">
+          {/* SECTION 7: Protected Selective Reset & Factory Reset */}
+          <div className="p-3.5 bg-red-50/80 border-2 border-red-300 rounded-2xl space-y-3 shadow-xs">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h4 className="text-xs font-black text-red-950 flex items-center gap-1.5">
                 <AlertTriangle className="w-4 h-4 text-red-600 icon-animated shrink-0" />
-                <span>7. إعادة ضبط المصنع (Factory Reset - مسح البيانات المدخلة)</span>
+                <span>7. التصفير الانتقائي وإعادة ضبط المصنع (حماية إدارة المحلة الكبرى)</span>
               </h4>
               <span className="text-[10px] font-black text-red-800 bg-red-200/80 px-2 py-0.5 rounded-lg border border-red-300">
-                إجراء حساس جداً
+                مقصور على مدير النظام (Super Admin)
               </span>
             </div>
-            <p className="text-[11px] text-red-900 font-bold leading-relaxed">
-              مسح وتفريغ كافة البيانات والمدخلات (المخابز، المديونيات، والرسائل المدخلة) من الجهاز والسحابة وإعادة المنظومة لحالتها الأولى.
-            </p>
 
-            {resetStep === 0 && (
-              <button
-                type="button"
-                onClick={() => setResetStep(1)}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black transition shadow-sm flex items-center gap-2 cursor-pointer border border-red-400"
-              >
-                <Trash2 className="w-4 h-4 text-red-200" />
-                <span>طلب إعادة ضبط المصنع ومسح البيانات المدخلة 🗑️</span>
-              </button>
-            )}
+            {!canResetBranchesOrFactory ? (
+              <div className="p-3 bg-white border border-red-200 rounded-xl text-xs font-black text-slate-700 flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  عمليات التصفير وإعادة ضبط المصنع ومسح القواعد مقصورة على مدير النظام (Super Admin) فقط، وتخضع إدارة تموين مركز المحلة الكبرى لحماية دائمة.
+                </span>
+              </div>
+            ) : (
+              <>
+                {onResetNonMahallaBranches && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex flex-wrap items-center justify-between gap-2">
+                    <div className="space-y-0.5 max-w-xl">
+                      <p className="text-xs font-black text-emerald-950">
+                        تصفير الإدارات غير الرئيسية فقط (الإبقاء الكامل على «إدارة تموين مركز المحلة الكبرى»)
+                      </p>
+                      <p className="text-[11px] font-bold text-emerald-800">
+                        يأخذ نسخة احتياطية فورية أولاً ثم يصفر بيانات الإدارات الإضافية دون أي مساس بإدارة مركز المحلة الكبرى.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="reset-non-mahalla-btn"
+                      disabled={isProcessing}
+                      onClick={handleSelectiveResetNonMahalla}
+                      className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition shadow-sm flex items-center gap-2 cursor-pointer border border-emerald-500 disabled:opacity-50"
+                    >
+                      <RotateCcw className="w-4 h-4 text-emerald-200" />
+                      <span>تصفير الإدارات غير الرئيسية فقط</span>
+                    </button>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-red-900 font-bold leading-relaxed">
+                  مسح وتفريغ كافة البيانات والمدخلات (المخابز، المديونيات، والرسائل المدخلة) من الجهاز والسحابة وإعادة المنظومة لحالتها الأولى.
+                </p>
+
+                {resetStep === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setResetStep(1)}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black transition shadow-sm flex items-center gap-2 cursor-pointer border border-red-400"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-200" />
+                    <span>طلب إعادة ضبط المصنع ومسح البيانات المدخلة 🗑️</span>
+                  </button>
+                )}
 
             {/* STEP 1 / 3 WARNING */}
             {resetStep === 1 && (
@@ -3275,6 +3383,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   </button>
                 </div>
               </div>
+            )}
+              </>
             )}
           </div>
         </div>

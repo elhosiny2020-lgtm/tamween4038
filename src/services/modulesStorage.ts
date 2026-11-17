@@ -351,6 +351,8 @@ export function createInitialRationState(
       invoiceNumber: 'INV-88101',
       monthKey,
       merchantId: merchants[0].id,
+      traderCode: merchants[0].traderCode,
+      posMachineNumber: merchants[0].posMachineNumber,
       wholesaleBranch: `فرع جملة ${branchName}`,
       linkedCardsCount: 380,
       linkedBeneficiariesCount: 1420,
@@ -364,6 +366,29 @@ export function createInitialRationState(
         { commodityId: commodities[0].id, commodityName: commodities[0].name, requestedQty: 900, approvedQty: 900, deliveredQty: 900, supplyPrice: 12.1 },
       ],
       totalValue: 10890,
+    },
+    {
+      id: `${branchId}-req-2`,
+      branchId,
+      requestNumber: 'REQ-2026-102',
+      invoiceNumber: 'INV-88102',
+      monthKey,
+      merchantId: merchants[1].id,
+      traderCode: merchants[1].traderCode,
+      posMachineNumber: merchants[1].posMachineNumber,
+      wholesaleBranch: `فرع جملة ${branchName}`,
+      linkedCardsCount: merchants[1].linkedCardsCount,
+      linkedBeneficiariesCount: merchants[1].linkedBeneficiariesCount,
+      insuranceAmount: merchants[1].cashInsuranceAmount,
+      committedInsuranceBefore: 8625,
+      previousStockTotalQty: 320,
+      requestDate: today,
+      deliveryDate: today,
+      status: 'معتمد',
+      lines: [
+        { commodityId: commodities[1].id, commodityName: commodities[1].name, requestedQty: 300, approvedQty: 300, deliveredQty: 280, supplyPrice: 28.75 },
+      ],
+      totalValue: 8625,
     },
   ];
 
@@ -1331,12 +1356,36 @@ function upgradeModulesBundleIfNeeded(
   let upgraded = false;
   let nextRation = bundle.ration;
 
-  if (!Array.isArray(nextRation.merchants) || nextRation.merchants.length < 116) {
+  const needsExpiryBackfill =
+    Array.isArray(nextRation.merchants) &&
+    nextRation.merchants.some((m) => !m.taxCardExpiryDate || !m.commercialRegExpiryDate);
+
+  if (!Array.isArray(nextRation.merchants) || nextRation.merchants.length < 116 || needsExpiryBackfill) {
     const fullMayList = buildMay2026RationMerchantsList(branchId, branchName, villages);
+    const seedById = new Map(fullMayList.map((m) => [m.id, m]));
     const existingById = new Map(
       (nextRation.merchants || []).map((m) => [m.id, m])
     );
-    const mergedMerchants = fullMayList.map((m) => existingById.get(m.id) || m);
+    const baseList =
+      Array.isArray(nextRation.merchants) && nextRation.merchants.length >= 116
+        ? nextRation.merchants
+        : fullMayList.map((m) => existingById.get(m.id) || m);
+
+    const mergedMerchants = baseList.map((m, idx) => {
+      const seededRef = seedById.get(m.id) || fullMayList[idx % fullMayList.length];
+      return {
+        ...m,
+        traderCode: m.traderCode || seededRef?.traderCode || `TRD-16-${5001 + idx}`,
+        posMachineNumber: m.posMachineNumber || seededRef?.posMachineNumber || `1604${8001 + idx}`,
+        commercialRegNumber: m.commercialRegNumber || seededRef?.commercialRegNumber || `CR-${30001 + idx}`,
+        taxCardNumber: m.taxCardNumber || seededRef?.taxCardNumber || `TX-410-${101 + idx}-16`,
+        licenseNumber: m.licenseNumber || seededRef?.licenseNumber || `LIC-TM-${2001 + idx}`,
+        licenseExpiryDate: m.licenseExpiryDate || seededRef?.licenseExpiryDate || '2027-05-01',
+        taxCardExpiryDate: m.taxCardExpiryDate || seededRef?.taxCardExpiryDate || '2027-08-15',
+        commercialRegExpiryDate: m.commercialRegExpiryDate || seededRef?.commercialRegExpiryDate || '2027-09-30',
+      };
+    });
+
     nextRation = {
       ...nextRation,
       merchants: mergedMerchants,
@@ -1649,7 +1698,9 @@ export async function saveBranchModulesBundle(
     branchId,
     updatedAt: nowIso,
   };
-  writeLocalBranchModulesBundle(branchId, withTimestamp);
+  setTimeout(() => {
+    writeLocalBranchModulesBundle(branchId, withTimestamp);
+  }, 0);
 
   const runSave = async (): Promise<ModuleSaveResult> => {
     let serverOk = false;

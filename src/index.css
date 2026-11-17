@@ -311,8 +311,14 @@ tfoot tr td {
 /* Official Print Styles */
 @media print {
   @page {
-    size: A4 landscape;
-    margin: 6mm;
+    size: auto;
+    margin: 8mm;
+    @bottom-center {
+      content: "صفحة " counter(page) " من " counter(pages);
+      font-size: 8pt;
+      font-weight: 700;
+      color: #475569;
+    }
   }
 
   html, body {
@@ -335,6 +341,10 @@ tfoot tr td {
     width: 100% !important;
     border-collapse: collapse !important;
     page-break-inside: auto;
+  }
+
+  table th {
+    position: static !important;
   }
 
   tr {

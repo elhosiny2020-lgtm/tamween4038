@@ -774,31 +774,90 @@ export function generateSmartRationAlerts(params: {
     }
   }
 
-  // 7: انتهاء صلاحية تراخيص أو بيانات التاجر
+  // 7: انتهاء صلاحية تراخيص أو البطاقة الضريبية أو السجل التجاري أو بيانات التاجر
   for (const m of params.merchants) {
-    const expStr = m.activityEndDate || m.licenseExpiryDate;
-    if (expStr) {
-      const expMs = new Date(expStr).getTime();
-      if (!Number.isNaN(expMs)) {
-        const daysLeft = Math.ceil((expMs - todayMs) / (1000 * 60 * 60 * 24));
-        if (daysLeft <= 45) {
-          alerts.push({
-            id: `lic-${m.id}`,
-            category: 'EXPIRED_MERCHANT_LICENSE',
-            categoryLabel: 'انتهاء صلاحية تراخيص أو بيانات التاجر',
-            severity: daysLeft <= 0 ? 'حرجة' : 'متوسطة',
-            entityName: `${m.merchantName} (${m.ownerName})`,
-            message:
-              daysLeft <= 0
-                ? `انتهت صلاحية ترخيص المنفذ رقم (${m.licenseNumber}) بتاريخ ${expStr}.`
-                : `ينتهي ترخيص المنفذ رقم (${m.licenseNumber}) خلال ${daysLeft} يوماً (${expStr}).`,
-            metricValue: expStr,
-          });
-        }
+    const docChecks: {
+      key: string;
+      docTitle: string;
+      categoryLabel: string;
+      docNumber: string;
+      expiryDate?: string;
+    }[] = [
+      {
+        key: 'lic',
+        docTitle: 'رخصة المنفذ التمويني',
+        categoryLabel: 'انتهاء صلاحية رخصة التاجر التمويني',
+        docNumber: m.licenseNumber || '—',
+        expiryDate: m.licenseExpiryDate || m.activityEndDate,
+      },
+      {
+        key: 'tax',
+        docTitle: 'البطاقة الضريبية',
+        categoryLabel: 'انتهاء صلاحية البطاقة الضريبية للتاجر',
+        docNumber: m.taxCardNumber || '—',
+        expiryDate: m.taxCardExpiryDate,
+      },
+      {
+        key: 'cr',
+        docTitle: 'السجل التجاري',
+        categoryLabel: 'انتهاء صلاحية السجل التجاري للتاجر',
+        docNumber: m.commercialRegExpiryDate ? m.commercialRegNumber || '—' : '—',
+        expiryDate: m.commercialRegExpiryDate,
+      },
+    ];
+
+    for (const chk of docChecks) {
+      if (!chk.expiryDate) continue;
+      const expMs = new Date(chk.expiryDate).getTime();
+      if (Number.isNaN(expMs)) continue;
+      const daysLeft = Math.ceil((expMs - todayMs) / (1000 * 60 * 60 * 24));
+      if (daysLeft <= 45) {
+        alerts.push({
+          id: `${chk.key}-${m.id}`,
+          category: 'EXPIRED_MERCHANT_LICENSE',
+          categoryLabel: chk.categoryLabel,
+          severity: daysLeft <= 0 ? 'حرجة' : 'متوسطة',
+          entityName: `${m.merchantName} (كود: ${m.traderCode || '—'} | ماكينة: ${m.posMachineNumber || '—'})`,
+          message:
+            daysLeft <= 0
+              ? `انتهت صلاحية ${chk.docTitle} رقم (${chk.docNumber}) بتاريخ ${chk.expiryDate} — الرقم القومي: ${m.nationalId || 'غير مسجل'} — التأمين: ${m.cashInsuranceAmount} ج.م.`
+              : `قرب انتهاء ${chk.docTitle} رقم (${chk.docNumber}) خلال ${daysLeft} يوماً (${chk.expiryDate}) — الرقم القومي: ${m.nationalId || 'غير مسجل'}.`,
+          metricValue: `${chk.docTitle}: ${chk.expiryDate}`,
+        });
       }
     }
   }
 
   return alerts;
 }
+
+export interface MerchantDocumentExpiryEvaluation {
+  status: 'منتهي' | 'قريب الانتهاء' | 'ساري' | 'غير مسجل';
+  daysLeft: number | null;
+  expiryDate: string;
+}
+
+export function evaluateSingleDateStatus(
+  expiryDate?: string,
+  todayIso?: string,
+  warningDays = 45
+): MerchantDocumentExpiryEvaluation {
+  if (!expiryDate || !expiryDate.trim()) {
+    return { status: 'غير مسجل', daysLeft: null, expiryDate: '—' };
+  }
+  const todayMs = todayIso ? new Date(todayIso).getTime() : Date.now();
+  const expMs = new Date(expiryDate).getTime();
+  if (Number.isNaN(expMs)) {
+    return { status: 'غير مسجل', daysLeft: null, expiryDate };
+  }
+  const daysLeft = Math.ceil((expMs - todayMs) / (1000 * 60 * 60 * 24));
+  if (daysLeft <= 0) {
+    return { status: 'منتهي', daysLeft, expiryDate };
+  }
+  if (daysLeft <= warningDays) {
+    return { status: 'قريب الانتهاء', daysLeft, expiryDate };
+  }
+  return { status: 'ساري', daysLeft, expiryDate };
+}
+
 

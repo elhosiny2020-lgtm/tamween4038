@@ -33,6 +33,9 @@ interface MillsDatabaseViewProps {
   branchName: string;
   currentUserFullName: string;
   isViewer: boolean;
+  canAdd?: boolean;
+  canPrint?: boolean;
+  canExport?: boolean;
   villages: VillageHierarchy[];
   onUpdateState: (updater: (prev: GrainMaintenanceState) => GrainMaintenanceState, summary: string) => void;
   onNotify: (type: 'ok' | 'err', text: string) => void;
@@ -43,6 +46,9 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
   branchName,
   currentUserFullName,
   isViewer,
+  canAdd = !isViewer,
+  canPrint = !isViewer,
+  canExport = !isViewer,
   villages,
   onUpdateState,
   onNotify,
@@ -420,7 +426,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {!isViewer && (
+              {canAdd && (
                 <button
                   type="button"
                   onClick={() => setShowAddMillModal(true)}
@@ -430,99 +436,103 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                   <span>إضافة مطحن جديد</span>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() =>
-                  exportRowsToArabicCsv(
-                    'mills_registry',
-                    [
-                      'م',
-                      'كود المطحن',
-                      'اسم المطحن',
-                      'الشركة المالكة',
-                      'الجهة المشغلة',
-                      'القطاع',
-                      'القرية/المنطقة',
-                      'العنوان',
-                      'الهاتف',
-                      'مدير المطحن',
-                      'المسؤول الفني',
-                      'القدرة اليومية (طن)',
-                      'القدرة الشهرية (طن)',
-                      'خطوط الطحن',
-                      'الورديات',
-                      'ساعات التشغيل',
-                      'نوع القمح',
-                      'نوع الدقيق المنتج',
-                      'حالة التشغيل',
-                      'آخر تفتيش',
-                    ],
-                    mills.map((m) => [
-                      m.serialNo,
-                      m.millCode,
-                      m.millName,
-                      m.ownerCompany,
-                      m.operatingEntity,
-                      m.millSectorType,
-                      m.villageOrArea,
-                      m.detailedAddress,
-                      m.phone,
-                      m.managerName,
-                      m.technicalOfficer,
-                      m.dailyMillingCapacityTons,
-                      m.monthlyMillingCapacityTons,
-                      m.millingLinesCount,
-                      m.shiftsCount,
-                      m.dailyOperatingHours,
-                      m.wheatTypeUsed,
-                      m.producedFlourType,
-                      m.operationalStatus,
-                      m.lastInspectionDate,
-                    ])
-                  )
-                }
-                className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1.5"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>تصدير Excel</span>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  printModuleReportA4({
-                    title: 'سجل المطاحن التموينية والقدرات الطحنية',
-                    subtitle: 'بيان المطاحن العاملة وخطوط الطحن ونوع الدقيق المنتج',
-                    branchName,
-                    headers: [
-                      'كود المطحن',
-                      'اسم المطحن',
-                      'القطاع والشركة',
-                      'المنطقة والعنوان',
-                      'مدير المطحن / الفني',
-                      'القدرة (يومي/شهري)',
-                      'الخطوط والورديات',
-                      'الدقيق المنتج',
-                      'الحالة',
-                    ],
-                    rows: mills.map((m) => [
-                      m.millCode,
-                      m.millName,
-                      `${m.millSectorType} - ${m.ownerCompany}`,
-                      `${m.villageOrArea} - ${m.detailedAddress}`,
-                      `${m.managerName} | ${m.technicalOfficer}`,
-                      `${m.dailyMillingCapacityTons} / ${m.monthlyMillingCapacityTons} طن`,
-                      `${m.millingLinesCount} خط / ${m.shiftsCount} وردية`,
-                      m.producedFlourType,
-                      m.operationalStatus,
-                    ]),
-                    preparedBy: currentUserFullName,
-                  })
-                }
-                className="px-3 py-2 rounded-xl bg-[#0f2342] text-white text-xs font-black flex items-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                <span>طباعة A4</span>
-              </button>
+              {canExport && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportRowsToArabicCsv(
+                      'mills_registry',
+                      [
+                        'م',
+                        'كود المطحن',
+                        'اسم المطحن',
+                        'الشركة المالكة',
+                        'الجهة المشغلة',
+                        'القطاع',
+                        'القرية/المنطقة',
+                        'العنوان',
+                        'الهاتف',
+                        'مدير المطحن',
+                        'المسؤول الفني',
+                        'القدرة اليومية (طن)',
+                        'القدرة الشهرية (طن)',
+                        'خطوط الطحن',
+                        'الورديات',
+                        'ساعات التشغيل',
+                        'نوع القمح',
+                        'نوع الدقيق المنتج',
+                        'حالة التشغيل',
+                        'آخر تفتيش',
+                      ],
+                      mills.map((m) => [
+                        m.serialNo,
+                        m.millCode,
+                        m.millName,
+                        m.ownerCompany,
+                        m.operatingEntity,
+                        m.millSectorType,
+                        m.villageOrArea,
+                        m.detailedAddress,
+                        m.phone,
+                        m.managerName,
+                        m.technicalOfficer,
+                        m.dailyMillingCapacityTons,
+                        m.monthlyMillingCapacityTons,
+                        m.millingLinesCount,
+                        m.shiftsCount,
+                        m.dailyOperatingHours,
+                        m.wheatTypeUsed,
+                        m.producedFlourType,
+                        m.operationalStatus,
+                        m.lastInspectionDate,
+                      ])
+                    )
+                  }
+                  className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1.5"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>تصدير Excel</span>
+                </button>
+              )}
+              {canPrint && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    printModuleReportA4({
+                      title: 'سجل المطاحن التموينية والقدرات الطحنية',
+                      subtitle: 'بيان المطاحن العاملة وخطوط الطحن ونوع الدقيق المنتج',
+                      branchName,
+                      headers: [
+                        'كود المطحن',
+                        'اسم المطحن',
+                        'القطاع والشركة',
+                        'المنطقة والعنوان',
+                        'مدير المطحن / الفني',
+                        'القدرة (يومي/شهري)',
+                        'الخطوط والورديات',
+                        'الدقيق المنتج',
+                        'الحالة',
+                      ],
+                      rows: mills.map((m) => [
+                        m.millCode,
+                        m.millName,
+                        `${m.millSectorType} - ${m.ownerCompany}`,
+                        `${m.villageOrArea} - ${m.detailedAddress}`,
+                        `${m.managerName} | ${m.technicalOfficer}`,
+                        `${m.dailyMillingCapacityTons} / ${m.monthlyMillingCapacityTons} طن`,
+                        `${m.millingLinesCount} خط / ${m.shiftsCount} وردية`,
+                        m.producedFlourType,
+                        m.operationalStatus,
+                      ]),
+                      preparedBy: currentUserFullName,
+                    })
+                  }
+                  className="px-3 py-2 rounded-xl bg-[#0f2342] text-white text-xs font-black flex items-center gap-1.5"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>طباعة A4</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -680,7 +690,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                 صافي الوزن المستلم = الوزن القائم - الوزن الفارغ، مع مطابقة رقم إذن صرف الشونة لمنع ازدواجية الصرف أو الفقد في الطريق
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddWheatRecModal(true)}
@@ -755,7 +765,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                 نسبة الاستخراج = (الدقيق الناتج ÷ القمح المطحون) × 100 | نسبة الردة = (الردة ÷ القمح المطحون) × 100 | نسبة الفاقد = ((القمح المطحون - مجموع النواتج) ÷ القمح المطحون) × 100
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddOpModal(true)}
@@ -1021,7 +1031,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                 سجل الفحص والمرور الدوري للجان صيانة الحبوب على المطاحن
               </h3>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddInspModal(true)}

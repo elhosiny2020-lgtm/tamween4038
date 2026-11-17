@@ -32,6 +32,9 @@ interface RefrigeratorsDatabaseViewProps {
   branchName: string;
   currentUserFullName: string;
   isViewer: boolean;
+  canAdd?: boolean;
+  canPrint?: boolean;
+  canExport?: boolean;
   villages: VillageHierarchy[];
   onUpdateState: (updater: (prev: GrainMaintenanceState) => GrainMaintenanceState, summary: string) => void;
   onNotify: (type: 'ok' | 'err', text: string) => void;
@@ -42,6 +45,9 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
   branchName,
   currentUserFullName,
   isViewer,
+  canAdd = !isViewer,
+  canPrint = !isViewer,
+  canExport = !isViewer,
   villages,
   onUpdateState,
   onNotify,
@@ -426,7 +432,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {!isViewer && (
+              {canAdd && (
                 <button
                   type="button"
                   onClick={() => setShowAddRefModal(true)}
@@ -436,99 +442,103 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                   <span>إضافة ثلاجة جديدة</span>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() =>
-                  exportRowsToArabicCsv(
-                    'refrigerators_registry',
-                    [
-                      'م',
-                      'كود الثلاجة',
-                      'اسم الثلاجة',
-                      'المالك',
-                      'الشركة المشغلة',
-                      'نوع الملكية',
-                      'القرية',
-                      'العنوان',
-                      'الهاتف',
-                      'المدير المسؤول',
-                      'مسؤول التشغيل',
-                      'غرف التبريد',
-                      'غرف التجميد',
-                      'المساحة م2',
-                      'الطاقة التصميمية (طن)',
-                      'الطاقة الفعلية (طن)',
-                      'نظام التبريد',
-                      'حالة التشغيل',
-                      'آخر فحص',
-                      'الصيانة القادمة',
-                    ],
-                    refrigerators.map((r) => [
-                      r.serialNo,
-                      r.refrigeratorCode,
-                      r.refrigeratorName,
-                      r.ownerName,
-                      r.operatingCompany,
-                      r.ownershipType,
-                      r.village,
-                      r.detailedAddress,
-                      r.phone,
-                      r.managerName,
-                      r.operationsOfficer,
-                      r.coolingRoomsCount,
-                      r.freezingRoomsCount,
-                      r.totalAreaSqm,
-                      r.designCapacityTons,
-                      r.operationalCapacityTons,
-                      r.coolingSystemType,
-                      r.operationalStatus,
-                      r.lastInspectionDate,
-                      r.nextMaintenanceDate,
-                    ])
-                  )
-                }
-                className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1.5"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>تصدير Excel</span>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  printModuleReportA4({
-                    title: 'سجل الثلاجات ومخازن التبريد والتجميد',
-                    subtitle: 'بيان الطاقة التصميمية والتشغيلية وحالة الغرف والمعدات',
-                    branchName,
-                    headers: [
-                      'كود الثلاجة',
-                      'اسم الثلاجة',
-                      'الملكية والمالك',
-                      'القرية والعنوان',
-                      'المدير / التشغيل',
-                      'الغرف (تبريد/تجميد)',
-                      'الطاقة (تصميمي/فعلي)',
-                      'نظام التبريد',
-                      'الحالة',
-                    ],
-                    rows: refrigerators.map((r) => [
-                      r.refrigeratorCode,
-                      r.refrigeratorName,
-                      `${r.ownershipType} - ${r.ownerName}`,
-                      `${r.village} - ${r.detailedAddress}`,
-                      `${r.managerName} (${r.phone})`,
-                      `${r.coolingRoomsCount} تبريد / ${r.freezingRoomsCount} تجميد`,
-                      `${r.designCapacityTons} / ${r.operationalCapacityTons} طن`,
-                      r.coolingSystemType,
-                      r.operationalStatus,
-                    ]),
-                    preparedBy: currentUserFullName,
-                  })
-                }
-                className="px-3 py-2 rounded-xl bg-[#0f2342] text-white text-xs font-black flex items-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                <span>طباعة A4</span>
-              </button>
+              {canExport && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportRowsToArabicCsv(
+                      'refrigerators_registry',
+                      [
+                        'م',
+                        'كود الثلاجة',
+                        'اسم الثلاجة',
+                        'المالك',
+                        'الشركة المشغلة',
+                        'نوع الملكية',
+                        'القرية',
+                        'العنوان',
+                        'الهاتف',
+                        'المدير المسؤول',
+                        'مسؤول التشغيل',
+                        'غرف التبريد',
+                        'غرف التجميد',
+                        'المساحة م2',
+                        'الطاقة التصميمية (طن)',
+                        'الطاقة الفعلية (طن)',
+                        'نظام التبريد',
+                        'حالة التشغيل',
+                        'آخر فحص',
+                        'الصيانة القادمة',
+                      ],
+                      refrigerators.map((r) => [
+                        r.serialNo,
+                        r.refrigeratorCode,
+                        r.refrigeratorName,
+                        r.ownerName,
+                        r.operatingCompany,
+                        r.ownershipType,
+                        r.village,
+                        r.detailedAddress,
+                        r.phone,
+                        r.managerName,
+                        r.operationsOfficer,
+                        r.coolingRoomsCount,
+                        r.freezingRoomsCount,
+                        r.totalAreaSqm,
+                        r.designCapacityTons,
+                        r.operationalCapacityTons,
+                        r.coolingSystemType,
+                        r.operationalStatus,
+                        r.lastInspectionDate,
+                        r.nextMaintenanceDate,
+                      ])
+                    )
+                  }
+                  className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1.5"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>تصدير Excel</span>
+                </button>
+              )}
+              {canPrint && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    printModuleReportA4({
+                      title: 'سجل الثلاجات ومخازن التبريد والتجميد',
+                      subtitle: 'بيان الطاقة التصميمية والتشغيلية وحالة الغرف والمعدات',
+                      branchName,
+                      headers: [
+                        'كود الثلاجة',
+                        'اسم الثلاجة',
+                        'الملكية والمالك',
+                        'القرية والعنوان',
+                        'المدير / التشغيل',
+                        'الغرف (تبريد/تجميد)',
+                        'الطاقة (تصميمي/فعلي)',
+                        'نظام التبريد',
+                        'الحالة',
+                      ],
+                      rows: refrigerators.map((r) => [
+                        r.refrigeratorCode,
+                        r.refrigeratorName,
+                        `${r.ownershipType} - ${r.ownerName}`,
+                        `${r.village} - ${r.detailedAddress}`,
+                        `${r.managerName} (${r.phone})`,
+                        `${r.coolingRoomsCount} تبريد / ${r.freezingRoomsCount} تجميد`,
+                        `${r.designCapacityTons} / ${r.operationalCapacityTons} طن`,
+                        r.coolingSystemType,
+                        r.operationalStatus,
+                      ]),
+                      preparedBy: currentUserFullName,
+                    })
+                  }
+                  className="px-3 py-2 rounded-xl bg-[#0f2342] text-white text-xs font-black flex items-center gap-1.5"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>طباعة A4</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -697,7 +707,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                 صافي الوزن = الوزن القائم - الوزن الفارغ | إجمالي القيمة = صافي الوزن × سعر الطن، مع التحقق من الطاقة المتاحة للغرفة
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddReceiptModal(true)}
@@ -792,7 +802,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                 الرصيد بعد الصرف = الرصيد قبل الصرف - الكمية المنصرفة، مع منع السحب بأكثر من الرصيد المتاح بالغرفة
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddIssueModal(true)}
@@ -941,7 +951,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                 يطلق النظام إنذاراً فورياً عند انحراف درجة الحرارة الفعلية عن المطلوبة أو انقطاع التيار الكهربائي
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddTempModal(true)}

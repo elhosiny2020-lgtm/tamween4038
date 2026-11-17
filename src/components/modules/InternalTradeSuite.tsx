@@ -58,6 +58,7 @@ import {
   aggregateVillageFuelBreakdown,
 } from '../../utils/internalTradeMathEngine';
 import { createInitialInternalTradeState } from '../../data/internalTradeInitialData';
+import { resolveModuleCrudPermissions } from '../../utils/moduleCrudHelpers';
 
 export type InternalTradeSubView =
   | 'dashboard'
@@ -160,7 +161,11 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
   // Official Report selection
   const [selectedReportId, setSelectedReportId] = useState<string>('rep-establishments');
 
-  const isReadOnly = currentUser?.role === 'viewer';
+  const permissions = useMemo(
+    () => resolveModuleCrudPermissions(currentUser ?? null, false, 'internal_trade'),
+    [currentUser]
+  );
+  const isReadOnly = permissions.isReadOnly;
 
   const uniqueVillages = useMemo(() => {
     const set = new Set<string>();
@@ -606,6 +611,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
 
   // CSV Export Helper
   const handleExportCsv = (filename: string, headers: string[], rows: (string | number)[][]) => {
+    if (!permissions.canExport) return;
     const bom = '\uFEFF';
     const csvContent =
       bom +
@@ -621,21 +627,20 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // Official Print Window Helper
+  // Official Iframe A4 Print Helper (zero window.open)
   const handlePrintOfficialReport = (title: string, tableHtml: string) => {
-    const printWin = window.open('', '_blank', 'width=1150,height=800');
-    if (!printWin) {
-      window.print();
-      return;
-    }
-    printWin.document.write(`
-      <!DOCTYPE html>
+    if (!permissions.canPrint) return;
+    const escTitle = String(title)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const htmlDoc = `<!DOCTYPE html>
       <html lang="ar" dir="rtl">
       <head>
         <meta charset="UTF-8" />
-        <title>${title}</title>
+        <title>${escTitle}</title>
         <style>
-          body { font-family: 'Cairo', 'Tajawal', sans-serif; margin: 20px; color: #0A1931; direction: rtl; }
+          body { font-family: 'Cairo', 'Tajawal', sans-serif; margin: 16px; color: #0A1931; direction: rtl; background: #fff; }
           .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px double #0A1931; padding-bottom: 12px; margin-bottom: 18px; }
           .header-right h2, .header-right h3, .header-right p { margin: 2px 0; }
           .report-title { text-align: center; background: #F8FAFC; border: 2px solid #0A1931; padding: 10px; border-radius: 10px; margin-bottom: 16px; }
@@ -660,7 +665,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
           </div>
         </div>
         <div class="report-title">
-          <h2>${title}</h2>
+          <h2>${escTitle}</h2>
         </div>
         ${tableHtml}
         <div class="signatures">
@@ -668,11 +673,43 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
           <div>رئيس قسم التجارة الداخلية<br/><br/>.........................</div>
           <div>مدير إدارة تموين مركز المحلة الكبرى<br/><br/>.........................</div>
         </div>
-        <script>window.onload = function() { window.print(); }</script>
       </body>
-      </html>
-    `);
-    printWin.document.close();
+      </html>`;
+
+    const existing = document.getElementById('internal-trade-print-iframe');
+    if (existing) existing.remove();
+    const iframe = document.createElement('iframe');
+    iframe.id = 'internal-trade-print-iframe';
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(iframe);
+    const frameDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!frameDoc) {
+      iframe.remove();
+      window.print();
+      return;
+    }
+    frameDoc.open();
+    frameDoc.write(htmlDoc);
+    frameDoc.close();
+    const triggerPrint = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch {
+        window.print();
+      } finally {
+        setTimeout(() => {
+          iframe.remove();
+        }, 1200);
+      }
+    };
+    setTimeout(triggerPrint, 120);
   };
 
   // Sub-Navigation Tabs
@@ -794,7 +831,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 setEditingEst(null);
                 setIsEstModalOpen(true);
               }}
-              disabled={isReadOnly}
+              disabled={!permissions.canAdd}
               className="px-4 py-2.5 bg-white hover:bg-[#0A1931] text-[#0A1931] hover:text-white border-2 border-[#0A1931] rounded-xl text-xs font-black flex items-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
             >
               <Plus className="w-4 h-4" />
@@ -803,7 +840,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <button
               type="button"
               onClick={() => setIsCampaignModalOpen(true)}
-              disabled={isReadOnly}
+              disabled={!permissions.canAdd}
               className="px-4 py-2.5 bg-white hover:bg-[#0A1931] text-[#0A1931] hover:text-white border-2 border-[#0A1931] rounded-xl text-xs font-black flex items-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
             >
               <ShieldCheck className="w-4 h-4" />
@@ -812,7 +849,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <button
               type="button"
               onClick={() => setIsViolationModalOpen(true)}
-              disabled={isReadOnly}
+              disabled={!permissions.canAdd}
               className="px-4 py-2.5 bg-white hover:bg-[#0A1931] text-[#0A1931] hover:text-white border-2 border-[#0A1931] rounded-xl text-xs font-black flex items-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
             >
               <Scale className="w-4 h-4" />
@@ -1306,7 +1343,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                             <History className="w-3.5 h-3.5 text-[#D4AF37]" />
                             <span>الملف التاريخي</span>
                           </button>
-                          {!est.linkedBakeryId && !isReadOnly && (
+                          {!est.linkedBakeryId && permissions.canEdit && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1572,8 +1609,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <button
               type="button"
               onClick={() => setIsCampaignModalOpen(true)}
-              disabled={isReadOnly}
-              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+              disabled={!permissions.canAdd}
+              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <Plus className="w-4 h-4 text-[#D4AF37]" />
               <span>تسجيل حملة جديدة</span>
@@ -1679,8 +1716,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <button
               type="button"
               onClick={() => setIsViolationModalOpen(true)}
-              disabled={isReadOnly}
-              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+              disabled={!permissions.canAdd}
+              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <Plus className="w-4 h-4 text-[#D4AF37]" />
               <span>تحرير محضر جديد</span>
@@ -1772,8 +1809,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <button
               type="button"
               onClick={() => setIsSeizureModalOpen(true)}
-              disabled={isReadOnly}
-              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+              disabled={!permissions.canAdd}
+              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <Plus className="w-4 h-4 text-[#D4AF37]" />
               <span>تسجيل محضر ضبط وتحفظ</span>
@@ -1847,8 +1884,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <button
               type="button"
               onClick={() => setIsComplaintModalOpen(true)}
-              disabled={isReadOnly}
-              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+              disabled={!permissions.canAdd}
+              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <Plus className="w-4 h-4 text-[#D4AF37]" />
               <span>تسجيل شكوى جديدة</span>
@@ -1930,8 +1967,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <button
               type="button"
               onClick={() => setIsPriceModalOpen(true)}
-              disabled={isReadOnly}
-              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+              disabled={!permissions.canAdd}
+              className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <Plus className="w-4 h-4 text-[#D4AF37]" />
               <span>رصد سعر سلعة بالسوق</span>
@@ -2024,70 +2061,72 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     setEditingLpgRecord(null);
                     setIsLpgQuotaModalOpen(true);
                   }}
-                  disabled={isReadOnly}
-                  className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  disabled={!permissions.canAdd}
+                  className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   <Plus className="w-4 h-4 text-[#D4AF37]" />
                   <span>إضافة / تحديث حصة قرية</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleExportCsv(
-                      'lpg-village-circulation',
-                      [
-                        'مسلسل',
-                        'كود القرية',
-                        'اسم القرية',
-                        'الوحدة المحلية',
-                        'عدد السكان',
-                        'عدد الأسر',
-                        'المستودعات',
-                        'الموزعون',
-                        'نوع الأسطوانة',
-                        'الوزن كجم',
-                        'الحصة الشهرية المقررة',
-                        'الوارد الفعلي',
-                        'المنصرف الفعلي',
-                        'المتبقي',
-                        'العجز أو الفائض',
-                        'نسبة التنفيذ %',
-                        'نصيب الفرد اليومي (أسطوانة)',
-                        'نصيب الفرد الشهري (أسطوانة)',
-                        'نصيب الأسرة الشهري (أسطوانة)',
-                        'نصيب الفرد السنوي (أسطوانة)',
-                        'تقييم القرية',
-                      ],
-                      lpgCalculatedRows.map(({ record: r, metrics: m }) => [
-                        r.serialNo,
-                        r.villageCode,
-                        r.village,
-                        r.localUnit,
-                        r.population,
-                        r.familiesCount,
-                        r.depotsCount,
-                        r.distributorsCount,
-                        r.cylinderType,
-                        r.cylinderWeightKg,
-                        r.prescribedMonthlyQuota,
-                        r.actualInboundQty,
-                        r.actualDisbursedQty,
-                        m.remainingQty,
-                        m.quotaVariance,
-                        m.quotaExecutionPct,
-                        m.dailyPerCapitaCylinders,
-                        m.monthlyPerCapitaCylinders,
-                        m.familyMonthlyShareCylinders,
-                        m.annualPerCapitaCylinders,
-                        m.villageStatus,
-                      ])
-                    )
-                  }
-                  className="px-3.5 py-2 bg-white hover:bg-[#0A1931] text-[#0A1931] hover:text-white border-2 border-[#0A1931] rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>تصدير Excel</span>
-                </button>
+                {permissions.canExport && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleExportCsv(
+                        'lpg-village-circulation',
+                        [
+                          'مسلسل',
+                          'كود القرية',
+                          'اسم القرية',
+                          'الوحدة المحلية',
+                          'عدد السكان',
+                          'عدد الأسر',
+                          'المستودعات',
+                          'الموزعون',
+                          'نوع الأسطوانة',
+                          'الوزن كجم',
+                          'الحصة الشهرية المقررة',
+                          'الوارد الفعلي',
+                          'المنصرف الفعلي',
+                          'المتبقي',
+                          'العجز أو الفائض',
+                          'نسبة التنفيذ %',
+                          'نصيب الفرد اليومي (أسطوانة)',
+                          'نصيب الفرد الشهري (أسطوانة)',
+                          'نصيب الأسرة الشهري (أسطوانة)',
+                          'نصيب الفرد السنوي (أسطوانة)',
+                          'تقييم القرية',
+                        ],
+                        lpgCalculatedRows.map(({ record: r, metrics: m }) => [
+                          r.serialNo,
+                          r.villageCode,
+                          r.village,
+                          r.localUnit,
+                          r.population,
+                          r.familiesCount,
+                          r.depotsCount,
+                          r.distributorsCount,
+                          r.cylinderType,
+                          r.cylinderWeightKg,
+                          r.prescribedMonthlyQuota,
+                          r.actualInboundQty,
+                          r.actualDisbursedQty,
+                          m.remainingQty,
+                          m.quotaVariance,
+                          m.quotaExecutionPct,
+                          m.dailyPerCapitaCylinders,
+                          m.monthlyPerCapitaCylinders,
+                          m.familyMonthlyShareCylinders,
+                          m.annualPerCapitaCylinders,
+                          m.villageStatus,
+                        ])
+                      )
+                    }
+                    className="px-3.5 py-2 bg-white hover:bg-[#0A1931] text-[#0A1931] hover:text-white border-2 border-[#0A1931] rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>تصدير Excel</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2148,7 +2187,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                       </td>
                       <td className="py-2 px-2.5 font-mono font-black">{m.quotaExecutionPct}%</td>
                       <td className="py-2 px-2.5">
-                        {!isReadOnly && (
+                        {permissions.canEdit && (
                           <button
                             type="button"
                             onClick={() => {
@@ -2255,8 +2294,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   setEditingPetroRecord(null);
                   setIsPetroQuotaModalOpen(true);
                 }}
-                disabled={isReadOnly}
-                className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                disabled={!permissions.canAdd}
+                className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 <Plus className="w-4 h-4 text-[#D4AF37]" />
                 <span>إضافة سجل مادة بترولية</span>
@@ -2395,8 +2434,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
               <button
                 type="button"
                 onClick={() => setIsMovementModalOpen(true)}
-                disabled={isReadOnly}
-                className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                disabled={!permissions.canAdd}
+                className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 <Plus className="w-4 h-4 text-[#D4AF37]" />
                 <span>تسجيل حركة وقود يومية (وارد / منصرف / جرد)</span>
@@ -2854,20 +2893,22 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const container = document.getElementById('internal-trade-printable-area');
-                  handlePrintOfficialReport(
-                    'تقرير رسمي معتمد — قسم التجارة الداخلية والرقابة التموينية',
-                    container?.innerHTML || ''
-                  );
-                }}
-                className="px-4 py-2.5 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-2 cursor-pointer"
-              >
-                <Printer className="w-4 h-4 text-[#D4AF37]" />
-                <span>طباعة التقرير الرسمي (A4)</span>
-              </button>
+              {permissions.canPrint && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const container = document.getElementById('internal-trade-printable-area');
+                    handlePrintOfficialReport(
+                      'تقرير رسمي معتمد — قسم التجارة الداخلية والرقابة التموينية',
+                      container?.innerHTML || ''
+                    );
+                  }}
+                  className="px-4 py-2.5 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-2 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 text-[#D4AF37]" />
+                  <span>طباعة التقرير الرسمي (A4)</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -3047,27 +3088,29 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const timeline = buildEstablishmentTimeline(selectedDossierEst);
-                    const rowsHtml = timeline
-                      .map(
-                        (ev) =>
-                          `<tr><td>${ev.date}</td><td>${ev.type}</td><td>${ev.referenceNo}</td><td>${ev.title}</td><td>${ev.description}</td></tr>`
-                      )
-                      .join('');
-                    handlePrintOfficialReport(
-                      `الملف التاريخي الموحد للمنشأة: ${selectedDossierEst.establishmentName} (${selectedDossierEst.establishmentCode})`,
-                      `<p><strong>المالك:</strong> ${selectedDossierEst.ownerName} | <strong>الرقم القومي:</strong> ${selectedDossierEst.nationalId} | <strong>الترخيص:</strong> ${selectedDossierEst.licenseNumber} | <strong>السجل التجاري:</strong> ${selectedDossierEst.commercialRegNumber}</p>
-                       <table><thead><tr><th>التاريخ</th><th>نوع الإجراء</th><th>رقم المرجع</th><th>البيان</th><th>التفاصيل والنتيجة</th></tr></thead><tbody>${rowsHtml}</tbody></table>`
-                    );
-                  }}
-                  className="px-3.5 py-2 bg-[#D4AF37] text-[#0A1931] rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>طباعة الملف الكامل (A4 PDF)</span>
-                </button>
+                {permissions.canPrint && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const timeline = buildEstablishmentTimeline(selectedDossierEst);
+                      const rowsHtml = timeline
+                        .map(
+                          (ev) =>
+                            `<tr><td>${ev.date}</td><td>${ev.type}</td><td>${ev.referenceNo}</td><td>${ev.title}</td><td>${ev.description}</td></tr>`
+                        )
+                        .join('');
+                      handlePrintOfficialReport(
+                        `الملف التاريخي الموحد للمنشأة: ${selectedDossierEst.establishmentName} (${selectedDossierEst.establishmentCode})`,
+                        `<p><strong>المالك:</strong> ${selectedDossierEst.ownerName} | <strong>الرقم القومي:</strong> ${selectedDossierEst.nationalId} | <strong>الترخيص:</strong> ${selectedDossierEst.licenseNumber} | <strong>السجل التجاري:</strong> ${selectedDossierEst.commercialRegNumber}</p>
+                         <table><thead><tr><th>التاريخ</th><th>نوع الإجراء</th><th>رقم المرجع</th><th>البيان</th><th>التفاصيل والنتيجة</th></tr></thead><tbody>${rowsHtml}</tbody></table>`
+                      );
+                    }}
+                    className="px-3.5 py-2 bg-[#D4AF37] text-[#0A1931] rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>طباعة الملف الكامل (A4 PDF)</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setSelectedDossierEst(null)}

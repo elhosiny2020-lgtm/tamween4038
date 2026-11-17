@@ -32,7 +32,8 @@ import {
   deleteSupplyBranch,
   syncAllBranchesFromCloudPayload,
   readBranchPartitionFromLocal,
-  isDefaultSeedState
+  isDefaultSeedState,
+  resetNonMahallaBranchesLocal,
 } from './storage';
 import {
   loadBranchAuthVault,
@@ -96,6 +97,9 @@ import {
   recordRealtimeDiagnosticEvent,
   requestRealtimeBranchInit,
   addSharedWebSocketListener,
+  getAuthSessionToken,
+  setAuthSessionToken,
+  getSecurityShieldHeaders,
 } from './lib/supabase';
 import {
   applyGranularRowChangeToState,
@@ -162,6 +166,10 @@ import {
   getDefaultTabForUser,
   isDepartmentRestrictedUser,
   canUserAccessDepartment,
+  hasDepartmentPermission,
+  canUserPrintDepartment,
+  canUserExportDepartment,
+  isSuperAdmin,
 } from './utils/departmentRbac';
 import {
   CommercialRegExpiryRange,
@@ -717,13 +725,48 @@ export default function App() {
     }, 6000);
 
     loadInitialState()
-      .then((state) => {
+      .then(async (state) => {
         if (!hasLoaded) {
           hasLoaded = true;
           clearTimeout(failsafe);
+          let resolvedUser = isAutoStart
+            ? state.currentUser || state.users[0] || INITIAL_USERS[0]
+            : state.currentUser;
+
+          if (!isAutoStart) {
+            const token = getAuthSessionToken();
+            if (!token) {
+              resolvedUser = null;
+              saveSessionUser(null);
+            } else {
+              try {
+                const meResp = await fetch('/api/auth/me', {
+                  method: 'GET',
+                  cache: 'no-store',
+                  headers: getSecurityShieldHeaders(false),
+                });
+                if (meResp.ok) {
+                  const meJson = await meResp.json().catch(() => null);
+                  if (meJson?.authenticated && meJson?.user) {
+                    resolvedUser = meJson.user;
+                    saveSessionUser(meJson.user);
+                  }
+                } else if (meResp.status === 401 || meResp.status === 403) {
+                  const errJson = await meResp.json().catch(() => null);
+                  setAuthSessionToken(null);
+                  saveSessionUser(null);
+                  resolvedUser = null;
+                  if (errJson?.error) setLogoutReason(errJson.error);
+                }
+              } catch {
+                // Keep cached session offline if server unreachable
+              }
+            }
+          }
+
           setAppState({
             ...state,
-            currentUser: isAutoStart ? (state.currentUser || state.users[0] || INITIAL_USERS[0]) : state.currentUser,
+            currentUser: resolvedUser,
           });
           setSaveTimestamp(getArabicTimestamp());
           if (pendingCloudUpdateRef.current && applyIncomingCloudStateRef.current) {
@@ -1064,7 +1107,7 @@ export default function App() {
         }
         // Skip polling while a local mutation is actively being committed
         const current = latestAppStateRef.current;
-        if (!current) return;
+        if (!current || !current.currentUser) return;
         const activeBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
         const resp = await fetch(
           `${window.location.protocol}//${window.location.host}/api/db/bootstrap?branchId=${encodeURIComponent(
@@ -1074,11 +1117,12 @@ export default function App() {
             method: 'GET',
             cache: 'no-store',
             credentials: 'same-origin',
+            headers: getSecurityShieldHeaders(false),
           }
         ).catch(() => null);
         if (!resp || !resp.ok) return;
         const bootJson = await resp.json().catch(() => null);
-        if (!bootJson?.success) return;
+        if (!bootJson?.success || bootJson.authenticated === false) return;
 
         const bootPayload: any = {
           activeBranchId,
@@ -2239,9 +2283,44 @@ export default function App() {
 
   // Handle Logout (Terminates session safely without resetting data)
   const handleLogout = useCallback((reason?: string) => {
+    const headers = getSecurityShieldHeaders(false);
+    fetch('/api/auth/logout', { method: 'POST', headers }).catch(() => {});
+    setAuthSessionToken(null);
     saveSessionUser(null);
     setLogoutReason(reason || null);
     setAppState((prev) => (prev ? { ...prev, currentUser: null } : null));
+  }, []);
+
+  // Selective Non-Mahalla Branch Factory Reset (Protects DEFAULT_BRANCH_ID 'branch-mahalla' 100%)
+  const handleResetNonMahallaBranches = useCallback(async () => {
+    const resp = await fetch('/api/branches/reset-non-default', {
+      method: 'POST',
+      headers: getSecurityShieldHeaders(true),
+      body: JSON.stringify({}),
+    });
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok || !json?.success) {
+      throw new Error(json?.error || 'تعذر تنفيذ التصفير الانتقائي للإدارات الفرعية.');
+    }
+    const localRes = resetNonMahallaBranchesLocal();
+    const mahallaBranch = localRes.remainingBranches;
+    saveBranchesList(mahallaBranch);
+    setActiveBranchId(DEFAULT_BRANCH_ID);
+    const refreshed = await loadInitialState(DEFAULT_BRANCH_ID);
+    setAppState((prev) => ({
+      ...refreshed,
+      activeBranchId: DEFAULT_BRANCH_ID,
+      branches: mahallaBranch,
+      currentUser: prev?.currentUser || refreshed.currentUser,
+    }));
+    setSaveToast({
+      id: Date.now(),
+      message:
+        json.message ||
+        'تم تصفير الإدارات غير الرئيسية بنجاح مع الحفاظ الكامل على قاعدة بيانات مركز المحلة الكبرى.',
+      timestamp: getArabicTimestamp(),
+    });
+    return json;
   }, []);
 
   // Handle Safe Save and Logout (حفظ آمن وتسجيل خروج فوري)
@@ -2605,12 +2684,16 @@ export default function App() {
               ? 'hr-dashboard'
               : defaultTab === 'grain-maintenance'
               ? 'grain-dashboard'
+              : defaultTab === 'internal-trade'
+              ? 'internal-trade-dashboard'
               : defaultTab === 'commodities'
               ? 'commodities-dashboard'
               : defaultTab === 'debts'
               ? 'debts-records'
               : defaultTab === 'bakeries'
               ? 'bakeries-all'
+              : defaultTab === 'reports'
+              ? 'reports-center'
               : 'welcome-home'
           );
           setBreadcrumbGroup(
@@ -2624,6 +2707,35 @@ export default function App() {
             message: `تم تسجيل الدخول إلى (${appState.systemConfig.administrationTitle}) بنجاح`,
             timestamp: getArabicTimestamp(),
           });
+
+          // Immediately re-hydrate authorized records from server using newly issued Bearer token
+          loadInitialState(activeBranchId)
+            .then((freshState) => {
+              setAppState((prev) => {
+                if (!prev) return prev;
+                const nextUsers =
+                  freshState.users && freshState.users.length > 0 ? freshState.users : prev.users;
+                const updated: AppState = {
+                  ...freshState,
+                  users: nextUsers,
+                  currentUser: scopedUser,
+                  systemConfig: {
+                    ...freshState.systemConfig,
+                    logoBase64: DEFAULT_OFFICIAL_LOGO,
+                  },
+                };
+                latestAppStateRef.current = updated;
+                return updated;
+              });
+              loadBranchModulesBundle(
+                activeBranchId,
+                freshState.systemConfig?.administrationTitle || appState.systemConfig.administrationTitle,
+                freshState.villages || DEFAULT_VILLAGES_HIERARCHY
+              )
+                .then((bundle) => setModulesBundle(bundle))
+                .catch(() => {});
+            })
+            .catch(() => {});
         }}
         onRegisterUser={async (newUser) => {
           const scopedNewUser: AppUser = {
@@ -3149,7 +3261,7 @@ export default function App() {
         setColumnViewMode('ALL');
         break;
       case 'data-add-bakery':
-        if (appState.currentUser?.role !== 'viewer') {
+        if (hasDepartmentPermission(appState.currentUser, 'bakeries', 'insert')) {
           setBakeryToEdit(null);
           setIsBakeryModalOpen(true);
         }
@@ -3204,6 +3316,7 @@ export default function App() {
 
       // 2. قسم التعديلات
       case 'data-edit-bakery':
+        if (!hasDepartmentPermission(appState.currentUser, 'bakeries', 'update')) break;
         if (selectedBakeryRowId) {
           const found = appState.bakeries.find((b) => b.id === selectedBakeryRowId);
           if (found) {
@@ -3212,7 +3325,7 @@ export default function App() {
             break;
           }
         }
-        if (appState.bakeries.length > 0 && appState.currentUser?.role !== 'viewer') {
+        if (appState.bakeries.length > 0) {
           setBakeryToEdit(appState.bakeries[0]);
           setIsBakeryModalOpen(true);
         } else {
@@ -3310,33 +3423,43 @@ export default function App() {
         break;
       case 'reports-center':
       case 'report-detailed':
-        setActiveTab('reports');
-        setActiveReportId('bak-all');
+        if (canUserAccessTab(appState.currentUser, 'reports')) {
+          setActiveTab('reports');
+          setActiveReportId('bak-all');
+        }
         break;
       case 'report-summary':
-        setActiveTab('reports');
-        setActiveReportId('comp-totals');
+        if (canUserAccessTab(appState.currentUser, 'reports')) {
+          setActiveTab('reports');
+          setActiveReportId('comp-totals');
+        }
         break;
       case 'report-years-comparison':
-        setActiveTab('reports');
-        setActiveReportId('comp-3years');
+        if (canUserAccessTab(appState.currentUser, 'reports')) {
+          setActiveTab('reports');
+          setActiveReportId('comp-3years');
+        }
         break;
       case 'report-insurance-quotas':
-        setActiveTab('reports');
-        setActiveReportId('ins-quotas');
+        if (canUserAccessTab(appState.currentUser, 'reports')) {
+          setActiveTab('reports');
+          setActiveReportId('ins-quotas');
+        }
         break;
       case 'report-differences':
-        setActiveTab('reports');
-        setActiveReportId('avg-cumdiff');
+        if (canUserAccessTab(appState.currentUser, 'reports')) {
+          setActiveTab('reports');
+          setActiveReportId('avg-cumdiff');
+        }
         break;
       case 'data-integrity':
         setIsAuditModalOpen(true);
         break;
       case 'settings-system':
-        setIsHeaderModalOpen(true);
+        if (isSuperAdmin(appState.currentUser)) setIsHeaderModalOpen(true);
         break;
       case 'settings-users':
-        setIsAdvancedPermissionsModalOpen(true);
+        if (isSuperAdmin(appState.currentUser)) setIsAdvancedPermissionsModalOpen(true);
         break;
       case 'settings-logs':
         setIsInboxModalOpen(true);
@@ -4067,88 +4190,19 @@ export default function App() {
               </button>
             </div>
 
-            {/* Account Settings Button */}
-            <button
-              type="button"
-              onClick={() => setIsUsersModalOpen(true)}
-              className="px-3 py-1.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
-              title="إعدادات الحساب وإدارة المستخدمين"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>إعدادات الحساب</span>
-            </button>
-
-            {/* Open in Web Page Direct Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const res = openStandaloneAppInNewTab(appState);
-                setSaveToast({
-                  id: Date.now(),
-                  message: `تم فتح المنظومة في صفحة إنترنت مستقلة بنجاح (${res.url})`,
-                  timestamp: getArabicTimestamp(),
-                });
-              }}
-              className="px-3 py-1.5 bg-sky-700 hover:bg-sky-600 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
-              title="فتح المنظومة مباشرة في صفحة إنترنت مستقلة"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-amber-300" />
-              <span>فتح في صفحة إنترنت</span>
-            </button>
-
-            {/* Download EXE Direct Button */}
-            <button
-              type="button"
-              onClick={async () => {
-                const res = await downloadWindowsExeLauncher();
-                setSaveToast({
-                  id: Date.now(),
-                  message: res.message,
-                  timestamp: getArabicTimestamp(),
-                });
-              }}
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-2xs border border-amber-300"
-              title="تنزيل البرنامج التنفيذي لنظام ويندوز (منظومة_وزارة_التموين.exe)"
-            >
-              <Download className="w-3.5 h-3.5 text-slate-950" />
-              <span>تنزيل البرنامج EXE</span>
-            </button>
-
-            {/* Supabase & Cloud Backup Button (Protected by Vault Passcode) */}
-            <button
-              type="button"
-              data-testid="header-backup-modal-btn"
-              onClick={() =>
-                requireVaultAccess('backup', 'قسم الحفظ والنسخ السحابي Supabase', () => {
-                  setIsBackupModalOpen(true);
-                })
-              }
-              className="px-3 py-1.5 bg-teal-800 hover:bg-teal-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-2xs border border-teal-500/40"
-              title="قسم الحفظ والنسخ السحابي (محمي بالرقم السري)"
-            >
-              {isVaultUnlocked ? (
-                <HardDrive className="w-3.5 h-3.5 text-amber-300" />
-              ) : (
-                <Lock className="w-3.5 h-3.5 text-amber-300" />
-              )}
-              <span className="hidden sm:inline">Supabase والنسخ السحابي</span>
-            </button>
-
-            {/* Google Workspace (Calendar, Tasks, Forms) Button (Protected by Vault Passcode) */}
-            <button
-              type="button"
-              onClick={() =>
-                requireVaultAccess('backup', 'قسم الحفظ والنسخ — Google Workspace', () => {
-                  setGoogleWorkspaceInitialTab('calendar');
-                  setIsGoogleWorkspaceModalOpen(true);
-                })
-              }
-              className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
-              title="مركز خدمات Google Workspace (محمي بالرقم السري)"
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline">Google Workspace</span>
-            </button>
+            {/* Account Settings Button (Super Admin Only) */}
+            {isSuperAdmin(appState.currentUser) && (
+              <button
+                type="button"
+                data-testid="header-account-settings-btn"
+                onClick={() => setIsUsersModalOpen(true)}
+                className="px-3 py-1.5 bg-[#0F2342] hover:bg-[#1E3A8A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                title="إعدادات الحساب وإدارة المستخدمين وسجل الأمان"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>إعدادات الحساب</span>
+              </button>
+            )}
 
             {/* Multi-Device Cloud Sync Button */}
             <button
@@ -4160,21 +4214,6 @@ export default function App() {
             >
               <RotateCw className={`w-3.5 h-3.5 ${isSyncingWithCloud ? 'animate-spin text-amber-300' : 'text-emerald-300'}`} />
               <span className="hidden md:inline">{isSyncingWithCloud ? 'جاري المزامنة...' : 'مزامنة الأجهزة 🔄'}</span>
-            </button>
-
-            {/* Publish & Cloud Hosting Button (Protected by Vault Passcode) */}
-            <button
-              type="button"
-              onClick={() =>
-                requireVaultAccess('backup', 'قسم الحفظ والنسخ — النشر والاستضافة السحابية', () => {
-                  setIsPublishModalOpen(true);
-                })
-              }
-              className="px-3 py-1.5 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-blue-400/30"
-              title="نشر واستضافة المنظومة سحابياً (محمي بالرقم السري)"
-            >
-              <UploadCloud className="w-3.5 h-3.5 text-amber-300" />
-              <span className="hidden sm:inline">نشر واستضافة (Cloudflare / Vercel)</span>
             </button>
 
             {/* Safe Save & Logout Button in Header */}
@@ -4419,6 +4458,23 @@ export default function App() {
                   <span>السلع التموينية</span>
                 </button>
               )}
+              {canUserAccessTab(appState.currentUser, 'internal-trade') && (
+                <button
+                  type="button"
+                  data-testid="nav-internal-trade-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav('internal-trade-dashboard', '7. قسم التجارة الداخلية', 'لوحة تحكم التجارة الداخلية')
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'internal-trade'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>التجارة الداخلية</span>
+                </button>
+              )}
               {canUserAccessTab(appState.currentUser, 'grain-maintenance') && (
                 <button
                   type="button"
@@ -4453,18 +4509,21 @@ export default function App() {
                   <span>الموارد البشرية</span>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => handleSelectSidebarNav('reports-center', 'مركز التقارير والطباعة', 'شاشة التقارير والطباعة المتقدمة')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'reports'
-                    ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
-                    : 'text-[#0A1628] hover:bg-white'
-                }`}
-              >
-                <Printer className="w-3.5 h-3.5 text-[#D4AF37]" />
-                <span>مركز التقارير والطباعة</span>
-              </button>
+              {canUserAccessTab(appState.currentUser, 'reports') && (
+                <button
+                  type="button"
+                  data-testid="nav-reports-tab"
+                  onClick={() => handleSelectSidebarNav('reports-center', 'مركز التقارير والطباعة', 'شاشة التقارير والطباعة المتقدمة')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'reports'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <Printer className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  <span>مركز التقارير والطباعة</span>
+                </button>
+              )}
               <button
                 type="button"
                 data-testid="nav-user-guide-tab"
@@ -4520,7 +4579,7 @@ export default function App() {
                 )}
               </button>
               {/* 1. Add Bakery */}
-              {appState.currentUser?.role !== 'viewer' && canUserAccessDepartment(appState.currentUser, 'bakeries') && (
+              {hasDepartmentPermission(appState.currentUser, 'bakeries', 'insert') && (
                 <button
                   type="button"
                   onClick={() =>
@@ -4537,42 +4596,47 @@ export default function App() {
               )}
 
               {/* 2. Edit Data */}
-              <button
-                type="button"
-                onClick={() =>
-                  runGuardedAction(() => {
-                    if (selectedBakeryRowId) {
-                      const found = appState.bakeries.find((b) => b.id === selectedBakeryRowId);
-                      if (found) {
-                        setBakeryToEdit(found);
-                        setIsBakeryModalOpen(true);
-                        return;
+              {hasDepartmentPermission(appState.currentUser, 'bakeries', 'update') && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    runGuardedAction(() => {
+                      if (selectedBakeryRowId) {
+                        const found = appState.bakeries.find((b) => b.id === selectedBakeryRowId);
+                        if (found) {
+                          setBakeryToEdit(found);
+                          setIsBakeryModalOpen(true);
+                          return;
+                        }
                       }
-                    }
-                    setMasterEditorInitialCategory('ALL');
-                    setIsMasterEditorModalOpen(true);
-                  })
-                }
-                className="px-2.5 py-1.5 bg-[#1E40AF] hover:bg-[#2563EB] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                title="تعديل المخبز المحدد أو تعديل القوائم والبيانات"
-              >
-                <Edit2 className="w-3.5 h-3.5" />
-                <span>تعديل البيانات</span>
-              </button>
+                      setMasterEditorInitialCategory('ALL');
+                      setIsMasterEditorModalOpen(true);
+                    })
+                  }
+                  className="px-2.5 py-1.5 bg-[#1E40AF] hover:bg-[#2563EB] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  title="تعديل المخبز المحدد أو تعديل القوائم والبيانات"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>تعديل البيانات</span>
+                </button>
+              )}
 
               {/* 3. Save Changes */}
-              <button
-                type="button"
-                onClick={() =>
-                  runGuardedAction(() => {
-                    triggerSave(appState, 'تم حفظ وتأكيد جميع التغييرات في قاعدة البيانات بنجاح');
-                  })
-                }
-                className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>حفظ التغييرات</span>
-              </button>
+              {(hasDepartmentPermission(appState.currentUser, 'bakeries', 'update') ||
+                hasDepartmentPermission(appState.currentUser, 'debts', 'update')) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    runGuardedAction(() => {
+                      triggerSave(appState, 'تم حفظ وتأكيد جميع التغييرات في قاعدة البيانات بنجاح');
+                    })
+                  }
+                  className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>حفظ التغييرات</span>
+                </button>
+              )}
 
               {/* 3.2 Safe Save & Logout Button (زر خروج وحفظ آمن أعلى الجداول) */}
               <button
@@ -4586,67 +4650,83 @@ export default function App() {
               </button>
 
               {/* 5. Refresh Data */}
-              <button
-                type="button"
-                onClick={() =>
-                  runGuardedAction(() => {
-                    const synced = recalculateAllDatabaseEquations(appState.bakeries, appState.debts);
-                    triggerSave(
-                      { ...appState, bakeries: synced.bakeries, debts: synced.debts },
-                      'تم تحديث البيانات ومزامنة كافة الجداول والمعادلات بنجاح'
-                    );
-                  })
-                }
-                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5 text-slate-600" />
-                <span>تحديث البيانات</span>
-              </button>
+              {(hasDepartmentPermission(appState.currentUser, 'bakeries', 'update') ||
+                hasDepartmentPermission(appState.currentUser, 'debts', 'update')) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    runGuardedAction(() => {
+                      const synced = recalculateAllDatabaseEquations(appState.bakeries, appState.debts);
+                      triggerSave(
+                        { ...appState, bakeries: synced.bakeries, debts: synced.debts },
+                        'تم تحديث البيانات ومزامنة كافة الجداول والمعادلات بنجاح'
+                      );
+                    })
+                  }
+                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-slate-600" />
+                  <span>تحديث البيانات</span>
+                </button>
+              )}
 
               {/* 6. Print */}
-              <button
-                type="button"
-                onClick={() =>
-                  runGuardedAction(() => {
-                    setReportModalInitialTab(activeTab === 'debts' ? 'debts' : 'bakeries');
-                    setIsReportModalOpen(true);
-                  })
-                }
-                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5 text-[#0F2342]" />
-                <span>طباعة</span>
-              </button>
+              {canUserPrintDepartment(
+                appState.currentUser,
+                activeTab === 'debts' ? 'debts' : 'bakeries'
+              ) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    runGuardedAction(() => {
+                      setReportModalInitialTab(activeTab === 'debts' ? 'debts' : 'bakeries');
+                      setIsReportModalOpen(true);
+                    })
+                  }
+                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5 text-[#0F2342]" />
+                  <span>طباعة</span>
+                </button>
+              )}
 
               {/* 7. Export Excel (Protected by Vault Passcode) */}
-              <button
-                type="button"
-                onClick={() =>
-                  runGuardedAction(() =>
-                    requireVaultAccess('backup', 'قسم الحفظ والنسخ — تصدير Excel', handleExportBakeryCSV)
-                  )
-                }
-                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-emerald-800 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-                <span>تصدير Excel</span>
-              </button>
+              {canUserExportDepartment(
+                appState.currentUser,
+                activeTab === 'debts' ? 'debts' : 'bakeries'
+              ) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    runGuardedAction(() =>
+                      requireVaultAccess('backup', 'قسم الحفظ والنسخ — تصدير Excel', handleExportBakeryCSV)
+                    )
+                  }
+                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-emerald-800 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>تصدير Excel</span>
+                </button>
+              )}
 
               {/* 8. Import Excel / Backup (Protected by Vault Passcode) */}
-              <button
-                type="button"
-                onClick={() =>
-                  runGuardedAction(() =>
-                    requireVaultAccess('backup', 'قسم الحفظ والنسخ — استيراد Excel والنسخ الاحتياطي', () =>
-                      setIsBackupModalOpen(true)
+              {(isSuperAdmin(appState.currentUser) ||
+                hasDepartmentPermission(appState.currentUser, 'bakeries', 'insert')) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    runGuardedAction(() =>
+                      requireVaultAccess('backup', 'قسم الحفظ والنسخ — استيراد Excel والنسخ الاحتياطي', () =>
+                        setIsBackupModalOpen(true)
+                      )
                     )
-                  )
-                }
-                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Upload className="w-3.5 h-3.5 text-[#1E40AF]" />
-                <span>استيراد Excel</span>
-              </button>
+                  }
+                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5 text-[#1E40AF]" />
+                  <span>استيراد Excel</span>
+                </button>
+              )}
             </div>
 
             {/* 9. Advanced Search & Instant Search Input inside Toolbar */}
@@ -4723,7 +4803,7 @@ export default function App() {
                   handleToggleAudioMute(shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig))
                 }
                 onRegisterNewBakery={() => {
-                  if (appState.currentUser?.role !== 'viewer') {
+                  if (hasDepartmentPermission(appState.currentUser, 'bakeries', 'insert')) {
                     setBakeryToEdit(null);
                     setIsBakeryModalOpen(true);
                   }
@@ -6171,32 +6251,32 @@ export default function App() {
                                       <Eye className="w-4 h-4" />
                                     </button>
 
-                                    {appState.currentUser?.role !== 'viewer' && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setBakeryToEdit(b);
-                                            setIsBakeryModalOpen(true);
-                                          }}
-                                          className="p-1.5 text-slate-700 hover:text-[#0F2342] hover:bg-slate-200 rounded-lg transition cursor-pointer"
-                                          title="تعديل بيانات المخبز"
-                                        >
-                                          <Edit2 className="w-4 h-4" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDeleteBakery(b.id, b.bakeryOwnerName);
-                                          }}
-                                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
-                                          title="حذف المخبز"
-                                        >
-                                          <Trash2 className="w-4 h-4" />
-                                        </button>
-                                      </>
+                                    {hasDepartmentPermission(appState.currentUser, 'bakeries', 'update') && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setBakeryToEdit(b);
+                                          setIsBakeryModalOpen(true);
+                                        }}
+                                        className="p-1.5 text-slate-700 hover:text-[#0F2342] hover:bg-slate-200 rounded-lg transition cursor-pointer"
+                                        title="تعديل بيانات المخبز"
+                                      >
+                                        <Edit2 className="w-4 h-4" />
+                                      </button>
+                                    )}
+                                    {hasDepartmentPermission(appState.currentUser, 'bakeries', 'delete') && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteBakery(b.id, b.bakeryOwnerName);
+                                        }}
+                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                                        title="حذف المخبز"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
                                     )}
                                   </div>
                                 </td>
@@ -6983,7 +7063,9 @@ export default function App() {
           isOpen={isBackupModalOpen}
           onClose={() => setIsBackupModalOpen(false)}
           currentState={appState}
+          currentUser={appState.currentUser}
           onRestoreState={(restored) => triggerSave(restored, 'تم استعادة وتطبيق قاعدة البيانات بنجاح')}
+          onResetNonMahallaBranches={handleResetNonMahallaBranches}
           onFactoryReset={async () => {
             await clearSupabaseDatabaseData().catch(() => {});
             await factoryReset();
@@ -8105,7 +8187,9 @@ export default function App() {
         onClose={() => setIsBranchesModalOpen(false)}
         branches={cleanBranchesList}
         activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+        currentUser={appState.currentUser}
         isVaultUnlocked={isVaultUnlocked}
+        onResetNonMahallaBranches={handleResetNonMahallaBranches}
         onRequireVaultUnlock={(label, onUnlocked) => {
           requireVaultAccess('branches', label, onUnlocked);
         }}
@@ -8113,6 +8197,7 @@ export default function App() {
           handleSwitchBranch(branchId, cleanBranchesList);
         }}
         onCreateBranch={async (name, directorate, governorate, description) => {
+          if (!isSuperAdmin(appState.currentUser)) return;
           const created = createSupplyBranch(name, directorate, governorate, description);
           if (!created.success || !created.newBranch) return;
           const deduplicatedNext = deduplicateSupplyBranches(created.branches);
@@ -8126,6 +8211,7 @@ export default function App() {
           handleSwitchBranch(created.newBranch.id, deduplicatedNext);
         }}
         onRenameBranch={async (branchId, name, directorate, governorate, description) => {
+          if (!isSuperAdmin(appState.currentUser)) return;
           const renamed = renameSupplyBranch(branchId, name, directorate, governorate, description);
           if (!renamed.success || !renamed.updatedBranch) return;
           const deduplicatedNext = deduplicateSupplyBranches(renamed.branches);
@@ -8165,6 +8251,7 @@ export default function App() {
           });
         }}
         onDeleteBranch={async (branchId) => {
+          if (!isSuperAdmin(appState.currentUser) || branchId === DEFAULT_BRANCH_ID) return;
           const currentActiveId = appState.activeBranchId || DEFAULT_BRANCH_ID;
           const deleted = deleteSupplyBranch(branchId);
           if (!deleted.success) return;

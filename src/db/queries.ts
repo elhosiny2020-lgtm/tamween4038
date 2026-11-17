@@ -69,14 +69,30 @@ export const ALLOWED_DB_TABLES = new Set<NormalizedTableName>([
 ]);
 
 import {
+  DEPARTMENT_SCOPES,
+  SYSTEM_DEPARTMENT_KEYS,
+  type DepartmentPermissionsMap,
+} from '../types.ts';
+import {
+  hashPasswordScrypt,
+  isScryptHash,
+  sanitizeUserForClient,
+  verifyPasswordScrypt,
+} from '../utils/serverAuth.ts';
+import { resolveUserDepartmentMatrix } from '../utils/departmentRbac.ts';
+import { INITIAL_USERS } from '../defaultData.ts';
+import {
+  fallbackAuthenticateUser,
   fallbackDeleteRow,
   fallbackDeleteStorageFile,
   fallbackGetBootstrap,
   fallbackGetBranchModuleState,
   fallbackGetStorageFile,
+  fallbackGetUserByIdAndBranch,
   fallbackListStorageFiles,
   fallbackPurgeAll,
   fallbackQueryTablePaginated,
+  fallbackResetNonMahallaBranches,
   fallbackSyncFullBranchState,
   fallbackSyncHighDebtAlerts,
   fallbackUpsertBranchModuleState,
@@ -140,16 +156,92 @@ export async function ensurePostgresSchema(): Promise<void> {
         .catch(() => {});
       await pool
         .query(
-          `INSERT INTO public.app_users (
-            id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions
+          `ALTER TABLE public.app_users
+             ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+             ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE,
+             ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '',
+             ADD COLUMN IF NOT EXISTS department_permissions JSONB DEFAULT NULL`
+        )
+        .catch(() => {});
+      await pool
+        .query(
+          `CREATE TABLE IF NOT EXISTS public.app_departments (
+            id TEXT PRIMARY KEY,
+            name_ar TEXT NOT NULL,
+            display_order INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+          )`
+        )
+        .catch(() => {});
+      for (let i = 0; i < SYSTEM_DEPARTMENT_KEYS.length; i++) {
+        const deptId = SYSTEM_DEPARTMENT_KEYS[i];
+        const scope = DEPARTMENT_SCOPES.find((d) => d.id === deptId);
+        await pool
+          .query(
+            `INSERT INTO public.app_departments (id, name_ar, display_order)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (id) DO UPDATE SET name_ar = EXCLUDED.name_ar, display_order = EXCLUDED.display_order`,
+            [deptId, scope?.label || deptId, i + 1]
           )
-          SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', 'admin', 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb
+          .catch(() => {});
+      }
+      await pool
+        .query(
+          `CREATE TABLE IF NOT EXISTS public.user_department_permissions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
+            branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+            department_id TEXT NOT NULL REFERENCES public.app_departments(id) ON DELETE CASCADE,
+            can_view BOOLEAN NOT NULL DEFAULT FALSE,
+            can_insert BOOLEAN NOT NULL DEFAULT FALSE,
+            can_update BOOLEAN NOT NULL DEFAULT FALSE,
+            can_delete BOOLEAN NOT NULL DEFAULT FALSE,
+            can_print BOOLEAN NOT NULL DEFAULT FALSE,
+            can_export BOOLEAN NOT NULL DEFAULT FALSE,
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            CONSTRAINT uq_user_dept_perm UNIQUE (user_id, department_id)
+          )`
+        )
+        .catch(() => {});
+      await pool
+        .query(
+          `ALTER TABLE public.audit_logs
+             ADD COLUMN IF NOT EXISTS username TEXT DEFAULT '',
+             ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
+             ADD COLUMN IF NOT EXISTS operation TEXT DEFAULT '',
+             ADD COLUMN IF NOT EXISTS record_id TEXT DEFAULT '',
+             ADD COLUMN IF NOT EXISTS result TEXT DEFAULT 'SUCCESS'`
+        )
+        .catch(() => {});
+      const hashedAdminPass = hashPasswordScrypt('admin');
+      await pool
+        .query(
+          `INSERT INTO public.app_users (
+            id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions, is_active, is_super_admin
+          )
+          SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', $1, 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb, TRUE, TRUE
           WHERE NOT EXISTS (
             SELECT 1 FROM public.app_users WHERE branch_id = 'branch-mahalla' AND lower(username) = 'admin'
           )
-          ON CONFLICT (id) DO NOTHING`
+          ON CONFLICT (id) DO NOTHING`,
+          [hashedAdminPass]
         )
         .catch(() => {});
+      // Auto-upgrade any legacy plaintext passwords stored in app_users to scrypt
+      const legacyUsersRes = await pool
+        .query(`SELECT id, password_hash FROM public.app_users`)
+        .catch(() => ({ rows: [] as any[] }));
+      for (const row of legacyUsersRes.rows) {
+        const rawHash = String(row.password_hash || '');
+        if (rawHash && !isScryptHash(rawHash)) {
+          await pool
+            .query(`UPDATE public.app_users SET password_hash = $1 WHERE id = $2`, [
+              hashPasswordScrypt(rawHash),
+              row.id,
+            ])
+            .catch(() => {});
+        }
+      }
       schemaInitialized = true;
     } catch (err) {
       schemaInitPromise = null;
@@ -296,26 +388,33 @@ export function mapDbUserToApp(r: any): AppUser & { version?: number } {
     .filter(Boolean);
   const applyAll = rawPerms.includes('__all_branches');
   const cleanPerms = rawPerms.filter((p) => !p.startsWith('__dept:') && p !== '__all_branches');
-  return {
+  const roleStr = String(r.role || 'inspector');
+  const mapped: AppUser & { version?: number } = {
     id: String(r.id),
     branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
     username: String(r.username || ''),
     fullName: String(r.full_name || ''),
-    password: String(r.password_hash || ''),
-    role: String(r.role || 'inspector'),
+    hasPassword: Boolean(r.password_hash),
+    role: roleStr,
     jobTitle: String(r.job_title || ''),
     department: String(r.department || ''),
     phone: String(r.phone || ''),
     gmailEmail: scrubProtectedOwnerEmail(r.gmail_email),
-    gmailPassword: String(r.gmail_password || ''),
     googleDriveAutoSync: Boolean(r.google_drive_auto_sync),
     customPermissions: Array.isArray(r.custom_permissions) ? (cleanPerms as any) : undefined,
     allowedDepartments: deptScopes.length > 0 ? (deptScopes as any) : undefined,
+    departmentPermissions:
+      r.department_permissions && typeof r.department_permissions === 'object'
+        ? (r.department_permissions as DepartmentPermissionsMap)
+        : undefined,
     applyToAllBranches: applyAll || undefined,
     isActive: r.is_active !== false,
+    isSuperAdmin: Boolean(r.is_super_admin || roleStr === 'super_admin' || roleStr === 'admin'),
+    notes: String(r.notes || ''),
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
     version: Number(r.version || 1),
   };
+  return sanitizeUserForClient(mapped) as AppUser & { version?: number };
 }
 
 export function mapDbTaskToApp(r: any): DailyBakeryTask & { branchId?: string; version?: number } {
@@ -442,6 +541,21 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
         listKey: String(row.list_key || ''),
         options: Array.isArray(row.options) ? row.options : [],
         version: Number(row.version || 1),
+      };
+    case 'audit_logs':
+      return {
+        id: String(row.id),
+        branchId: String(row.branch_id || DEFAULT_BRANCH_ID),
+        userEmail: String(row.user_email || ''),
+        username: String(row.username || row.user_email || ''),
+        department: String(row.department || ''),
+        operation: String(row.operation || row.action || ''),
+        recordId: String(row.record_id || ''),
+        result: String(row.result || 'SUCCESS'),
+        action: String(row.action || ''),
+        details: String(row.details || ''),
+        ipAddress: String(row.ip_address || ''),
+        createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
       };
     default:
       return row;
@@ -580,7 +694,7 @@ export async function queryTablePaginated(
     return `$${params.length}`;
   };
 
-  if (table !== 'branches') {
+  if (table !== 'branches' && !(table === 'audit_logs' && options.branchId === 'ALL')) {
     conditions.push(`branch_id = ${pushParam(branchId)}`);
   }
 
@@ -627,6 +741,21 @@ export async function queryTablePaginated(
       const p = pushParam(q);
       conditions.push(`(title ILIKE ${p} OR description ILIKE ${p} OR bakery_name ILIKE ${p} OR village ILIKE ${p})`);
     }
+  } else if (table === 'audit_logs') {
+    if (options.status && options.status !== 'all') {
+      if (options.status === 'SUCCESS') {
+        conditions.push(`result IN ('SUCCESS', 'ALLOWED')`);
+      } else {
+        conditions.push(`result = ${pushParam(options.status)}`);
+      }
+    }
+    if (options.search?.trim()) {
+      const q = `%${options.search.trim()}%`;
+      const p = pushParam(q);
+      conditions.push(
+        `(user_email ILIKE ${p} OR COALESCE(username, '') ILIKE ${p} OR COALESCE(department, '') ILIKE ${p} OR action ILIKE ${p} OR details ILIKE ${p} OR COALESCE(ip_address, '') ILIKE ${p})`
+      );
+    }
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -638,7 +767,7 @@ export async function queryTablePaginated(
       table === 'system_config'
         ? 'ORDER BY branch_id ASC'
         : table === 'audit_logs'
-        ? 'ORDER BY created_at DESC'
+        ? 'ORDER BY created_at DESC, id DESC'
         : 'ORDER BY updated_at DESC, id ASC';
 
     const limitParam = pushParam(pageSize);
@@ -1051,39 +1180,63 @@ export async function upsertRowWithClient(
       const u = payload as AppUser;
       const cleanUsername = String(u.username || '').trim();
       let effectiveUserId = recordId;
+      let existingUserRow: any = null;
       if (cleanUsername) {
         const existingByUsername = await client.query(
-          `SELECT id FROM public.app_users
+          `SELECT * FROM public.app_users
            WHERE branch_id = $1 AND lower(username) = lower($2)
            LIMIT 1 FOR UPDATE`,
           [effectiveBranchId, cleanUsername]
         );
         if (existingByUsername.rows.length > 0) {
           effectiveUserId = String(existingByUsername.rows[0].id);
+          existingUserRow = existingByUsername.rows[0];
         } else {
           const existingIdRow = await client.query(
-            `SELECT branch_id FROM public.app_users WHERE id = $1 LIMIT 1 FOR UPDATE`,
+            `SELECT * FROM public.app_users WHERE id = $1 LIMIT 1 FOR UPDATE`,
             [effectiveUserId]
           );
-          if (
-            existingIdRow.rows.length > 0 &&
-            String(existingIdRow.rows[0].branch_id) !== effectiveBranchId
-          ) {
-            effectiveUserId = `${recordId}__${effectiveBranchId}`;
+          if (existingIdRow.rows.length > 0) {
+            if (String(existingIdRow.rows[0].branch_id) !== effectiveBranchId) {
+              effectiveUserId = `${recordId}__${effectiveBranchId}`;
+            } else {
+              existingUserRow = existingIdRow.rows[0];
+            }
           }
         }
       } else {
         const existingIdRow = await client.query(
-          `SELECT branch_id FROM public.app_users WHERE id = $1 LIMIT 1 FOR UPDATE`,
+          `SELECT * FROM public.app_users WHERE id = $1 LIMIT 1 FOR UPDATE`,
           [effectiveUserId]
         );
-        if (
-          existingIdRow.rows.length > 0 &&
-          String(existingIdRow.rows[0].branch_id) !== effectiveBranchId
-        ) {
-          effectiveUserId = `${recordId}__${effectiveBranchId}`;
+        if (existingIdRow.rows.length > 0) {
+          if (String(existingIdRow.rows[0].branch_id) !== effectiveBranchId) {
+            effectiveUserId = `${recordId}__${effectiveBranchId}`;
+          } else {
+            existingUserRow = existingIdRow.rows[0];
+          }
         }
       }
+      const incomingPassword = typeof u.password === 'string' ? u.password.trim() : '';
+      const passwordHashToSave = incomingPassword
+        ? isScryptHash(incomingPassword)
+          ? incomingPassword
+          : hashPasswordScrypt(incomingPassword)
+        : existingUserRow?.password_hash
+        ? String(existingUserRow.password_hash)
+        : '';
+      const resolvedRole = String(u.role || existingUserRow?.role || 'inspector');
+      const isSuper = Boolean(
+        u.isSuperAdmin !== undefined
+          ? u.isSuperAdmin
+          : resolvedRole === 'super_admin' || resolvedRole === 'admin'
+      );
+      const isActive = u.isActive !== undefined ? Boolean(u.isActive) : existingUserRow?.is_active !== false;
+      const matrix = resolveUserDepartmentMatrix({
+        ...u,
+        role: resolvedRole,
+        isSuperAdmin: isSuper,
+      });
       const encodedPerms: string[] = [
         ...(Array.isArray(u.customPermissions)
           ? u.customPermissions.filter((p) => !String(p).startsWith('__dept:') && p !== '__all_branches')
@@ -1094,8 +1247,9 @@ export async function upsertRowWithClient(
       const res = await client.query(
         `INSERT INTO public.app_users (
           id, branch_id, username, full_name, password_hash, role, job_title, department,
-          phone, gmail_email, gmail_password, google_drive_auto_sync, custom_permissions
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+          phone, gmail_email, gmail_password, google_drive_auto_sync, custom_permissions,
+          is_active, is_super_admin, notes, department_permissions
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17::jsonb)
         ON CONFLICT (id) DO UPDATE SET
           branch_id = EXCLUDED.branch_id,
           username = EXCLUDED.username,
@@ -1106,9 +1260,13 @@ export async function upsertRowWithClient(
           department = EXCLUDED.department,
           phone = EXCLUDED.phone,
           gmail_email = EXCLUDED.gmail_email,
-          gmail_password = EXCLUDED.gmail_password,
+          gmail_password = CASE WHEN EXCLUDED.gmail_password <> '' THEN EXCLUDED.gmail_password ELSE public.app_users.gmail_password END,
           google_drive_auto_sync = EXCLUDED.google_drive_auto_sync,
           custom_permissions = EXCLUDED.custom_permissions,
+          is_active = EXCLUDED.is_active,
+          is_super_admin = EXCLUDED.is_super_admin,
+          notes = EXCLUDED.notes,
+          department_permissions = EXCLUDED.department_permissions,
           version = public.app_users.version + 1,
           updated_at = NOW()
         RETURNING *`,
@@ -1117,8 +1275,8 @@ export async function upsertRowWithClient(
           effectiveBranchId,
           cleanUsername,
           String(u.fullName || ''),
-          String(u.password || ''),
-          String(u.role || 'inspector'),
+          passwordHashToSave,
+          resolvedRole,
           String(u.jobTitle || ''),
           String(u.department || ''),
           String(u.phone || ''),
@@ -1126,8 +1284,44 @@ export async function upsertRowWithClient(
           String(u.gmailPassword || ''),
           Boolean(u.googleDriveAutoSync),
           JSON.stringify(encodedPerms),
+          isActive,
+          isSuper,
+          String(u.notes || ''),
+          JSON.stringify(matrix),
         ]
       );
+      for (const deptId of SYSTEM_DEPARTMENT_KEYS) {
+        const flags = matrix[deptId];
+        await client
+          .query(
+            `INSERT INTO public.user_department_permissions (
+              id, user_id, branch_id, department_id,
+              can_view, can_insert, can_update, can_delete, can_print, can_export, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+            ON CONFLICT (user_id, department_id) DO UPDATE SET
+              branch_id = EXCLUDED.branch_id,
+              can_view = EXCLUDED.can_view,
+              can_insert = EXCLUDED.can_insert,
+              can_update = EXCLUDED.can_update,
+              can_delete = EXCLUDED.can_delete,
+              can_print = EXCLUDED.can_print,
+              can_export = EXCLUDED.can_export,
+              updated_at = NOW()`,
+            [
+              `${effectiveUserId}__${deptId}`,
+              effectiveUserId,
+              effectiveBranchId,
+              deptId,
+              Boolean(flags?.view),
+              Boolean(flags?.insert),
+              Boolean(flags?.update),
+              Boolean(flags?.delete),
+              Boolean(flags?.print),
+              Boolean(flags?.export),
+            ]
+          )
+          .catch(() => {});
+      }
       resultRow = mapDbRowByTable('app_users', res.rows[0]);
       break;
     }
@@ -1325,18 +1519,23 @@ export async function upsertRowWithClient(
 
     case 'audit_logs': {
       const res = await client.query(
-        `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           effectiveBranchId,
           String(payload.userEmail || 'system'),
+          String(payload.username || payload.userEmail || 'system'),
+          String(payload.department || ''),
+          String(payload.operation || payload.action || ''),
+          String(payload.recordId || ''),
+          String(payload.result || 'SUCCESS'),
           String(payload.action || 'ACTION'),
           String(payload.details || ''),
           String(payload.ipAddress || '127.0.0.1'),
         ]
       );
-      resultRow = res.rows[0];
+      resultRow = mapDbRowByTable('audit_logs', res.rows[0]);
       break;
     }
   }
@@ -1389,6 +1588,12 @@ export async function deleteRowInPostgres(
   id: string,
   branchId?: string
 ): Promise<{ success: boolean; deletedRow?: any; error?: string }> {
+  if (table === 'branches' && id === DEFAULT_BRANCH_ID) {
+    return {
+      success: false,
+      error: 'لا يمكن حذف أو مسح الإدارة الرئيسية الافتراضية (إدارة تموين مركز المحلة الكبرى).',
+    };
+  }
   if (table === 'branches') {
     const canonicalMatch = CANONICAL_DEFAULT_BRANCHES.find((b) => b.id === id);
     markBranchDeleted(id, canonicalMatch?.name);
@@ -1790,21 +1995,272 @@ export async function purgeAllPostgresData(): Promise<void> {
   }
 }
 
-export async function recordAuditLog(userEmail: string, action: string, details: string, ipAddress?: string, branchId = DEFAULT_BRANCH_ID) {
+export async function authenticateUserInPostgres(
+  branchId: string,
+  usernameOrName: string,
+  password: string
+): Promise<{ ok: boolean; user?: AppUser; error?: string; status?: number }> {
+  await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackAuthenticateUser(branchId, usernameOrName, password);
+  }
+  const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
+  const cleanTarget = String(usernameOrName || '').trim().toLowerCase();
+  try {
+    let usersRes = await pool.query(
+      `SELECT * FROM public.app_users WHERE branch_id = $1`,
+      [effectiveBranchId]
+    );
+    if (usersRes.rows.length === 0) {
+      for (const seed of INITIAL_USERS) {
+        const seedId = effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`;
+        await upsertRowInPostgres('app_users', effectiveBranchId, {
+          ...seed,
+          id: seedId,
+          branchId: effectiveBranchId,
+          isSuperAdmin: seed.role === 'admin',
+          isActive: seed.isActive !== false,
+        });
+      }
+      usersRes = await pool.query(
+        `SELECT * FROM public.app_users WHERE branch_id = $1`,
+        [effectiveBranchId]
+      );
+    }
+
+    const matched = usersRes.rows.find(
+      (r) =>
+        String(r.username || '').trim().toLowerCase() === cleanTarget ||
+        String(r.full_name || '').trim().toLowerCase() === cleanTarget
+    );
+    if (!matched) {
+      return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
+    }
+    const storedHash = String(matched.password_hash || '');
+    if (!verifyPasswordScrypt(password, storedHash)) {
+      return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
+    }
+    if (matched.is_active === false) {
+      return { ok: false, status: 403, error: 'هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.' };
+    }
+    if (storedHash && !isScryptHash(storedHash)) {
+      await pool
+        .query(`UPDATE public.app_users SET password_hash = $1 WHERE id = $2`, [
+          hashPasswordScrypt(password),
+          matched.id,
+        ])
+        .catch(() => {});
+    }
+    return { ok: true, user: mapDbUserToApp(matched) };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackAuthenticateUser(branchId, usernameOrName, password);
+    }
+    throw err;
+  }
+}
+
+export async function getUserByIdAndBranchFromPostgres(
+  branchId: string,
+  userId: string
+): Promise<AppUser | null> {
+  await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackGetUserByIdAndBranch(branchId, userId);
+  }
+  try {
+    const res = await pool.query(
+      `SELECT * FROM public.app_users WHERE id = $1 LIMIT 1`,
+      [userId]
+    );
+    if (res.rows.length === 0) return null;
+    const mapped = mapDbUserToApp(res.rows[0]);
+    if (branchId && mapped.branchId !== branchId && !mapped.applyToAllBranches && !mapped.isSuperAdmin) {
+      return null;
+    }
+    return mapped;
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackGetUserByIdAndBranch(branchId, userId);
+    }
+    throw err;
+  }
+}
+
+export async function resetNonMahallaBranchesInPostgres(actorUsername = 'super_admin'): Promise<{
+  success: boolean;
+  backupFileName: string;
+  removedBranchesCount: number;
+  preservedMahallaCounts: { bakeries: number; debts: number; villages: number; users: number };
+}> {
+  await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackResetNonMahallaBranches(actorUsername);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupFileName = `pre_reset_non_mahalla_branches_${ts}.json`;
+
+    const [branchesRes, villagesRes, bakeriesRes, debtsRes, usersRes, tasksRes, inboxRes, alertsRes, cfgRes, listsRes, modRes] =
+      await Promise.all([
+        client.query(`SELECT * FROM public.branches WHERE id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.villages WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.bakeries WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.debts WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.app_users WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.daily_tasks WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.inbox_messages WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.high_debt_alerts WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.system_config WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.dropdown_lists WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+        client.query(`SELECT * FROM public.branch_module_states WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]),
+      ]);
+
+    const snapshotPayload = {
+      createdAt: new Date().toISOString(),
+      createdBy: actorUsername,
+      branches: branchesRes.rows.map(mapDbBranchToApp),
+      villages: villagesRes.rows.map(mapDbVillageToApp),
+      bakeries: bakeriesRes.rows.map(mapDbBakeryToApp),
+      debts: debtsRes.rows.map(mapDbDebtToApp),
+      app_users: usersRes.rows.map(mapDbUserToApp),
+      daily_tasks: tasksRes.rows.map(mapDbTaskToApp),
+      inbox_messages: inboxRes.rows.map(mapDbInboxToApp),
+      high_debt_alerts: alertsRes.rows.map(mapDbAlertToApp),
+      system_config: cfgRes.rows,
+      dropdown_lists: listsRes.rows,
+      branch_module_states: modRes.rows,
+    };
+
+    await upsertStorageFileInPostgres({
+      branchId: DEFAULT_BRANCH_ID,
+      fileName: backupFileName,
+      content: JSON.stringify(snapshotPayload),
+      contentType: 'application/json',
+      clientId: actorUsername,
+    });
+
+    // Strictly delete ONLY non-Mahalla branches and rows — NEVER touch branch-mahalla
+    await client.query(`DELETE FROM public.branch_module_states WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]).catch(() => {});
+    await client.query(`DELETE FROM public.high_debt_alerts WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.inbox_messages WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.daily_tasks WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.debts WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.bakeries WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.villages WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.dropdown_lists WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.system_config WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.app_users WHERE branch_id <> $1`, [DEFAULT_BRANCH_ID]);
+    await client.query(`DELETE FROM public.branches WHERE id <> $1`, [DEFAULT_BRANCH_ID]);
+
+    const countsRes = await client.query(
+      `SELECT
+        (SELECT count(*)::int FROM public.bakeries WHERE branch_id = $1) AS bakeries,
+        (SELECT count(*)::int FROM public.debts WHERE branch_id = $1) AS debts,
+        (SELECT count(*)::int FROM public.villages WHERE branch_id = $1) AS villages,
+        (SELECT count(*)::int FROM public.app_users WHERE branch_id = $1) AS users`,
+      [DEFAULT_BRANCH_ID]
+    );
+
+    await client.query(
+      `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
+       VALUES ($1, $2, $3, 'system', 'RESET_NON_MAHALLA_BRANCHES', 'non-mahalla', 'SUCCESS', 'SELECTIVE_BRANCH_RESET', $4, '127.0.0.1')`,
+      [
+        DEFAULT_BRANCH_ID,
+        actorUsername,
+        actorUsername,
+        `تم تصفير الإدارات غير الرئيسية فقط (${branchesRes.rows.length} إدارة) مع أخذ نسخة احتياطية (${backupFileName}) والإبقاء التام على بيانات مركز المحلة الكبرى.`,
+      ]
+    );
+
+    await client.query('COMMIT');
+    return {
+      success: true,
+      backupFileName,
+      removedBranchesCount: branchesRes.rows.length,
+      preservedMahallaCounts: {
+        bakeries: Number(countsRes.rows[0]?.bakeries || 0),
+        debts: Number(countsRes.rows[0]?.debts || 0),
+        villages: Number(countsRes.rows[0]?.villages || 0),
+        users: Number(countsRes.rows[0]?.users || 0),
+      },
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackResetNonMahallaBranches(actorUsername);
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function recordAuditLog(
+  userEmail: string,
+  action: string,
+  details: string,
+  ipAddress?: string,
+  branchId = DEFAULT_BRANCH_ID,
+  extra?: {
+    username?: string;
+    department?: string;
+    operation?: string;
+    recordId?: string;
+    result?: string;
+  }
+) {
   try {
     await ensurePostgresSchema();
     if (pgFallbackMode) {
-      fallbackUpsertRow('audit_logs', branchId, { userEmail, action, details, ipAddress });
+      fallbackUpsertRow('audit_logs', branchId, {
+        userEmail,
+        username: extra?.username || userEmail,
+        department: extra?.department || '',
+        operation: extra?.operation || action,
+        recordId: extra?.recordId || '',
+        result: extra?.result || 'SUCCESS',
+        action,
+        details,
+        ipAddress,
+      });
       return;
     }
     await pool.query(
-      `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)`,
-      [branchId, userEmail, action, details, ipAddress || '127.0.0.1']
+      `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        branchId,
+        userEmail,
+        extra?.username || userEmail,
+        extra?.department || '',
+        extra?.operation || action,
+        extra?.recordId || '',
+        extra?.result || 'SUCCESS',
+        action,
+        details,
+        ipAddress || '127.0.0.1',
+      ]
     );
   } catch (error) {
     if (isPostgresUnavailableError(error)) {
       pgFallbackMode = true;
-      fallbackUpsertRow('audit_logs', branchId, { userEmail, action, details, ipAddress });
+      fallbackUpsertRow('audit_logs', branchId, {
+        userEmail,
+        username: extra?.username || userEmail,
+        department: extra?.department || '',
+        operation: extra?.operation || action,
+        recordId: extra?.recordId || '',
+        result: extra?.result || 'SUCCESS',
+        action,
+        details,
+        ipAddress,
+      });
       return;
     }
     console.error('Failed to record audit log:', error);

@@ -594,12 +594,47 @@ function getDiagnosticPingApiUrl(): string {
 }
 
 export const API_SECURITY_SHIELD_TOKEN = 'TAMWEEN-GOV-SHIELD-2026-V5';
+export const AUTH_TOKEN_STORAGE_KEY = 'TAMWEEN_AUTH_TOKEN';
+
+let inMemoryAuthToken = '';
+
+export function setAuthSessionToken(token: string | null): void {
+  const clean = token ? String(token).trim() : '';
+  inMemoryAuthToken = clean;
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      if (clean) {
+        sessionStorage.setItem(AUTH_TOKEN_STORAGE_KEY, clean);
+      } else {
+        sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+      }
+    }
+  } catch {}
+}
+
+export function getAuthSessionToken(): string {
+  if (inMemoryAuthToken) return inMemoryAuthToken;
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const stored = sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || '';
+      if (stored) {
+        inMemoryAuthToken = stored;
+        return stored;
+      }
+    }
+  } catch {}
+  return '';
+}
 
 export function getSecurityShieldHeaders(includeJsonContentType = true): Record<string, string> {
   const headers: Record<string, string> = {
     'X-Tamween-Security-Token': API_SECURITY_SHIELD_TOKEN,
     'X-Tamween-Client-Id': SESSION_CLIENT_ID,
   };
+  const authToken = getAuthSessionToken();
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
   if (includeJsonContentType) {
     headers['Content-Type'] = 'application/json';
   }

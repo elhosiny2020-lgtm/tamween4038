@@ -7,6 +7,7 @@ import {
   computeMonthlyQuotaExecutionPct,
   computeDisbursedQuantityValue,
   generateSmartRationAlerts,
+  evaluateSingleDateStatus,
 } from './rationMathEngine';
 import { createInitialRationState } from '../services/modulesStorage';
 import { DEFAULT_VILLAGES_HIERARCHY } from '../defaultData';
@@ -56,7 +57,18 @@ test('computeDisbursedQuantityValue: calculates disbursedQty * unitPrice', () =>
   assert.equal(computeDisbursedQuantityValue(4100, 30), 123000);
 });
 
-test('generateSmartRationAlerts: detects all 7 categories including low stock, incomplete quotas, and expiring items/licenses', () => {
+test('evaluateSingleDateStatus: classifies expired, expiring soon (<=45 days), and valid dates', () => {
+  const expired = evaluateSingleDateStatus('2026-01-15', '2026-04-01');
+  assert.equal(expired.status, 'منتهي');
+
+  const soon = evaluateSingleDateStatus('2026-04-20', '2026-04-01');
+  assert.equal(soon.status, 'قريب الانتهاء');
+
+  const valid = evaluateSingleDateStatus('2027-01-01', '2026-04-01');
+  assert.equal(valid.status, 'ساري');
+});
+
+test('generateSmartRationAlerts: detects all categories including license, tax card, and commercial reg expiry', () => {
   const state = createInitialRationState('branch-main', 'إدارة تموين مركز المحلة الكبرى', DEFAULT_VILLAGES_HIERARCHY);
   // Force one warehouse item below reorderLevel
   state.warehouses[0].openingBalance = 100;
@@ -66,9 +78,10 @@ test('generateSmartRationAlerts: detects all 7 categories including low stock, i
   // Force one commodity near expiry
   state.commodities[0].expiryDate = '2026-01-01';
   state.warehouses[0].expiryDate = '2026-01-01';
-  // Force one merchant license near expiry
+  // Force merchant #0 license, tax card, and commercial reg expiry
   state.merchants[0].licenseExpiryDate = '2026-01-01';
-  state.merchants[0].activityEndDate = '2026-01-01';
+  state.merchants[0].taxCardExpiryDate = '2026-04-15';
+  state.merchants[0].commercialRegExpiryDate = '2025-12-31';
   // Force one requisition with low distributed quantity (< 85%)
   state.requisitions[0].lines[0].deliveredQty = 10;
 
@@ -82,12 +95,13 @@ test('generateSmartRationAlerts: detects all 7 categories including low stock, i
   assert.ok(alerts.length > 0, 'Should generate smart alerts');
   assert.ok(alerts.some((a) => a.category === 'LOW_STOCK'), 'Should include LOW_STOCK alert');
   assert.ok(alerts.some((a) => a.category === 'NEAR_EXPIRY'), 'Should include NEAR_EXPIRY alert');
-  assert.ok(
-    alerts.some((a) => a.category === 'EXPIRED_MERCHANT_LICENSE'),
-    'Should include EXPIRED_MERCHANT_LICENSE alert'
+  const docAlerts = alerts.filter(
+    (a) => a.category === 'EXPIRED_MERCHANT_LICENSE' && a.entityName.startsWith(state.merchants[0].merchantName)
   );
+  assert.ok(docAlerts.length >= 3, 'Should generate alerts for license, tax card, and commercial reg expiry');
   assert.ok(
     alerts.some((a) => a.category === 'INCOMPLETE_DISBURSEMENT' || a.category === 'DELAYED_QUOTA'),
     'Should include quota execution alerts'
   );
 });
+

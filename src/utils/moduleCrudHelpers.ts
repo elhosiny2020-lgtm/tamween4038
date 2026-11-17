@@ -4,7 +4,8 @@ import type {
   ModuleAuditLog,
   RationModuleState,
 } from '../types/modules';
-import type { AppUser } from '../types';
+import type { AppUser, SystemDepartmentKey } from '../types';
+import { hasDepartmentPermission, isSuperAdmin } from './departmentRbac';
 
 export interface RelationalCheckResult {
   canDelete: boolean;
@@ -18,32 +19,81 @@ export interface ValidationResult {
 }
 
 export interface ModulePermissions {
+  canView: boolean;
   canAdd: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  canPrint: boolean;
+  canExport: boolean;
   isReadOnly: boolean;
 }
 
 /**
- * صلاحيات المستخدم لتنفيذ عمليات الإضافة والتعديل والحذف داخل الأقسام
+ * صلاحيات المستخدم لتنفيذ عمليات المشاهدة والإضافة والتعديل والحذف والطباعة والتصدير داخل الأقسام
  */
 export function resolveModuleCrudPermissions(
   currentUser: AppUser | null,
-  isVaultLocked = false
+  isVaultLocked = false,
+  department?: SystemDepartmentKey
 ): ModulePermissions {
   if (!currentUser) {
     return {
+      canView: !isVaultLocked,
       canAdd: !isVaultLocked,
       canEdit: !isVaultLocked,
       canDelete: !isVaultLocked,
+      canPrint: !isVaultLocked,
+      canExport: !isVaultLocked,
       isReadOnly: isVaultLocked,
     };
   }
-  if (currentUser.role === 'viewer' || isVaultLocked) {
+  if (currentUser.isActive === false || isVaultLocked) {
     return {
+      canView: currentUser.isActive !== false && !isVaultLocked,
       canAdd: false,
       canEdit: false,
       canDelete: false,
+      canPrint: false,
+      canExport: false,
+      isReadOnly: true,
+    };
+  }
+  if (isSuperAdmin(currentUser)) {
+    return {
+      canView: true,
+      canAdd: true,
+      canEdit: true,
+      canDelete: true,
+      canPrint: true,
+      canExport: true,
+      isReadOnly: false,
+    };
+  }
+  if (department) {
+    const canView = hasDepartmentPermission(currentUser, department, 'view');
+    const canAdd = hasDepartmentPermission(currentUser, department, 'insert');
+    const canEdit = hasDepartmentPermission(currentUser, department, 'update');
+    const canDelete = hasDepartmentPermission(currentUser, department, 'delete');
+    const canPrint = hasDepartmentPermission(currentUser, department, 'print');
+    const canExport = hasDepartmentPermission(currentUser, department, 'export');
+    return {
+      canView,
+      canAdd,
+      canEdit,
+      canDelete,
+      canPrint,
+      canExport,
+      isReadOnly: !canAdd && !canEdit && !canDelete,
+    };
+  }
+  if (currentUser.role === 'viewer') {
+    return {
+      canView: true,
+      canAdd: false,
+      canEdit: false,
+      canDelete: false,
+      canPrint: true,
+      canExport: true,
       isReadOnly: true,
     };
   }
@@ -59,9 +109,12 @@ export function resolveModuleCrudPermissions(
         : true;
 
   return {
+    canView: true,
     canAdd,
     canEdit,
     canDelete,
+    canPrint: hasCustom ? custom.includes('VIEW_REPORTS') || currentUser.role === 'admin' : true,
+    canExport: hasCustom ? custom.includes('EXPORT_DATA') || currentUser.role === 'admin' : true,
     isReadOnly: !canAdd && !canEdit && !canDelete,
   };
 }

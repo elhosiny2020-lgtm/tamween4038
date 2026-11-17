@@ -25,9 +25,12 @@ import {
 import { getExpirationAlerts } from './AlertsModal';
 import {
   formatDateDDMMYYYY,
-  getDailyTaskCategoryLabel,
   getWelcomeDashboardReminderTasks,
 } from '../utils/auditHelper';
+import {
+  canUserAccessDepartment,
+  hasDepartmentPermission,
+} from '../utils/departmentRbac';
 
 interface WelcomeDashboardPageProps {
   currentUser: AppUser;
@@ -84,6 +87,12 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
   onToggleTaskWelcomeReminder,
   onOpenInbox,
 }) => {
+  const canAccessBakeries = canUserAccessDepartment(currentUser, 'bakeries');
+  const canInsertBakery = hasDepartmentPermission(currentUser, 'bakeries', 'insert');
+  const canUpdateBakery = hasDepartmentPermission(currentUser, 'bakeries', 'update');
+  const canAccessDebts = canUserAccessDepartment(currentUser, 'debts');
+  const canAccessReports = canUserAccessDepartment(currentUser, 'reports');
+
   const expirationAlerts = React.useMemo(() => getExpirationAlerts(bakeries), [bakeries]);
   const expiredDocsCount = expirationAlerts.filter((a) => a.isExpired).length;
   const expiringSoonCount = expirationAlerts.filter((a) => !a.isExpired).length;
@@ -151,7 +160,7 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
 
             {/* Primary CTA Buttons */}
             <div className="flex flex-wrap items-center gap-2.5 pt-2">
-              {currentUser.role !== 'viewer' && (
+              {canInsertBakery && (
                 <button
                   type="button"
                   data-testid="welcome-register-bakery-btn"
@@ -173,7 +182,7 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
                 <span>عرض التنبيهات ({totalAlertsCount})</span>
               </button>
 
-              {onOpenDailyPerformanceSummary && (
+              {canAccessReports && onOpenDailyPerformanceSummary && (
                 <button
                   type="button"
                   data-testid="welcome-open-daily-performance-btn"
@@ -185,15 +194,17 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
                 </button>
               )}
 
-              <button
-                type="button"
-                data-testid="welcome-daily-briefing-btn"
-                onClick={onOpenDailyBriefing}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-black text-xs sm:text-sm border border-white/20 transition cursor-pointer"
-              >
-                <TrendingUp className="w-4 h-4 text-[#5EEAD4]" />
-                <span>التقرير اليومي للمديونيات والتراخيص</span>
-              </button>
+              {canAccessReports && (
+                <button
+                  type="button"
+                  data-testid="welcome-daily-briefing-btn"
+                  onClick={onOpenDailyBriefing}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-black text-xs sm:text-sm border border-white/20 transition cursor-pointer"
+                >
+                  <TrendingUp className="w-4 h-4 text-[#5EEAD4]" />
+                  <span>التقرير اليومي للمديونيات والتراخيص</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -249,46 +260,50 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
 
       {/* 4 Core Executive KPI Summary Cards */}
       <section aria-label="ملخص المخابز والمديونيات الحالي" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <button
-          type="button"
-          onClick={onNavigateBakeries}
-          className="text-right bg-white rounded-2xl p-5 border border-slate-200 hover:border-[#0D9488] shadow-xs hover:shadow-md transition group cursor-pointer"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-slate-600">إجمالي المخابز المسجلة</span>
-            <span className="w-10 h-10 rounded-xl bg-[#0D9488]/10 text-[#0D9488] flex items-center justify-center group-hover:bg-[#0D9488] group-hover:text-white transition">
-              <Store className="w-5 h-5" />
-            </span>
-          </div>
-          <p className="text-3xl font-black font-mono tabular-nums text-[#0A1628] mt-3">
-            {bakeries.length.toLocaleString('en-US')}
-          </p>
-          <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-[#0D9488]">
-            <span>عرض قاعدة بيانات المخابز</span>
-            <ArrowLeft className="w-3.5 h-3.5" />
-          </div>
-        </button>
+        {canAccessBakeries && (
+          <button
+            type="button"
+            onClick={onNavigateBakeries}
+            className="text-right bg-white rounded-2xl p-5 border border-slate-200 hover:border-[#0D9488] shadow-xs hover:shadow-md transition group cursor-pointer"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-slate-600">إجمالي المخابز المسجلة</span>
+              <span className="w-10 h-10 rounded-xl bg-[#0D9488]/10 text-[#0D9488] flex items-center justify-center group-hover:bg-[#0D9488] group-hover:text-white transition">
+                <Store className="w-5 h-5" />
+              </span>
+            </div>
+            <p className="text-3xl font-black font-mono tabular-nums text-[#0A1628] mt-3">
+              {bakeries.length.toLocaleString('en-US')}
+            </p>
+            <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-[#0D9488]">
+              <span>عرض قاعدة بيانات المخابز</span>
+              <ArrowLeft className="w-3.5 h-3.5" />
+            </div>
+          </button>
+        )}
 
-        <button
-          type="button"
-          onClick={onNavigateDebts}
-          className="text-right bg-white rounded-2xl p-5 border border-slate-200 hover:border-rose-500 shadow-xs hover:shadow-md transition group cursor-pointer"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-slate-600">إجمالي المديونيات الحالية</span>
-            <span className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center group-hover:bg-rose-600 group-hover:text-white transition">
-              <Scale className="w-5 h-5" />
-            </span>
-          </div>
-          <p className="text-2xl sm:text-3xl font-black font-mono tabular-nums text-rose-700 mt-3">
-            {debtSummary.totalRemaining.toLocaleString('en-US')}{' '}
-            <span className="text-xs font-bold text-slate-500">ج.م</span>
-          </p>
-          <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-rose-700">
-            <span>{debtSummary.debtorBakeriesCount} مخبز عليه رصيد متبقي</span>
-            <ArrowLeft className="w-3.5 h-3.5" />
-          </div>
-        </button>
+        {canAccessDebts && (
+          <button
+            type="button"
+            onClick={onNavigateDebts}
+            className="text-right bg-white rounded-2xl p-5 border border-slate-200 hover:border-rose-500 shadow-xs hover:shadow-md transition group cursor-pointer"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-slate-600">إجمالي المديونيات الحالية</span>
+              <span className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center group-hover:bg-rose-600 group-hover:text-white transition">
+                <Scale className="w-5 h-5" />
+              </span>
+            </div>
+            <p className="text-2xl sm:text-3xl font-black font-mono tabular-nums text-rose-700 mt-3">
+              {debtSummary.totalRemaining.toLocaleString('en-US')}{' '}
+              <span className="text-xs font-bold text-slate-500">ج.م</span>
+            </p>
+            <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-rose-700">
+              <span>{debtSummary.debtorBakeriesCount} مخبز عليه رصيد متبقي</span>
+              <ArrowLeft className="w-3.5 h-3.5" />
+            </div>
+          </button>
+        )}
 
         <button
           type="button"
@@ -471,7 +486,7 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
 
                   <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-1.5">
-                      {onCompleteTask && currentUser.role !== 'viewer' && (
+                      {onCompleteTask && canUpdateBakery && (
                         <button
                           type="button"
                           data-testid="welcome-complete-task-btn"
@@ -482,7 +497,7 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
                           <span>إنجاز المهمة ✓</span>
                         </button>
                       )}
-                      {task.taskType === 'debt_review' ? (
+                      {task.taskType === 'debt_review' && canAccessDebts ? (
                         <button
                           type="button"
                           onClick={onNavigateDebts}
@@ -490,7 +505,7 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
                         >
                           سجل المديونيات
                         </button>
-                      ) : (
+                      ) : canAccessBakeries ? (
                         <button
                           type="button"
                           onClick={onNavigateBakeries}
@@ -498,10 +513,10 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
                         >
                           جدول المخابز
                         </button>
-                      )}
+                      ) : null}
                     </div>
 
-                    {onToggleTaskWelcomeReminder && currentUser.role !== 'viewer' && (
+                    {onToggleTaskWelcomeReminder && canUpdateBakery && (
                       <button
                         type="button"
                         data-testid="welcome-unpin-task-btn"
@@ -535,7 +550,7 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {currentUser.role !== 'viewer' && (
+            {canInsertBakery && (
               <button
                 type="button"
                 onClick={onRegisterNewBakery}
@@ -551,33 +566,37 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={onNavigateBakeries}
-              className="p-4 rounded-2xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-right transition cursor-pointer space-y-2"
-            >
-              <div className="w-9 h-9 rounded-xl bg-[#0F2342] text-[#D4AF37] flex items-center justify-center">
-                <Store className="w-5 h-5" />
-              </div>
-              <div className="text-xs font-black text-[#0A1628]">جدول بيانات المخابز</div>
-              <div className="text-[11px] font-semibold text-slate-600">
-                البحث والتصفية ومتابعة الحصص والأرغفة
-              </div>
-            </button>
+            {canAccessBakeries && (
+              <button
+                type="button"
+                onClick={onNavigateBakeries}
+                className="p-4 rounded-2xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-right transition cursor-pointer space-y-2"
+              >
+                <div className="w-9 h-9 rounded-xl bg-[#0F2342] text-[#D4AF37] flex items-center justify-center">
+                  <Store className="w-5 h-5" />
+                </div>
+                <div className="text-xs font-black text-[#0A1628]">جدول بيانات المخابز</div>
+                <div className="text-[11px] font-semibold text-slate-600">
+                  البحث والتصفية ومتابعة الحصص والأرغفة
+                </div>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={onNavigateDebts}
-              className="p-4 rounded-2xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 text-right transition cursor-pointer space-y-2"
-            >
-              <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center">
-                <Scale className="w-5 h-5" />
-              </div>
-              <div className="text-xs font-black text-[#0A1628]">سجل المديونيات والتحصيل</div>
-              <div className="text-[11px] font-semibold text-slate-600">
-                متابعة المخالفات والسداد وجدولة الدفعات
-              </div>
-            </button>
+            {canAccessDebts && (
+              <button
+                type="button"
+                onClick={onNavigateDebts}
+                className="p-4 rounded-2xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 text-right transition cursor-pointer space-y-2"
+              >
+                <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center">
+                  <Scale className="w-5 h-5" />
+                </div>
+                <div className="text-xs font-black text-[#0A1628]">سجل المديونيات والتحصيل</div>
+                <div className="text-[11px] font-semibold text-slate-600">
+                  متابعة المخالفات والسداد وجدولة الدفعات
+                </div>
+              </button>
+            )}
 
             <button
               type="button"
@@ -607,21 +626,23 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
               </div>
             </button>
 
-            <button
-              type="button"
-              onClick={onNavigateReports}
-              className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/80 text-right transition cursor-pointer space-y-2"
-            >
-              <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center">
-                <Printer className="w-5 h-5" />
-              </div>
-              <div className="text-xs font-black text-[#0A1628]">مركز التقارير والطباعة</div>
-              <div className="text-[11px] font-semibold text-slate-600">
-                إصدار وطباعة التقارير الرسمية المعتمدة
-              </div>
-            </button>
+            {canAccessReports && (
+              <button
+                type="button"
+                onClick={onNavigateReports}
+                className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/80 text-right transition cursor-pointer space-y-2"
+              >
+                <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div className="text-xs font-black text-[#0A1628]">مركز التقارير والطباعة</div>
+                <div className="text-[11px] font-semibold text-slate-600">
+                  إصدار وطباعة التقارير الرسمية المعتمدة
+                </div>
+              </button>
+            )}
 
-            {onOpenDailyPerformanceSummary && (
+            {canAccessReports && onOpenDailyPerformanceSummary && (
               <button
                 type="button"
                 onClick={onOpenDailyPerformanceSummary}
@@ -702,14 +723,16 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={onOpenDailyBriefing}
-            className="w-full py-2.5 px-4 rounded-xl bg-[#0F2342] hover:bg-[#1E3A8A] text-amber-300 text-xs font-black transition cursor-pointer flex items-center justify-center gap-2"
-          >
-            <span>فتح البيان اليومي الموحد</span>
-            <ArrowLeft className="w-3.5 h-3.5" />
-          </button>
+          {canAccessReports && (
+            <button
+              type="button"
+              onClick={onOpenDailyBriefing}
+              className="w-full py-2.5 px-4 rounded-xl bg-[#0F2342] hover:bg-[#1E3A8A] text-amber-300 text-xs font-black transition cursor-pointer flex items-center justify-center gap-2"
+            >
+              <span>فتح البيان اليومي الموحد</span>
+              <ArrowLeft className="w-3.5 h-3.5" />
+            </button>
+          )}
         </section>
       </div>
     </div>

@@ -311,6 +311,7 @@ export function aggregateVillageFuelBreakdown(
 // ============================================================================
 
 export interface MerchantArchiveItemSnapshot {
+  id?: string;
   traderCode: string;
   posMachineNumber: string;
   merchantName: string;
@@ -319,6 +320,12 @@ export interface MerchantArchiveItemSnapshot {
   detailedAddress: string;
   cashInsuranceAmount: number;
   activityStatus: string;
+  commercialRegNumber?: string;
+  taxCardNumber?: string;
+  licenseNumber?: string;
+  licenseExpiryDate?: string;
+  taxCardExpiryDate?: string;
+  commercialRegExpiryDate?: string;
 }
 
 export interface MerchantMonthlyDiffResult {
@@ -334,10 +341,18 @@ export function compareMerchantArchiveSnapshots(
   incomingList: MerchantArchiveItemSnapshot[]
 ): MerchantMonthlyDiffResult {
   const prevByCode = new Map<string, MerchantArchiveItemSnapshot>();
+  const prevByPos = new Map<string, MerchantArchiveItemSnapshot>();
+  const prevByNid = new Map<string, MerchantArchiveItemSnapshot>();
+  const prevByName = new Map<string, MerchantArchiveItemSnapshot>();
+
   for (const p of previousList) {
-    const key = p.traderCode.trim() || p.posMachineNumber.trim() || p.merchantName.trim();
-    prevByCode.set(key, p);
+    if (p.traderCode?.trim()) prevByCode.set(p.traderCode.trim(), p);
+    if (p.posMachineNumber?.trim()) prevByPos.set(p.posMachineNumber.trim(), p);
+    if (p.nationalId?.trim()) prevByNid.set(p.nationalId.trim(), p);
+    if (p.merchantName?.trim()) prevByName.set(p.merchantName.trim(), p);
   }
+
+  const matchedPrevSet = new Set<MerchantArchiveItemSnapshot>();
 
   const newMerchants: MerchantArchiveItemSnapshot[] = [];
   const stoppedMerchants: MerchantMonthlyDiffResult['stoppedMerchants'] = [];
@@ -346,22 +361,34 @@ export function compareMerchantArchiveSnapshots(
   const dataModified: MerchantMonthlyDiffResult['dataModified'] = [];
 
   for (const curr of incomingList) {
-    const key = curr.traderCode.trim() || curr.posMachineNumber.trim() || curr.merchantName.trim();
-    const prev = prevByCode.get(key);
+    const prev =
+      (curr.traderCode?.trim() ? prevByCode.get(curr.traderCode.trim()) : undefined) ||
+      (curr.posMachineNumber?.trim() ? prevByPos.get(curr.posMachineNumber.trim()) : undefined) ||
+      (curr.nationalId?.trim() ? prevByNid.get(curr.nationalId.trim()) : undefined) ||
+      (curr.merchantName?.trim() ? prevByName.get(curr.merchantName.trim()) : undefined);
+
     if (!prev) {
       newMerchants.push(curr);
       continue;
     }
 
+    matchedPrevSet.add(prev);
+
     const changedFields: string[] = [];
-    if (prev.activityStatus !== 'متوقف' && prev.activityStatus !== 'موقوف' && (curr.activityStatus === 'متوقف' || curr.activityStatus === 'موقوف')) {
+    if (
+      prev.activityStatus !== 'متوقف' &&
+      prev.activityStatus !== 'موقوف' &&
+      (curr.activityStatus === 'متوقف' || curr.activityStatus === 'موقوف')
+    ) {
       stoppedMerchants.push({ prev, curr });
       changedFields.push('حالة التاجر (تم الإيقاف)');
     } else if (prev.activityStatus !== curr.activityStatus) {
       changedFields.push('حالة التاجر');
     }
 
-    const insDiff = round2((Number(curr.cashInsuranceAmount) || 0) - (Number(prev.cashInsuranceAmount) || 0));
+    const insDiff = round2(
+      (Number(curr.cashInsuranceAmount) || 0) - (Number(prev.cashInsuranceAmount) || 0)
+    );
     if (Math.abs(insDiff) > 0.01) {
       insuranceChanged.push({ prev, curr, diff: insDiff });
       changedFields.push('مبلغ التأمين');
@@ -369,15 +396,44 @@ export function compareMerchantArchiveSnapshots(
 
     if (prev.posMachineNumber !== curr.posMachineNumber || prev.traderCode !== curr.traderCode) {
       posOrCodeChanged.push({ prev, curr });
-      changedFields.push('رقم الماكينة / الكود');
+      if (prev.traderCode !== curr.traderCode) changedFields.push('كود التاجر');
+      if (prev.posMachineNumber !== curr.posMachineNumber) changedFields.push('رقم الماكينة');
     }
 
     if (prev.phone !== curr.phone) changedFields.push('رقم التليفون');
     if (prev.detailedAddress !== curr.detailedAddress) changedFields.push('العنوان التفصيلي');
     if (prev.nationalId !== curr.nationalId) changedFields.push('الرقم القومي');
+    if ((prev.commercialRegNumber || '') !== (curr.commercialRegNumber || ''))
+      changedFields.push('السجل التجاري');
+    if ((prev.licenseNumber || '') !== (curr.licenseNumber || ''))
+      changedFields.push('رقم الترخيص');
+    if ((prev.taxCardNumber || '') !== (curr.taxCardNumber || ''))
+      changedFields.push('البطاقة الضريبية');
+    if ((prev.licenseExpiryDate || '') !== (curr.licenseExpiryDate || ''))
+      changedFields.push('تاريخ انتهاء الرخصة');
+    if ((prev.taxCardExpiryDate || '') !== (curr.taxCardExpiryDate || ''))
+      changedFields.push('تاريخ انتهاء البطاقة الضريبية');
+    if ((prev.commercialRegExpiryDate || '') !== (curr.commercialRegExpiryDate || ''))
+      changedFields.push('تاريخ انتهاء السجل التجاري');
 
     if (changedFields.length > 0) {
       dataModified.push({ prev, curr, changedFields });
+    }
+  }
+
+  // أي تاجر كان بالنسخة السابقة ولم يظهر في النسخة الجديدة يُسجّل ضمن المتوقفين / المستبعدين
+  for (const prev of previousList) {
+    if (!matchedPrevSet.has(prev)) {
+      const removedCurr: MerchantArchiveItemSnapshot = {
+        ...prev,
+        activityStatus: 'متوقف (مستبعد بالكشف الجديد)',
+      };
+      stoppedMerchants.push({ prev, curr: removedCurr });
+      dataModified.push({
+        prev,
+        curr: removedCurr,
+        changedFields: ['حالة التاجر (استبعاد من النسخة الجديدة)'],
+      });
     }
   }
 
@@ -389,3 +445,4 @@ export function compareMerchantArchiveSnapshots(
     dataModified,
   };
 }
+

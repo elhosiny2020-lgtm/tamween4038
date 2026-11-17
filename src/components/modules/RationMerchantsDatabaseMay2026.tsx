@@ -35,6 +35,7 @@ import {
   round2,
 } from '../../utils/internalTradeMathEngine';
 import { buildMay2026RationMerchantsList } from '../../data/may2026RationMerchants';
+import { resolveModuleCrudPermissions } from '../../utils/moduleCrudHelpers';
 
 interface Props {
   state: RationModuleState;
@@ -72,6 +73,10 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   canWrite,
   onUpdateMerchants,
 }) => {
+  const { canPrint, canExport } = useMemo(
+    () => resolveModuleCrudPermissions(currentUser ?? null, false, 'commodities'),
+    [currentUser]
+  );
   const [subTab, setSubTab] = useState<ActiveSubTab>('table');
   const [searchQuery, setSearchQuery] = useState('');
   const [villageFilter, setVillageFilter] = useState('ALL');
@@ -84,6 +89,8 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   const [editingMerchant, setEditingMerchant] = useState<RationMerchant | null>(null);
 
   const [selectedReportId, setSelectedReportId] = useState<ReportTypeId>('RPT_ALL');
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Monthly CSV Import & Diff Preview state
   const [newMonthLabel, setNewMonthLabel] = useState('يونيو 2026');
@@ -101,6 +108,12 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
     activityStatus: 'نشط' as MerchantActivityStatus,
     posMachineNumber: '',
     traderCode: '',
+    commercialRegNumber: '',
+    licenseNumber: '',
+    taxCardNumber: '',
+    licenseExpiryDate: '2027-05-01',
+    taxCardExpiryDate: '2027-08-15',
+    commercialRegExpiryDate: '2027-09-30',
     village: villages[0]?.village || 'بشبيش',
     localUnit: villages[0]?.localUnits?.[0] || 'بشبيش الرئيسية',
     reviewStatus: 'تمت المراجعة' as MerchantReviewStatus,
@@ -211,12 +224,25 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         (m.phone || '').toLowerCase().includes(q) ||
         (m.posMachineNumber || '').toLowerCase().includes(q) ||
         (m.traderCode || m.activityCardNumber || '').toLowerCase().includes(q) ||
+        (m.commercialRegNumber || '').toLowerCase().includes(q) ||
+        (m.licenseNumber || '').toLowerCase().includes(q) ||
         (m.internalCode || '').toLowerCase().includes(q) ||
         (m.detailedAddress || '').toLowerCase().includes(q) ||
         (m.village || '').toLowerCase().includes(q)
       );
     });
   }, [merchants, searchQuery, villageFilter, localUnitFilter, statusFilter, reviewFilter]);
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredMerchants.length / pageSize)),
+    [filteredMerchants.length, pageSize]
+  );
+
+  const paginatedMerchants = useMemo(() => {
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * pageSize;
+    return filteredMerchants.slice(start, start + pageSize);
+  }, [filteredMerchants, currentPage, pageSize, totalPages]);
 
   const openAddMerchant = () => {
     setEditingMerchant(null);
@@ -230,6 +256,12 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       activityStatus: 'نشط',
       posMachineNumber: `1604${String(8000 + nextSerial)}`,
       traderCode: `TRD-16-${String(5000 + nextSerial)}`,
+      commercialRegNumber: `CR-${30000 + nextSerial}`,
+      licenseNumber: `LIC-TM-${2000 + nextSerial}`,
+      taxCardNumber: `TX-400-${100 + nextSerial}-16`,
+      licenseExpiryDate: '2027-05-01',
+      taxCardExpiryDate: '2027-08-15',
+      commercialRegExpiryDate: '2027-09-30',
       village: villages[0]?.village || 'بشبيش',
       localUnit: villages[0]?.localUnits?.[0] || 'بشبيش الرئيسية',
       reviewStatus: 'تمت المراجعة',
@@ -249,6 +281,12 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       activityStatus: m.activityStatus === 'موقوف' ? 'متوقف' : m.activityStatus,
       posMachineNumber: m.posMachineNumber || '',
       traderCode: m.traderCode || m.activityCardNumber || '',
+      commercialRegNumber: m.commercialRegNumber || '',
+      licenseNumber: m.licenseNumber || '',
+      taxCardNumber: m.taxCardNumber || '',
+      licenseExpiryDate: m.licenseExpiryDate || '2027-05-01',
+      taxCardExpiryDate: m.taxCardExpiryDate || '2027-08-15',
+      commercialRegExpiryDate: m.commercialRegExpiryDate || '2027-09-30',
       village: m.village || 'بشبيش',
       localUnit: m.localUnit || m.village || 'بشبيش الرئيسية',
       reviewStatus: m.reviewStatus || 'تمت المراجعة',
@@ -291,6 +329,13 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         posMachineNumber: formState.posMachineNumber.trim(),
         traderCode: formState.traderCode.trim(),
         activityCardNumber: formState.traderCode.trim(),
+        commercialRegNumber: formState.commercialRegNumber.trim() || editingMerchant.commercialRegNumber,
+        licenseNumber: formState.licenseNumber.trim() || editingMerchant.licenseNumber,
+        taxCardNumber: formState.taxCardNumber.trim() || editingMerchant.taxCardNumber,
+        licenseExpiryDate: formState.licenseExpiryDate || editingMerchant.licenseExpiryDate,
+        taxCardExpiryDate: formState.taxCardExpiryDate || editingMerchant.taxCardExpiryDate,
+        commercialRegExpiryDate: formState.commercialRegExpiryDate || editingMerchant.commercialRegExpiryDate,
+        activityEndDate: formState.licenseExpiryDate || editingMerchant.activityEndDate,
         village: formState.village,
         localUnit: formState.localUnit,
         reviewStatus: formState.reviewStatus,
@@ -302,12 +347,13 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
             timestamp: nowStr,
             username: actor,
             action: 'تعديل بيانات تاجر تمويني',
-            details: `تحديث الحالة إلى (${formState.activityStatus}) ومبلغ التأمين (${formState.cashInsuranceAmount} ج.م) والماكينة (${formState.posMachineNumber})`,
+            details: `تحديث الحالة إلى (${formState.activityStatus}) ومبلغ التأمين (${formState.cashInsuranceAmount} ج.م) والماكينة (${formState.posMachineNumber}) والرخصة (${formState.licenseNumber})`,
           },
           ...(editingMerchant.auditHistory || []),
         ],
       };
       const nextList = merchants.map((m) => (m.id === editingMerchant.id ? updated : m));
+      setShowAddOrEditModal(false);
       onUpdateMerchants(nextList, archives, `تعديل بيانات التاجر: ${updated.merchantName}`);
       setBannerMessage(`تم حفظ تعديلات التاجر (${updated.merchantName}) في قاعدة البيانات بنجاح.`);
     } else {
@@ -330,14 +376,16 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         detailedAddress: formState.detailedAddress.trim(),
         phone: formState.phone.trim(),
         nationalId: formState.nationalId.trim(),
-        commercialRegNumber: `CR-${30000 + nextSerial}`,
-        taxCardNumber: `TX-400-${100 + nextSerial}-16`,
-        licenseNumber: `LIC-TM-${2000 + nextSerial}`,
+        commercialRegNumber: formState.commercialRegNumber.trim() || `CR-${30000 + nextSerial}`,
+        taxCardNumber: formState.taxCardNumber.trim() || `TX-400-${100 + nextSerial}-16`,
+        licenseNumber: formState.licenseNumber.trim() || `LIC-TM-${2000 + nextSerial}`,
         licenseIssueDate: todayIso,
-        licenseExpiryDate: '2028-05-01',
+        licenseExpiryDate: formState.licenseExpiryDate || '2027-05-01',
+        taxCardExpiryDate: formState.taxCardExpiryDate || '2027-08-15',
+        commercialRegExpiryDate: formState.commercialRegExpiryDate || '2027-09-30',
         registrationDate: todayIso,
         activityStartDate: todayIso,
-        activityEndDate: '2028-05-01',
+        activityEndDate: formState.licenseExpiryDate || '2027-05-01',
         monthlyEntitlementQuota: 45000,
         cashInsuranceAmount: Math.max(0, Number(formState.cashInsuranceAmount) || 0),
         openingBalance: 0,
@@ -354,16 +402,16 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
             timestamp: nowStr,
             username: actor,
             action: 'إضافة تاجر تمويني جديد',
-            details: `تسجيل تاجر جديد بكود (${formState.traderCode}) وتأمين (${formState.cashInsuranceAmount} ج.م)`,
+            details: `تسجيل تاجر جديد بكود (${formState.traderCode}) وماكينة (${formState.posMachineNumber}) وتأمين (${formState.cashInsuranceAmount} ج.م)`,
           },
         ],
         notes: formState.notes.trim(),
         updatedAt: todayIso,
       };
+      setShowAddOrEditModal(false);
       onUpdateMerchants([...merchants, created], archives, `إضافة تاجر تمويني: ${created.merchantName}`);
       setBannerMessage(`تم إضافة التاجر (${created.merchantName}) برقم مسلسل (${nextSerial}) بنجاح.`);
     }
-    setShowAddOrEditModal(false);
   };
 
   const handleQuickStatusChange = (merchant: RationMerchant, nextStatus: MerchantActivityStatus) => {
@@ -389,17 +437,43 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
     setBannerMessage(`تم تحديث حالة التاجر (${merchant.merchantName}) إلى «${nextStatus}» مع الاحتفاظ بكامل بياناته وتأمينه.`);
   };
 
+  const mapMerchantsToSnapshots = (list: RationMerchant[]) =>
+    list.map((m) => ({
+      id: m.id,
+      traderCode: m.traderCode || m.activityCardNumber || '',
+      posMachineNumber: m.posMachineNumber || '',
+      merchantName: m.merchantName,
+      nationalId: m.nationalId || '',
+      phone: m.phone || '',
+      detailedAddress: m.detailedAddress || '',
+      cashInsuranceAmount: m.cashInsuranceAmount,
+      activityStatus: m.activityStatus,
+      commercialRegNumber: m.commercialRegNumber || '',
+      taxCardNumber: m.taxCardNumber || '',
+      licenseNumber: m.licenseNumber || '',
+      licenseExpiryDate: m.licenseExpiryDate || '',
+      taxCardExpiryDate: m.taxCardExpiryDate || '',
+      commercialRegExpiryDate: m.commercialRegExpiryDate || '',
+    }));
+
   // Simulate or parse monthly update sheet for comparison before approval
   const handleSimulateMonthlyUpdateSheet = () => {
     const simulated = merchants.map((m, idx) => {
-      if (idx === 4) {
+      if (idx === 4 || idx === 19) {
         return { ...m, activityStatus: 'متوقف' as MerchantActivityStatus };
       }
       if (idx === 10) {
         return { ...m, cashInsuranceAmount: m.cashInsuranceAmount + 5000 };
       }
+      if (idx === 14) {
+        return { ...m, cashInsuranceAmount: Math.max(10000, m.cashInsuranceAmount - 2500) };
+      }
       if (idx === 18) {
-        return { ...m, posMachineNumber: `${m.posMachineNumber}-NEW` };
+        return {
+          ...m,
+          posMachineNumber: `${m.posMachineNumber}-M2`,
+          traderCode: `${m.traderCode || 'TRD'}-UPD`,
+        };
       }
       return m;
     });
@@ -412,37 +486,192 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       traderCode: `TRD-16-${5000 + newTraderSerial}`,
       activityCardNumber: `TRD-16-${5000 + newTraderSerial}`,
       posMachineNumber: `1604${8000 + newTraderSerial}`,
-      merchantName: 'عبد العزيز مصطفى الشناوي (تاجر مستجد)',
-      ownerName: 'عبد العزيز مصطفى الشناوي (تاجر مستجد)',
+      merchantName: 'عبد العزيز مصطفى الشناوي (تاجر تمويني مستجد)',
+      ownerName: 'عبد العزيز مصطفى الشناوي (تاجر تمويني مستجد)',
+      nationalId: '28605121604911',
+      detailedAddress: 'شارع الجمهورية الرئيسي - بشبيش - مركز المحلة الكبرى',
       cashInsuranceAmount: 30000,
+      commercialRegNumber: `CR-${30000 + newTraderSerial}`,
+      licenseNumber: `LIC-TM-${2000 + newTraderSerial}`,
+      taxCardNumber: `TX-400-${100 + newTraderSerial}-16`,
+      licenseExpiryDate: '2028-06-01',
+      taxCardExpiryDate: '2028-06-01',
+      commercialRegExpiryDate: '2028-06-01',
       activityStatus: 'نشط',
     });
 
     const diff = compareMerchantArchiveSnapshots(
-      merchants.map((m) => ({
-        traderCode: m.traderCode || m.activityCardNumber || '',
-        posMachineNumber: m.posMachineNumber || '',
-        merchantName: m.merchantName,
-        nationalId: m.nationalId || '',
-        phone: m.phone || '',
-        detailedAddress: m.detailedAddress || '',
-        cashInsuranceAmount: m.cashInsuranceAmount,
-        activityStatus: m.activityStatus,
-      })),
-      simulated.map((m) => ({
-        traderCode: m.traderCode || m.activityCardNumber || '',
-        posMachineNumber: m.posMachineNumber || '',
-        merchantName: m.merchantName,
-        nationalId: m.nationalId || '',
-        phone: m.phone || '',
-        detailedAddress: m.detailedAddress || '',
-        cashInsuranceAmount: m.cashInsuranceAmount,
-        activityStatus: m.activityStatus,
-      }))
+      mapMerchantsToSnapshots(merchants),
+      mapMerchantsToSnapshots(simulated)
     );
     setPendingIncomingMerchants(simulated);
     setPendingDiffResult(diff);
-    setBannerMessage('تم تحليل ملف التحديث الشهري ومقارنته بالنسخة الحالية. يرجى مراجعة الفروق والموافقة عليها قبل الاعتماد.');
+    setBannerMessage('تم تحليل النسخة الشهرية الجديدة ومقارنتها بالنسخة السابقة وإعداد التقرير الإداري للمقارنة قبل الحفظ النهائي.');
+  };
+
+  const handleUploadCsvArchiveFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || '');
+        const lines = text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        if (lines.length < 2) {
+          setBannerMessage('الملف المستورد فارغ أو لا يحتوي على صفوف بيانات صالحة.');
+          return;
+        }
+        const parseRow = (line: string) =>
+          line
+            .split(',')
+            .map((cell) => cell.replace(/^"|"$/g, '').trim());
+
+        const headers = parseRow(lines[0]);
+        const nameIdx = headers.findIndex((h) => h.includes('اسم التاجر') || h.includes('التاجر'));
+        const nidIdx = headers.findIndex((h) => h.includes('الرقم القومي') || h.includes('قومي'));
+        const addrIdx = headers.findIndex((h) => h.includes('العنوان'));
+        const phoneIdx = headers.findIndex((h) => h.includes('تليفون') || h.includes('هاتف'));
+        const insIdx = headers.findIndex((h) => h.includes('التأمين') || h.includes('تأمين'));
+        const statusIdx = headers.findIndex((h) => h.includes('حالة'));
+        const posIdx = headers.findIndex((h) => h.includes('ماكينة'));
+        const codeIdx = headers.findIndex((h) => h.includes('كود التاجر') || h.includes('كود'));
+        const villageIdx = headers.findIndex((h) => h.includes('القرية'));
+
+        const importedMerchants: RationMerchant[] = lines.slice(1).map((line, idx) => {
+          const cols = parseRow(line);
+          const mName = (nameIdx >= 0 ? cols[nameIdx] : cols[1] || cols[0]) || `تاجر مستورد ${idx + 1}`;
+          const tCode = (codeIdx >= 0 ? cols[codeIdx] : cols[8]) || `TRD-16-${5001 + idx}`;
+          const posNo = (posIdx >= 0 ? cols[posIdx] : cols[7]) || `1604${8001 + idx}`;
+          const existing =
+            merchants.find(
+              (m) =>
+                m.traderCode === tCode ||
+                m.posMachineNumber === posNo ||
+                m.merchantName.trim() === mName.trim()
+            ) || merchants[0];
+
+          const rawStatus = (statusIdx >= 0 ? cols[statusIdx] : 'نشط') || 'نشط';
+          const statusVal: MerchantActivityStatus =
+            rawStatus.includes('متوقف') || rawStatus.includes('موقوف')
+              ? 'متوقف'
+              : rawStatus.includes('إجازة')
+              ? 'إجازة'
+              : 'نشط';
+
+          return {
+            ...(existing || {}),
+            id: existing?.id || `${branchId}-m-imp-${Date.now()}-${idx}`,
+            serialNo: idx + 1,
+            internalCode: existing?.internalCode || `MHL-IMP-${idx + 1}`,
+            traderCode: tCode,
+            activityCardNumber: tCode,
+            branchId,
+            merchantName: mName,
+            ownerName: mName,
+            posMachineNumber: posNo,
+            outletType: existing?.outletType || 'تاجر تمويني',
+            governorate: 'الغربية',
+            district: branchName,
+            village: (villageIdx >= 0 ? cols[villageIdx] : existing?.village) || 'بشبيش',
+            localUnit: existing?.localUnit || 'بشبيش الرئيسية',
+            detailedAddress: (addrIdx >= 0 ? cols[addrIdx] : existing?.detailedAddress) || '',
+            phone: (phoneIdx >= 0 ? cols[phoneIdx] : existing?.phone) || '',
+            nationalId: (nidIdx >= 0 ? cols[nidIdx] : existing?.nationalId) || '',
+            commercialRegNumber: existing?.commercialRegNumber || `CR-${30001 + idx}`,
+            taxCardNumber: existing?.taxCardNumber || `TX-400-${101 + idx}-16`,
+            licenseNumber: existing?.licenseNumber || `LIC-TM-${2001 + idx}`,
+            licenseIssueDate: existing?.licenseIssueDate || '2024-01-01',
+            licenseExpiryDate: existing?.licenseExpiryDate || '2027-05-01',
+            taxCardExpiryDate: existing?.taxCardExpiryDate || '2027-08-15',
+            commercialRegExpiryDate: existing?.commercialRegExpiryDate || '2027-09-30',
+            cashInsuranceAmount:
+              insIdx >= 0
+                ? Math.max(0, Number(String(cols[insIdx]).replace(/[^0-9.]/g, '')) || 0)
+                : existing?.cashInsuranceAmount || 25000,
+            openingBalance: existing?.openingBalance || 0,
+            linkedCardsCount: existing?.linkedCardsCount || 250,
+            linkedBeneficiariesCount: existing?.linkedBeneficiariesCount || 850,
+            activityStatus: statusVal,
+            wholesaleBranchName: `فرع جملة ${branchName}`,
+          };
+        });
+
+        const diff = compareMerchantArchiveSnapshots(
+          mapMerchantsToSnapshots(merchants),
+          mapMerchantsToSnapshots(importedMerchants)
+        );
+        setPendingIncomingMerchants(importedMerchants);
+        setPendingDiffResult(diff);
+        setBannerMessage(`تم استيراد ملف (${file.name}) بإجمالي (${importedMerchants.length}) تاجر وإعداد التقرير الإداري للمقارنة قبل الحفظ النهائي.`);
+      } catch {
+        setBannerMessage('تعذر قراءة ملف الاستيراد. تأكد من أنه بصيغة CSV UTF-8.');
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+    e.target.value = '';
+  };
+
+  const handlePrintComparisonAdminReport = () => {
+    if (!pendingDiffResult) return;
+    const rows: (string | number)[][] = [
+      ...pendingDiffResult.newMerchants.map((m, idx) => [
+        `جديد (${idx + 1})`,
+        m.merchantName,
+        'غير مدرج بالنسخة السابقة',
+        m.traderCode,
+        '—',
+        m.posMachineNumber,
+        0,
+        m.cashInsuranceAmount.toLocaleString(),
+        `+${m.cashInsuranceAmount.toLocaleString()}`,
+        `تاجر جديد (${m.activityStatus})`,
+      ]),
+      ...pendingDiffResult.dataModified.map((item, idx) => {
+        const insDiff = (Number(item.curr.cashInsuranceAmount) || 0) - (Number(item.prev.cashInsuranceAmount) || 0);
+        return [
+          `تعديل (${idx + 1})`,
+          item.curr.merchantName,
+          item.prev.traderCode,
+          item.curr.traderCode,
+          item.prev.posMachineNumber,
+          item.curr.posMachineNumber,
+          item.prev.cashInsuranceAmount.toLocaleString(),
+          item.curr.cashInsuranceAmount.toLocaleString(),
+          insDiff === 0 ? '0' : insDiff > 0 ? `+${insDiff.toLocaleString()}` : insDiff.toLocaleString(),
+          item.changedFields.join(' + '),
+        ];
+      }),
+    ];
+    printModuleReportA4({
+      title: `تقرير إداري بمقارنة الأرشفة الشهرية للتجار قبل الحفظ النهائي — (${newMonthLabel})`,
+      subtitle: 'قسم السلع التموينية — مقارنة النسخة الشهرية الجديدة بالنسخة السابقة لاكتشاف التجار الجدد والمتوقفين والمتغيرات',
+      branchName,
+      governorateTitle: 'محافظة الغربية',
+      directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+      preparedBy: currentUser?.fullName || 'مسؤول السلع التموينية',
+      summaryItems: [
+        { label: 'التجار الجدد المكتشفون', value: `${pendingDiffResult.newMerchants.length} تاجر` },
+        { label: 'التجار المتوقفون', value: `${pendingDiffResult.stoppedMerchants.length} تاجر` },
+        { label: 'متغيرات مبالغ التأمين', value: `${pendingDiffResult.insuranceChanged.length} تاجر` },
+        { label: 'متغيرات الكود والماكينة', value: `${pendingDiffResult.posOrCodeChanged.length} تاجر` },
+      ],
+      headers: [
+        'نوع التغيير',
+        'اسم التاجر التمويني',
+        'كود التاجر السابق',
+        'كود التاجر الجديد',
+        'رقم الماكينة السابق',
+        'رقم الماكينة الجديد',
+        'التأمين السابق (ج.م)',
+        'التأمين الجديد (ج.م)',
+        'فرق التأمين',
+        'بيان المتغيرات المكتشفة',
+      ],
+      rows,
+    });
   };
 
   const handleApproveMonthlyUpdate = () => {
@@ -952,15 +1181,61 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
 
           {/* Action Toolbar */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
-            <div className="text-xs font-black text-slate-700">
-              عدد السجلات المعروضة: <span className="text-[#0A1931] font-mono">{filteredMerchants.length}</span> من إجمالي{' '}
-              <span className="font-mono">{merchants.length}</span> تاجر تمويني
+            <div className="flex flex-wrap items-center gap-3 text-xs font-black text-slate-700">
+              <span>
+                عدد السجلات المعروضة:{' '}
+                <span className="text-[#0A1931] font-mono">{paginatedMerchants.length}</span> من أصل{' '}
+                <span className="text-[#0A1931] font-mono">{filteredMerchants.length}</span> (إجمالي:{' '}
+                <span className="font-mono">{merchants.length}</span> تاجر تمويني)
+              </span>
+              <div className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-lg">
+                <span className="text-[11px] text-slate-600">حجم الصفحة:</span>
+                {[25, 50, 150].map((sz) => (
+                  <button
+                    key={sz}
+                    type="button"
+                    onClick={() => {
+                      setPageSize(sz);
+                      setCurrentPage(1);
+                    }}
+                    className={`px-2 py-0.5 rounded text-[11px] font-black cursor-pointer ${
+                      pageSize === sz ? 'bg-[#0A1931] text-white' : 'text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {sz === 150 ? 'الكل' : sz}
+                  </button>
+                ))}
+              </div>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={currentPage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-[11px] font-black cursor-pointer"
+                  >
+                    السابق
+                  </button>
+                  <span className="font-mono text-[11px] px-1.5">
+                    صفحة {currentPage} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-[11px] font-black cursor-pointer"
+                  >
+                    التالي
+                  </button>
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {canWrite && (
                 <button
                   type="button"
                   onClick={openAddMerchant}
+                  data-testid="add-ration-merchant-may2026-btn"
                   className="px-4 py-2 rounded-xl bg-[#0A1931] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
                   <Plus className="w-4 h-4" />
@@ -969,47 +1244,59 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               )}
               <button
                 type="button"
-                onClick={() =>
-                  printModuleReportA4({
-                    title: 'كشف قاعدة بيانات التجار التموينيين — تحديث شهر مايو 2026',
-                    subtitle: 'قسم السلع التموينية — إدارة تموين مركز المحلة الكبرى',
-                    branchName,
-                    governorateTitle: 'محافظة الغربية',
-                    directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
-                    preparedBy: currentUser?.fullName || 'مسؤول السلع التموينية',
-                    headers: [
-                      'مسلسل',
-                      'اسم التاجر',
-                      'الرقم القومي',
-                      'العنوان بالتفصيل',
-                      'رقم التليفون',
-                      'مبلغ التأمين بالجنيه',
-                      'حالة التاجر',
-                      'رقم ماكينة التاجر',
-                      'كود التاجر',
-                      'القرية',
-                    ],
-                    rows: filteredMerchants.map((m) => [
-                      m.serialNo,
-                      m.merchantName,
-                      m.nationalId || '-',
-                      m.detailedAddress,
-                      m.phone || '-',
-                      m.cashInsuranceAmount.toLocaleString(),
-                      m.activityStatus,
-                      m.posMachineNumber,
-                      m.traderCode || m.activityCardNumber || '-',
-                      m.village,
-                    ]),
-                  })
-                }
-                className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 text-[#0A1931] border border-slate-300 text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                onClick={() => setSubTab('archives')}
+                data-testid="open-monthly-archives-tab-btn"
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-[#0A1931] text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
-                <Printer className="w-3.5 h-3.5" />
-                طباعة الكشف الرسمي A4
+                <History className="w-3.5 h-3.5" />
+                الأرشفة الشهرية ومقارنة النسخ
               </button>
-              <button
-                type="button"
+              {canPrint && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    printModuleReportA4({
+                      title: 'كشف قاعدة بيانات التجار التموينيين — تحديث شهر مايو 2026',
+                      subtitle: 'قسم السلع التموينية — إدارة تموين مركز المحلة الكبرى',
+                      branchName,
+                      governorateTitle: 'محافظة الغربية',
+                      directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+                      preparedBy: currentUser?.fullName || 'مسؤول السلع التموينية',
+                      headers: [
+                        'مسلسل',
+                        'اسم التاجر',
+                        'الرقم القومي',
+                        'العنوان بالتفصيل',
+                        'مبلغ التأمين بالجنيه',
+                        'حالة التاجر',
+                        'رقم ماكينة التاجر',
+                        'كود التاجر',
+                        'رقم الترخيص / انتهاء الرخصة',
+                        'السجل التجاري / انتهاء السجل',
+                      ],
+                      rows: filteredMerchants.map((m) => [
+                        m.serialNo,
+                        m.merchantName,
+                        m.nationalId || '-',
+                        m.detailedAddress,
+                        m.cashInsuranceAmount.toLocaleString(),
+                        m.activityStatus,
+                        m.posMachineNumber,
+                        m.traderCode || m.activityCardNumber || '-',
+                        `${m.licenseNumber || '-'} (${m.licenseExpiryDate || '-'})`,
+                        `${m.commercialRegNumber || '-'} (${m.commercialRegExpiryDate || '-'})`,
+                      ]),
+                    })
+                  }
+                  className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 text-[#0A1931] border border-slate-300 text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  طباعة الكشف الرسمي A4
+                </button>
+              )}
+              {canExport && (
+                <button
+                  type="button"
                 onClick={() =>
                   exportRowsToArabicCsv(
                     'قاعدة_بيانات_التجار_التموينيين_مايو_2026',
@@ -1024,9 +1311,13 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                       'حالة التاجر',
                       'رقم ماكينة التاجر',
                       'كود التاجر',
+                      'رقم الترخيص',
+                      'السجل التجاري',
+                      'تاريخ انتهاء الرخصة',
+                      'تاريخ انتهاء البطاقة الضريبية',
+                      'تاريخ انتهاء السجل التجاري',
                       'القرية',
                       'الوحدة المحلية',
-                      'حالة المراجعة',
                     ],
                     filteredMerchants.map((m) => [
                       m.serialNo,
@@ -1039,9 +1330,13 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                       m.activityStatus,
                       m.posMachineNumber,
                       m.traderCode || m.activityCardNumber || '',
+                      m.licenseNumber || '',
+                      m.commercialRegNumber || '',
+                      m.licenseExpiryDate || '',
+                      m.taxCardExpiryDate || '',
+                      m.commercialRegExpiryDate || '',
                       m.village,
                       m.localUnit,
-                      m.reviewStatus || 'تمت المراجعة',
                     ])
                   )
                 }
@@ -1050,31 +1345,30 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 <Download className="w-3.5 h-3.5" />
                 تصدير Excel (CSV)
               </button>
+              )}
             </div>
           </div>
 
-          {/* Main 116-Merchants Table */}
+          {/* Main Paginated Merchants Table */}
           <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-[600px]">
             <table className="w-full text-xs border-collapse">
               <thead className="bg-[#0A1931] text-white sticky top-0 z-10">
                 <tr>
                   <th className="p-2.5 text-center font-black">مسلسل</th>
-                  <th className="p-2.5 text-right font-black">كود داخلي</th>
                   <th className="p-2.5 text-right font-black">اسم التاجر</th>
                   <th className="p-2.5 text-center font-black">الرقم القومي</th>
-                  <th className="p-2.5 text-right font-black">العنوان بالتفصيل</th>
-                  <th className="p-2.5 text-center font-black">رقم التليفون</th>
-                  <th className="p-2.5 text-center font-black">مبلغ التأمين بالجنيه</th>
-                  <th className="p-2.5 text-center font-black">حالة التاجر</th>
-                  <th className="p-2.5 text-center font-black">رقم ماكينة التاجر</th>
                   <th className="p-2.5 text-center font-black">كود التاجر</th>
-                  <th className="p-2.5 text-right font-black">القرية / الوحدة</th>
-                  <th className="p-2.5 text-center font-black">حالة المراجعة</th>
+                  <th className="p-2.5 text-center font-black">رقم ماكينة التاجر</th>
+                  <th className="p-2.5 text-right font-black">العنوان بالتفصيل</th>
+                  <th className="p-2.5 text-center font-black">مبلغ التأمين بالجنيه</th>
+                  <th className="p-2.5 text-center font-black">السجل التجاري / الترخيص</th>
+                  <th className="p-2.5 text-center font-black">انتهاء الرخصة / الضريبية / السجل</th>
+                  <th className="p-2.5 text-center font-black">حالة التاجر</th>
                   <th className="p-2.5 text-center font-black">إجراءات الملف</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredMerchants.map((m) => {
+                {paginatedMerchants.map((m) => {
                   const statusColor =
                     m.activityStatus === 'نشط'
                       ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
@@ -1089,9 +1383,6 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                       <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
                         {m.serialNo}
                       </td>
-                      <td className="p-2.5 font-mono text-[11px] font-bold text-slate-600">
-                        {m.internalCode || `MHL-${m.serialNo}`}
-                      </td>
                       <td className="p-2.5 font-black text-slate-900">
                         <button
                           type="button"
@@ -1100,18 +1391,33 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                         >
                           {m.merchantName}
                         </button>
+                        <div className="text-[10px] text-slate-500 font-bold">
+                          {m.village} · {m.localUnit} {m.phone ? `· ${m.phone}` : ''}
+                        </div>
                       </td>
                       <td className="p-2.5 text-center font-mono tabular-nums text-slate-700">
                         {m.nationalId || (
                           <span className="text-rose-600 font-black">غير مسجل</span>
                         )}
                       </td>
-                      <td className="p-2.5 text-slate-700 font-bold">{m.detailedAddress}</td>
-                      <td className="p-2.5 text-center font-mono tabular-nums text-slate-700">
-                        {m.phone || <span className="text-rose-600 font-black">غير مسجل</span>}
+                      <td className="p-2.5 text-center font-mono tabular-nums font-black text-teal-800">
+                        {m.traderCode || m.activityCardNumber || '-'}
                       </td>
+                      <td className="p-2.5 text-center font-mono tabular-nums font-black text-slate-800">
+                        {m.posMachineNumber}
+                      </td>
+                      <td className="p-2.5 text-slate-700 font-bold">{m.detailedAddress}</td>
                       <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
                         {m.cashInsuranceAmount.toLocaleString()} ج.م
+                      </td>
+                      <td className="p-2.5 text-center font-mono text-[11px] font-bold text-slate-700">
+                        <div>سجل: {m.commercialRegNumber || '—'}</div>
+                        <div className="text-teal-800">رخصة: {m.licenseNumber || '—'}</div>
+                      </td>
+                      <td className="p-2.5 text-center font-mono text-[10px] font-bold">
+                        <div>رخصة: {m.licenseExpiryDate || '—'}</div>
+                        <div>ضريبية: {m.taxCardExpiryDate || '—'}</div>
+                        <div>سجل: {m.commercialRegExpiryDate || '—'}</div>
                       </td>
                       <td className="p-2.5 text-center">
                         <span
@@ -1119,18 +1425,6 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                         >
                           {m.activityStatus === 'موقوف' ? 'متوقف' : m.activityStatus}
                         </span>
-                      </td>
-                      <td className="p-2.5 text-center font-mono tabular-nums font-bold text-slate-800">
-                        {m.posMachineNumber}
-                      </td>
-                      <td className="p-2.5 text-center font-mono tabular-nums font-bold text-teal-800">
-                        {m.traderCode || m.activityCardNumber || '-'}
-                      </td>
-                      <td className="p-2.5 text-slate-700 font-bold">
-                        {m.village} · <span className="text-slate-500">{m.localUnit}</span>
-                      </td>
-                      <td className="p-2.5 text-center text-[11px] font-bold text-slate-600">
-                        {m.reviewStatus || 'تمت المراجعة'}
                       </td>
                       <td className="p-2.5 text-center">
                         <div className="flex items-center justify-center gap-1">
@@ -1166,14 +1460,14 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
 
       {/* Monthly Archives & Comparison Tab */}
       {subTab === 'archives' && (
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
+        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
             <div>
               <h4 className="text-sm font-black text-[#0A1931]">
-                نظام الأرشفة الشهرية ومقارنة تحديثات ملفات التجار (Excel / CSV)
+                نظام الأرشفة الشهرية للتجار ومقارنة النسخ المستوردة بالنسخة السابقة
               </h4>
               <p className="text-xs text-slate-600 mt-0.5">
-                لا يتم استبدال البيانات القديمة تلقائياً قبل مراجعة التغييرات (التجار الجدد، المتوقفين، فروق التأمين، وتغيير الماكينات) والموافقة عليها.
+                يقوم النظام بمقارنة النسخة الجديدة المستوردة بالنسخة السابقة واكتشاف التجار الجدد والمتوقفين والمتغيرات (مثل مبلغ التأمين أو كود التاجر أو رقم الماكينة) وعرض تقرير إداري بالمقارنة قبل الحفظ النهائي.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1184,81 +1478,353 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 placeholder="اسم الشهر الجديد (مثال: يونيو 2026)"
                 className="px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold"
               />
-              <button
-                type="button"
-                onClick={handleSimulateMonthlyUpdateSheet}
-                className="px-4 py-2 rounded-xl bg-[#0A1931] text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                فحص ومقارنة كشف تحديث شهري جديد
-              </button>
-              <button
-                type="button"
-                onClick={handleRestoreOriginalMay2026}
-                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-black flex items-center gap-1.5 cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                استرجاع النسخة الأصلية (مايو 2026 - 116 تاجراً)
-              </button>
+              {canWrite && (
+                <>
+                  <label className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer">
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    استيراد ملف كشف شهري (CSV / Excel)
+                    <input
+                      type="file"
+                      accept=".csv,.txt"
+                      onChange={handleUploadCsvArchiveFile}
+                      className="hidden"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleSimulateMonthlyUpdateSheet}
+                    data-testid="simulate-monthly-archive-diff-btn"
+                    className="px-4 py-2 rounded-xl bg-[#0A1931] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    فحص ومقارنة كشف تحديث شهري جديد
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRestoreOriginalMay2026}
+                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    استرجاع النسخة الأصلية (مايو 2026)
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
           {pendingDiffResult && (
-            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h5 className="text-xs font-black text-amber-950">
-                  نتيجة مقارنة كشف ({newMonthLabel}) مع النسخة الحالية قبل الاعتماد:
-                </h5>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleApproveMonthlyUpdate}
-                    className="px-4 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black cursor-pointer"
-                  >
-                    الموافقة واعتماد التحديث وحفظ الأرشيف
-                  </button>
+            <div
+              className="bg-amber-50/90 border-2 border-[#0A1931] rounded-2xl p-5 space-y-4 shadow-md"
+              data-testid="monthly-archive-comparison-report"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-300 pb-3">
+                <div>
+                  <div className="text-[11px] font-black text-teal-800">
+                    معاينة إلزامية قبل الحفظ النهائي في قاعدة البيانات والأرشيف الشهري
+                  </div>
+                  <h5 className="text-sm font-black text-[#0A1931] mt-0.5">
+                    التقرير الإداري لمقارنة النسخة الشهرية الجديدة ({newMonthLabel}) بالنسخة السابقة المعتمدة
+                  </h5>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {canPrint && (
+                    <button
+                      type="button"
+                      onClick={handlePrintComparisonAdminReport}
+                      className="px-3.5 py-2 rounded-xl bg-[#0A1931] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      طباعة التقرير الإداري للمقارنة A4
+                    </button>
+                  )}
+                  {canExport && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const rows: (string | number)[][] = [
+                          ...pendingDiffResult.newMerchants.map((m) => [
+                            'تاجر جديد',
+                            m.merchantName,
+                            '—',
+                            m.traderCode,
+                            '—',
+                            m.posMachineNumber,
+                            0,
+                            m.cashInsuranceAmount,
+                            m.cashInsuranceAmount,
+                            'إضافة تاجر جديد بالنسخة المستوردة',
+                          ]),
+                          ...pendingDiffResult.dataModified.map((d) => [
+                            'تعديل بيانات / حالة',
+                            d.curr.merchantName,
+                            d.prev.traderCode,
+                            d.curr.traderCode,
+                            d.prev.posMachineNumber,
+                            d.curr.posMachineNumber,
+                            d.prev.cashInsuranceAmount,
+                            d.curr.cashInsuranceAmount,
+                            (Number(d.curr.cashInsuranceAmount) || 0) - (Number(d.prev.cashInsuranceAmount) || 0),
+                            d.changedFields.join(' | '),
+                          ]),
+                        ];
+                        exportRowsToArabicCsv(
+                          `تقرير_مقارنة_الأرشفة_الشهرية_${newMonthLabel.replace(/\s+/g, '_')}`,
+                          [
+                            'نوع التغيير',
+                            'اسم التاجر',
+                            'كود التاجر السابق',
+                            'كود التاجر الجديد',
+                            'رقم الماكينة السابق',
+                            'رقم الماكينة الجديد',
+                            'مبلغ التأمين السابق',
+                            'مبلغ التأمين الجديد',
+                            'فرق التأمين',
+                            'تفاصيل المتغيرات',
+                          ],
+                          rows
+                        );
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      تصدير تقرير المقارنة Excel
+                    </button>
+                  )}
+                  {canWrite && (
+                    <button
+                      type="button"
+                      onClick={handleApproveMonthlyUpdate}
+                      data-testid="approve-monthly-archive-btn"
+                      className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-sm"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      الموافقة والحفظ النهائي في الأرشيف الشهري
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
                       setPendingDiffResult(null);
                       setPendingIncomingMerchants(null);
                     }}
-                    className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold cursor-pointer"
+                    className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold cursor-pointer"
                   >
-                    إلغاء
+                    إلغاء المعاينة
                   </button>
                 </div>
               </div>
+
+              {/* Summary KPIs of Comparison */}
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
-                <div className="bg-white p-2.5 rounded-xl border border-amber-200">
-                  <div className="text-slate-500 font-bold">تجار جدد تم اكتشافهم</div>
-                  <div className="text-base font-black text-emerald-700 font-mono">
+                <div className="bg-white p-3 rounded-xl border border-emerald-300 shadow-2xs">
+                  <div className="text-slate-500 font-bold">التجار الجدد المكتشفون</div>
+                  <div className="text-lg font-black text-emerald-700 font-mono mt-0.5">
                     {pendingDiffResult.newMerchants.length}
                   </div>
+                  <div className="text-[10px] font-bold text-emerald-700">مضافون بالنسخة الجديدة</div>
                 </div>
-                <div className="bg-white p-2.5 rounded-xl border border-amber-200">
-                  <div className="text-slate-500 font-bold">تجار تم إيقافهم</div>
-                  <div className="text-base font-black text-rose-700 font-mono">
+                <div className="bg-white p-3 rounded-xl border border-rose-300 shadow-2xs">
+                  <div className="text-slate-500 font-bold">التجار المتوقفون / المستبعدون</div>
+                  <div className="text-lg font-black text-rose-700 font-mono mt-0.5">
                     {pendingDiffResult.stoppedMerchants.length}
                   </div>
+                  <div className="text-[10px] font-bold text-rose-700">تحولوا لمتوقف أو استبعدوا</div>
                 </div>
-                <div className="bg-white p-2.5 rounded-xl border border-amber-200">
-                  <div className="text-slate-500 font-bold">تغييرات مبالغ التأمين</div>
-                  <div className="text-base font-black text-[#0A1931] font-mono">
+                <div className="bg-white p-3 rounded-xl border border-amber-300 shadow-2xs">
+                  <div className="text-slate-500 font-bold">متغيرات مبلغ التأمين</div>
+                  <div className="text-lg font-black text-[#0A1931] font-mono mt-0.5">
                     {pendingDiffResult.insuranceChanged.length}
                   </div>
+                  <div className="text-[10px] font-bold text-slate-600">تعديل بالزيادة أو النقص</div>
                 </div>
-                <div className="bg-white p-2.5 rounded-xl border border-amber-200">
-                  <div className="text-slate-500 font-bold">تغييرات الماكينات والأكواد</div>
-                  <div className="text-base font-black text-teal-800 font-mono">
+                <div className="bg-white p-3 rounded-xl border border-teal-300 shadow-2xs">
+                  <div className="text-slate-500 font-bold">متغيرات كود التاجر / الماكينة</div>
+                  <div className="text-lg font-black text-teal-800 font-mono mt-0.5">
                     {pendingDiffResult.posOrCodeChanged.length}
                   </div>
+                  <div className="text-[10px] font-bold text-teal-700">تغيير الكود أو POS</div>
                 </div>
-                <div className="bg-white p-2.5 rounded-xl border border-amber-200">
-                  <div className="text-slate-500 font-bold">إجمالي السجلات المعدلة</div>
-                  <div className="text-base font-black text-amber-800 font-mono">
+                <div className="bg-white p-3 rounded-xl border border-slate-300 shadow-2xs">
+                  <div className="text-slate-500 font-bold">إجمالي السجلات المتغيرة</div>
+                  <div className="text-lg font-black text-amber-800 font-mono mt-0.5">
                     {pendingDiffResult.dataModified.length}
                   </div>
+                  <div className="text-[10px] font-bold text-amber-800">تعديلات مرصودة بالكشف</div>
+                </div>
+              </div>
+
+              {/* Detailed Administrative Comparison Tables */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* 1. New Merchants Table */}
+                <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                  <h6 className="text-xs font-black text-emerald-800 flex items-center justify-between">
+                    <span>أولاً: كشف التجار الجدد المكتشفين ({pendingDiffResult.newMerchants.length})</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded font-bold">
+                      إضافة جديدة
+                    </span>
+                  </h6>
+                  {pendingDiffResult.newMerchants.length === 0 ? (
+                    <div className="text-xs text-slate-500 font-bold py-3 text-center">
+                      لا يوجد تجار جدد في هذه النسخة مقارنة بالنسخة السابقة.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px] border-collapse">
+                        <thead className="bg-emerald-900 text-white">
+                          <tr>
+                            <th className="p-2 text-right">اسم التاجر الجديد</th>
+                            <th className="p-2 text-center">كود التاجر</th>
+                            <th className="p-2 text-center">رقم الماكينة</th>
+                            <th className="p-2 text-center">مبلغ التأمين</th>
+                            <th className="p-2 text-right">العنوان</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pendingDiffResult.newMerchants.map((nm, idx) => (
+                            <tr key={idx} className="border-b border-slate-200">
+                              <td className="p-2 font-black text-slate-900">{nm.merchantName}</td>
+                              <td className="p-2 text-center font-mono font-bold text-teal-800">{nm.traderCode}</td>
+                              <td className="p-2 text-center font-mono font-bold">{nm.posMachineNumber}</td>
+                              <td className="p-2 text-center font-mono font-black text-emerald-700">
+                                {nm.cashInsuranceAmount.toLocaleString()} ج.م
+                              </td>
+                              <td className="p-2 text-slate-600 font-bold">{nm.detailedAddress || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Stopped Merchants Table */}
+                <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                  <h6 className="text-xs font-black text-rose-800 flex items-center justify-between">
+                    <span>ثانياً: كشف التجار المتوقفين حديثاً ({pendingDiffResult.stoppedMerchants.length})</span>
+                    <span className="text-[10px] bg-rose-100 text-rose-900 px-2 py-0.5 rounded font-bold">
+                      تحول إلى متوقف
+                    </span>
+                  </h6>
+                  {pendingDiffResult.stoppedMerchants.length === 0 ? (
+                    <div className="text-xs text-slate-500 font-bold py-3 text-center">
+                      لا يوجد تجار تم إيقافهم في هذه النسخة مقارنة بالنسخة السابقة.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px] border-collapse">
+                        <thead className="bg-rose-900 text-white">
+                          <tr>
+                            <th className="p-2 text-right">اسم التاجر</th>
+                            <th className="p-2 text-center">كود التاجر</th>
+                            <th className="p-2 text-center">الحالة السابقة</th>
+                            <th className="p-2 text-center">الحالة الجديدة</th>
+                            <th className="p-2 text-center">التأمين المحفوظ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pendingDiffResult.stoppedMerchants.map((st, idx) => (
+                            <tr key={idx} className="border-b border-slate-200">
+                              <td className="p-2 font-black text-slate-900">{st.curr.merchantName}</td>
+                              <td className="p-2 text-center font-mono font-bold">{st.curr.traderCode}</td>
+                              <td className="p-2 text-center font-bold text-emerald-700">{st.prev.activityStatus}</td>
+                              <td className="p-2 text-center font-black text-rose-700">{st.curr.activityStatus}</td>
+                              <td className="p-2 text-center font-mono font-bold">
+                                {st.curr.cashInsuranceAmount.toLocaleString()} ج.م
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 3. Detailed Modified Variables Table (Insurance, Trader Code, POS Machine, Licenses) */}
+              <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                <h6 className="text-xs font-black text-[#0A1931] flex items-center justify-between">
+                  <span>
+                    ثالثاً: بيان المتغيرات التفصيلي (فروق مبلغ التأمين، تغيير كود التاجر، تغيير رقم الماكينة، وتحديث البيانات) ({pendingDiffResult.dataModified.length})
+                  </span>
+                  <span className="text-[10px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-bold">
+                    مقارنة الحقل السابق بالحقل الجديد
+                  </span>
+                </h6>
+                <div className="overflow-x-auto max-h-[300px]">
+                  <table className="w-full text-[11px] border-collapse">
+                    <thead className="bg-[#0A1931] text-white sticky top-0">
+                      <tr>
+                        <th className="p-2 text-right">اسم التاجر التمويني</th>
+                        <th className="p-2 text-center">كود التاجر (السابق ← الجديد)</th>
+                        <th className="p-2 text-center">رقم الماكينة (السابق ← الجديد)</th>
+                        <th className="p-2 text-center">مبلغ التأمين (السابق ← الجديد)</th>
+                        <th className="p-2 text-center">الفرق المالي للتأمين</th>
+                        <th className="p-2 text-center">الحالة (السابقة ← الجديدة)</th>
+                        <th className="p-2 text-right">الحقول المتغيرة المرصودة</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pendingDiffResult.dataModified.map((mod, idx) => {
+                        const insDiff =
+                          (Number(mod.curr.cashInsuranceAmount) || 0) -
+                          (Number(mod.prev.cashInsuranceAmount) || 0);
+                        return (
+                          <tr key={idx} className="border-b border-slate-200 hover:bg-slate-50">
+                            <td className="p-2 font-black text-slate-900">{mod.curr.merchantName}</td>
+                            <td className="p-2 text-center font-mono">
+                              {mod.prev.traderCode === mod.curr.traderCode ? (
+                                <span>{mod.curr.traderCode}</span>
+                              ) : (
+                                <span className="font-black text-teal-800">
+                                  {mod.prev.traderCode} ← {mod.curr.traderCode}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2 text-center font-mono">
+                              {mod.prev.posMachineNumber === mod.curr.posMachineNumber ? (
+                                <span>{mod.curr.posMachineNumber}</span>
+                              ) : (
+                                <span className="font-black text-indigo-800">
+                                  {mod.prev.posMachineNumber} ← {mod.curr.posMachineNumber}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2 text-center font-mono">
+                              {insDiff === 0 ? (
+                                <span>{mod.curr.cashInsuranceAmount.toLocaleString()} ج.م</span>
+                              ) : (
+                                <span className="font-black text-amber-900">
+                                  {mod.prev.cashInsuranceAmount.toLocaleString()} ←{' '}
+                                  {mod.curr.cashInsuranceAmount.toLocaleString()} ج.م
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2 text-center font-mono font-black">
+                              {insDiff === 0 ? (
+                                <span className="text-slate-400">0</span>
+                              ) : insDiff > 0 ? (
+                                <span className="text-emerald-700">+{insDiff.toLocaleString()} ج.م</span>
+                              ) : (
+                                <span className="text-rose-700">{insDiff.toLocaleString()} ج.م</span>
+                              )}
+                            </td>
+                            <td className="p-2 text-center font-bold">
+                              {mod.prev.activityStatus === mod.curr.activityStatus ? (
+                                <span>{mod.curr.activityStatus}</span>
+                              ) : (
+                                <span className="text-rose-700 font-black">
+                                  {mod.prev.activityStatus} ← {mod.curr.activityStatus}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2 font-bold text-amber-900">
+                              {mod.changedFields.join(' ، ')}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -1268,7 +1834,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
             <table className="w-full text-xs border-collapse">
               <thead className="bg-[#0A1931] text-white">
                 <tr>
-                  <th className="p-2.5 text-right">بيان الأرشيف الشهري</th>
+                  <th className="p-2.5 text-right">بيان الأرشيف الشهري المحفوظ</th>
                   <th className="p-2.5 text-center">تاريخ الحفظ</th>
                   <th className="p-2.5 text-right">بواسطة</th>
                   <th className="p-2.5 text-center">إجمالي التجار</th>
@@ -1277,6 +1843,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                   <th className="p-2.5 text-center">إجازة</th>
                   <th className="p-2.5 text-center">إجمالي التأمين</th>
                   <th className="p-2.5 text-right">ملاحظات</th>
+                  <th className="p-2.5 text-center">مقارنة الأرشيف</th>
                 </tr>
               </thead>
               <tbody>
@@ -1293,6 +1860,24 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                       {arch.totalInsuranceAmount.toLocaleString()} ج.م
                     </td>
                     <td className="p-2.5 text-slate-600">{arch.summaryNotes}</td>
+                    <td className="p-2.5 text-center">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!arch.merchantsSnapshot?.length) return;
+                          const diff = compareMerchantArchiveSnapshots(
+                            mapMerchantsToSnapshots(arch.merchantsSnapshot),
+                            mapMerchantsToSnapshots(merchants)
+                          );
+                          setNewMonthLabel(`النسخة الحالية مقابل (${arch.monthLabel})`);
+                          setPendingIncomingMerchants(merchants);
+                          setPendingDiffResult(diff);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#0A1931] font-black text-[11px] cursor-pointer"
+                      >
+                        عرض تقرير المقارنة
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1336,39 +1921,43 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() =>
-                  printModuleReportA4({
-                    title: activeReportPayload.title,
-                    subtitle: 'قسم السلع التموينية — إدارة تموين مركز المحلة الكبرى',
-                    branchName,
-                    governorateTitle: 'محافظة الغربية',
-                    directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
-                    preparedBy: currentUser?.fullName || 'مسؤول السلع التموينية',
-                    headers: activeReportPayload.headers,
-                    rows: activeReportPayload.rows,
-                  })
-                }
-                className="px-4 py-2 rounded-xl bg-[#0A1931] text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                طباعة التقرير A4 RTL
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  exportRowsToArabicCsv(
-                    activeReportPayload.title.replace(/\s+/g, '_'),
-                    activeReportPayload.headers,
-                    activeReportPayload.rows
-                  )
-                }
-                className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5" />
-                تصدير Excel (CSV)
-              </button>
+              {canPrint && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    printModuleReportA4({
+                      title: activeReportPayload.title,
+                      subtitle: 'قسم السلع التموينية — إدارة تموين مركز المحلة الكبرى',
+                      branchName,
+                      governorateTitle: 'محافظة الغربية',
+                      directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
+                      preparedBy: currentUser?.fullName || 'مسؤول السلع التموينية',
+                      headers: activeReportPayload.headers,
+                      rows: activeReportPayload.rows,
+                    })
+                  }
+                  className="px-4 py-2 rounded-xl bg-[#0A1931] text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  طباعة التقرير A4 RTL
+                </button>
+              )}
+              {canExport && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportRowsToArabicCsv(
+                      activeReportPayload.title.replace(/\s+/g, '_'),
+                      activeReportPayload.headers,
+                      activeReportPayload.rows
+                    )
+                  }
+                  className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  تصدير Excel (CSV)
+                </button>
+              )}
             </div>
           </div>
 
@@ -1521,19 +2110,21 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 </div>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <div className="text-slate-500 font-bold">حالة التاجر الحالية</div>
-                <div className="font-black text-slate-900 mt-1">{selectedMerchant.activityStatus}</div>
-              </div>
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <div className="text-slate-500 font-bold">البطاقات والمستفيدون</div>
+                <div className="text-slate-500 font-bold">رقم الترخيص والسجل التجاري</div>
                 <div className="font-black font-mono text-slate-900 mt-1">
-                  {selectedMerchant.linkedCardsCount} بطاقة / {selectedMerchant.linkedBeneficiariesCount} فرد
+                  {selectedMerchant.licenseNumber || '—'} / {selectedMerchant.commercialRegNumber || '—'}
                 </div>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <div className="text-slate-500 font-bold">حالة المراجعة الإدارية</div>
-                <div className="font-black text-slate-900 mt-1">
-                  {selectedMerchant.reviewStatus || 'تمت المراجعة'}
+                <div className="text-slate-500 font-bold">تاريخ انتهاء الرخصة</div>
+                <div className="font-black font-mono text-slate-900 mt-1">
+                  {selectedMerchant.licenseExpiryDate || '—'}
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="text-slate-500 font-bold">انتهاء البطاقة الضريبية والسجل</div>
+                <div className="font-black font-mono text-slate-900 mt-1">
+                  {selectedMerchant.taxCardExpiryDate || '—'} / {selectedMerchant.commercialRegExpiryDate || '—'}
                 </div>
               </div>
             </div>
@@ -1572,12 +2163,20 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
 
       {/* Add / Edit Merchant Modal */}
       {showAddOrEditModal && (
-        <div className="fixed inset-0 bg-slate-950/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+        <div
+          className="fixed inset-0 bg-slate-950/60 z-50 flex items-center justify-center p-4 overflow-y-auto"
+          data-testid="ration-merchant-may2026-modal"
+        >
+          <div className="bg-white rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 my-auto max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h4 className="text-sm font-black text-[#0A1931]">
-                {editingMerchant ? `تعديل بيانات التاجر: ${editingMerchant.merchantName}` : 'إضافة تاجر تمويني جديد'}
-              </h4>
+              <div>
+                <h4 className="text-sm font-black text-[#0A1931]">
+                  {editingMerchant ? `تعديل بيانات التاجر: ${editingMerchant.merchantName}` : 'إضافة تاجر تمويني جديد (قسم السلع التموينية)'}
+                </h4>
+                <p className="text-[11px] font-bold text-teal-700 mt-0.5">
+                  تُسجّل تواريخ انتهاء الرخصة والبطاقة الضريبية والسجل التجاري وتُربط تلقائياً بشاشة التنبيهات الذكية لقسم السلع التموينية
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowAddOrEditModal(false)}
@@ -1587,32 +2186,45 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="sm:col-span-2">
                 <label className="block font-black text-slate-700 mb-1">اسم التاجر التمويني *</label>
                 <input
                   type="text"
                   value={formState.merchantName}
                   onChange={(e) => setFormState((p) => ({ ...p, merchantName: e.target.value }))}
+                  placeholder="الاسم الرباعي للتاجر التمويني"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold"
                 />
               </div>
               <div>
-                <label className="block font-black text-slate-700 mb-1">الرقم القومي (14 رقماً نصياً)</label>
+                <label className="block font-black text-slate-700 mb-1">الرقم القومي (14 رقماً)</label>
                 <input
                   type="text"
                   value={formState.nationalId}
                   onChange={(e) => setFormState((p) => ({ ...p, nationalId: e.target.value }))}
+                  placeholder="28501011601234"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
                 />
               </div>
               <div>
-                <label className="block font-black text-slate-700 mb-1">رقم التليفون</label>
+                <label className="block font-black text-slate-700 mb-1">كود التاجر</label>
                 <input
                   type="text"
-                  value={formState.phone}
-                  onChange={(e) => setFormState((p) => ({ ...p, phone: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  value={formState.traderCode}
+                  onChange={(e) => setFormState((p) => ({ ...p, traderCode: e.target.value }))}
+                  placeholder="TRD-16-5117"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono font-bold text-teal-900"
+                />
+              </div>
+              <div>
+                <label className="block font-black text-slate-700 mb-1">رقم ماكينة التاجر (POS)</label>
+                <input
+                  type="text"
+                  value={formState.posMachineNumber}
+                  onChange={(e) => setFormState((p) => ({ ...p, posMachineNumber: e.target.value }))}
+                  placeholder="16048117"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono font-bold"
                 />
               </div>
               <div>
@@ -1624,24 +2236,88 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono font-bold"
                 />
               </div>
-              <div>
-                <label className="block font-black text-slate-700 mb-1">رقم ماكينة التاجر (POS)</label>
+              <div className="sm:col-span-2">
+                <label className="block font-black text-slate-700 mb-1">العنوان بالتفصيل</label>
                 <input
                   type="text"
-                  value={formState.posMachineNumber}
-                  onChange={(e) => setFormState((p) => ({ ...p, posMachineNumber: e.target.value }))}
+                  value={formState.detailedAddress}
+                  onChange={(e) => setFormState((p) => ({ ...p, detailedAddress: e.target.value }))}
+                  placeholder="الشارع - الوحدة المحلية - القرية"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold"
+                />
+              </div>
+              <div>
+                <label className="block font-black text-slate-700 mb-1">رقم التليفون</label>
+                <input
+                  type="text"
+                  value={formState.phone}
+                  onChange={(e) => setFormState((p) => ({ ...p, phone: e.target.value }))}
+                  placeholder="01012345678"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                />
+              </div>
+
+              {/* السجل التجاري ورقم الترخيص والبطاقة الضريبية */}
+              <div>
+                <label className="block font-black text-slate-700 mb-1">السجل التجاري</label>
+                <input
+                  type="text"
+                  value={formState.commercialRegNumber}
+                  onChange={(e) => setFormState((p) => ({ ...p, commercialRegNumber: e.target.value }))}
+                  placeholder="CR-30117"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
                 />
               </div>
               <div>
-                <label className="block font-black text-slate-700 mb-1">كود التاجر</label>
+                <label className="block font-black text-slate-700 mb-1">رقم الترخيص</label>
                 <input
                   type="text"
-                  value={formState.traderCode}
-                  onChange={(e) => setFormState((p) => ({ ...p, traderCode: e.target.value }))}
+                  value={formState.licenseNumber}
+                  onChange={(e) => setFormState((p) => ({ ...p, licenseNumber: e.target.value }))}
+                  placeholder="LIC-TM-2117"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
                 />
               </div>
+              <div>
+                <label className="block font-black text-slate-700 mb-1">رقم البطاقة الضريبية</label>
+                <input
+                  type="text"
+                  value={formState.taxCardNumber}
+                  onChange={(e) => setFormState((p) => ({ ...p, taxCardNumber: e.target.value }))}
+                  placeholder="TX-400-217-16"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                />
+              </div>
+
+              {/* تواريخ انتهاء الرخصة والبطاقة الضريبية والسجل التجاري */}
+              <div>
+                <label className="block font-black text-rose-800 mb-1">تاريخ انتهاء الرخصة</label>
+                <input
+                  type="date"
+                  value={formState.licenseExpiryDate}
+                  onChange={(e) => setFormState((p) => ({ ...p, licenseExpiryDate: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl border border-rose-300 bg-rose-50/40 font-mono font-bold"
+                />
+              </div>
+              <div>
+                <label className="block font-black text-rose-800 mb-1">تاريخ انتهاء البطاقة الضريبية</label>
+                <input
+                  type="date"
+                  value={formState.taxCardExpiryDate}
+                  onChange={(e) => setFormState((p) => ({ ...p, taxCardExpiryDate: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl border border-rose-300 bg-rose-50/40 font-mono font-bold"
+                />
+              </div>
+              <div>
+                <label className="block font-black text-rose-800 mb-1">تاريخ انتهاء السجل التجاري</label>
+                <input
+                  type="date"
+                  value={formState.commercialRegExpiryDate}
+                  onChange={(e) => setFormState((p) => ({ ...p, commercialRegExpiryDate: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl border border-rose-300 bg-rose-50/40 font-mono font-bold"
+                />
+              </div>
+
               <div>
                 <label className="block font-black text-slate-700 mb-1">القرية</label>
                 <input
@@ -1674,30 +2350,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                   <option value="إجازة">إجازة</option>
                 </select>
               </div>
-              <div>
-                <label className="block font-black text-slate-700 mb-1">حالة مراجعة البيانات</label>
-                <select
-                  value={formState.reviewStatus}
-                  onChange={(e) =>
-                    setFormState((p) => ({ ...p, reviewStatus: e.target.value as MerchantReviewStatus }))
-                  }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold bg-white"
-                >
-                  <option value="تمت المراجعة">تمت المراجعة</option>
-                  <option value="تحتاج مراجعة">تحتاج مراجعة</option>
-                  <option value="بيانات غير مكتملة">بيانات غير مكتملة</option>
-                </select>
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block font-black text-slate-700 mb-1">العنوان بالتفصيل</label>
-                <input
-                  type="text"
-                  value={formState.detailedAddress}
-                  onChange={(e) => setFormState((p) => ({ ...p, detailedAddress: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold"
-                />
-              </div>
-              <div className="sm:col-span-2">
+              <div className="sm:col-span-3">
                 <label className="block font-black text-slate-700 mb-1">ملاحظات الإدارة</label>
                 <input
                   type="text"
@@ -1719,6 +2372,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={handleSaveMerchantForm}
+                data-testid="save-ration-merchant-may2026-btn"
                 className="px-5 py-2 rounded-xl bg-[#0A1931] text-white text-xs font-black cursor-pointer"
               >
                 حفظ بيانات التاجر ومزامنة Supabase

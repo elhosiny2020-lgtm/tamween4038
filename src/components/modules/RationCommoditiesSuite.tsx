@@ -74,6 +74,7 @@ import {
   computeMonthlyQuotaExecutionPct,
   computeDisbursedQuantityValue,
   generateSmartRationAlerts,
+  evaluateSingleDateStatus,
   round2,
 } from '../../utils/rationMathEngine';
 import { exportRowsToArabicCsv, printModuleReportA4 } from '../../services/modulesStorage';
@@ -161,8 +162,13 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
   const [commoditySearch, setCommoditySearch] = useState<string>('');
 
   const permissions = useMemo(
-    () => resolveModuleCrudPermissions(currentUser, false),
-    [currentUser]
+    () =>
+      resolveModuleCrudPermissions(
+        currentUser,
+        false,
+        initialMode === 'internal_trade' ? 'internal_trade' : 'commodities'
+      ),
+    [currentUser, initialMode]
   );
   const isViewer = permissions.isReadOnly;
 
@@ -258,6 +264,9 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
 
   // Settings Editor Draft
   const [settingsDraft, setSettingsDraft] = useState(state.settings);
+  const [merchantRegistryPage, setMerchantRegistryPage] = useState<number>(1);
+  const [merchantRegistryPageSize, setMerchantRegistryPageSize] = useState<number>(25);
+  const [alertDocFilter, setAlertDocFilter] = useState<'ALL' | 'ALERT_ONLY'>('ALERT_ONLY');
 
   const appendAudit = (
     actionType: ModuleAuditLog['actionType'],
@@ -489,9 +498,16 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     { key: 'ownerName', label: 'اسم التاجر رباعياً', type: 'text', required: true },
     { key: 'merchantName', label: 'اسم منفذ التموين', type: 'text', required: true },
     { key: 'nationalId', label: 'الرقم القومي للتاجر (14 رقم)', type: 'text', required: true },
-    { key: 'commercialRegNumber', label: 'رقم السجل التجاري', type: 'text', required: true },
+    { key: 'traderCode', label: 'كود التاجر', type: 'text', required: true },
+    { key: 'posMachineNumber', label: 'رقم ماكينة التاجر (POS)', type: 'text', required: true },
+    { key: 'detailedAddress', label: 'العنوان بالتفصيل', type: 'text', required: true },
+    { key: 'cashInsuranceAmount', label: 'مبلغ التأمين بالجنيه', type: 'number', required: true, min: 0 },
+    { key: 'commercialRegNumber', label: 'السجل التجاري', type: 'text', required: true },
+    { key: 'licenseNumber', label: 'رقم الترخيص', type: 'text', required: true },
     { key: 'taxCardNumber', label: 'رقم البطاقة الضريبية', type: 'text', required: true },
-    { key: 'posMachineNumber', label: 'رقم منفذ التموين / ماكينة POS', type: 'text', required: true },
+    { key: 'licenseExpiryDate', label: 'تاريخ انتهاء الرخصة', type: 'date', required: true },
+    { key: 'taxCardExpiryDate', label: 'تاريخ انتهاء البطاقة الضريبية', type: 'date', required: true },
+    { key: 'commercialRegExpiryDate', label: 'تاريخ انتهاء السجل التجاري', type: 'date', required: true },
     {
       key: 'outletType',
       label: 'نوع المنفذ التمويني',
@@ -505,16 +521,12 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     },
     { key: 'village', label: 'اسم المنطقة أو القرية', type: 'select', required: true, options: villageOptions },
     { key: 'localUnit', label: 'الوحدة المحلية', type: 'text', required: true },
-    { key: 'detailedAddress', label: 'العنوان التفصيلي', type: 'text', required: true },
     { key: 'phone', label: 'رقم الهاتف', type: 'text', required: true },
     { key: 'linkedCardsCount', label: 'عدد البطاقات التموينية المسندة', type: 'number', required: true, min: 0 },
     { key: 'linkedBeneficiariesCount', label: 'عدد المستفيدين', type: 'number', required: true, min: 0 },
     { key: 'monthlyEntitlementQuota', label: 'الحصة الشهرية المستحقة (ج.م)', type: 'number', required: true, min: 0 },
-    { key: 'cashInsuranceAmount', label: 'قيمة التأمين النقدي (ج.م)', type: 'number', required: true, min: 0 },
     { key: 'openingBalance', label: 'رصيد أول المدة المالي (ج.م)', type: 'number', required: true },
-    { key: 'licenseNumber', label: 'رقم الترخيص التمويني', type: 'text', required: true },
     { key: 'activityStartDate', label: 'تاريخ بداية النشاط', type: 'date', required: true },
-    { key: 'licenseExpiryDate', label: 'تاريخ نهاية النشاط / الترخيص', type: 'date', required: true },
     {
       key: 'activityStatus',
       label: 'حالة النشاط',
@@ -522,6 +534,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
       required: true,
       options: [
         { value: 'نشط', label: 'نشط' },
+        { value: 'متوقف', label: 'متوقف' },
+        { value: 'إجازة', label: 'إجازة' },
         { value: 'موقوف', label: 'موقوف' },
         { value: 'ملغي', label: 'ملغي' },
       ],
@@ -699,6 +713,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     { key: 'monthKey', label: 'الشهر والسنة (YYYY-MM)', type: 'text', required: true },
     { key: 'requestDate', label: 'تاريخ الاستلام', type: 'date', required: true },
     { key: 'merchantId', label: 'اسم التاجر / المنفذ التمويني', type: 'select', required: true, options: merchantOptions },
+    { key: 'traderCode', label: 'كود التاجر', type: 'text', required: true },
+    { key: 'posMachineNumber', label: 'رقم ماكينة التاجر (POS)', type: 'text', required: true },
     { key: 'commodityId', label: 'اسم السلعة التموينية', type: 'select', required: true, options: commodityOptions },
     { key: 'requestedQty', label: 'الكمية المقررة', type: 'number', required: true, min: 1 },
     { key: 'approvedQty', label: 'الكمية المستلمة', type: 'number', required: true, min: 0 },
@@ -1459,6 +1475,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           invoiceNumber: String(values.invoiceNumber).trim(),
           monthKey: monthKeyVal,
           merchantId: merchant.id,
+          traderCode: String(values.traderCode || merchant.traderCode || merchant.activityCardNumber || '').trim(),
+          posMachineNumber: String(values.posMachineNumber || merchant.posMachineNumber || '').trim(),
           wholesaleBranch: merchant.wholesaleBranchName,
           linkedCardsCount: merchant.linkedCardsCount,
           linkedBeneficiariesCount: merchant.linkedBeneficiariesCount,
@@ -1502,6 +1520,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 requestDate: String(values.requestDate || r.requestDate),
                 deliveryDate: String(values.requestDate || r.deliveryDate || r.requestDate),
                 merchantId: merchant.id,
+                traderCode: String(values.traderCode || merchant.traderCode || r.traderCode || '').trim(),
+                posMachineNumber: String(values.posMachineNumber || merchant.posMachineNumber || r.posMachineNumber || '').trim(),
                 linkedCardsCount: merchant.linkedCardsCount,
                 linkedBeneficiariesCount: merchant.linkedBeneficiariesCount,
                 insuranceAmount: merchant.cashInsuranceAmount,
@@ -2310,6 +2330,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               idx + 1,
               r.monthKey,
               m?.merchantName || r.merchantId,
+              r.traderCode || m?.traderCode || m?.activityCardNumber || '-',
+              r.posMachineNumber || m?.posMachineNumber || '-',
               l0?.commodityName || '-',
               prescribed,
               received,
@@ -2323,7 +2345,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           });
         return {
           title: '3. تقرير الحصص التموينية الشهرية لكل تاجر',
-          headers: ['م', 'الشهر والسنة', 'اسم التاجر / المنفذ', 'السلعة', 'المقررة', 'المستلمة', 'الموزعة', 'المتبقية', 'نسبة التنفيذ', 'قيمة الحصة', 'تاريخ الاستلام', 'حالة الصرف'],
+          headers: ['م', 'الشهر والسنة', 'اسم التاجر / المنفذ', 'كود التاجر', 'رقم ماكينة التاجر', 'السلعة', 'المقررة', 'المستلمة', 'الموزعة', 'المتبقية', 'نسبة التنفيذ', 'قيمة الحصة', 'تاريخ الاستلام', 'حالة الصرف'],
           rows,
         };
       }
@@ -2588,44 +2610,48 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              exportRowsToArabicCsv(
-                `السلع_التموينية_${branchName}`,
-                activeReportData.headers,
-                activeReportData.rows
-              )
-            }
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-sm"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>تصدير Excel</span>
-          </button>
+          {permissions.canExport && (
+            <button
+              type="button"
+              onClick={() =>
+                exportRowsToArabicCsv(
+                  `السلع_التموينية_${branchName}`,
+                  activeReportData.headers,
+                  activeReportData.rows
+                )
+              }
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>تصدير Excel</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() =>
-              printModuleReportA4({
-                title: activeReportData.title,
-                subtitle: `${state.settings.decisionNumber} • شهر ${state.settings.activeMonth}`,
-                branchName,
-                headers: activeReportData.headers,
-                rows: activeReportData.rows,
-                summaryItems: [
-                  { label: 'إجمالي السلع المسجلة', value: String(kpis.totalCommodities) },
-                  { label: 'قيمة المخزون الحالي', value: `${kpis.stockValuation.toLocaleString()} ج.م` },
-                  { label: 'التجار والمنافذ النشطة', value: `${kpis.activeMerchants} / ${kpis.totalMerchants}` },
-                  { label: 'نسبة تنفيذ الحصص الشهرية', value: `${kpis.monthlyQuotaExecutionPct}%` },
-                ],
-                preparedBy: currentUser?.fullName,
-              })
-            }
-            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-          >
-            <Printer className="w-4 h-4 text-[#D4AF37]" />
-            <span>طباعة A4</span>
-          </button>
+          {permissions.canPrint && (
+            <button
+              type="button"
+              onClick={() =>
+                printModuleReportA4({
+                  title: activeReportData.title,
+                  subtitle: `${state.settings.decisionNumber} • شهر ${state.settings.activeMonth}`,
+                  branchName,
+                  headers: activeReportData.headers,
+                  rows: activeReportData.rows,
+                  summaryItems: [
+                    { label: 'إجمالي السلع المسجلة', value: String(kpis.totalCommodities) },
+                    { label: 'قيمة المخزون الحالي', value: `${kpis.stockValuation.toLocaleString()} ج.م` },
+                    { label: 'التجار والمنافذ النشطة', value: `${kpis.activeMerchants} / ${kpis.totalMerchants}` },
+                    { label: 'نسبة تنفيذ الحصص الشهرية', value: `${kpis.monthlyQuotaExecutionPct}%` },
+                  ],
+                  preparedBy: currentUser?.fullName,
+                })
+              }
+              className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+            >
+              <Printer className="w-4 h-4 text-[#D4AF37]" />
+              <span>طباعة A4</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -2831,12 +2857,13 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           />
           <ModuleTableToolbar
             title="سجل بيانات التراخيص والحصص التفصيلية للمنافذ والتجار"
-            subtitle="تشمل الرقم القومي، السجل التجاري، البطاقة الضريبية، رقم المنفذ، القرية، الوحدة المحلية، البطاقات، المستفيدين، والحصة الشهرية"
+            subtitle="تشمل الرقم القومي، كود التاجر، رقم الماكينة، السجل التجاري، رقم الترخيص، البطاقة الضريبية، تواريخ الانتهاء، ومبلغ التأمين"
             count={filteredMerchants.length}
             addLabel="إضافة تاجر / منفذ تمويني جديد"
             permissions={permissions}
             testIdPrefix="ration-merchants"
-            onAddClick={() =>
+            onAddClick={() => {
+              const nextSerial = state.merchants.length + 1;
               setActiveModal({
                 mode: 'add',
                 entity: 'merchant',
@@ -2846,43 +2873,52 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   ownerName: '',
                   merchantName: '',
                   nationalId: '28501011601234',
-                  commercialRegNumber: `CR-${Math.floor(10000 + Math.random() * 89999)}`,
-                  taxCardNumber: `TX-${Math.floor(100 + Math.random() * 899)}-400`,
-                  posMachineNumber: `POS-${Math.floor(10000 + Math.random() * 89999)}`,
+                  traderCode: `TRD-16-${5000 + nextSerial}`,
+                  posMachineNumber: `1604${8000 + nextSerial}`,
+                  detailedAddress: `الشارع العمومي - ${villages[0]?.village || 'بشبيش'}`,
+                  cashInsuranceAmount: 25000,
+                  commercialRegNumber: `CR-${30000 + nextSerial}`,
+                  licenseNumber: `LIC-TM-${2000 + nextSerial}`,
+                  taxCardNumber: `TX-400-${100 + nextSerial}-16`,
+                  licenseExpiryDate: '2027-05-01',
+                  taxCardExpiryDate: '2027-08-15',
+                  commercialRegExpiryDate: '2027-09-30',
                   outletType: 'تاجر تمويني',
                   village: villages[0]?.village || 'بشبيش',
                   localUnit: villages[0]?.localUnits?.[0] || 'بشبيش',
-                  detailedAddress: `الشارع العمومي - ${villages[0]?.village || 'بشبيش'}`,
                   phone: '01000000000',
                   linkedCardsCount: 250,
                   linkedBeneficiariesCount: 950,
                   monthlyEntitlementQuota: 47500,
-                  cashInsuranceAmount: 40000,
                   openingBalance: 0,
-                  licenseNumber: `LIC-${Math.floor(1000 + Math.random() * 8999)}`,
                   activityStartDate: '2022-01-01',
-                  licenseExpiryDate: '2027-12-31',
                   activityStatus: 'نشط',
                 },
-              })
-            }
+              });
+            }}
           />
 
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-            <div className="flex flex-wrap items-center gap-2.5 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs">
               <div className="relative flex-1 min-w-[220px]">
                 <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={merchantSearch}
-                  onChange={(e) => setMerchantSearch(e.target.value)}
-                  placeholder="بحث باسم التاجر، المنفذ، الرقم القومي، السجل التجاري، أو رقم الماكينة..."
+                  onChange={(e) => {
+                    setMerchantSearch(e.target.value);
+                    setMerchantRegistryPage(1);
+                  }}
+                  placeholder="بحث باسم التاجر، المنفذ، الرقم القومي، كود التاجر، السجل التجاري، أو رقم الماكينة..."
                   className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold"
                 />
               </div>
               <select
                 value={villageFilter}
-                onChange={(e) => setVillageFilter(e.target.value)}
+                onChange={(e) => {
+                  setVillageFilter(e.target.value);
+                  setMerchantRegistryPage(1);
+                }}
                 className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold"
               >
                 <option value="ALL">كافة القرى والمناطق</option>
@@ -2892,7 +2928,10 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               </select>
               <select
                 value={outletTypeFilter}
-                onChange={(e) => setOutletTypeFilter(e.target.value as 'ALL' | OutletType)}
+                onChange={(e) => {
+                  setOutletTypeFilter(e.target.value as 'ALL' | OutletType);
+                  setMerchantRegistryPage(1);
+                }}
                 className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold"
               >
                 <option value="ALL">كل أنواع المنافذ</option>
@@ -2902,14 +2941,37 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               </select>
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as 'ALL' | MerchantActivityStatus)}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value as 'ALL' | MerchantActivityStatus);
+                  setMerchantRegistryPage(1);
+                }}
                 className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold"
               >
                 <option value="ALL">كل الحالات</option>
                 <option value="نشط">نشط</option>
+                <option value="متوقف">متوقف</option>
+                <option value="إجازة">إجازة</option>
                 <option value="موقوف">موقوف</option>
                 <option value="ملغي">ملغي</option>
               </select>
+              <div className="flex items-center gap-1 bg-slate-100 px-2.5 py-1.5 rounded-xl font-bold">
+                <span>عرض:</span>
+                {[25, 50, 200].map((sz) => (
+                  <button
+                    key={sz}
+                    type="button"
+                    onClick={() => {
+                      setMerchantRegistryPageSize(sz);
+                      setMerchantRegistryPage(1);
+                    }}
+                    className={`px-2 py-0.5 rounded text-[11px] font-black cursor-pointer ${
+                      merchantRegistryPageSize === sz ? 'bg-[#0A1628] text-white' : 'text-slate-700'
+                    }`}
+                  >
+                    {sz === 200 ? 'الكل' : sz}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -2919,117 +2981,127 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                     <th className="py-2.5 px-2 border border-slate-700">م</th>
                     <th className="py-2.5 px-2 border border-slate-700 text-right">اسم التاجر / المنفذ</th>
                     <th className="py-2.5 px-2 border border-slate-700">الرقم القومي</th>
-                    <th className="py-2.5 px-2 border border-slate-700">السجل التجاري / الضريبية</th>
-                    <th className="py-2.5 px-2 border border-slate-700">رقم المنفذ POS</th>
-                    <th className="py-2.5 px-2 border border-slate-700">القرية / الوحدة المحلية</th>
-                    <th className="py-2.5 px-2 border border-slate-700">العنوان والهاتف</th>
-                    <th className="py-2.5 px-2 border border-slate-700">البطاقات / المستفيدين</th>
+                    <th className="py-2.5 px-2 border border-slate-700">كود التاجر / الماكينة</th>
+                    <th className="py-2.5 px-2 border border-slate-700">السجل التجاري / الترخيص</th>
+                    <th className="py-2.5 px-2 border border-slate-700">انتهاء الرخصة / الضريبية / السجل</th>
+                    <th className="py-2.5 px-2 border border-slate-700">العنوان بالتفصيل</th>
+                    <th className="py-2.5 px-2 border border-slate-700">مبلغ التأمين</th>
                     <th className="py-2.5 px-2 border border-slate-700">الحصة الشهرية المستحقة</th>
-                    <th className="py-2.5 px-2 border border-slate-700">بداية ونهاية النشاط</th>
                     <th className="py-2.5 px-2 border border-slate-700">الحالة</th>
                     <th className="py-2.5 px-2 border border-slate-700">إجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {filteredMerchants.map((m, idx) => {
-                    const monthlyQuota =
-                      m.monthlyEntitlementQuota ||
-                      round2(m.linkedBeneficiariesCount * state.settings.supportPerBeneficiary);
-                    return (
-                      <tr key={m.id} className="hover:bg-slate-50">
-                        <td className="py-2 px-2 font-mono">{idx + 1}</td>
-                        <td className="py-2 px-2 text-right">
-                          <div className="font-black text-[#0A1628]">{m.ownerName}</div>
-                          <div className="text-[11px] text-slate-500">{m.merchantName} ({m.outletType})</div>
-                        </td>
-                        <td className="py-2 px-2 font-mono">{m.nationalId || '-'}</td>
-                        <td className="py-2 px-2 font-mono text-[11px]">
-                          <div>س.ت: {m.commercialRegNumber || '-'}</div>
-                          <div className="text-slate-500">ب.ض: {m.taxCardNumber || '-'}</div>
-                        </td>
-                        <td className="py-2 px-2 font-mono font-black text-[#0A1628]">{m.posMachineNumber}</td>
-                        <td className="py-2 px-2">
-                          <div>{m.village}</div>
-                          <div className="text-[11px] text-slate-500">{m.localUnit}</div>
-                        </td>
-                        <td className="py-2 px-2 text-[11px]">
-                          <div>{m.detailedAddress}</div>
-                          <div className="font-mono text-[#0D9488]">{m.phone || '-'}</div>
-                        </td>
-                        <td className="py-2 px-2 font-mono tabular-nums">
-                          {m.linkedCardsCount} بطاقة / {m.linkedBeneficiariesCount} فرد
-                        </td>
-                        <td className="py-2 px-2 font-mono tabular-nums text-[#0D9488] font-black">
-                          {monthlyQuota.toLocaleString()} ج.م
-                        </td>
-                        <td className="py-2 px-2 font-mono text-[11px]">
-                          <div>من: {m.activityStartDate || m.licenseIssueDate}</div>
-                          <div>إلى: {m.activityEndDate || m.licenseExpiryDate}</div>
-                        </td>
-                        <td className="py-2 px-2">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
-                              m.activityStatus === 'نشط'
-                                ? 'bg-emerald-100 text-emerald-900'
-                                : 'bg-rose-100 text-rose-900'
-                            }`}
-                          >
-                            {m.activityStatus}
-                          </span>
-                        </td>
-                        <td className="py-2 px-2">
-                          <ModuleRowActions
-                            entityLabel={m.merchantName}
-                            updatedAt={m.updatedAt}
-                            permissions={permissions}
-                            testIdPrefix={`merchant-${m.id}`}
-                            onEdit={() =>
-                              setActiveModal({
-                                mode: 'edit',
-                                entity: 'merchant',
-                                targetId: m.id,
-                                title: `تعديل بيانات التاجر والمنفذ: ${m.merchantName}`,
-                                fields: merchantFields,
-                                initialValues: {
-                                  ...m,
-                                  activityStartDate: m.activityStartDate || m.licenseIssueDate,
-                                  monthlyEntitlementQuota: monthlyQuota,
-                                },
-                              })
-                            }
-                            onDelete={() => {
-                              const check = checkRationDeleteIntegrity(state, 'merchant', m.id);
-                              setDeleteTarget({
-                                entityTitle: `حذف المنفذ التمويني: ${m.merchantName}`,
-                                summary: [
-                                  { label: 'اسم المنفذ', value: m.merchantName },
-                                  { label: 'اسم التاجر', value: m.ownerName },
-                                  { label: 'القرية', value: m.village },
-                                  { label: 'رقم المنفذ', value: m.posMachineNumber },
-                                ],
-                                canDelete: check.canDelete,
-                                blockReason: check.reason,
-                                onConfirm: () => {
-                                  onChangeState(
-                                    {
-                                      ...state,
-                                      merchants: state.merchants.filter((x) => x.id !== m.id),
-                                      auditLogs: [
-                                        appendAudit('حذف', 'سجل التجار والمنافذ', m.id, `حذف المنفذ ${m.merchantName}`),
-                                        ...state.auditLogs,
-                                      ],
-                                    },
-                                    `تم حذف المنفذ (${m.merchantName}) من Supabase`
-                                  );
-                                  notify('ok', `تم حذف المنفذ (${m.merchantName}) بنجاح.`);
-                                },
-                              });
-                            }}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {filteredMerchants
+                    .slice(
+                      (merchantRegistryPage - 1) * merchantRegistryPageSize,
+                      merchantRegistryPage * merchantRegistryPageSize
+                    )
+                    .map((m, idx) => {
+                      const monthlyQuota =
+                        m.monthlyEntitlementQuota ||
+                        round2(m.linkedBeneficiariesCount * state.settings.supportPerBeneficiary);
+                      return (
+                        <tr key={m.id} className="hover:bg-slate-50">
+                          <td className="py-2 px-2 font-mono">
+                            {(merchantRegistryPage - 1) * merchantRegistryPageSize + idx + 1}
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            <div className="font-black text-[#0A1628]">{m.ownerName}</div>
+                            <div className="text-[11px] text-slate-500">{m.merchantName} ({m.outletType})</div>
+                          </td>
+                          <td className="py-2 px-2 font-mono">{m.nationalId || '-'}</td>
+                          <td className="py-2 px-2 font-mono text-[11px]">
+                            <div className="font-black text-teal-800">{m.traderCode || m.activityCardNumber || '-'}</div>
+                            <div className="font-black text-[#0A1628]">POS: {m.posMachineNumber}</div>
+                          </td>
+                          <td className="py-2 px-2 font-mono text-[11px]">
+                            <div>س.ت: {m.commercialRegNumber || '-'}</div>
+                            <div className="text-teal-800">رخصة: {m.licenseNumber || '-'}</div>
+                            <div className="text-slate-500">ب.ض: {m.taxCardNumber || '-'}</div>
+                          </td>
+                          <td className="py-2 px-2 font-mono text-[10px]">
+                            <div>رخصة: {m.licenseExpiryDate || '-'}</div>
+                            <div>ضريبية: {m.taxCardExpiryDate || '-'}</div>
+                            <div>سجل: {m.commercialRegExpiryDate || '-'}</div>
+                          </td>
+                          <td className="py-2 px-2 text-[11px]">
+                            <div>{m.detailedAddress}</div>
+                            <div className="text-slate-500">{m.village} · {m.localUnit}</div>
+                          </td>
+                          <td className="py-2 px-2 font-mono tabular-nums font-black text-[#0A1628]">
+                            {m.cashInsuranceAmount.toLocaleString()} ج.م
+                          </td>
+                          <td className="py-2 px-2 font-mono tabular-nums text-[#0D9488] font-black">
+                            {monthlyQuota.toLocaleString()} ج.م
+                          </td>
+                          <td className="py-2 px-2">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+                                m.activityStatus === 'نشط'
+                                  ? 'bg-emerald-100 text-emerald-900'
+                                  : 'bg-rose-100 text-rose-900'
+                              }`}
+                            >
+                              {m.activityStatus}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2">
+                            <ModuleRowActions
+                              entityLabel={m.merchantName}
+                              updatedAt={m.updatedAt}
+                              permissions={permissions}
+                              testIdPrefix={`merchant-${m.id}`}
+                              onEdit={() =>
+                                setActiveModal({
+                                  mode: 'edit',
+                                  entity: 'merchant',
+                                  targetId: m.id,
+                                  title: `تعديل بيانات التاجر والمنفذ: ${m.merchantName}`,
+                                  fields: merchantFields,
+                                  initialValues: {
+                                    ...m,
+                                    traderCode: m.traderCode || m.activityCardNumber || '',
+                                    taxCardExpiryDate: m.taxCardExpiryDate || '2027-08-15',
+                                    commercialRegExpiryDate: m.commercialRegExpiryDate || '2027-09-30',
+                                    activityStartDate: m.activityStartDate || m.licenseIssueDate,
+                                    monthlyEntitlementQuota: monthlyQuota,
+                                  },
+                                })
+                              }
+                              onDelete={() => {
+                                const check = checkRationDeleteIntegrity(state, 'merchant', m.id);
+                                setDeleteTarget({
+                                  entityTitle: `حذف المنفذ التمويني: ${m.merchantName}`,
+                                  summary: [
+                                    { label: 'اسم المنفذ', value: m.merchantName },
+                                    { label: 'اسم التاجر', value: m.ownerName },
+                                    { label: 'القرية', value: m.village },
+                                    { label: 'رقم المنفذ', value: m.posMachineNumber },
+                                  ],
+                                  canDelete: check.canDelete,
+                                  blockReason: check.reason,
+                                  onConfirm: () => {
+                                    onChangeState(
+                                      {
+                                        ...state,
+                                        merchants: state.merchants.filter((x) => x.id !== m.id),
+                                        auditLogs: [
+                                          appendAudit('حذف', 'سجل التجار والمنافذ', m.id, `حذف المنفذ ${m.merchantName}`),
+                                          ...state.auditLogs,
+                                        ],
+                                      },
+                                      `تم حذف المنفذ (${m.merchantName}) من Supabase`
+                                    );
+                                    notify('ok', `تم حذف المنفذ (${m.merchantName}) بنجاح.`);
+                                  },
+                                });
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -3583,7 +3655,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             }
           />
 
-          {!isViewer && (
+          {permissions.canAdd && (
             <form onSubmit={handleRegisterDisbursement} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
               <div className="text-xs font-black text-[#0A1628]">
                 تسجيل سريع لعملية صرف مواطن (يتحقق آلياً من عدم التكرار ومن المقرر ومن رصيد المخزن)
@@ -3926,7 +3998,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                           permissions={permissions}
                           testIdPrefix={`movement-${mv.id}`}
                           extraAction={
-                            !isViewer && !mv.isReversed && mv.movementType !== 'REVERSAL' ? (
+                            permissions.canEdit && !mv.isReversed && mv.movementType !== 'REVERSAL' ? (
                               <button
                                 type="button"
                                 onClick={() => handleReverseInventoryMovement(mv)}
@@ -3977,12 +4049,13 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
         <div className="space-y-4">
           <ModuleTableToolbar
             title="إدارة الحصص التموينية الشهرية للتجار والمنافذ"
-            subtitle="الكمية المتبقية = المقررة - المستلمة | نسبة تنفيذ الحصة = (الموزعة ÷ المقررة) × 100 | مربوطة بعدد البطاقات والمستفيدين"
+            subtitle="تتضمن كود التاجر ورقم ماكينة التاجر | الكمية المتبقية = المقررة - المستلمة | نسبة تنفيذ الحصة = (الموزعة ÷ المقررة) × 100"
             count={state.requisitions.length}
             addLabel="تسجيل حصة تموينية شهرية جديدة"
             permissions={permissions}
             testIdPrefix="ration-requisitions"
-            onAddClick={() =>
+            onAddClick={() => {
+              const m0 = state.merchants[0];
               setActiveModal({
                 mode: 'add',
                 entity: 'requisition',
@@ -3993,7 +4066,9 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   invoiceNumber: `INV-${Math.floor(10000 + Math.random() * 89999)}`,
                   monthKey: state.settings.activeMonth,
                   requestDate: new Date().toISOString().split('T')[0],
-                  merchantId: state.merchants[0]?.id || '',
+                  merchantId: m0?.id || '',
+                  traderCode: m0?.traderCode || m0?.activityCardNumber || 'TRD-16-5001',
+                  posMachineNumber: m0?.posMachineNumber || '16048001',
                   commodityId: state.commodities[0]?.id || '',
                   requestedQty: 500,
                   approvedQty: 450,
@@ -4001,8 +4076,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   status: 'معتمد',
                   notes: '',
                 },
-              })
-            }
+              });
+            }}
           />
 
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
@@ -4011,6 +4086,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 <tr>
                   <th className="py-2 px-2 border border-slate-700">الشهر والسنة</th>
                   <th className="py-2 px-2 border border-slate-700 text-right">اسم التاجر / المنفذ</th>
+                  <th className="py-2 px-2 border border-slate-700">كود التاجر</th>
+                  <th className="py-2 px-2 border border-slate-700">رقم ماكينة التاجر</th>
                   <th className="py-2 px-2 border border-slate-700">البطاقات / المستفيدين</th>
                   <th className="py-2 px-2 border border-slate-700">اسم السلعة</th>
                   <th className="py-2 px-2 border border-slate-700">الكمية المقررة</th>
@@ -4034,12 +4111,16 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   const remainingQty = computeRemainingMonthlyQuota(prescribed, received);
                   const execPct = computeMonthlyQuotaExecutionPct(distributed, prescribed);
                   const quotaVal = round2(prescribed * (line0?.supplyPrice || 0));
+                  const tCode = r.traderCode || m?.traderCode || m?.activityCardNumber || '-';
+                  const posNo = r.posMachineNumber || m?.posMachineNumber || '-';
                   return (
                     <tr key={r.id} className="hover:bg-slate-50">
                       <td className="py-2 px-2 font-mono font-black">{r.monthKey}</td>
                       <td className="py-2 px-2 text-right font-black text-[#0A1628]">
                         {m?.merchantName || r.merchantId}
                       </td>
+                      <td className="py-2 px-2 font-mono font-black text-teal-800">{tCode}</td>
+                      <td className="py-2 px-2 font-mono font-black text-[#0A1628]">{posNo}</td>
                       <td className="py-2 px-2 font-mono text-[11px]">
                         {m?.linkedCardsCount || r.linkedCardsCount} بطاقة / {m?.linkedBeneficiariesCount || r.linkedBeneficiariesCount} فرد
                       </td>
@@ -4085,6 +4166,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                                 monthKey: r.monthKey,
                                 requestDate: r.requestDate,
                                 merchantId: r.merchantId,
+                                traderCode: tCode,
+                                posMachineNumber: posNo,
                                 commodityId: line0?.commodityId || state.commodities[0]?.id || '',
                                 requestedQty: prescribed,
                                 approvedQty: received,
@@ -4100,6 +4183,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                               summary: [
                                 { label: 'رقم السجل', value: r.requestNumber },
                                 { label: 'المنفذ', value: m?.merchantName || r.merchantId },
+                                { label: 'كود التاجر / الماكينة', value: `${tCode} / ${posNo}` },
                                 { label: 'القيمة', value: `${quotaVal} ج.م` },
                               ],
                               canDelete: r.status === 'جديد' || r.status === 'ملغي',
@@ -4137,29 +4221,29 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
       {/* SubView 8: Smart Alerts System + Inspections & Citizen Complaints */}
       {subView === 'inspections' && (
         <div className="space-y-5">
-          {/* Smart Alerts System (7 Automatic Categories) */}
+          {/* Smart Alerts System (7 Automatic Categories including License, Tax Card & Commercial Registry Expirations) */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-black text-[#0A1628] flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4 text-amber-600" />
-                  <span>نظام التنبيهات الذكي التلقائي ({smartAlerts.length} تنبيه نشط)</span>
+                  <span>نظام التنبيهات الذكي التلقائي لقسم السلع التموينية ({smartAlerts.length} تنبيه نشط)</span>
                 </h3>
                 <p className="text-xs font-bold text-slate-500">
-                  يرصد تلقائياً: انخفاض المخزون، قرب انتهاء الصلاحية، تأخر استلام الحصة، العجز المخزني، عدم صرف الحصة بالكامل، فروق الوارد والمنصرف، وانتهاء تراخيص التجار
+                  يرصد تلقائياً: انتهاء الرخص، انتهاء البطاقة الضريبية، انتهاء السجل التجاري، انخفاض المخزون، قرب انتهاء صلاحية السلع، وتأخر استلام أو صرف الحصص التموينية
                 </p>
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[380px]">
               <table className="w-full text-xs text-center border-collapse">
-                <thead className="bg-[#0A1628] text-white font-black">
+                <thead className="bg-[#0A1628] text-white font-black sticky top-0">
                   <tr>
                     <th className="py-2 px-2 border border-slate-700">فئة التنبيه الذكي</th>
                     <th className="py-2 px-2 border border-slate-700">الأولوية</th>
-                    <th className="py-2 px-2 border border-slate-700 text-right">الجهة / الصنف</th>
-                    <th className="py-2 px-2 border border-slate-700 text-right">تفاصيل التنبيه</th>
-                    <th className="py-2 px-2 border border-slate-700">المؤشر الرقمي</th>
+                    <th className="py-2 px-2 border border-slate-700 text-right">التاجر / المنفذ / الصنف</th>
+                    <th className="py-2 px-2 border border-slate-700 text-right">تفاصيل التنبيه والمستندات</th>
+                    <th className="py-2 px-2 border border-slate-700">المؤشر الرقمي / التاريخ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
@@ -4192,6 +4276,126 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                       </tr>
                     ))
                   )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Dedicated Merchant Documents, Insurance, POS & Expiry Dates Alert Screen Table */}
+          <div
+            className="bg-white p-4 rounded-2xl border-2 border-[#0A1628]/20 shadow-sm space-y-3"
+            data-testid="ration-merchants-documents-alert-table"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+              <div>
+                <h3 className="text-sm font-black text-[#0A1628]">
+                  شاشة تنبيهات ورقابة مستندات وتراخيص التجار التموينيين (الرخصة — البطاقة الضريبية — السجل التجاري)
+                </h3>
+                <p className="text-xs font-bold text-slate-500">
+                  متابعة شاملة للرقم القومي، كود التاجر، العنوان بالتفصيل، مبلغ التأمين، رقم ماكينة التاجر، السجل التجاري، رقم الترخيص، وتواريخ انتهاء الرخص والبطاقة الضريبية والسجل التجاري
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setAlertDocFilter('ALERT_ONLY')}
+                  className={`px-3 py-1.5 rounded-xl font-black cursor-pointer ${
+                    alertDocFilter === 'ALERT_ONLY'
+                      ? 'bg-rose-700 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  التراخيص المنتهية أو قريبة الانتهاء فقط
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAlertDocFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-xl font-black cursor-pointer ${
+                    alertDocFilter === 'ALL'
+                      ? 'bg-[#0A1628] text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  عرض جميع التجار ({state.merchants.length})
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto max-h-[420px]">
+              <table className="w-full text-xs text-center border-collapse">
+                <thead className="bg-[#0A1628] text-white font-black sticky top-0">
+                  <tr>
+                    <th className="py-2 px-2 border border-slate-700 text-right">اسم التاجر التمويني</th>
+                    <th className="py-2 px-2 border border-slate-700">الرقم القومي</th>
+                    <th className="py-2 px-2 border border-slate-700">كود التاجر</th>
+                    <th className="py-2 px-2 border border-slate-700">رقم ماكينة التاجر</th>
+                    <th className="py-2 px-2 border border-slate-700 text-right">العنوان بالتفصيل</th>
+                    <th className="py-2 px-2 border border-slate-700">مبلغ التأمين</th>
+                    <th className="py-2 px-2 border border-slate-700">رقم الترخيص / انتهاء الرخصة</th>
+                    <th className="py-2 px-2 border border-slate-700">البطاقة الضريبية / انتهائها</th>
+                    <th className="py-2 px-2 border border-slate-700">السجل التجاري / انتهاؤه</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 font-bold">
+                  {state.merchants
+                    .filter((m) => {
+                      if (alertDocFilter === 'ALL') return true;
+                      const licEval = evaluateSingleDateStatus(m.licenseExpiryDate || m.activityEndDate);
+                      const taxEval = evaluateSingleDateStatus(m.taxCardExpiryDate);
+                      const crEval = evaluateSingleDateStatus(m.commercialRegExpiryDate);
+                      return (
+                        licEval.status === 'منتهي' ||
+                        licEval.status === 'قريب الانتهاء' ||
+                        taxEval.status === 'منتهي' ||
+                        taxEval.status === 'قريب الانتهاء' ||
+                        crEval.status === 'منتهي' ||
+                        crEval.status === 'قريب الانتهاء'
+                      );
+                    })
+                    .slice(0, 50)
+                    .map((m) => {
+                      const licEval = evaluateSingleDateStatus(m.licenseExpiryDate || m.activityEndDate);
+                      const taxEval = evaluateSingleDateStatus(m.taxCardExpiryDate);
+                      const crEval = evaluateSingleDateStatus(m.commercialRegExpiryDate);
+                      const badgeClass = (st: string) =>
+                        st === 'منتهي'
+                          ? 'bg-rose-100 text-rose-900 border-rose-300'
+                          : st === 'قريب الانتهاء'
+                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                          : 'bg-emerald-100 text-emerald-900 border-emerald-300';
+                      return (
+                        <tr key={m.id} className="hover:bg-slate-50">
+                          <td className="py-2 px-2 text-right font-black text-[#0A1628]">{m.merchantName}</td>
+                          <td className="py-2 px-2 font-mono">{m.nationalId || 'غير مسجل'}</td>
+                          <td className="py-2 px-2 font-mono font-black text-teal-800">
+                            {m.traderCode || m.activityCardNumber || '-'}
+                          </td>
+                          <td className="py-2 px-2 font-mono font-black text-[#0A1628]">{m.posMachineNumber}</td>
+                          <td className="py-2 px-2 text-right text-[11px]">{m.detailedAddress}</td>
+                          <td className="py-2 px-2 font-mono font-black text-emerald-800">
+                            {m.cashInsuranceAmount.toLocaleString()} ج.م
+                          </td>
+                          <td className="py-2 px-2 font-mono text-[11px]">
+                            <div>{m.licenseNumber || '-'}</div>
+                            <span className={`inline-block mt-0.5 px-2 py-0.5 rounded border text-[10px] font-black ${badgeClass(licEval.status)}`}>
+                              {licEval.expiryDate} ({licEval.status})
+                            </span>
+                          </td>
+                          <td className="py-2 px-2 font-mono text-[11px]">
+                            <div>{m.taxCardNumber || '-'}</div>
+                            <span className={`inline-block mt-0.5 px-2 py-0.5 rounded border text-[10px] font-black ${badgeClass(taxEval.status)}`}>
+                              {taxEval.expiryDate} ({taxEval.status})
+                            </span>
+                          </td>
+                          <td className="py-2 px-2 font-mono text-[11px]">
+                            <div>{m.commercialRegNumber || '-'}</div>
+                            <span className={`inline-block mt-0.5 px-2 py-0.5 rounded border text-[10px] font-black ${badgeClass(crEval.status)}`}>
+                              {crEval.expiryDate} ({crEval.status})
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -4431,46 +4635,50 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const visHeaders = activeReportData.headers.filter((_, i) => !hiddenReportCols.includes(i));
-                    const visRows = activeReportData.rows.map((r) =>
-                      r.filter((_, i) => !hiddenReportCols.includes(i))
-                    );
-                    exportRowsToArabicCsv(activeReportData.title, visHeaders, visRows);
-                  }}
-                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span>تصدير التقرير الحالي Excel</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const visHeaders = activeReportData.headers.filter((_, i) => !hiddenReportCols.includes(i));
-                    const visRows = activeReportData.rows.map((r) =>
-                      r.filter((_, i) => !hiddenReportCols.includes(i))
-                    );
-                    printModuleReportA4({
-                      title: activeReportData.title,
-                      subtitle: `${branchName} • ${state.settings.decisionNumber} • شهر ${state.settings.activeMonth}`,
-                      branchName,
-                      headers: visHeaders,
-                      rows: visRows,
-                      summaryItems: [
-                        { label: 'عدد السجلات بالتقرير', value: String(visRows.length) },
-                        { label: 'إجمالي قيمة المخزون', value: `${kpis.stockValuation.toLocaleString()} ج.م` },
-                        { label: 'نسبة تنفيذ الحصص', value: `${kpis.monthlyQuotaExecutionPct}%` },
-                      ],
-                      preparedBy: currentUser?.fullName,
-                    });
-                  }}
-                  className="px-3.5 py-2 bg-[#0A1628] hover:bg-[#13294B] text-[#D4AF37] rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>طباعة رسمية A4 / PDF</span>
-                </button>
+                {permissions.canExport && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const visHeaders = activeReportData.headers.filter((_, i) => !hiddenReportCols.includes(i));
+                      const visRows = activeReportData.rows.map((r) =>
+                        r.filter((_, i) => !hiddenReportCols.includes(i))
+                      );
+                      exportRowsToArabicCsv(activeReportData.title, visHeaders, visRows);
+                    }}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>تصدير التقرير الحالي Excel</span>
+                  </button>
+                )}
+                {permissions.canPrint && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const visHeaders = activeReportData.headers.filter((_, i) => !hiddenReportCols.includes(i));
+                      const visRows = activeReportData.rows.map((r) =>
+                        r.filter((_, i) => !hiddenReportCols.includes(i))
+                      );
+                      printModuleReportA4({
+                        title: activeReportData.title,
+                        subtitle: `${branchName} • ${state.settings.decisionNumber} • شهر ${state.settings.activeMonth}`,
+                        branchName,
+                        headers: visHeaders,
+                        rows: visRows,
+                        summaryItems: [
+                          { label: 'عدد السجلات بالتقرير', value: String(visRows.length) },
+                          { label: 'إجمالي قيمة المخزون', value: `${kpis.stockValuation.toLocaleString()} ج.م` },
+                          { label: 'نسبة تنفيذ الحصص', value: `${kpis.monthlyQuotaExecutionPct}%` },
+                        ],
+                        preparedBy: currentUser?.fullName,
+                      });
+                    }}
+                    className="px-3.5 py-2 bg-[#0A1628] hover:bg-[#13294B] text-[#D4AF37] rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>طباعة رسمية A4 / PDF</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -4691,7 +4899,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               </label>
             </div>
           </div>
-          {!isViewer && (
+          {permissions.canEdit && (
             <button type="submit" className="px-5 py-2.5 bg-[#0A1628] hover:bg-slate-800 text-[#D4AF37] rounded-xl text-xs font-black cursor-pointer">
               حفظ وتطبيق القرار التمويني مع سجل الإصدارات التاريخي
             </button>
@@ -4746,6 +4954,17 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           initialValues={activeModal.initialValues}
           onClose={() => setActiveModal(null)}
           onSubmit={handleModalSubmit}
+          onFieldChange={(key, value) => {
+            if (activeModal.entity === 'requisition' && key === 'merchantId') {
+              const selMerchant = state.merchants.find((m) => m.id === String(value));
+              if (selMerchant) {
+                return {
+                  traderCode: selMerchant.traderCode || selMerchant.activityCardNumber || '',
+                  posMachineNumber: selMerchant.posMachineNumber || '',
+                };
+              }
+            }
+          }}
         />
       )}
 

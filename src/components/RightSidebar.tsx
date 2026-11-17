@@ -45,6 +45,7 @@ import {
   canUserAccessDepartment,
   canUserAccessTab,
   getDepartmentForSidebarGroup,
+  isSuperAdmin,
 } from '../utils/departmentRbac';
 
 export type SidebarNavId =
@@ -611,6 +612,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
     if (!currentUser) return true;
     const dept = getDepartmentForSidebarGroup(group.id);
     if (dept === 'shared') return true;
+    if (dept === 'admin_only') return isSuperAdmin(currentUser);
     return canUserAccessDepartment(currentUser, dept);
   });
 

@@ -185,7 +185,7 @@ export const ALL_PERMISSIONS_LIST: PermissionDefinition[] = [
 ];
 
 export function getDefaultPermissionsForRole(role: UserRoleType | string): UserAction[] {
-  if (role === 'admin') {
+  if (role === 'super_admin' || role === 'admin') {
     return ALL_PERMISSIONS_LIST.map((p) => p.id);
   }
   if (role === 'supervisor') {
@@ -256,6 +256,7 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
 
 export function getDefaultRolePermissionsMap(): Record<UserRoleType, UserAction[]> {
   return {
+    super_admin: getDefaultPermissionsForRole('super_admin'),
     admin: getDefaultPermissionsForRole('admin'),
     supervisor: getDefaultPermissionsForRole('supervisor'),
     auditor: getDefaultPermissionsForRole('auditor'),
@@ -270,8 +271,18 @@ export function hasPermission(
   action: UserAction,
   systemConfig?: SystemConfig | null
 ): boolean {
-  if (!user) return false;
+  if (!user || user.isActive === false) return false;
   const role = user.role;
+  if (user.isSuperAdmin === true || role === 'super_admin') return true;
+
+  // Restricted-department admins cannot access global user/system admin unless explicitly permitted
+  const hasDeptRestriction =
+    (Array.isArray(user.allowedDepartments) &&
+      user.allowedDepartments.length > 0 &&
+      !user.allowedDepartments.includes('all')) ||
+    (user.departmentPermissions && Object.keys(user.departmentPermissions).length > 0);
+
+  if (role === 'admin' && !hasDeptRestriction && user.isSuperAdmin !== false) return true;
 
   // 1. If customPermissions array is explicitly configured on the specific user, respect it
   if (Array.isArray(user.customPermissions) && user.customPermissions.length > 0) {
@@ -283,15 +294,13 @@ export function hasPermission(
     return systemConfig.rolePermissions[role].includes(action);
   }
 
-  // 3. Admin always has full 100% control by default
-  if (role === 'admin') return true;
-
-  // 4. Otherwise use default permissions for the user's role
+  // 3. Otherwise use default permissions for the user's role
   const defaults = getDefaultPermissionsForRole(role);
   return defaults.includes(action);
 }
 
 export function getRoleNameArabic(role: UserRoleType | string, systemConfig?: SystemConfig | null): string {
+  if (role === 'super_admin') return 'مدير عام النظام (Super Admin — صلاحيات كاملة ومراقبة)';
   if (role === 'admin') return 'مدير نظام (تحكم كامل في المنظومة 100%)';
   if (role === 'supervisor') return 'مشرف عام رقابة ومخابز (صلاحيات إشرافية موسعة)';
   if (role === 'auditor') return 'مراجع حسابات ومديونيات وتحصيل';

@@ -1224,10 +1224,11 @@ CREATE TABLE IF NOT EXISTS public.flour_inventory_movements (
   payload JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
--- RLS Policies for all new module tables
+-- RLS Policies for all new module tables (Granular Per-Department RBAC, Fail-Closed)
 DO $$
 DECLARE
   tbl TEXT;
+  dept TEXT;
   module_tables TEXT[] := ARRAY[
     'ration_merchants', 'ration_outlets', 'ration_commodities', 'ration_goods',
     'ration_prices', 'ration_cards', 'ration_beneficiaries', 'ration_quotas',
@@ -1266,17 +1267,44 @@ DECLARE
   ];
 BEGIN
   FOREACH tbl IN ARRAY module_tables LOOP
+    dept := CASE
+      WHEN tbl LIKE 'ration_%' THEN 'commodities'
+      WHEN tbl LIKE 'internal_trade_%' OR tbl LIKE 'lpg_%' OR tbl LIKE 'petroleum_%' OR tbl LIKE 'fuel_%' THEN 'internal_trade'
+      WHEN tbl LIKE 'maintenance_%' OR tbl LIKE 'grain_%' OR tbl LIKE 'refrigerator%' OR tbl LIKE 'mill%' OR tbl LIKE 'flour_%' THEN 'grain_maintenance'
+      WHEN tbl = 'branch_module_states' THEN 'all'
+      ELSE 'hr'
+    END;
+
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS "Tamween module read on %s" ON public.%I', tbl, tbl);
     EXECUTE format('DROP POLICY IF EXISTS "Tamween module write on %s" ON public.%I', tbl, tbl);
-    EXECUTE format(
-      'CREATE POLICY "Tamween module read on %s" ON public.%I FOR SELECT USING (auth.role() IN (''anon'', ''authenticated''))',
-      tbl, tbl
-    );
-    EXECUTE format(
-      'CREATE POLICY "Tamween module write on %s" ON public.%I FOR ALL USING (auth.role() IN (''anon'', ''authenticated'') AND public.is_tamween_authorized_writer()) WITH CHECK (auth.role() IN (''anon'', ''authenticated'') AND public.is_tamween_authorized_writer())',
-      tbl, tbl
-    );
+    EXECUTE format('DROP POLICY IF EXISTS "Tamween module insert on %s" ON public.%I', tbl, tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "Tamween module update on %s" ON public.%I', tbl, tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "Tamween module delete on %s" ON public.%I', tbl, tbl);
+
+    IF dept = 'all' THEN
+      EXECUTE 'CREATE POLICY "Tamween module read on branch_module_states" ON public.branch_module_states FOR SELECT USING (auth.role() = ''authenticated'')';
+      EXECUTE 'CREATE POLICY "Tamween module insert on branch_module_states" ON public.branch_module_states FOR INSERT WITH CHECK (public.is_tamween_authorized_writer())';
+      EXECUTE 'CREATE POLICY "Tamween module update on branch_module_states" ON public.branch_module_states FOR UPDATE USING (public.is_tamween_authorized_writer()) WITH CHECK (public.is_tamween_authorized_writer())';
+      EXECUTE 'CREATE POLICY "Tamween module delete on branch_module_states" ON public.branch_module_states FOR DELETE USING (public.is_tamween_super_admin())';
+    ELSE
+      EXECUTE format(
+        'CREATE POLICY "Tamween module read on %s" ON public.%I FOR SELECT USING (public.has_department_permission(%L, ''view''))',
+        tbl, tbl, dept
+      );
+      EXECUTE format(
+        'CREATE POLICY "Tamween module insert on %s" ON public.%I FOR INSERT WITH CHECK (public.has_department_permission(%L, ''insert''))',
+        tbl, tbl, dept
+      );
+      EXECUTE format(
+        'CREATE POLICY "Tamween module update on %s" ON public.%I FOR UPDATE USING (public.has_department_permission(%L, ''update'')) WITH CHECK (public.has_department_permission(%L, ''update''))',
+        tbl, tbl, dept, dept
+      );
+      EXECUTE format(
+        'CREATE POLICY "Tamween module delete on %s" ON public.%I FOR DELETE USING (public.has_department_permission(%L, ''delete''))',
+        tbl, tbl, dept
+      );
+    END IF;
   END LOOP;
 END $$;
 

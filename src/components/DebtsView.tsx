@@ -40,6 +40,11 @@ import {
   formatDateDDMMYYYY,
   getLateInstallmentPaymentInfo,
 } from '../utils/auditHelper';
+import {
+  hasDepartmentPermission,
+  canUserPrintDepartment,
+  canUserExportDepartment,
+} from '../utils/departmentRbac';
 
 export const getDebtOverdueInfo = (
   dateStr?: string,
@@ -128,7 +133,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   onSendLatePaymentAlert,
 }) => {
   const debtsPrintRef = React.useRef<HTMLDivElement>(null);
-  const isViewer = currentUser?.role === 'viewer';
+  const canInsertDebt = hasDepartmentPermission(currentUser, 'debts', 'insert');
+  const canUpdateDebt = hasDepartmentPermission(currentUser, 'debts', 'update');
+  const canDeleteDebt = hasDepartmentPermission(currentUser, 'debts', 'delete');
+  const canPrintDebt = canUserPrintDepartment(currentUser, 'debts');
+  const canExportDebt = canUserExportDepartment(currentUser, 'debts');
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   useEffect(() => {
@@ -533,6 +542,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
   // Handle Export to CSV (Excel UTF-8 BOM)
   const handleExportCSV = () => {
+    if (!canExportDebt) return;
     const headers = [
       'م',
       'اسم المخبز',
@@ -626,6 +636,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   };
 
   const handlePrintDebts = () => {
+    if (!canPrintDebt) return;
     if (onOpenReportModal) {
       onOpenReportModal('debts');
       return;
@@ -637,6 +648,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   };
 
   const handleExportDebtsPdf = async () => {
+    if (!canExportDebt && !canPrintDebt) return;
     if (isExportingPdf || !debtsPrintRef.current) return;
     setIsExportingPdf(true);
     try {
@@ -685,7 +697,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         </div>
 
         <div className="flex items-center flex-wrap justify-end gap-2.5 text-right">
-          {!isViewer && (
+          {canUpdateDebt && (
             <button
               type="button"
               onClick={() => {
@@ -718,29 +730,33 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             <span>مفتاح التنبيهات الخاص بسجل المديونيات</span>
           </button>
 
-          <button
-            type="button"
-            disabled={isExportingPdf}
-            onClick={handleExportDebtsPdf}
-            className="px-4 py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-md border border-blue-400/50 transition cursor-pointer"
-          >
-            {isExportingPdf ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-            <span>{isExportingPdf ? 'جاري التصدير...' : 'تصدير التقرير PDF'}</span>
-          </button>
+          {(canExportDebt || canPrintDebt) && (
+            <button
+              type="button"
+              disabled={isExportingPdf}
+              onClick={handleExportDebtsPdf}
+              className="px-4 py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-md border border-blue-400/50 transition cursor-pointer"
+            >
+              {isExportingPdf ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+              <span>{isExportingPdf ? 'جاري التصدير...' : 'تصدير التقرير PDF'}</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() =>
-              printHtmlElementA4(
-                debtsPrintRef.current,
-                `سجل_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}`
-              )
-            }
-            className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <Printer className="w-4 h-4 text-amber-300" />
-            <span>طباعة فورية</span>
-          </button>
+          {canPrintDebt && (
+            <button
+              type="button"
+              onClick={() =>
+                printHtmlElementA4(
+                  debtsPrintRef.current,
+                  `سجل_مديونيات_المخابز_${new Date().toISOString().split('T')[0]}`
+                )
+              }
+              className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <Printer className="w-4 h-4 text-amber-300" />
+              <span>طباعة فورية</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -941,7 +957,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </span>
           </button>
 
-          {stats.late14DaysCount > 0 && !isViewer && (
+          {stats.late14DaysCount > 0 && canUpdateDebt && (
             <button
               type="button"
               data-testid="send-all-late-14d-alerts-btn"
@@ -1097,7 +1113,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2.5">
-            {!isViewer && (
+            {canInsertDebt && (
               <button
                 type="button"
                 onClick={() => {
@@ -1112,7 +1128,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               </button>
             )}
 
-            {!isViewer && (
+            {canUpdateDebt && (
               <button
                 type="button"
                 onClick={() => {
@@ -1132,7 +1148,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               </button>
             )}
 
-            {!isViewer && selectedRowId && (
+            {canUpdateDebt && selectedRowId && (
               <button
                 type="button"
                 onClick={() => {
@@ -1159,7 +1175,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               <span>حاسبة الغرامات التموينية</span>
             </button>
 
-            {!isViewer && (
+            {(canInsertDebt || canUpdateDebt) && (
               <button
                 type="button"
                 data-testid="open-loaf-weight-fine-btn"
@@ -1197,23 +1213,27 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               <span>جدولة الدفعات الأسبوعية (&gt; 20 ألف)</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-white" />
-              <span>تصدير Excel</span>
-            </button>
+            {canExportDebt && (
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-black shadow-sm transition cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-white" />
+                <span>تصدير Excel</span>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={handlePrintDebts}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-[#0F2342] border border-slate-300 rounded-xl text-xs font-black transition cursor-pointer"
-            >
-              <Printer className="w-4 h-4 text-[#0F2342]" />
-              <span>معاينة وطباعة الكشف</span>
-            </button>
+            {canPrintDebt && (
+              <button
+                type="button"
+                onClick={handlePrintDebts}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-[#0F2342] border border-slate-300 rounded-xl text-xs font-black transition cursor-pointer"
+              >
+                <Printer className="w-4 h-4 text-[#0F2342]" />
+                <span>معاينة وطباعة الكشف</span>
+              </button>
+            )}
 
             {/* Safe Save & Logout Button (زر خروج وحفظ آمن أعلى جدول المديونيات) */}
             {onSafeSaveAndLogout && (
@@ -1810,7 +1830,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                     دفع متأخر ({latePaymentInfo.daysSinceLastInstallment} يوم بدون قسط)
                                   </span>
                                 </span>
-                                {!isViewer && (
+                                {canUpdateDebt && (
                                   <button
                                     type="button"
                                     data-testid="send-instant-late-alert-inline-btn"
@@ -2102,7 +2122,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                         {/* Actions & Details Column */}
                         <td className="py-2 px-1.5 border-l border-slate-200 no-print text-center">
                           <div className="flex items-center justify-center gap-1 flex-wrap">
-                            {isLate14Days && !isViewer && (
+                            {isLate14Days && canUpdateDebt && (
                               <button
                                 type="button"
                                 data-testid="send-instant-late-alert-btn"
@@ -2128,7 +2148,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                             >
                               التفاصيل
                             </button>
-                            {!isViewer && (
+                            {canUpdateDebt && (
                               <>
                                 <button
                                   type="button"
@@ -2156,22 +2176,24 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setPendingDebtConfirm({
-                                      title: 'تأكيد حذف قيد المديونية',
-                                      message: `هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`,
-                                      onConfirm: () => onDeleteDebt(d.id),
-                                    });
-                                  }}
-                                  className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg transition cursor-pointer"
-                                  title="حذف القيد"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
                               </>
+                            )}
+                            {canDeleteDebt && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPendingDebtConfirm({
+                                    title: 'تأكيد حذف قيد المديونية',
+                                    message: `هل أنت متأكد من حذف قيد المديونية الخاص بـ "${d.bakeryOwnerName}"؟`,
+                                    onConfirm: () => onDeleteDebt(d.id),
+                                  });
+                                }}
+                                className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg transition cursor-pointer"
+                                title="حذف القيد"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             )}
                           </div>
                         </td>
@@ -2473,7 +2495,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {!isViewer && (
+                {canUpdateDebt && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2578,18 +2600,36 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             )}
 
             {/* Add New Entity Form */}
-            <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3 mb-3.5 shrink-0">
-              <label className="block text-[11px] font-black text-amber-950 mb-1.5">
-                إضافة جهة محررة جديدة إلى المنظومة:
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={newEntityName}
-                  onChange={(e) => setNewEntityName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
+            {canInsertDebt && (
+              <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3 mb-3.5 shrink-0">
+                <label className="block text-[11px] font-black text-amber-950 mb-1.5">
+                  إضافة جهة محررة جديدة إلى المنظومة:
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newEntityName}
+                    onChange={(e) => setNewEntityName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const name = newEntityName.trim();
+                        if (!name) return;
+                        if (issuingEntities.includes(name)) {
+                          showListError('هذه الجهة مسجلة بالفعل في القائمة');
+                          return;
+                        }
+                        onUpdateEntities([...issuingEntities, name]);
+                        setNewEntityName('');
+                        setListModalError('');
+                      }
+                    }}
+                    placeholder="اكتب اسم الجهة (مثال: جهاز حماية المستهلك، مباحث التموين...)"
+                    className="flex-1 px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 text-right placeholder:text-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
                       const name = newEntityName.trim();
                       if (!name) return;
                       if (issuingEntities.includes(name)) {
@@ -2599,31 +2639,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       onUpdateEntities([...issuingEntities, name]);
                       setNewEntityName('');
                       setListModalError('');
-                    }
-                  }}
-                  placeholder="اكتب اسم الجهة (مثال: جهاز حماية المستهلك، مباحث التموين...)"
-                  className="flex-1 px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 text-right placeholder:text-slate-400"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const name = newEntityName.trim();
-                    if (!name) return;
-                    if (issuingEntities.includes(name)) {
-                      showListError('هذه الجهة مسجلة بالفعل في القائمة');
-                      return;
-                    }
-                    onUpdateEntities([...issuingEntities, name]);
-                    setNewEntityName('');
-                    setListModalError('');
-                  }}
-                  className="px-4 py-2 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-white rounded-lg text-xs font-black shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  إضافة جهة
-                </button>
+                    }}
+                    className="px-4 py-2 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-white rounded-lg text-xs font-black shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    إضافة جهة
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Search in Entities */}
             <div className="relative mb-3 shrink-0">
@@ -2764,20 +2788,22 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                           </div>
 
                           <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingEntityOldName(ent);
-                                setEditingEntityNewName(ent);
-                              }}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-700 hover:text-amber-800 bg-white hover:bg-amber-50 border border-slate-300 hover:border-amber-400 rounded-lg transition-all text-[11px] font-bold cursor-pointer"
-                              title="تعديل اسم الجهة وتحديث كافة المحاضر المرتبطة بها"
-                            >
-                              <Edit2 className="w-3 h-3 text-amber-600" />
-                              تعديل
-                            </button>
+                            {canUpdateDebt && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingEntityOldName(ent);
+                                  setEditingEntityNewName(ent);
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-700 hover:text-amber-800 bg-white hover:bg-amber-50 border border-slate-300 hover:border-amber-400 rounded-lg transition-all text-[11px] font-bold cursor-pointer"
+                                title="تعديل اسم الجهة وتحديث كافة المحاضر المرتبطة بها"
+                              >
+                                <Edit2 className="w-3 h-3 text-amber-600" />
+                                تعديل
+                              </button>
+                            )}
 
-                            {issuingEntities.length > 1 && (
+                            {canDeleteDebt && issuingEntities.length > 1 && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -2880,18 +2906,36 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </div>
 
             {/* Add New Violation Type Form */}
-            <div className="bg-red-50/60 border border-red-200 rounded-xl p-3 mb-3.5 shrink-0">
-              <label className="block text-[11px] font-black text-red-950 mb-1.5">
-                إضافة نوع مخالفة جديد إلى المنظومة:
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={newViolationName}
-                  onChange={(e) => setNewViolationName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
+            {canInsertDebt && (
+              <div className="bg-red-50/60 border border-red-200 rounded-xl p-3 mb-3.5 shrink-0">
+                <label className="block text-[11px] font-black text-red-950 mb-1.5">
+                  إضافة نوع مخالفة جديد إلى المنظومة:
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newViolationName}
+                    onChange={(e) => setNewViolationName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const name = newViolationName.trim();
+                        if (!name) return;
+                        if (violationTypes.includes(name)) {
+                          showListError('نوع المخالفة مسجل مسبقاً في القائمة');
+                          return;
+                        }
+                        onUpdateViolations([...violationTypes, name]);
+                        setNewViolationName('');
+                        setListModalError('');
+                      }
+                    }}
+                    placeholder="اكتب نوع المخالفة (مثال: عدم نظافة المعجن، بيع بأزيد من السعر...)"
+                    className="flex-1 px-3 py-2 bg-white border border-red-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-red-500 text-right placeholder:text-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
                       const name = newViolationName.trim();
                       if (!name) return;
                       if (violationTypes.includes(name)) {
@@ -2901,31 +2945,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       onUpdateViolations([...violationTypes, name]);
                       setNewViolationName('');
                       setListModalError('');
-                    }
-                  }}
-                  placeholder="اكتب نوع المخالفة (مثال: عدم نظافة المعجن، بيع بأزيد من السعر...)"
-                  className="flex-1 px-3 py-2 bg-white border border-red-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-red-500 text-right placeholder:text-slate-400"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const name = newViolationName.trim();
-                    if (!name) return;
-                    if (violationTypes.includes(name)) {
-                      showListError('نوع المخالفة مسجل مسبقاً في القائمة');
-                      return;
-                    }
-                    onUpdateViolations([...violationTypes, name]);
-                    setNewViolationName('');
-                    setListModalError('');
-                  }}
-                  className="px-4 py-2 bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white rounded-lg text-xs font-black shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  إضافة مخالفة
-                </button>
+                    }}
+                    className="px-4 py-2 bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white rounded-lg text-xs font-black shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    إضافة مخالفة
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Search in Violation Types */}
             <div className="relative mb-3 shrink-0">
@@ -3066,20 +3094,22 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                           </div>
 
                           <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingViolationOldName(v);
-                                setEditingViolationNewName(v);
-                              }}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-700 hover:text-red-800 bg-white hover:bg-red-50 border border-slate-300 hover:border-red-400 rounded-lg transition-all text-[11px] font-bold cursor-pointer"
-                              title="تعديل نوع المخالفة وتحديث كافة المحاضر المرتبطة بها"
-                            >
-                              <Edit2 className="w-3 h-3 text-red-600" />
-                              تعديل
-                            </button>
+                            {canUpdateDebt && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingViolationOldName(v);
+                                  setEditingViolationNewName(v);
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-700 hover:text-red-800 bg-white hover:bg-red-50 border border-slate-300 hover:border-red-400 rounded-lg transition-all text-[11px] font-bold cursor-pointer"
+                                title="تعديل نوع المخالفة وتحديث كافة المحاضر المرتبطة بها"
+                              >
+                                <Edit2 className="w-3 h-3 text-red-600" />
+                                تعديل
+                              </button>
+                            )}
 
-                            {violationTypes.length > 1 && (
+                            {canDeleteDebt && violationTypes.length > 1 && (
                               <button
                                 type="button"
                                 onClick={() => {

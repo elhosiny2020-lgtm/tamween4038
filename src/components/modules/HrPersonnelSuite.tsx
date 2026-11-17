@@ -93,7 +93,10 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
 }) => {
   const [subView, setSubView] = useState<HrSubView>(initialSubView);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-  const permissions = useMemo(() => resolveModuleCrudPermissions(currentUser), [currentUser]);
+  const permissions = useMemo(
+    () => resolveModuleCrudPermissions(currentUser, false, 'hr'),
+    [currentUser]
+  );
   const isViewer = permissions.isReadOnly;
 
   const [empSearch, setEmpSearch] = useState('');
@@ -1289,66 +1292,70 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              exportRowsToArabicCsv(
-                `مسير_رواتب_${branchName}`,
-                ['الكود', 'الاسم', 'القسم', 'الأجر الوظيفي', 'المكمل', 'العلاوات', 'الحوافز', 'الإجمالي', 'التأمين', 'الضريبة', 'السلف', 'الصافي'],
-                (activeRun?.lines || []).map((l) => [
-                  l.employeeCode,
-                  l.employeeName,
-                  l.departmentName,
-                  l.functionalWage,
-                  l.complementaryWage,
-                  l.allowancesAndRaises,
-                  l.incentivesAndRewards,
-                  l.grossEarnings,
-                  l.employeeInsurance,
-                  l.monthlyIncomeTax,
-                  l.loanInstallmentDeduction,
-                  l.netSalary,
-                ])
-              )
-            }
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>تصدير Excel</span>
-          </button>
+          {permissions.canExport && (
+            <button
+              type="button"
+              onClick={() =>
+                exportRowsToArabicCsv(
+                  `مسير_رواتب_${branchName}`,
+                  ['الكود', 'الاسم', 'القسم', 'الأجر الوظيفي', 'المكمل', 'العلاوات', 'الحوافز', 'الإجمالي', 'التأمين', 'الضريبة', 'السلف', 'الصافي'],
+                  (activeRun?.lines || []).map((l) => [
+                    l.employeeCode,
+                    l.employeeName,
+                    l.departmentName,
+                    l.functionalWage,
+                    l.complementaryWage,
+                    l.allowancesAndRaises,
+                    l.incentivesAndRewards,
+                    l.grossEarnings,
+                    l.employeeInsurance,
+                    l.monthlyIncomeTax,
+                    l.loanInstallmentDeduction,
+                    l.netSalary,
+                  ])
+                )
+              }
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>تصدير Excel</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() =>
-              printModuleReportA4({
-                title: `كشف استحقاقات ومرتبات العاملين — شهر ${activeRun?.monthKey || payrollMonth}`,
-                subtitle: `${state.policySettings.lawDecisionReference}`,
-                branchName,
-                headers: ['الكود', 'اسم الموظف', 'القسم', 'الإجمالي', 'التأمينات', 'الضريبة', 'أقساط السلف', 'الصافي المنصرف'],
-                rows: (activeRun?.lines || []).map((l) => [
-                  l.employeeCode,
-                  l.employeeName,
-                  l.departmentName,
-                  `${l.grossEarnings.toLocaleString()} ج.م`,
-                  `${l.employeeInsurance.toLocaleString()} ج.م`,
-                  `${l.monthlyIncomeTax.toLocaleString()} ج.م`,
-                  `${l.loanInstallmentDeduction.toLocaleString()} ج.م`,
-                  `${l.netSalary.toLocaleString()} ج.م`,
-                ]),
-                summaryItems: [
-                  { label: 'عدد الموظفين', value: String(state.employees.length) },
-                  { label: 'إجمالي الاستحقاقات', value: `${payrollSummary.grossTotal.toLocaleString()} ج.م` },
-                  { label: 'إجمالي التأمين والضريبة', value: `${(payrollSummary.insuranceTotal + payrollSummary.taxTotal).toLocaleString()} ج.م` },
-                  { label: 'صافي المنصرف', value: `${payrollSummary.netTotal.toLocaleString()} ج.م` },
-                ],
-                preparedBy: currentUser?.fullName,
-              })
-            }
-            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-          >
-            <Printer className="w-4 h-4 text-[#D4AF37]" />
-            <span>طباعة كشف الرواتب A4</span>
-          </button>
+          {permissions.canPrint && (
+            <button
+              type="button"
+              onClick={() =>
+                printModuleReportA4({
+                  title: `كشف استحقاقات ومرتبات العاملين — شهر ${activeRun?.monthKey || payrollMonth}`,
+                  subtitle: `${state.policySettings.lawDecisionReference}`,
+                  branchName,
+                  headers: ['الكود', 'اسم الموظف', 'القسم', 'الإجمالي', 'التأمينات', 'الضريبة', 'أقساط السلف', 'الصافي المنصرف'],
+                  rows: (activeRun?.lines || []).map((l) => [
+                    l.employeeCode,
+                    l.employeeName,
+                    l.departmentName,
+                    `${l.grossEarnings.toLocaleString()} ج.م`,
+                    `${l.employeeInsurance.toLocaleString()} ج.م`,
+                    `${l.monthlyIncomeTax.toLocaleString()} ج.م`,
+                    `${l.loanInstallmentDeduction.toLocaleString()} ج.م`,
+                    `${l.netSalary.toLocaleString()} ج.م`,
+                  ]),
+                  summaryItems: [
+                    { label: 'عدد الموظفين', value: String(state.employees.length) },
+                    { label: 'إجمالي الاستحقاقات', value: `${payrollSummary.grossTotal.toLocaleString()} ج.م` },
+                    { label: 'إجمالي التأمين والضريبة', value: `${(payrollSummary.insuranceTotal + payrollSummary.taxTotal).toLocaleString()} ج.م` },
+                    { label: 'صافي المنصرف', value: `${payrollSummary.netTotal.toLocaleString()} ج.م` },
+                  ],
+                  preparedBy: currentUser?.fullName,
+                })
+              }
+              className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+            >
+              <Printer className="w-4 h-4 text-[#D4AF37]" />
+              <span>طباعة كشف الرواتب A4</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1521,7 +1528,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
-              {!isViewer && (
+              {permissions.canAdd && (
                 <button
                   type="button"
                   onClick={() =>
@@ -1564,70 +1571,74 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={() =>
-                  exportRowsToArabicCsv(
-                    `موظفو_الخدمة_العامة_والاستعانة_${branchName}`,
-                    ['المسلسل', 'الكود', 'الاسم', 'الرقم القومي', 'المؤهل', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'نهاية التعاقد', 'المدة', 'الأيام المتبقية', 'الحالة'],
-                    contractEmployees.map((e, idx) => [
-                      idx + 1,
-                      e.employeeCode,
-                      e.fullName,
-                      e.nationalId,
-                      e.qualification || 'غير محدد',
-                      e.jobTitle,
-                      e.departmentName,
-                      e.employeeType || 'خدمة عامة',
-                      e.hireDate,
-                      e.contractEndDate || 'غير محدد',
-                      e.contractDurationText || 'سنة',
-                      getContractDaysRemaining(e.contractEndDate),
-                      e.status,
-                    ])
-                  )
-                }
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>تصدير Excel</span>
-              </button>
+              {permissions.canExport && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportRowsToArabicCsv(
+                      `موظفو_الخدمة_العامة_والاستعانة_${branchName}`,
+                      ['المسلسل', 'الكود', 'الاسم', 'الرقم القومي', 'المؤهل', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'نهاية التعاقد', 'المدة', 'الأيام المتبقية', 'الحالة'],
+                      contractEmployees.map((e, idx) => [
+                        idx + 1,
+                        e.employeeCode,
+                        e.fullName,
+                        e.nationalId,
+                        e.qualification || 'غير محدد',
+                        e.jobTitle,
+                        e.departmentName,
+                        e.employeeType || 'خدمة عامة',
+                        e.hireDate,
+                        e.contractEndDate || 'غير محدد',
+                        e.contractDurationText || 'سنة',
+                        getContractDaysRemaining(e.contractEndDate),
+                        e.status,
+                      ])
+                    )
+                  }
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>تصدير Excel</span>
+                </button>
+              )}
 
-              <button
-                type="button"
-                onClick={() =>
-                  printModuleReportA4({
-                    title: 'تقرير موظفي الخدمة العامة وموظفي الاستعانة',
-                    subtitle: `سجل التعاقدات ومتابعة تواريخ انتهاء المدد — ${branchName}`,
-                    branchName,
-                    headers: ['م', 'الكود', 'اسم الموظف', 'الرقم القومي', 'المؤهل الدراسي', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'انتهاء التعاقد', 'المتبقي', 'الحالة'],
-                    rows: contractEmployees.map((e, idx) => [
-                      idx + 1,
-                      e.employeeCode,
-                      e.fullName,
-                      e.nationalId,
-                      e.qualification || '—',
-                      e.jobTitle,
-                      e.departmentName,
-                      e.employeeType || 'خدمة عامة',
-                      e.hireDate,
-                      e.contractEndDate || '—',
-                      `${getContractDaysRemaining(e.contractEndDate)} يوم`,
-                      e.status,
-                    ]),
-                    summaryItems: [
-                      { label: 'إجمالي الخدمة العامة', value: String(publicServiceCount) },
-                      { label: 'إجمالي الاستعانة', value: String(assistanceCount) },
-                      { label: 'العقود المنتهية', value: String(expiredContractsCount) },
-                    ],
-                    preparedBy: currentUser?.fullName,
-                  })
-                }
-                className="px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-              >
-                <Printer className="w-4 h-4 text-[#D4AF37]" />
-                <span>طباعة تقرير A4</span>
-              </button>
+              {permissions.canPrint && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    printModuleReportA4({
+                      title: 'تقرير موظفي الخدمة العامة وموظفي الاستعانة',
+                      subtitle: `سجل التعاقدات ومتابعة تواريخ انتهاء المدد — ${branchName}`,
+                      branchName,
+                      headers: ['م', 'الكود', 'اسم الموظف', 'الرقم القومي', 'المؤهل الدراسي', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'انتهاء التعاقد', 'المتبقي', 'الحالة'],
+                      rows: contractEmployees.map((e, idx) => [
+                        idx + 1,
+                        e.employeeCode,
+                        e.fullName,
+                        e.nationalId,
+                        e.qualification || '—',
+                        e.jobTitle,
+                        e.departmentName,
+                        e.employeeType || 'خدمة عامة',
+                        e.hireDate,
+                        e.contractEndDate || '—',
+                        `${getContractDaysRemaining(e.contractEndDate)} يوم`,
+                        e.status,
+                      ]),
+                      summaryItems: [
+                        { label: 'إجمالي الخدمة العامة', value: String(publicServiceCount) },
+                        { label: 'إجمالي الاستعانة', value: String(assistanceCount) },
+                        { label: 'العقود المنتهية', value: String(expiredContractsCount) },
+                      ],
+                      preparedBy: currentUser?.fullName,
+                    })
+                  }
+                  className="px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 text-[#D4AF37]" />
+                  <span>طباعة تقرير A4</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1692,7 +1703,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                         </td>
                         <td className="py-2.5 px-2">
                           <div className="flex items-center justify-center gap-1.5">
-                            {!isViewer && (
+                            {permissions.canEdit && (
                               <>
                                 <button
                                   type="button"
@@ -1747,27 +1758,29 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                                 >
                                   تعديل
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setDeleteModalState({
-                                      isOpen: true,
-                                      entityType: 'employee',
-                                      entityTitle: e.fullName,
-                                      entityId: e.id,
-                                      recordSummary: [
-                                        { label: 'الكود', value: e.employeeCode },
-                                        { label: 'الاسم', value: e.fullName },
-                                        { label: 'النوع', value: e.employeeType || 'خدمة عامة' },
-                                        { label: 'تاريخ انتهاء التعاقد', value: e.contractEndDate || '—' },
-                                      ],
-                                    })
-                                  }
-                                  className="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg text-[11px] font-black cursor-pointer"
-                                >
-                                  حذف
-                                </button>
                               </>
+                            )}
+                            {permissions.canDelete && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDeleteModalState({
+                                    isOpen: true,
+                                    entityType: 'employee',
+                                    entityTitle: e.fullName,
+                                    entityId: e.id,
+                                    recordSummary: [
+                                      { label: 'الكود', value: e.employeeCode },
+                                      { label: 'الاسم', value: e.fullName },
+                                      { label: 'النوع', value: e.employeeType || 'خدمة عامة' },
+                                      { label: 'تاريخ انتهاء التعاقد', value: e.contractEndDate || '—' },
+                                    ],
+                                  })
+                                }
+                                className="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg text-[11px] font-black cursor-pointer"
+                              >
+                                حذف
+                              </button>
                             )}
                           </div>
                         </td>
@@ -1820,7 +1833,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
               }
             />
 
-            {!isViewer && (
+            {permissions.canAdd && (
               <form onSubmit={handleAddEmployee} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-black text-[#0A1628] flex items-center gap-1.5">
@@ -2039,7 +2052,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
             }
           />
 
-          {!isViewer && (
+          {permissions.canAdd && (
             <form onSubmit={handleAddAttendance} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs">
               <select value={attEmpId} onChange={(e) => setAttEmpId(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold">
                 {state.employees.map((e) => <option key={e.id} value={e.id}>{e.fullName}</option>)}
@@ -2148,7 +2161,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
               }
             />
 
-            {!isViewer && (
+            {permissions.canAdd && (
               <form onSubmit={handleSubmitLeave} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-5 gap-2.5 text-xs">
                 <select value={leaveEmpId} onChange={(e) => setLeaveEmpId(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold">
                   {state.employees.map((e) => <option key={e.id} value={e.id}>{e.fullName}</option>)}
@@ -2332,12 +2345,12 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex flex-wrap items-center gap-2">
               <input type="month" value={payrollMonth} onChange={(e) => setPayrollMonth(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
-              {!isViewer && (
+              {permissions.canEdit && (
                 <button type="button" onClick={handleRunOrRecalculatePayroll} className="px-4 py-2 bg-[#0D9488] hover:bg-teal-700 text-white rounded-xl font-black cursor-pointer">
                   احتساب / معاينة مسير الشهر
                 </button>
               )}
-              {!isViewer && activeRun && activeRun.status === 'معاينة' && (
+              {permissions.canEdit && activeRun && activeRun.status === 'معاينة' && (
                 <button type="button" onClick={() => handleApprovePayrollLock(activeRun.id)} className="px-4 py-2 bg-[#0A1628] text-[#D4AF37] rounded-xl font-black cursor-pointer flex items-center gap-1">
                   <Lock className="w-3.5 h-3.5" />
                   <span>اعتماد وإقفال نهائي</span>
@@ -2408,32 +2421,34 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                       <td className="py-2 px-2 font-mono font-black text-[#0D9488]">{l.netSalary.toLocaleString()} ج.م</td>
                       <td className="py-2 px-2">
                         <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              printModuleReportA4({
-                                title: `مفردات راتب فردية — شهر ${activeRun?.monthKey}`,
-                                subtitle: `${l.employeeName} (${l.employeeCode}) — ${l.departmentName}`,
-                                branchName,
-                                headers: ['البند', 'المبلغ (جنيه مصري)'],
-                                rows: [
-                                  ['الأجر الوظيفي', l.functionalWage],
-                                  ['الأجر المكمل', l.complementaryWage],
-                                  ['العلاوات والبدلات', l.allowancesAndRaises],
-                                  ['الحوافز والمكافآت', l.incentivesAndRewards],
-                                  ['إجمالي الاستحقاقات', l.grossEarnings],
-                                  ['حصة التأمينات الاجتماعية', -l.employeeInsurance],
-                                  ['ضريبة كسب العمل الشهرية', -l.monthlyIncomeTax],
-                                  ['أقساط السلف', -l.loanInstallmentDeduction],
-                                  ['صافي الراتب المستحق', l.netSalary],
-                                ],
-                                preparedBy: currentUser?.fullName,
-                              })
-                            }
-                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-[11px] font-black cursor-pointer"
-                          >
-                            طباعة مفردات
-                          </button>
+                          {permissions.canPrint && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                printModuleReportA4({
+                                  title: `مفردات راتب فردية — شهر ${activeRun?.monthKey}`,
+                                  subtitle: `${l.employeeName} (${l.employeeCode}) — ${l.departmentName}`,
+                                  branchName,
+                                  headers: ['البند', 'المبلغ (جنيه مصري)'],
+                                  rows: [
+                                    ['الأجر الوظيفي', l.functionalWage],
+                                    ['الأجر المكمل', l.complementaryWage],
+                                    ['العلاوات والبدلات', l.allowancesAndRaises],
+                                    ['الحوافز والمكافآت', l.incentivesAndRewards],
+                                    ['إجمالي الاستحقاقات', l.grossEarnings],
+                                    ['حصة التأمينات الاجتماعية', -l.employeeInsurance],
+                                    ['ضريبة كسب العمل الشهرية', -l.monthlyIncomeTax],
+                                    ['أقساط السلف', -l.loanInstallmentDeduction],
+                                    ['صافي الراتب المستحق', l.netSalary],
+                                  ],
+                                  preparedBy: currentUser?.fullName,
+                                })
+                              }
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-[11px] font-black cursor-pointer"
+                            >
+                              طباعة مفردات
+                            </button>
+                          )}
                           {permissions.canEdit && emp && activeRun?.status !== 'معتمد' && (
                             <button
                               type="button"
@@ -2495,7 +2510,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
               }
             />
 
-            {!isViewer && (
+            {permissions.canAdd && (
               <form onSubmit={handleAddLoan} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
                 <select value={loanEmpId} onChange={(e) => setLoanEmpId(e.target.value)} className="px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold">
                   {state.employees.map((e) => <option key={e.id} value={e.id}>{e.fullName}</option>)}
@@ -2768,7 +2783,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
             </div>
           </div>
 
-          {!isViewer && (
+          {permissions.canEdit && (
             <button type="submit" className="px-5 py-2.5 bg-[#0A1628] text-[#D4AF37] rounded-xl font-black cursor-pointer">
               اعتماد وحفظ نسخة جديدة من اللائحة المالية
             </button>

@@ -1,53 +1,92 @@
-export type DepartmentScopeId =
-  | 'all'
+export type SystemDepartmentKey =
   | 'bakeries'
   | 'debts'
   | 'commodities'
   | 'internal_trade'
   | 'grain_maintenance'
-  | 'hr';
+  | 'hr'
+  | 'reports';
+
+export type DepartmentScopeId = 'all' | SystemDepartmentKey;
+
+export type PermissionAction = 'view' | 'insert' | 'update' | 'delete' | 'print' | 'export';
+
+export interface DepartmentPermissionFlags {
+  view: boolean;
+  insert: boolean;
+  update: boolean;
+  delete: boolean;
+  print: boolean;
+  export: boolean;
+}
+
+export type DepartmentPermissionsMap = Partial<Record<SystemDepartmentKey, DepartmentPermissionFlags>>;
 
 export interface DepartmentScopeMeta {
   id: DepartmentScopeId;
   label: string;
   description: string;
+  isSystemDepartment?: boolean;
 }
+
+export const SYSTEM_DEPARTMENT_KEYS: SystemDepartmentKey[] = [
+  'bakeries',
+  'debts',
+  'commodities',
+  'internal_trade',
+  'grain_maintenance',
+  'hr',
+  'reports',
+];
 
 export const DEPARTMENT_SCOPES: DepartmentScopeMeta[] = [
   {
     id: 'all',
-    label: 'كافة الأقسام (إدارة شاملة)',
-    description: 'وصول كامل لجميع أقسام المنظومة عبر كافة الفروع',
+    label: 'كافة الأقسام (مدير عام النظام)',
+    description: 'وصول كامل لجميع أقسام المنظومة وإدارة المستخدمين وسجل المراقبة',
+    isSystemDepartment: false,
   },
   {
     id: 'bakeries',
     label: 'قسم إدارة المخابز',
     description: 'قاعدة بيانات المخابز والحصص والمتوسطات والتراخيص فقط',
+    isSystemDepartment: true,
   },
   {
     id: 'debts',
     label: 'قسم سجل المديونيات للمخابز',
     description: 'سجل المخالفات والمديونيات والتحصيل وغرامات نقص الوزن فقط',
+    isSystemDepartment: true,
   },
   {
     id: 'commodities',
     label: 'قسم السلع التموينية',
     description: 'البطاقات والمستفيدون والمقررات التموينية والاستعاضات والرقابة',
+    isSystemDepartment: true,
   },
   {
     id: 'internal_trade',
     label: 'قسم التجارة الداخلية والرقابة الموحدة',
     description: 'المنشآت والحملات والمحاضر والمضبوطات ومحطات الوقود والبوتاجاز ومتوسط نصيب الفرد',
+    isSystemDepartment: true,
   },
   {
     id: 'grain_maintenance',
     label: 'قسم صيانة الحبوب والصوامع',
     description: 'الصوامع والمعدات وأوامر الصيانة وقطع الغيار والفاقد والرطوبة',
+    isSystemDepartment: true,
   },
   {
     id: 'hr',
     label: 'قسم الموارد البشرية وشؤون العاملين',
     description: 'الموظفون والحضور والإجازات والمرتبات والتأمينات والضرائب والسلف',
+    isSystemDepartment: true,
+  },
+  {
+    id: 'reports',
+    label: 'مركز التقارير والطباعة',
+    description: 'شاشات التقارير الرسمية والطباعة والتصدير PDF/Excel',
+    isSystemDepartment: true,
   },
 ];
 
@@ -140,6 +179,8 @@ export interface RationMerchant {
   licenseNumber: string;
   licenseIssueDate: string;
   licenseExpiryDate: string;
+  taxCardExpiryDate?: string;
+  commercialRegExpiryDate?: string;
   warehouseName?: string;
   registrationDate?: string; // تاريخ تسجيل التاجر
   activityStartDate?: string;
@@ -327,6 +368,8 @@ export interface RationRequisition {
   invoiceNumber: string;
   monthKey: string;
   merchantId: string;
+  traderCode?: string;
+  posMachineNumber?: string;
   wholesaleBranch: string;
   linkedCardsCount: number;
   linkedBeneficiariesCount: number;

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AppUser, SupplyBranch, SystemConfig } from '../types';
 import { INITIAL_USERS } from '../defaultData';
 import { normalizePasscodeInput } from '../utils/branchVaultUtils';
+import { getSecurityShieldHeaders, setAuthSessionToken } from '../lib/supabase';
 import {
   ShieldCheck,
   Lock,
@@ -35,7 +36,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   users,
   logoutReason,
   branches = [],
-  activeBranchId = 'branch_mahalla_center',
+  activeBranchId = 'branch-mahalla',
   onSelectBranch,
   onLoginSuccess,
   onLogin,
@@ -46,6 +47,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -54,6 +56,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError(null);
     setSuccessMsg(null);
 
@@ -95,8 +98,47 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
 
-    const effectiveUsers = Array.isArray(users) && users.length > 0 ? users : INITIAL_USERS;
+    // 1. Primary server authentication (scrypt + HMAC Bearer session token)
+    const isHttpOrigin =
+      typeof window !== 'undefined' &&
+      (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+    if (isHttpOrigin) {
+      setIsSubmitting(true);
+      try {
+        const resp = await fetch('/api/auth/login', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: getSecurityShieldHeaders(true),
+          body: JSON.stringify({
+            branchId: activeBranchId || 'branch-mahalla',
+            username: username.trim(),
+            password: trimmedPass,
+          }),
+        });
+        const data = await resp.json().catch(() => null);
+        if (resp.ok && data?.success && data?.user && data?.token) {
+          setAuthSessionToken(data.token);
+          setIsSubmitting(false);
+          triggerLogin?.({
+            ...data.user,
+            isActive: data.user.isActive !== false,
+          });
+          return;
+        }
+        if (resp.status === 400 || resp.status === 401 || resp.status === 403) {
+          setIsSubmitting(false);
+          setError(data?.error || 'اسم المستخدم أو كلمة المرور غير صحيحة');
+          return;
+        }
+      } catch {
+        // Fall through to offline fallback ONLY when network/server is unreachable
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
 
+    // 2. Offline / file:// fallback ONLY when server is unreachable
+    const effectiveUsers = Array.isArray(users) && users.length > 0 ? users : INITIAL_USERS;
     const matched = effectiveUsers.find((u) => {
       const uName = (u.username || '').trim().toLowerCase();
       const uFullName = (u.fullName || '').trim().toLowerCase();
@@ -106,11 +148,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       const uPass = (u.password || '').trim();
       const uPassNorm = normalizePasscodeInput(uPass);
 
-      // Strict password match or normalized Arabic/English digits match (no hardcoded fallback backdoors)
       if (uPass && (uPass === trimmedPass || uPassNorm === normalizedInputPass)) {
         return true;
       }
-
       return false;
     });
 
@@ -119,7 +159,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
 
-    // Only reject if explicitly marked false
     if (matched.isActive === false) {
       setError('هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.');
       return;

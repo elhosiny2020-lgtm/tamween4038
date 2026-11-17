@@ -1860,11 +1860,20 @@ export async function persistFullState(
     localStorage.setItem(scopedKeys.DAILY_TASKS, JSON.stringify(dailyTasks));
     localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify(inboxMessages));
     localStorage.setItem(scopedKeys.COLUMNS, JSON.stringify(columnTitles));
+    const sanitizedLocalUsers = isolatedBranchUsers.map(({ password: _p, gmailPassword: _gp, ...rest }) => ({
+      ...rest,
+      hasPassword: Boolean(_p || rest.hasPassword),
+    }));
     localStorage.setItem(scopedKeys.CONFIG, JSON.stringify(lockedConfig));
-    localStorage.setItem(scopedKeys.USERS, JSON.stringify(isolatedBranchUsers));
+    localStorage.setItem(scopedKeys.USERS, JSON.stringify(sanitizedLocalUsers));
   } catch (err) {
     console.warn('LocalStorage quota limit reached, relying primarily on IndexedDB', err);
   }
+
+  const sanitizedSnapshotUsers = isolatedBranchUsers.map(({ password: _p, gmailPassword: _gp, ...rest }) => ({
+    ...rest,
+    hasPassword: Boolean(_p || rest.hasPassword),
+  }));
 
   const backupSnapshot = {
     timestamp: snapshotTimestamp,
@@ -1891,7 +1900,7 @@ export async function persistFullState(
       inboxMessages,
       columnTitles,
       systemConfig: lockedConfig,
-      users: isolatedBranchUsers,
+      users: sanitizedSnapshotUsers,
     },
   };
 
@@ -1915,7 +1924,7 @@ export async function persistFullState(
     [scopedKeys.INBOX_MESSAGES, inboxMessages],
     [scopedKeys.COLUMNS, columnTitles],
     [scopedKeys.CONFIG, lockedConfig],
-    [scopedKeys.USERS, isolatedBranchUsers],
+    [scopedKeys.USERS, sanitizedSnapshotUsers],
     [scopedKeys.AUTOSAVE_BACKUP, backupSnapshot],
   ]);
 
@@ -2265,6 +2274,58 @@ export async function factoryReset(): Promise<void> {
     tx.objectStore(STORE_NAME).clear();
     await new Promise((res) => { tx.oncomplete = res; });
   } catch {}
+}
+
+/**
+ * إعادة ضبط المصنع الانتقائية للفروع غير الرئيسية فقط — تحفظ بيانات "إدارة تموين مركز المحلة الكبرى" بالكامل
+ */
+export function resetNonMahallaBranchesLocal(): {
+  remainingBranches: SupplyBranch[];
+  removedCount: number;
+} {
+  let mahallaOnly: SupplyBranch[] = [DEFAULT_SUPPLY_BRANCHES[0]];
+  let removedCount = 0;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const branches = getBranchesList();
+      const nonMahallaBranches = branches.filter((b) => b.id !== DEFAULT_BRANCH_ID);
+      const nonMahallaIds = new Set(nonMahallaBranches.map((b) => b.id));
+      removedCount = nonMahallaIds.size;
+
+      for (const b of nonMahallaBranches) {
+        markBranchDeleted(b.id, b.name);
+      }
+      for (const c of CANONICAL_DEFAULT_BRANCHES) {
+        if (c.id !== DEFAULT_BRANCH_ID) {
+          markBranchDeleted(c.id, c.name);
+        }
+      }
+
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        for (const brId of nonMahallaIds) {
+          if (k.endsWith(`__${brId}`) || k.includes(`__${brId}__`)) {
+            keysToRemove.push(k);
+            break;
+          }
+        }
+        if (k.startsWith('TAMWEEN_MODULES_') && !k.includes(DEFAULT_BRANCH_ID)) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => {
+        try {
+          localStorage.removeItem(k);
+        } catch {}
+      });
+      mahallaOnly = [branches.find((b) => b.id === DEFAULT_BRANCH_ID) || DEFAULT_SUPPLY_BRANCHES[0]];
+      saveBranchesList(mahallaOnly);
+      setActiveBranchId(DEFAULT_BRANCH_ID);
+    }
+  } catch {}
+  return { remainingBranches: mahallaOnly, removedCount };
 }
 
 export interface MergeResult {

@@ -1,14 +1,22 @@
 import type {
+  DepartmentPermissionFlags,
+  DepartmentPermissionsMap,
   DepartmentScopeId,
   LoafWeightFineRecord,
   LoafWeightSettings,
+  PermissionAction,
+  SystemDepartmentKey,
 } from './types/modules.ts';
 export type {
+  DepartmentPermissionFlags,
+  DepartmentPermissionsMap,
   DepartmentScopeId,
   LoafWeightFineRecord,
   LoafWeightSettings,
+  PermissionAction,
+  SystemDepartmentKey,
 } from './types/modules.ts';
-export { DEPARTMENT_SCOPES } from './types/modules.ts';
+export { DEPARTMENT_SCOPES, SYSTEM_DEPARTMENT_KEYS } from './types/modules.ts';
 
 export interface BakeryActivityLogItem {
   id: string;
@@ -268,14 +276,24 @@ export interface SystemConfig {
   loafWeightSettings?: LoafWeightSettings;
 }
 
-export type UserRoleType = 'admin' | 'supervisor' | 'inspector' | 'auditor' | 'data_entry' | 'viewer' | string;
+export type UserRoleType =
+  | 'super_admin'
+  | 'admin'
+  | 'supervisor'
+  | 'inspector'
+  | 'auditor'
+  | 'data_entry'
+  | 'viewer'
+  | string;
 
 export interface AppUser {
   id: string;
   username: string;
   fullName: string;
   password?: string;
+  hasPassword?: boolean;
   role: UserRoleType;
+  isSuperAdmin?: boolean;
   jobTitle?: string;
   department?: string;
   phone?: string;
@@ -284,10 +302,12 @@ export interface AppUser {
   googleDriveAutoSync?: boolean;
   customPermissions?: string[];
   allowedDepartments?: DepartmentScopeId[];
+  departmentPermissions?: DepartmentPermissionsMap;
   applyToAllBranches?: boolean;
   branchId?: string;
   createdAt?: string;
   isActive?: boolean;
+  notes?: string;
 }
 
 export interface InboxChatMessage {

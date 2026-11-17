@@ -116,7 +116,10 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
 }) => {
   const [subView, setSubView] = useState<GrainSubView>(initialSubView);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-  const permissions = useMemo(() => resolveModuleCrudPermissions(currentUser), [currentUser]);
+  const permissions = useMemo(
+    () => resolveModuleCrudPermissions(currentUser, false, 'grain_maintenance'),
+    [currentUser]
+  );
   const isViewer = permissions.isReadOnly;
 
   // Add Asset quick form
@@ -1148,6 +1151,10 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
           isViewer={isViewer}
+          canAdd={permissions.canAdd}
+          canEdit={permissions.canEdit}
+          canPrint={permissions.canPrint}
+          canExport={permissions.canExport}
           villages={villages}
           initialTab="shunas"
           onUpdateState={handleUpdateGrainSubState}
@@ -1161,6 +1168,10 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
           isViewer={isViewer}
+          canAdd={permissions.canAdd}
+          canEdit={permissions.canEdit}
+          canPrint={permissions.canPrint}
+          canExport={permissions.canExport}
           villages={villages}
           initialTab="receipts_book"
           onUpdateState={handleUpdateGrainSubState}
@@ -1174,6 +1185,9 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
           isViewer={isViewer}
+          canAdd={permissions.canAdd}
+          canPrint={permissions.canPrint}
+          canExport={permissions.canExport}
           villages={villages}
           onUpdateState={handleUpdateGrainSubState}
           onNotify={notify}
@@ -1186,6 +1200,9 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
           isViewer={isViewer}
+          canAdd={permissions.canAdd}
+          canPrint={permissions.canPrint}
+          canExport={permissions.canExport}
           villages={villages}
           onUpdateState={handleUpdateGrainSubState}
           onNotify={notify}
@@ -1198,6 +1215,9 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
           isViewer={isViewer}
+          canAdd={permissions.canAdd}
+          canPrint={permissions.canPrint}
+          canExport={permissions.canExport}
           bakeries={bakeries}
           onUpdateState={handleUpdateGrainSubState}
           onNotify={notify}
@@ -1210,6 +1230,9 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
           isViewer={isViewer}
+          canAdd={permissions.canAdd}
+          canPrint={permissions.canPrint}
+          canExport={permissions.canExport}
           initialMode="financials"
           onUpdateState={handleUpdateGrainSubState}
           onNotify={notify}
@@ -1222,6 +1245,9 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
           isViewer={isViewer}
+          canAdd={permissions.canAdd}
+          canPrint={permissions.canPrint}
+          canExport={permissions.canExport}
           initialMode="reports"
           onUpdateState={handleUpdateGrainSubState}
           onNotify={notify}
@@ -1348,7 +1374,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             }
           />
 
-          {!isViewer && (
+          {permissions.canAdd && (
             <form onSubmit={handleAddAsset} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-5 gap-2.5 text-xs">
               <input type="text" value={assetCode} onChange={(e) => setAssetCode(e.target.value)} placeholder="كود الأصل *" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
               <input type="text" value={assetName} onChange={(e) => setAssetName(e.target.value)} placeholder="اسم الصومعة / المعدة *" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold" />
@@ -1475,7 +1501,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             }
           />
 
-          {!isViewer && (
+          {permissions.canAdd && (
             <form onSubmit={handleAddOrder} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-7 gap-2 text-xs">
               <select value={orderAssetId} onChange={(e) => setOrderAssetId(e.target.value)} className="px-2.5 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold">
                 {state.assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -1524,7 +1550,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                       <td className="py-2 px-2 font-mono font-black text-rose-700">{o.totalRepairCost.toLocaleString()} ج.م</td>
                       <td className="py-2 px-2">
                         <select
-                          disabled={isViewer}
+                          disabled={!permissions.canEdit}
                           value={o.status}
                           onChange={(e) => handleAdvanceOrderStatus(o.id, e.target.value as MaintenanceOrderStatus)}
                           className="px-2 py-1 bg-slate-50 border border-slate-300 rounded-lg text-[11px] font-black cursor-pointer"
@@ -1810,7 +1836,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             }
           />
 
-          {!isViewer && (
+          {permissions.canAdd && (
             <form onSubmit={handleAddGrainMovement} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
               <div className="text-xs font-black text-[#0A1628]">
                 حركة الحبوب وتصحيح الوزن حسب الرطوبة المرجعية: الوزن المصحح = الأصلي × (100 - الرطوبة الفعلية) ÷ (100 - المرجعية)
@@ -1954,7 +1980,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
               <input type="number" step="0.1" value={settingsDraft.defaultReferenceMoisturePct} onChange={(e) => setSettingsDraft({ ...settingsDraft, defaultReferenceMoisturePct: Number(e.target.value) || 12 })} className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
             </div>
           </div>
-          {!isViewer && (
+          {permissions.canEdit && (
             <button type="submit" className="px-5 py-2 bg-[#0A1628] text-[#D4AF37] rounded-xl font-black cursor-pointer">
               حفظ الإعدادات
             </button>

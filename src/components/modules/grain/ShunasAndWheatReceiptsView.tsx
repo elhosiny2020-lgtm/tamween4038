@@ -37,6 +37,10 @@ interface ShunasAndWheatReceiptsViewProps {
   branchName: string;
   currentUserFullName: string;
   isViewer: boolean;
+  canAdd?: boolean;
+  canEdit?: boolean;
+  canPrint?: boolean;
+  canExport?: boolean;
   villages: VillageHierarchy[];
   initialTab?: 'shunas' | 'receipts_book' | 'issues_book' | 'ledger' | 'reconciliation';
   onUpdateState: (updater: (prev: GrainMaintenanceState) => GrainMaintenanceState, summary: string) => void;
@@ -48,6 +52,10 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
   branchName,
   currentUserFullName,
   isViewer,
+  canAdd = !isViewer,
+  canEdit = !isViewer,
+  canPrint = !isViewer,
+  canExport = !isViewer,
   villages,
   initialTab = 'shunas',
   onUpdateState,
@@ -720,7 +728,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {!isViewer && (
+              {canAdd && (
                 <button
                   type="button"
                   onClick={() => setShowAddShunaModal(true)}
@@ -731,101 +739,105 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                   <span>إضافة شونة جديدة</span>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() =>
-                  exportRowsToArabicCsv(
-                    'shunas_valuation_and_balances',
-                    [
-                      'م',
-                      'كود الشونة',
-                      'اسم الشونة',
-                      'القرية',
-                      'الجهة التابعة',
-                      'المساحة الكلية م2',
-                      'المساحة المتبقية م2',
-                      'السعة التخزينية (طن)',
-                      'الرصيد الافتتاحي (طن)',
-                      'الوارد المعتمد (طن)',
-                      'المنصرف المعتمد (طن)',
-                      'الرصيد الحالي المحسوب (طن)',
-                      'سعر الطن (ج.م)',
-                      'قيمة المخزون السلعي (ج.م)',
-                      'قيمة الأصول والمعدات والموازين (ج.م)',
-                      'إجمالي القيمة التقديرية للشونة (ج.م)',
-                      'حالة الميزان',
-                      'حالة التشغيل',
-                    ],
-                    shunasWithMetrics.map(({ shuna, metrics }) => [
-                      shuna.serialNo,
-                      shuna.shunaCode,
-                      shuna.shunaName,
-                      shuna.village,
-                      shuna.affiliatedEntity,
-                      shuna.totalAreaSqm,
-                      metrics.remainingAreaSqm,
-                      shuna.storageCapacityTons,
-                      metrics.openingBalanceTons,
-                      metrics.approvedInboundTons,
-                      metrics.approvedOutboundTons,
-                      metrics.currentBookBalanceTons,
-                      shuna.tonPrice,
-                      metrics.stockValuationAmount,
-                      metrics.fixedAssetsValuationAmount,
-                      metrics.totalEstimatedShunaValue,
-                      shuna.scaleStatus,
-                      shuna.operationalStatus,
-                    ])
-                  )
-                }
-                className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>تصدير Excel</span>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  printModuleReportA4({
-                    title: 'بيان الشون وتقييم الأصول والأرصدة المعتمدة للقمح',
-                    subtitle: 'فصل كامل بين قيمة الأصول الثابتة وقيمة المخزون السلعي المحسوب من دفتر استلام القمح اليومي',
-                    branchName,
-                    headers: [
-                      'كود الشونة',
-                      'اسم الشونة',
-                      'القرية',
-                      'السعة (طن)',
-                      'الافتتاحي',
-                      'الوارد المعتمد',
-                      'المنصرف المعتمد',
-                      'الرصيد الحالي (طن)',
-                      'قيمة مخزون القمح',
-                      'قيمة الأصول والمعدات',
-                      'الإجمالي التقديري للشونة',
-                      'حالة الميزان والتشغيل',
-                    ],
-                    rows: shunasWithMetrics.map(({ shuna, metrics }) => [
-                      shuna.shunaCode,
-                      shuna.shunaName,
-                      shuna.village,
-                      shuna.storageCapacityTons,
-                      metrics.openingBalanceTons,
-                      metrics.approvedInboundTons,
-                      metrics.approvedOutboundTons,
-                      metrics.currentBookBalanceTons,
-                      `${metrics.stockValuationAmount.toLocaleString('ar-EG')} ج.م`,
-                      `${metrics.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م`,
-                      `${metrics.totalEstimatedShunaValue.toLocaleString('ar-EG')} ج.م`,
-                      `${shuna.scaleStatus} / ${shuna.operationalStatus}`,
-                    ]),
-                    preparedBy: currentUserFullName,
-                  })
-                }
-                className="px-3 py-2 rounded-xl bg-[#0f2342] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                <span>طباعة A4</span>
-              </button>
+              {canExport && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportRowsToArabicCsv(
+                      'shunas_valuation_and_balances',
+                      [
+                        'م',
+                        'كود الشونة',
+                        'اسم الشونة',
+                        'القرية',
+                        'الجهة التابعة',
+                        'المساحة الكلية م2',
+                        'المساحة المتبقية م2',
+                        'السعة التخزينية (طن)',
+                        'الرصيد الافتتاحي (طن)',
+                        'الوارد المعتمد (طن)',
+                        'المنصرف المعتمد (طن)',
+                        'الرصيد الحالي المحسوب (طن)',
+                        'سعر الطن (ج.م)',
+                        'قيمة المخزون السلعي (ج.م)',
+                        'قيمة الأصول والمعدات والموازين (ج.م)',
+                        'إجمالي القيمة التقديرية للشونة (ج.م)',
+                        'حالة الميزان',
+                        'حالة التشغيل',
+                      ],
+                      shunasWithMetrics.map(({ shuna, metrics }) => [
+                        shuna.serialNo,
+                        shuna.shunaCode,
+                        shuna.shunaName,
+                        shuna.village,
+                        shuna.affiliatedEntity,
+                        shuna.totalAreaSqm,
+                        metrics.remainingAreaSqm,
+                        shuna.storageCapacityTons,
+                        metrics.openingBalanceTons,
+                        metrics.approvedInboundTons,
+                        metrics.approvedOutboundTons,
+                        metrics.currentBookBalanceTons,
+                        shuna.tonPrice,
+                        metrics.stockValuationAmount,
+                        metrics.fixedAssetsValuationAmount,
+                        metrics.totalEstimatedShunaValue,
+                        shuna.scaleStatus,
+                        shuna.operationalStatus,
+                      ])
+                    )
+                  }
+                  className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>تصدير Excel</span>
+                </button>
+              )}
+              {canPrint && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    printModuleReportA4({
+                      title: 'بيان الشون وتقييم الأصول والأرصدة المعتمدة للقمح',
+                      subtitle: 'فصل كامل بين قيمة الأصول الثابتة وقيمة المخزون السلعي المحسوب من دفتر استلام القمح اليومي',
+                      branchName,
+                      headers: [
+                        'كود الشونة',
+                        'اسم الشونة',
+                        'القرية',
+                        'السعة (طن)',
+                        'الافتتاحي',
+                        'الوارد المعتمد',
+                        'المنصرف المعتمد',
+                        'الرصيد الحالي (طن)',
+                        'قيمة مخزون القمح',
+                        'قيمة الأصول والمعدات',
+                        'الإجمالي التقديري للشونة',
+                        'حالة الميزان والتشغيل',
+                      ],
+                      rows: shunasWithMetrics.map(({ shuna, metrics }) => [
+                        shuna.shunaCode,
+                        shuna.shunaName,
+                        shuna.village,
+                        shuna.storageCapacityTons,
+                        metrics.openingBalanceTons,
+                        metrics.approvedInboundTons,
+                        metrics.approvedOutboundTons,
+                        metrics.currentBookBalanceTons,
+                        `${metrics.stockValuationAmount.toLocaleString('ar-EG')} ج.م`,
+                        `${metrics.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م`,
+                        `${metrics.totalEstimatedShunaValue.toLocaleString('ar-EG')} ج.م`,
+                        `${shuna.scaleStatus} / ${shuna.operationalStatus}`,
+                      ]),
+                      preparedBy: currentUserFullName,
+                    })
+                  }
+                  className="px-3 py-2 rounded-xl bg-[#0f2342] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>طباعة A4</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -945,7 +957,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {!isViewer && (
+                {canAdd && (
                   <button
                     type="button"
                     onClick={() => setShowAddReceiptModal(true)}
@@ -956,125 +968,129 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                     <span>تسجيل إذن استلام قمح جديد</span>
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() =>
-                    exportRowsToArabicCsv(
-                      'daily_wheat_receipts_book',
-                      [
-                        'م',
-                        'رقم إذن الاستلام',
-                        'تاريخ الاستلام',
-                        'الوقت',
-                        'كود الشونة',
-                        'اسم الشونة',
-                        'اسم المورد / المزارع',
-                        'الرقم القومي / الكود',
-                        'نوع القمح',
-                        'الموسم',
-                        'رقم السيارة',
-                        'اسم السائق',
-                        'رقم الميزان',
-                        'الوزن القائم (كجم)',
-                        'الوزن الفارغ (كجم)',
-                        'صافي الوزن (كجم)',
-                        'صافي الوزن (طن)',
-                        'الرطوبة %',
-                        'الشوائب %',
-                        'درجة النظافة',
-                        'الرتبة',
-                        'الوزن المستبعد (طن)',
-                        'الوزن المقبول (طن)',
-                        'سعر الطن (ج.م)',
-                        'إجمالي القيمة (ج.م)',
-                        'محضر الفحص',
-                        'أمين الشونة',
-                        'عضو اللجنة',
-                        'حالة الاعتماد',
-                      ],
-                      filteredReceipts.map((r, i) => [
-                        i + 1,
-                        r.receiptOrderNumber,
-                        r.receiptDate,
-                        r.receiptTime,
-                        r.shunaCode,
-                        r.shunaName,
-                        r.supplierName,
-                        r.supplierNationalIdOrCode,
-                        r.wheatType,
-                        r.agriculturalSeason,
-                        r.vehicleNumber,
-                        r.driverName,
-                        r.scaleNumber,
-                        r.grossWeightKg,
-                        r.tareWeightKg,
-                        r.netWeightKg,
-                        r.netWeightTons,
-                        r.moisturePct,
-                        r.impuritiesPct,
-                        r.cleanlinessGrade,
-                        r.qualityGrade,
-                        r.excludedWeightTons,
-                        r.acceptedNetWeightTons,
-                        r.tonPrice,
-                        r.totalSupplyValue,
-                        r.inspectionReportNumber,
-                        r.shunaKeeperName,
-                        r.committeeMemberName,
-                        r.approvalStatus,
-                      ])
-                    )
-                  }
-                  className="px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-black flex items-center gap-1.5"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span>تصدير دفتر الاستلام Excel</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    printModuleReportA4({
-                      title: 'دفتر استلام القمح اليومي المعتمد بالشون',
-                      subtitle: `إجمالي الأذون المعروضة: (${filteredReceipts.length}) إذن استلام`,
-                      branchName,
-                      headers: [
-                        'رقم الإذن',
-                        'التاريخ',
-                        'الشونة',
-                        'المورد / الجهة',
-                        'السيارة',
-                        'القائم (كجم)',
-                        'الفارغ (كجم)',
-                        'صافي (طن)',
-                        'النظافة / الرطوبة',
-                        'المستبعد',
-                        'المقبول (طن)',
-                        'إجمالي القيمة',
-                        'الحالة',
-                      ],
-                      rows: filteredReceipts.map((r) => [
-                        r.receiptOrderNumber,
-                        r.receiptDate,
-                        r.shunaName,
-                        r.supplierName,
-                        r.vehicleNumber,
-                        r.grossWeightKg.toLocaleString('ar-EG'),
-                        r.tareWeightKg.toLocaleString('ar-EG'),
-                        r.netWeightTons,
-                        `${r.cleanlinessGrade} (${r.moisturePct}%)`,
-                        r.excludedWeightTons,
-                        r.acceptedNetWeightTons,
-                        `${r.totalSupplyValue.toLocaleString('ar-EG')} ج.م`,
-                        r.approvalStatus,
-                      ]),
-                      preparedBy: currentUserFullName,
-                    })
-                  }
-                  className="px-3 py-2 rounded-xl bg-[#0f2342] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>طباعة الدفتر A4</span>
-                </button>
+                {canExport && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      exportRowsToArabicCsv(
+                        'daily_wheat_receipts_book',
+                        [
+                          'م',
+                          'رقم إذن الاستلام',
+                          'تاريخ الاستلام',
+                          'الوقت',
+                          'كود الشونة',
+                          'اسم الشونة',
+                          'اسم المورد / المزارع',
+                          'الرقم القومي / الكود',
+                          'نوع القمح',
+                          'الموسم',
+                          'رقم السيارة',
+                          'اسم السائق',
+                          'رقم الميزان',
+                          'الوزن القائم (كجم)',
+                          'الوزن الفارغ (كجم)',
+                          'صافي الوزن (كجم)',
+                          'صافي الوزن (طن)',
+                          'الرطوبة %',
+                          'الشوائب %',
+                          'درجة النظافة',
+                          'الرتبة',
+                          'الوزن المستبعد (طن)',
+                          'الوزن المقبول (طن)',
+                          'سعر الطن (ج.م)',
+                          'إجمالي القيمة (ج.م)',
+                          'محضر الفحص',
+                          'أمين الشونة',
+                          'عضو اللجنة',
+                          'حالة الاعتماد',
+                        ],
+                        filteredReceipts.map((r, i) => [
+                          i + 1,
+                          r.receiptOrderNumber,
+                          r.receiptDate,
+                          r.receiptTime,
+                          r.shunaCode,
+                          r.shunaName,
+                          r.supplierName,
+                          r.supplierNationalIdOrCode,
+                          r.wheatType,
+                          r.agriculturalSeason,
+                          r.vehicleNumber,
+                          r.driverName,
+                          r.scaleNumber,
+                          r.grossWeightKg,
+                          r.tareWeightKg,
+                          r.netWeightKg,
+                          r.netWeightTons,
+                          r.moisturePct,
+                          r.impuritiesPct,
+                          r.cleanlinessGrade,
+                          r.qualityGrade,
+                          r.excludedWeightTons,
+                          r.acceptedNetWeightTons,
+                          r.tonPrice,
+                          r.totalSupplyValue,
+                          r.inspectionReportNumber,
+                          r.shunaKeeperName,
+                          r.committeeMemberName,
+                          r.approvalStatus,
+                        ])
+                      )
+                    }
+                    className="px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-black flex items-center gap-1.5"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>تصدير دفتر الاستلام Excel</span>
+                  </button>
+                )}
+                {canPrint && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      printModuleReportA4({
+                        title: 'دفتر استلام القمح اليومي المعتمد بالشون',
+                        subtitle: `إجمالي الأذون المعروضة: (${filteredReceipts.length}) إذن استلام`,
+                        branchName,
+                        headers: [
+                          'رقم الإذن',
+                          'التاريخ',
+                          'الشونة',
+                          'المورد / الجهة',
+                          'السيارة',
+                          'القائم (كجم)',
+                          'الفارغ (كجم)',
+                          'صافي (طن)',
+                          'النظافة / الرطوبة',
+                          'المستبعد',
+                          'المقبول (طن)',
+                          'إجمالي القيمة',
+                          'الحالة',
+                        ],
+                        rows: filteredReceipts.map((r) => [
+                          r.receiptOrderNumber,
+                          r.receiptDate,
+                          r.shunaName,
+                          r.supplierName,
+                          r.vehicleNumber,
+                          r.grossWeightKg.toLocaleString('ar-EG'),
+                          r.tareWeightKg.toLocaleString('ar-EG'),
+                          r.netWeightTons,
+                          `${r.cleanlinessGrade} (${r.moisturePct}%)`,
+                          r.excludedWeightTons,
+                          r.acceptedNetWeightTons,
+                          `${r.totalSupplyValue.toLocaleString('ar-EG')} ج.م`,
+                          r.approvalStatus,
+                        ]),
+                        preparedBy: currentUserFullName,
+                      })
+                    }
+                    className="px-3 py-2 rounded-xl bg-[#0f2342] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>طباعة الدفتر A4</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1244,15 +1260,17 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                       </td>
                       <td className="p-2.5 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handlePrintOfficialReceiptVoucher(r)}
-                            title="طباعة إذن استلام قمح رسمي A4"
-                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                          </button>
-                          {!isViewer && r.approvalStatus !== 'معتمد' && (
+                          {canPrint && (
+                            <button
+                              type="button"
+                              onClick={() => handlePrintOfficialReceiptVoucher(r)}
+                              title="طباعة إذن استلام قمح رسمي A4"
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canEdit && r.approvalStatus !== 'معتمد' && (
                             <button
                               type="button"
                               onClick={() => handleApproveOrReverseReceipt(r, 'معتمد')}
@@ -1263,7 +1281,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                               <span>اعتماد</span>
                             </button>
                           )}
-                          {!isViewer && r.approvalStatus === 'معتمد' && (
+                          {canEdit && r.approvalStatus === 'معتمد' && (
                             <button
                               type="button"
                               onClick={() => handleApproveOrReverseReceipt(r, 'ملغي')}
@@ -1333,7 +1351,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                 يمنع النظام صرف أي كمية تتجاوز الرصيد المتاح في الشونة إلا بتجاوز إداري مسبب وموثق، ويرتبط كل إذن صرف باستلام المطحن
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddIssueModal(true)}
@@ -1499,7 +1517,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                 فرق الجرد = الرصيد الفعلي بالجرد - الرصيد الدفتري (اللون الأحمر للعجز، والأخضر للزيادة أو المطابقة)
               </p>
             </div>
-            {!isViewer && (
+            {canAdd && (
               <button
                 type="button"
                 onClick={() => setShowAddReconModal(true)}

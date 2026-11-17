@@ -8,6 +8,11 @@ import type {
 } from '../types/modules';
 import { round2 } from './rationMathEngine';
 
+function safeNum(val: unknown, fallback = 0): number {
+  const n = Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 /**
  * استخراج تاريخ الميلاد والنوع والتحقق الصارم من صحة الرقم القومي المصري (14 رقماً)
  */
@@ -59,8 +64,8 @@ export function parseEgyptianNationalId(nationalId: string): {
 
 function parseTimeToMinutes(hhmm: string): number {
   const parts = String(hhmm || '00:00').split(':');
-  const h = Number(parts[0] || 0);
-  const m = Number(parts[1] || 0);
+  const h = Math.max(0, Math.min(23, safeNum(parts[0])));
+  const m = Math.max(0, Math.min(59, safeNum(parts[1])));
   return h * 60 + m;
 }
 
@@ -83,7 +88,7 @@ export function computeAttendanceMetrics(params: {
   const totalWorkedMinutes = Math.max(0, actOut - actIn);
   const lateMinutes = Math.max(0, actIn - offIn);
   const earlyLeaveMinutes = Math.max(0, offOut - actOut);
-  const netWorkedMinutes = Math.max(0, totalWorkedMinutes - Math.max(0, params.breakMinutes || 0));
+  const netWorkedMinutes = Math.max(0, totalWorkedMinutes - Math.max(0, safeNum(params.breakMinutes)));
 
   return { totalWorkedMinutes, lateMinutes, earlyLeaveMinutes, netWorkedMinutes };
 }
@@ -97,7 +102,7 @@ export function computeLeaveDaysInclusive(startDate: string, endDate: string): n
 
 export function computeRemainingLeaveBalance(balance: HrLeaveBalance): number {
   return round2(
-    (balance.previousBalance || 0) + (balance.entitledDays || 0) - (balance.usedDays || 0)
+    safeNum(balance.previousBalance) + safeNum(balance.entitledDays) - safeNum(balance.usedDays)
   );
 }
 
@@ -105,15 +110,20 @@ export function computeProgressiveAnnualTax(
   annualTaxableIncome: number,
   brackets: HrTaxBracket[]
 ): number {
-  if (!(annualTaxableIncome > 0) || !Array.isArray(brackets) || brackets.length === 0) return 0;
-  const sorted = [...brackets].sort((a, b) => a.minAnnual - b.minAnnual);
+  const taxable = safeNum(annualTaxableIncome);
+  if (!(taxable > 0) || !Array.isArray(brackets) || brackets.length === 0) return 0;
+  const sorted = [...brackets].sort((a, b) => safeNum(a.minAnnual) - safeNum(b.minAnnual));
   let totalTax = 0;
 
   for (const b of sorted) {
-    if (annualTaxableIncome <= b.minAnnual) continue;
-    const upper = b.maxAnnual === null ? annualTaxableIncome : Math.min(annualTaxableIncome, b.maxAnnual);
-    const slice = Math.max(0, upper - b.minAnnual);
-    totalTax += (slice * Math.max(0, b.ratePct)) / 100;
+    const minAnnual = Math.max(0, safeNum(b.minAnnual));
+    if (taxable <= minAnnual) continue;
+    const upper =
+      b.maxAnnual === null || b.maxAnnual === undefined
+        ? taxable
+        : Math.min(taxable, safeNum(b.maxAnnual, taxable));
+    const slice = Math.max(0, upper - minAnnual);
+    totalTax += (slice * Math.max(0, safeNum(b.ratePct))) / 100;
   }
   return round2(totalTax);
 }
@@ -126,61 +136,76 @@ export function computeEmployeePayrollLine(params: {
 }): HrPayrollLine {
   const { employee, policy, activeLoans, unexcusedAbsenceDays = 0 } = params;
 
+  const funcWage = Math.max(0, safeNum(employee.functionalWage));
+  const compWage = Math.max(0, safeNum(employee.complementaryWage));
+
   const allowancesAndRaises = round2(
-    (employee.periodicAllowances || 0) +
-      (employee.specialAllowances || 0) +
-      (employee.allowancesTotal || 0)
+    Math.max(0, safeNum(employee.periodicAllowances)) +
+      Math.max(0, safeNum(employee.specialAllowances)) +
+      Math.max(0, safeNum(employee.allowancesTotal))
   );
   const incentivesAndRewards = round2(
-    (employee.monthlyIncentives || 0) +
-      (employee.rewards || 0) +
-      (employee.extraEntitlements || 0)
+    Math.max(0, safeNum(employee.monthlyIncentives)) +
+      Math.max(0, safeNum(employee.rewards)) +
+      Math.max(0, safeNum(employee.extraEntitlements))
   );
 
   const grossEarnings = round2(
-    (employee.functionalWage || 0) +
-      (employee.complementaryWage || 0) +
-      allowancesAndRaises +
-      incentivesAndRewards
+    funcWage + compWage + allowancesAndRaises + incentivesAndRewards
   );
 
   // التأمينات الاجتماعية مع مراعاة الحدين الأدنى والأقصى القابلين للتحديث
+  const insurable = Math.max(0, safeNum(employee.insurableWage));
+  const minInsurable = Math.max(0, safeNum(policy.minInsurableWage));
+  const maxInsurable = Math.max(0, safeNum(policy.maxInsurableWage));
   const boundedInsurable = Math.min(
-    Math.max(employee.insurableWage || 0, policy.minInsurableWage || 0),
-    policy.maxInsurableWage > 0 ? policy.maxInsurableWage : Number.MAX_SAFE_INTEGER
+    Math.max(insurable, minInsurable),
+    maxInsurable > 0 ? maxInsurable : Number.MAX_SAFE_INTEGER
   );
-  const effectiveInsurable = employee.insurableWage > 0 ? boundedInsurable : 0;
+  const effectiveInsurable = insurable > 0 ? boundedInsurable : 0;
 
   const employeeInsurance = round2(
-    (effectiveInsurable * Math.max(0, policy.employeeInsuranceRatePct || 0)) / 100
+    (effectiveInsurable * Math.max(0, safeNum(policy.employeeInsuranceRatePct))) / 100
   );
   const employerInsurance = round2(
-    (effectiveInsurable * Math.max(0, policy.employerInsuranceRatePct || 0)) / 100
+    (effectiveInsurable * Math.max(0, safeNum(policy.employerInsuranceRatePct))) / 100
   );
 
   // ضريبة كسب العمل طبقاً للشرائح والإعفاء القابلين للتحديث من الإعدادات
   const annualTaxableIncome = Math.max(
     0,
-    grossEarnings * 12 - employeeInsurance * 12 - (policy.annualTaxExemptionAmount || 0)
+    grossEarnings * 12 -
+      employeeInsurance * 12 -
+      Math.max(0, safeNum(policy.annualTaxExemptionAmount))
   );
   const annualTax = computeProgressiveAnnualTax(annualTaxableIncome, policy.taxBrackets);
   const monthlyIncomeTax = round2(annualTax / 12);
 
   // السلف المستحقة
   const loanInstallmentDeduction = round2(
-    activeLoans
-      .filter((l) => l.employeeId === employee.id && l.status === 'سارية' && l.remainingAmount > 0)
-      .reduce((sum, l) => sum + Math.min(l.installmentAmount, l.remainingAmount), 0)
+    (activeLoans || [])
+      .filter(
+        (l) =>
+          l.employeeId === employee.id &&
+          l.status === 'سارية' &&
+          safeNum(l.remainingAmount) > 0
+      )
+      .reduce(
+        (sum, l) =>
+          sum +
+          Math.max(0, Math.min(safeNum(l.installmentAmount), safeNum(l.remainingAmount))),
+        0
+      )
   );
 
   // أجر اليوم وفق لائحة الاحتساب (30 يوم أو أيام العمل الفعلية)
-  const dailyRate =
-    policy.dayCalculationBasis > 0
-      ? (employee.functionalWage + employee.complementaryWage) / policy.dayCalculationBasis
-      : 0;
-  const absenceDeduction = round2(Math.max(0, unexcusedAbsenceDays) * dailyRate);
+  const dayBasis = safeNum(policy.dayCalculationBasis);
+  const dailyRate = dayBasis > 0 ? (funcWage + compWage) / dayBasis : 0;
+  const absenceDeduction = round2(Math.max(0, safeNum(unexcusedAbsenceDays)) * dailyRate);
   const absenceAndPenaltiesDeduction = round2(
-    absenceDeduction + (employee.manualDeductions || 0) + (employee.penalties || 0)
+    absenceDeduction +
+      Math.max(0, safeNum(employee.manualDeductions)) +
+      Math.max(0, safeNum(employee.penalties))
   );
 
   const totalDeductions = round2(
@@ -192,8 +217,8 @@ export function computeEmployeePayrollLine(params: {
   const netSalary = round2(grossEarnings - totalDeductions);
 
   const maxAllowedLoanCeiling = round2(
-    (netSalary + loanInstallmentDeduction) *
-      (Math.max(0, policy.maxLoanDeductionCeilingPct || 25) / 100)
+    Math.max(0, netSalary + loanInstallmentDeduction) *
+      (Math.max(0, safeNum(policy.maxLoanDeductionCeilingPct, 25)) / 100)
   );
   const exceedsLegalDeductionCeiling =
     loanInstallmentDeduction > 0 && loanInstallmentDeduction > maxAllowedLoanCeiling;
@@ -204,8 +229,8 @@ export function computeEmployeePayrollLine(params: {
     employeeName: employee.fullName,
     employeeCode: employee.employeeCode,
     departmentName: employee.departmentName,
-    functionalWage: round2(employee.functionalWage),
-    complementaryWage: round2(employee.complementaryWage),
+    functionalWage: round2(funcWage),
+    complementaryWage: round2(compWage),
     allowancesAndRaises,
     incentivesAndRewards,
     grossEarnings,

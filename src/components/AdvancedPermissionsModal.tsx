@@ -49,6 +49,12 @@ interface RoleTabItem {
 
 const DEFAULT_ROLE_TABS: RoleTabItem[] = [
   {
+    role: 'super_admin',
+    shortTitle: 'مدير عام النظام (Super Admin)',
+    fullTitle: 'مدير عام النظام (صلاحيات مطلقة شاملة وسجل الأمان)',
+    badgeColor: 'from-amber-600 to-yellow-700',
+  },
+  {
     role: 'admin',
     shortTitle: 'مدير النظام (Admin)',
     fullTitle: 'مدير النظام (صلاحيات الإدارة العليا الكاملة)',
@@ -117,6 +123,9 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     const defaults = getDefaultRolePermissionsMap();
     const existing = systemConfig.rolePermissions || {};
     const merged: Record<string, string[]> = {
+      super_admin: existing.super_admin
+        ? [...existing.super_admin]
+        : [...(defaults.super_admin || defaults.admin)],
       admin: existing.admin ? [...existing.admin] : [...defaults.admin],
       supervisor: existing.supervisor ? [...existing.supervisor] : [...defaults.supervisor],
       auditor: existing.auditor ? [...existing.auditor] : [...defaults.auditor],
@@ -137,6 +146,9 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     const defaults = getDefaultRolePermissionsMap();
     const existing = systemConfig.rolePermissions || {};
     const merged: Record<string, string[]> = {
+      super_admin: existing.super_admin
+        ? [...existing.super_admin]
+        : [...(defaults.super_admin || defaults.admin)],
       admin: existing.admin ? [...existing.admin] : [...defaults.admin],
       supervisor: existing.supervisor ? [...existing.supervisor] : [...defaults.supervisor],
       auditor: existing.auditor ? [...existing.auditor] : [...defaults.auditor],
@@ -295,12 +307,16 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
       return;
     }
 
+    const isSuper = newUserRole === 'super_admin' || newUserRole === 'admin';
     const createdUser: AppUser = {
       id: `u-${Date.now()}`,
       fullName: cleanName,
       username: cleanUser,
       password: cleanPass,
       role: newUserRole,
+      isSuperAdmin: isSuper,
+      isActive: true,
+      allowedDepartments: isSuper ? ['all'] : ['bakeries', 'debts', 'commodities', 'internal_trade', 'grain_maintenance', 'hr', 'reports'],
       jobTitle: newJobTitle.trim() || 'مفتش تموين',
       department: 'إدارة تموين مركز المحلة الكبرى',
       customPermissions:
@@ -329,8 +345,8 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     if (!onUpdateUser) return;
     const cleanName = editFullName.trim();
     const cleanUser = editUsername.trim();
-    const cleanPass = editPassword.trim() || u.password || '';
-    if (!cleanName || !cleanUser || !cleanPass) {
+    const cleanPass = editPassword.trim();
+    if (!cleanName || !cleanUser) {
       setErrorNotice('الاسم بالكامل واليوزر حقول أساسية لا يمكن تركها فارغة');
       return;
     }
@@ -338,12 +354,17 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
       ...u,
       fullName: cleanName,
       username: cleanUser,
-      password: cleanPass,
       role: editUserRole,
+      isSuperAdmin: editUserRole === 'super_admin' ? true : editUserRole === 'admin' ? u.isSuperAdmin : false,
       jobTitle: editJobTitle.trim() || u.jobTitle,
       customPermissions:
         rolePermissions[editUserRole] || getDefaultPermissionsForRole(editUserRole),
     };
+    if (cleanPass) {
+      updatedUser.password = cleanPass;
+    } else {
+      delete updatedUser.password;
+    }
     onUpdateUser(updatedUser);
     setEditingUserId(null);
     showNotice(

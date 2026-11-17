@@ -9,14 +9,18 @@ import { fileURLToPath } from 'url';
 import {
   ALLOWED_DB_TABLES,
   DEFAULT_BRANCH_ID,
+  authenticateUserInPostgres,
   deleteRowInPostgres,
   deleteStorageFileInPostgres,
   ensurePostgresSchema,
   getBootstrapFromPostgres,
   getStorageFileFromPostgres,
+  getUserByIdAndBranchFromPostgres,
   listStorageFilesInPostgres,
   purgeAllPostgresData,
   queryTablePaginated,
+  recordAuditLog,
+  resetNonMahallaBranchesInPostgres,
   syncFullBranchStateToPostgres,
   syncHighDebtAlertsToPostgres,
   upsertRowInPostgres,
@@ -25,6 +29,20 @@ import {
   upsertBranchModuleStateInPostgres,
   type NormalizedTableName,
 } from './src/db/queries.ts';
+import {
+  createSessionToken,
+  sanitizeUsersForClient,
+  verifySessionToken,
+} from './src/utils/serverAuth.ts';
+import {
+  hasDepartmentPermission,
+  isSuperAdmin as isUserSuperAdmin,
+} from './src/utils/departmentRbac.ts';
+import type {
+  AppUser,
+  PermissionAction,
+  SystemDepartmentKey,
+} from './src/types.ts';
 import {
   INITIAL_BAKERIES,
   INITIAL_DEBTS,
@@ -203,7 +221,7 @@ async function startServer() {
   // 1. Sovereign Security Headers & CORS Middleware
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header(
       'Access-Control-Allow-Headers',
       'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Tamween-Security-Token, X-Tamween-Client-Id, X-Simulated-Attack'
@@ -785,6 +803,270 @@ async function startServer() {
     });
   });
 
+  // =========================================================================
+  // Real Server Authentication, Bearer Session Verification & Granular RBAC
+  // =========================================================================
+  const extractBearerToken = (req: express.Request): string => {
+    const authHeader = String(req.headers.authorization || '').trim();
+    if (authHeader.toLowerCase().startsWith('bearer ')) {
+      return authHeader.slice(7).trim();
+    }
+    return '';
+  };
+
+  const getClientIp = (req: express.Request): string =>
+    String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1');
+
+  const resolveAuthenticatedActor = async (
+    req: express.Request
+  ): Promise<{ authenticated: boolean; user: AppUser | null; reason?: string }> => {
+    const token = extractBearerToken(req);
+    if (!token) {
+      return { authenticated: false, user: null, reason: 'NO_TOKEN' };
+    }
+    const verifiedPayload = verifySessionToken(token);
+    if (!verifiedPayload) {
+      return { authenticated: false, user: null, reason: 'INVALID_TOKEN' };
+    }
+    const liveUser = await getUserByIdAndBranchFromPostgres(
+      verifiedPayload.branchId,
+      verifiedPayload.userId
+    ).catch(() => null);
+    if (!liveUser) {
+      return { authenticated: false, user: null, reason: 'USER_NOT_FOUND' };
+    }
+    if (liveUser.isActive === false) {
+      return { authenticated: false, user: null, reason: 'USER_SUSPENDED' };
+    }
+    return { authenticated: true, user: liveUser };
+  };
+
+  const denyUnauthorizedAndAudit = async (
+    req: express.Request,
+    res: express.Response,
+    actor: AppUser | null,
+    status: 401 | 403,
+    department: string,
+    operation: string,
+    detail: string,
+    actionLabel = 'UNAUTHORIZED_ACCESS_ATTEMPT'
+  ) => {
+    const ip = getClientIp(req);
+    const branchId = String(
+      req.query?.branchId || req.body?.branchId || actor?.branchId || DEFAULT_BRANCH_ID
+    );
+    await recordAuditLog(
+      actor?.username || 'anonymous',
+      actionLabel,
+      detail,
+      ip,
+      branchId,
+      {
+        username: actor?.username || 'anonymous',
+        department,
+        operation,
+        recordId: String(req.params?.id || req.body?.id || ''),
+        result: 'DENIED',
+      }
+    ).catch(() => {});
+    recordSecurityAudit({
+      ip,
+      method: req.method,
+      path: req.originalUrl,
+      threatType: actionLabel,
+      actionTaken: 'BLOCKED_403',
+      detail,
+    });
+    res.status(status).json({
+      success: false,
+      blocked: true,
+      code: status === 401 ? 'AUTH_REQUIRED_401' : 'RBAC_FORBIDDEN_403',
+      error: detail,
+    });
+  };
+
+  const mapTableToAccessScope = (
+    table: NormalizedTableName
+  ): SystemDepartmentKey | 'super_admin' | 'shared' => {
+    switch (table) {
+      case 'bakeries':
+        return 'bakeries';
+      case 'debts':
+      case 'high_debt_alerts':
+        return 'debts';
+      case 'app_users':
+      case 'branches':
+      case 'system_config':
+      case 'audit_logs':
+        return 'super_admin';
+      default:
+        return 'shared';
+    }
+  };
+
+  const canActorAccessDbTable = (
+    actor: AppUser,
+    table: NormalizedTableName,
+    action: PermissionAction
+  ): boolean => {
+    if (table === 'audit_logs') {
+      if (action !== 'view') return false;
+      return isUserSuperAdmin(actor);
+    }
+    if (isUserSuperAdmin(actor)) return true;
+    const scope = mapTableToAccessScope(table);
+    if (scope === 'super_admin') return false;
+    if (scope === 'shared') {
+      if (action === 'view') return true;
+      return (
+        hasDepartmentPermission(actor, 'bakeries', action) ||
+        hasDepartmentPermission(actor, 'debts', action) ||
+        hasDepartmentPermission(actor, 'reports', action)
+      );
+    }
+    if (scope === 'bakeries') {
+      if (action === 'view') {
+        return (
+          hasDepartmentPermission(actor, 'bakeries', 'view') ||
+          hasDepartmentPermission(actor, 'debts', 'view') ||
+          hasDepartmentPermission(actor, 'reports', 'view')
+        );
+      }
+      return hasDepartmentPermission(actor, 'bakeries', action);
+    }
+    if (scope === 'debts') {
+      if (action === 'view') {
+        return (
+          hasDepartmentPermission(actor, 'debts', 'view') ||
+          hasDepartmentPermission(actor, 'reports', 'view')
+        );
+      }
+      return hasDepartmentPermission(actor, 'debts', action);
+    }
+    return hasDepartmentPermission(actor, scope, action);
+  };
+
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      await Promise.race([
+        startupBootstrapPromise,
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]);
+      const branchId = String(req.body?.branchId || DEFAULT_BRANCH_ID);
+      const username = String(req.body?.username || '').trim();
+      const password = String(req.body?.password || '');
+      const ip = getClientIp(req);
+
+      if (!username || !password) {
+        res.status(400).json({
+          success: false,
+          error: 'يرجى إدخال اسم المستخدم وكلمة المرور.',
+        });
+        return;
+      }
+
+      const authRes = await authenticateUserInPostgres(branchId, username, password);
+      if (!authRes.ok || !authRes.user) {
+        await recordAuditLog(
+          username,
+          'LOGIN_FAILED',
+          `محاولة دخول فاشلة للمستخدم (${username}): ${authRes.error || 'بيانات غير صحيحة'}`,
+          ip,
+          branchId,
+          {
+            username,
+            department: 'auth',
+            operation: 'LOGIN',
+            result: 'DENIED',
+          }
+        ).catch(() => {});
+        res.status(authRes.status || 401).json({
+          success: false,
+          error: authRes.error || 'اسم المستخدم أو كلمة المرور غير صحيحة',
+        });
+        return;
+      }
+
+      const user = authRes.user;
+      const token = createSessionToken({
+        userId: user.id,
+        branchId: user.branchId || branchId,
+        username: user.username,
+        role: user.role,
+        isSuperAdmin: isUserSuperAdmin(user),
+      });
+
+      await recordAuditLog(
+        user.username,
+        'LOGIN_SUCCESS',
+        `تم تسجيل دخول المستخدم (${user.fullName} — ${user.username}) إلى الفرع (${branchId})`,
+        ip,
+        branchId,
+        {
+          username: user.username,
+          department: 'auth',
+          operation: 'LOGIN',
+          recordId: user.id,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+
+      res.json({
+        success: true,
+        token,
+        user,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل تسجيل الدخول.' });
+    }
+  });
+
+  app.get('/api/auth/me', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        const status = actor.reason === 'USER_SUSPENDED' ? 403 : 401;
+        res.status(status).json({
+          success: false,
+          code: actor.reason || 'UNAUTHORIZED',
+          error:
+            actor.reason === 'USER_SUSPENDED'
+              ? 'هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.'
+              : 'الجلسة غير صالحة أو منتهية. يرجى تسجيل الدخول.',
+        });
+        return;
+      }
+      res.json({ success: true, user: actor.user });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/auth/logout', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (actor.authenticated && actor.user) {
+        await recordAuditLog(
+          actor.user.username,
+          'LOGOUT',
+          `تسجيل خروج آمن للمستخدم (${actor.user.username})`,
+          getClientIp(req),
+          actor.user.branchId || DEFAULT_BRANCH_ID,
+          {
+            username: actor.user.username,
+            department: 'auth',
+            operation: 'LOGOUT',
+            recordId: actor.user.id,
+            result: 'SUCCESS',
+          }
+        ).catch(() => {});
+      }
+      res.json({ success: true });
+    } catch {
+      res.json({ success: true });
+    }
+  });
+
   // Security & Database File Protection Status Endpoint
   app.get('/api/security/status', (_req, res) => {
     const dbData = cachedLiveSnapshot?.data || {};
@@ -1229,11 +1511,62 @@ async function startServer() {
       ]);
       const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
       const boot = await getBootstrapFromPostgres(branchId);
+      const actor = await resolveAuthenticatedActor(req);
+
+      if (!actor.authenticated || !actor.user) {
+        const publicConfig = boot.systemConfig
+          ? {
+              ...boot.systemConfig,
+              vaultUsername: '',
+              vaultPasscode: '',
+              branchVaultCredentials: undefined,
+            }
+          : null;
+        res.json({
+          success: true,
+          requiresAuth: true,
+          branchId: boot.branchId,
+          branches: boot.branches,
+          villages: [],
+          bakeries: [],
+          debts: [],
+          users: [],
+          dailyTasks: [],
+          inboxMessages: [],
+          highDebtAlerts: [],
+          systemConfig: publicConfig,
+          columnTitles: boot.columnTitles,
+          activityStatuses: boot.activityStatuses,
+          dropdownLists: boot.dropdownLists,
+          hasAnyRows: boot.hasAnyRows,
+          revision: liveRevision,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const actorUser = actor.user;
+      const isSuper = isUserSuperAdmin(actorUser);
+      const canSeeBakeries =
+        isSuper ||
+        hasDepartmentPermission(actorUser, 'bakeries', 'view') ||
+        hasDepartmentPermission(actorUser, 'debts', 'view') ||
+        hasDepartmentPermission(actorUser, 'reports', 'view');
+      const canSeeDebts =
+        isSuper ||
+        hasDepartmentPermission(actorUser, 'debts', 'view') ||
+        hasDepartmentPermission(actorUser, 'reports', 'view');
+
       res.json({
         success: true,
+        requiresAuth: false,
         revision: liveRevision,
         timestamp: new Date().toISOString(),
         ...boot,
+        bakeries: canSeeBakeries ? boot.bakeries : [],
+        debts: canSeeDebts ? boot.debts : [],
+        highDebtAlerts: canSeeDebts ? boot.highDebtAlerts : [],
+        users: isSuper ? sanitizeUsersForClient(boot.users) : sanitizeUsersForClient([actorUser]),
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'فشل تحميل البيانات من قاعدة البيانات.' });
@@ -1242,14 +1575,43 @@ async function startServer() {
 
   app.post('/api/db/batch', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          'system',
+          'BATCH_SYNC',
+          'رفض المزامنة الجماعية: يلزم تسجيل دخول صالح ومفعل.'
+        );
+        return;
+      }
+
       const body = req.body || {};
       const branchId = String(body.branchId || body.data?.activeBranchId || DEFAULT_BRANCH_ID);
       const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
       const pruneRemoved = Boolean(body.pruneRemoved);
-      const stateData = body.data || body;
+      const rawStateData = body.data || body;
+      const isSuper = isUserSuperAdmin(actor.user);
+
+      // Fail-closed: non-Super-Admin batch sync can only touch data arrays their department permits
+      const stateData = { ...rawStateData };
+      if (!isSuper) {
+        delete stateData.users;
+        delete stateData.branches;
+        delete stateData.systemConfig;
+        if (!hasDepartmentPermission(actor.user, 'bakeries', 'update') && !hasDepartmentPermission(actor.user, 'bakeries', 'insert')) {
+          delete stateData.bakeries;
+        }
+        if (!hasDepartmentPermission(actor.user, 'debts', 'update') && !hasDepartmentPermission(actor.user, 'debts', 'insert')) {
+          delete stateData.debts;
+        }
+      }
 
       // Sync multi-branch partitions additively ONLY for branches with actual records, and sync active branch authoritatively
-      if (stateData?.branchPartitions && typeof stateData.branchPartitions === 'object') {
+      if (isSuper && stateData?.branchPartitions && typeof stateData.branchPartitions === 'object') {
         for (const [partBranchId, partData] of Object.entries(stateData.branchPartitions)) {
           if (partBranchId === branchId) continue;
           const pData = partData as any;
@@ -1265,7 +1627,9 @@ async function startServer() {
           }
         }
       }
-      const syncRes = await syncFullBranchStateToPostgres(branchId, stateData, { pruneRemoved });
+      const syncRes = await syncFullBranchStateToPostgres(branchId, stateData, {
+        pruneRemoved: isSuper ? pruneRemoved : false,
+      });
       if (!syncRes.success) {
         res.status(500).json({ success: false, error: syncRes.error });
         return;
@@ -1282,7 +1646,7 @@ async function startServer() {
         villages: freshBoot.villages,
         bakeries: freshBoot.bakeries,
         debts: freshBoot.debts,
-        users: freshBoot.users,
+        users: sanitizeUsersForClient(freshBoot.users),
         dailyTasks: freshBoot.dailyTasks,
         inboxMessages: freshBoot.inboxMessages,
         ...(freshBoot.systemConfig ? { systemConfig: freshBoot.systemConfig } : {}),
@@ -1358,8 +1722,63 @@ async function startServer() {
     }
   });
 
+  app.post('/api/branches/reset-non-default', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'branches',
+          'RESET_NON_MAHALLA_BRANCHES',
+          'محاولة غير مصرح بها لإعادة تعيين الإدارات غير الرئيسية (مقصور على Super Admin فقط).'
+        );
+        return;
+      }
+      const result = await resetNonMahallaBranchesInPostgres(actor.user.username);
+      cachedBranchModules.clear();
+      liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
+        clientId: actor.user.username,
+        sqlOperation: 'RESET_NON_MAHALLA',
+        affectedTable: 'branches',
+      });
+      broadcastWs({
+        type: 'non_mahalla_branches_reset',
+        branchId: DEFAULT_BRANCH_ID,
+        removedBranchesCount: result.removedBranchesCount,
+        preservedMahallaCounts: result.preservedMahallaCounts,
+        backupFileName: result.backupFileName,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({
+        ...result,
+        revision: liveRevision,
+        message: `تم أخذ نسخة احتياطية (${result.backupFileName}) وتصفير ${result.removedBranchesCount} إدارة غير رئيسية مع الإبقاء الكامل على بيانات إدارة تموين مركز المحلة الكبرى.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل إعادة تعيين الفروع غير الرئيسية.' });
+    }
+  });
+
   app.post('/api/db/purge', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'system',
+          'PURGE_ALL',
+          'محاولة مسح شامل مرفوضة: يتطلب صلاحية Super Admin.'
+        );
+        return;
+      }
       const clientId = String(req.headers['x-tamween-client-id'] || req.body?.clientId || '');
       const timestamp = new Date().toISOString();
       await purgeAllPostgresData();
@@ -1411,6 +1830,53 @@ async function startServer() {
     }
   });
 
+  // Tamper-Resistant Audit Log Endpoint Protection
+  app.all(['/api/audit-logs', '/api/audit-logs/*', '/api/db/audit_logs/:id'], async (req, res, next) => {
+    if (['PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase())) {
+      const actor = await resolveAuthenticatedActor(req);
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        403,
+        'audit_logs',
+        req.method.toUpperCase(),
+        'محاولة تعديل أو حذف سجل المراجعة والأمان (ممنوع نهائياً — سجل غير قابل للعبث).',
+        'AUDIT_LOG_TAMPER_ATTEMPT'
+      );
+      return;
+    }
+    next();
+  });
+
+  app.get('/api/audit-logs', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'audit_logs',
+          'VIEW_AUDIT_LOGS',
+          'الاطلاع على سجل المراجعة والأمان متاح لمدير النظام الرئيسي (Super Admin) فقط.'
+        );
+        return;
+      }
+      const result = await queryTablePaginated('audit_logs', {
+        branchId: String(req.query?.branchId || 'ALL'),
+        search: req.query?.search ? String(req.query.search) : undefined,
+        status: req.query?.status ? String(req.query.status) : undefined,
+        page: req.query?.page ? Number(req.query.page) : 1,
+        pageSize: req.query?.pageSize ? Number(req.query.pageSize) : 100,
+      });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
   app.get('/api/db/:table', async (req, res) => {
     try {
       const table = req.params.table as NormalizedTableName;
@@ -1418,8 +1884,33 @@ async function startServer() {
         res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
         return;
       }
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          table,
+          'VIEW',
+          `الوصول للجدول (${table}) يتطلب مصادقة صالحة.`
+        );
+        return;
+      }
+      if (!canActorAccessDbTable(actor.user, table, 'view')) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          table,
+          'VIEW',
+          `المستخدم (${actor.user.username}) لا يملك صلاحية عرض بيانات (${table}).`
+        );
+        return;
+      }
       const result = await queryTablePaginated(table, {
-        branchId: String(req.query?.branchId || DEFAULT_BRANCH_ID),
+        branchId: String(req.query?.branchId || (table === 'audit_logs' ? 'ALL' : DEFAULT_BRANCH_ID)),
         search: req.query?.search ? String(req.query.search) : undefined,
         village: req.query?.village ? String(req.query.village) : undefined,
         localUnit: req.query?.localUnit ? String(req.query.localUnit) : undefined,
@@ -1430,7 +1921,11 @@ async function startServer() {
         page: req.query?.page ? Number(req.query.page) : 1,
         pageSize: req.query?.pageSize ? Number(req.query.pageSize) : 100,
       });
-      res.json({ success: true, ...result });
+      res.json({
+        success: true,
+        ...result,
+        rows: table === 'app_users' ? sanitizeUsersForClient(result.rows) : result.rows,
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
     }
@@ -1443,8 +1938,42 @@ async function startServer() {
         res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
         return;
       }
+      if (table === 'audit_logs') {
+        res.status(403).json({
+          success: false,
+          blocked: true,
+          error: 'يُحظر إدخال سجلات مراجعة مصطنعة مباشرة عبر الواجهة.',
+        });
+        return;
+      }
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          table,
+          'INSERT',
+          `إضافة/تحديث في (${table}) يتطلب مصادقة صالحة.`
+        );
+        return;
+      }
       const body = req.body || {};
       const rowPayload = body.row || body;
+      const requestedOp: PermissionAction = body.operation === 'update' ? 'update' : 'insert';
+      if (!canActorAccessDbTable(actor.user, table, requestedOp)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          table,
+          requestedOp.toUpperCase(),
+          `تم حظر العملية (${requestedOp}) على (${table}) لعدم توفر الصلاحية للمستخدم (${actor.user.username}).`
+        );
+        return;
+      }
       const branchId = String(body.branchId || rowPayload?.branchId || DEFAULT_BRANCH_ID);
       const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
       const expectedVersion =
@@ -1469,6 +1998,21 @@ async function startServer() {
         res.status(400).json({ success: false, error: result.error });
         return;
       }
+
+      await recordAuditLog(
+        actor.user.username,
+        `${table.toUpperCase()}_${result.operation}`,
+        `تنفيذ (${result.operation}) في جدول (${table}) بواسطة (${actor.user.username})`,
+        getClientIp(req),
+        branchId,
+        {
+          username: actor.user.username,
+          department: String(mapTableToAccessScope(table)),
+          operation: result.operation,
+          recordId: String(result.row?.id || rowPayload?.id || ''),
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
 
       const timestamp = new Date().toISOString();
       liveRevision += 1;
@@ -1510,6 +2054,31 @@ async function startServer() {
         res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
         return;
       }
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          table,
+          'UPDATE',
+          `تعديل سجل في (${table}) يتطلب مصادقة صالحة.`
+        );
+        return;
+      }
+      if (!canActorAccessDbTable(actor.user, table, 'update')) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          table,
+          'UPDATE',
+          `تم حظر تعديل (${table}/${req.params.id}) للمستخدم (${actor.user.username}).`
+        );
+        return;
+      }
       const body = req.body || {};
       const rowPayload = { ...(body.row || body), id: req.params.id };
       const branchId = String(body.branchId || rowPayload?.branchId || DEFAULT_BRANCH_ID);
@@ -1536,6 +2105,21 @@ async function startServer() {
         res.status(400).json({ success: false, error: result.error });
         return;
       }
+
+      await recordAuditLog(
+        actor.user.username,
+        `${table.toUpperCase()}_${result.operation}`,
+        `تعديل السجل (${req.params.id}) في (${table}) بواسطة (${actor.user.username})`,
+        getClientIp(req),
+        branchId,
+        {
+          username: actor.user.username,
+          department: String(mapTableToAccessScope(table)),
+          operation: result.operation,
+          recordId: String(req.params.id),
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
 
       const timestamp = new Date().toISOString();
       liveRevision += 1;
@@ -1577,6 +2161,31 @@ async function startServer() {
         res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
         return;
       }
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          table,
+          'DELETE',
+          `حذف سجل من (${table}) يتطلب مصادقة صالحة.`
+        );
+        return;
+      }
+      if (!canActorAccessDbTable(actor.user, table, 'delete')) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          table,
+          'DELETE',
+          `تم حظر حذف (${table}/${req.params.id}) للمستخدم (${actor.user.username}).`
+        );
+        return;
+      }
       const branchId = req.query?.branchId ? String(req.query.branchId) : undefined;
       const clientId = String(req.query?.clientId || req.headers['x-tamween-client-id'] || '');
       const delRes = await deleteRowInPostgres(table, req.params.id, branchId);
@@ -1591,6 +2200,22 @@ async function startServer() {
             ? branchId
             : DEFAULT_BRANCH_ID
           : branchId || delRes.deletedRow?.branchId || DEFAULT_BRANCH_ID;
+
+      await recordAuditLog(
+        actor.user.username,
+        `${table.toUpperCase()}_DELETE`,
+        `حذف السجل (${req.params.id}) من (${table}) بواسطة (${actor.user.username})`,
+        getClientIp(req),
+        effectiveBranchId,
+        {
+          username: actor.user.username,
+          department: String(mapTableToAccessScope(table)),
+          operation: 'DELETE',
+          recordId: String(req.params.id),
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+
       const timestamp = new Date().toISOString();
       liveRevision += 1;
       await refreshCachedSnapshotFromPostgres(effectiveBranchId, {
@@ -1624,12 +2249,44 @@ async function startServer() {
   // Live Supabase SQL/Cloud State synchronization endpoint + immediate WebSocket fanout
   app.get('/api/supabase/live-db', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+          success: false,
+          requiresAuth: true,
+          error: 'يتطلب الوصول لحالة قاعدة البيانات المباشرة مصادقة صالحة.',
+        });
+        return;
+      }
       const requestedBranchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
       const { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(requestedBranchId, {
         clientId: 'postgres-live',
         sqlOperation: 'SELECT',
         affectedTable: 'bakeries',
       });
+      const isSuper = isUserSuperAdmin(actor.user);
+      const filteredSnapshot = {
+        ...snapshot,
+        data: {
+          ...snapshot.data,
+          bakeries:
+            isSuper ||
+            hasDepartmentPermission(actor.user, 'bakeries', 'view') ||
+            hasDepartmentPermission(actor.user, 'debts', 'view') ||
+            hasDepartmentPermission(actor.user, 'reports', 'view')
+              ? snapshot.data.bakeries
+              : [],
+          debts:
+            isSuper ||
+            hasDepartmentPermission(actor.user, 'debts', 'view') ||
+            hasDepartmentPermission(actor.user, 'reports', 'view')
+              ? snapshot.data.debts
+              : [],
+          users: isSuper
+            ? sanitizeUsersForClient(snapshot.data.users)
+            : sanitizeUsersForClient([actor.user]),
+        },
+      };
       const hasPersistedData =
         pgBoot.hasAnyRows || pgBoot.branches.length > 1 || Boolean(pgBoot.systemConfig);
       if (hasPersistedData) {
@@ -1638,7 +2295,7 @@ async function startServer() {
           exists: true,
           cleanStartEpoch: CLEAN_START_RESET_EPOCH,
           integrityVerified: true,
-          snapshot,
+          snapshot: filteredSnapshot,
         });
         return;
       }
@@ -1656,8 +2313,27 @@ async function startServer() {
 
   app.post('/api/supabase/live-db', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          'system',
+          'LIVE_DB_SYNC',
+          'رفض كتابة البيانات المباشرة: يلزم تسجيل دخول صالح.'
+        );
+        return;
+      }
       const body = req.body || {};
-      const incomingStateData = body.data || body;
+      const incomingStateData = { ...(body.data || body) };
+      const isSuper = isUserSuperAdmin(actor.user);
+      if (!isSuper) {
+        delete incomingStateData.users;
+        delete incomingStateData.branches;
+        delete incomingStateData.systemConfig;
+      }
       const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'http');
       const hasSecurityToken =
         req.headers['x-tamween-security-token'] === API_SECURITY_SHIELD_TOKEN;
@@ -1668,7 +2344,7 @@ async function startServer() {
         hasSecurityToken
       );
       const targetBranchId = String(safeData?.activeBranchId || DEFAULT_BRANCH_ID);
-      if (safeData?.branchPartitions && typeof safeData.branchPartitions === 'object') {
+      if (isSuper && safeData?.branchPartitions && typeof safeData.branchPartitions === 'object') {
         for (const [partBranchId, partData] of Object.entries(safeData.branchPartitions)) {
           if (partBranchId === targetBranchId) continue;
           const pData = partData as any;
@@ -1684,7 +2360,9 @@ async function startServer() {
           }
         }
       }
-      await syncFullBranchStateToPostgres(targetBranchId, safeData, { pruneRemoved: hasSecurityToken });
+      await syncFullBranchStateToPostgres(targetBranchId, safeData, {
+        pruneRemoved: isSuper && hasSecurityToken,
+      });
 
       const timestamp = body.timestamp || new Date().toISOString();
       const clientId = body.clientId || '';
@@ -1692,7 +2370,11 @@ async function startServer() {
       const affectedTable = body.affectedTable || 'bakeries';
       const sentAt = Number(body.sentAt) || Date.now();
       liveRevision += 1;
-      const integrityHash = computeDatabaseIntegrityHash(safeData);
+      const safeForSnapshot = {
+        ...safeData,
+        users: sanitizeUsersForClient(safeData?.users),
+      };
+      const integrityHash = computeDatabaseIntegrityHash(safeForSnapshot);
       const snapshot = {
         version: '5.0-supabase-realtime-shield',
         cleanStartEpoch: CLEAN_START_RESET_EPOCH,
@@ -1703,9 +2385,9 @@ async function startServer() {
         affectedTable,
         sentAt,
         integrityHash,
-        bakeriesCount: Array.isArray(safeData?.bakeries) ? safeData.bakeries.length : 0,
-        debtsCount: Array.isArray(safeData?.debts) ? safeData.debts.length : 0,
-        data: safeData,
+        bakeriesCount: Array.isArray(safeForSnapshot?.bakeries) ? safeForSnapshot.bakeries.length : 0,
+        debtsCount: Array.isArray(safeForSnapshot?.debts) ? safeForSnapshot.debts.length : 0,
+        data: safeForSnapshot,
       };
       cachedLiveSnapshot = snapshot;
       broadcastWs({
@@ -1733,6 +2415,19 @@ async function startServer() {
 
   app.delete('/api/supabase/live-db', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'system',
+          'DELETE_LIVE_DB',
+          'محاولة مسح شامل مرفوضة: يتطلب صلاحية Super Admin.'
+        );
+        return;
+      }
       const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'http');
       const clientId = String(req.headers['x-tamween-client-id'] || req.query?.clientId || '');
       const timestamp = new Date().toISOString();
@@ -1945,13 +2640,56 @@ async function startServer() {
   });
 
   // =========================================================================
-  // Cross-Branch Departmental Modules Sync API (Ration, Grain Maintenance, HR)
+  // Cross-Branch Departmental Modules Sync API (Ration, Internal Trade, Grain, HR)
   // =========================================================================
   const cachedBranchModules = new Map<string, { payload: any; version: number; updatedAt: string }>();
 
+  const MODULE_SLICE_TO_DEPT: Record<string, SystemDepartmentKey> = {
+    ration: 'commodities',
+    internal_trade: 'internal_trade',
+    grain: 'grain_maintenance',
+    hr: 'hr',
+  };
+
+  const filterModulePayloadByRbac = (payload: any, actor: AppUser): any => {
+    if (!payload || typeof payload !== 'object') return payload;
+    if (isUserSuperAdmin(actor)) return payload;
+    const filtered: Record<string, any> = {};
+    for (const [k, v] of Object.entries(payload)) {
+      const dept = MODULE_SLICE_TO_DEPT[k];
+      if (!dept || hasDepartmentPermission(actor, dept, 'view')) {
+        filtered[k] = v;
+      }
+    }
+    return filtered;
+  };
+
   app.get('/api/modules/:branchId', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user) {
+      res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+        success: false,
+        exists: false,
+        requiresAuth: true,
+        error: 'يتطلب عرض وحدات الأقسام مصادقة صالحة.',
+      });
+      return;
+    }
     const branchId = String(req.params.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
     const moduleKey = String(req.query?.moduleKey || 'all_modules').trim() || 'all_modules';
+    const requestedDept = MODULE_SLICE_TO_DEPT[moduleKey];
+    if (requestedDept && !hasDepartmentPermission(actor.user, requestedDept, 'view')) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        403,
+        requestedDept,
+        'VIEW',
+        `تم حظر قراءة القسم (${requestedDept}) للمستخدم (${actor.user.username}).`
+      );
+      return;
+    }
     const cacheKey = `${branchId}::${moduleKey}`;
     try {
       const result = await getBranchModuleStateFromPostgres(branchId, moduleKey);
@@ -1965,7 +2703,7 @@ async function startServer() {
           success: true,
           exists: true,
           branchId,
-          payload: result.payload,
+          payload: filterModulePayloadByRbac(result.payload, actor.user),
           version: result.version,
           updatedAt: result.updatedAt,
         });
@@ -1977,7 +2715,7 @@ async function startServer() {
           success: true,
           exists: true,
           branchId,
-          payload: memCached.payload,
+          payload: filterModulePayloadByRbac(memCached.payload, actor.user),
           version: memCached.version,
           updatedAt: memCached.updatedAt,
         });
@@ -1991,7 +2729,7 @@ async function startServer() {
           success: true,
           exists: true,
           branchId,
-          payload: memCached.payload,
+          payload: filterModulePayloadByRbac(memCached.payload, actor.user),
           version: memCached.version,
           updatedAt: memCached.updatedAt,
         });
@@ -2002,13 +2740,73 @@ async function startServer() {
   });
 
   app.post('/api/modules/:branchId', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+        'modules',
+        'UPDATE',
+        'رفض تعديل بيانات الأقسام: يلزم تسجيل دخول صالح.'
+      );
+      return;
+    }
     const branchId = String(req.params.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
     const body = req.body || {};
     const moduleKey = String(body.moduleKey || 'all_modules').trim() || 'all_modules';
-    const payload = body.payload || body;
-    const updatedBy = String(body.updatedBy || 'system');
+    const rawPayload = body.payload || body;
+    const updatedBy = actor.user.username || String(body.updatedBy || 'system');
     const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
     const cacheKey = `${branchId}::${moduleKey}`;
+
+    const isSuper = isUserSuperAdmin(actor.user);
+    const existingResult = await getBranchModuleStateFromPostgres(branchId, moduleKey).catch(() => ({
+      exists: false,
+      payload: null,
+      version: 0,
+      updatedAt: null,
+    }));
+    const prevPayload = existingResult.exists
+      ? existingResult.payload
+      : cachedBranchModules.get(cacheKey)?.payload || {};
+
+    let payload = rawPayload;
+    if (!isSuper) {
+      const mergedAuthorized: Record<string, any> =
+        prevPayload && typeof prevPayload === 'object' ? { ...prevPayload } : {};
+      const targetSlice =
+        typeof body.department === 'string' && body.department ? body.department : null;
+
+      for (const [sliceKey, deptKey] of Object.entries(MODULE_SLICE_TO_DEPT)) {
+        if (!(sliceKey in (rawPayload || {}))) continue;
+        const incomingJson = JSON.stringify((rawPayload as any)[sliceKey]);
+        const prevJson = JSON.stringify((prevPayload as any)?.[sliceKey]);
+        const sliceChanged = incomingJson !== prevJson;
+        if (sliceChanged || targetSlice === deptKey) {
+          const canMutate =
+            hasDepartmentPermission(actor.user, deptKey, 'insert') ||
+            hasDepartmentPermission(actor.user, deptKey, 'update') ||
+            hasDepartmentPermission(actor.user, deptKey, 'delete');
+          if (!canMutate) {
+            await denyUnauthorizedAndAudit(
+              req,
+              res,
+              actor.user,
+              403,
+              deptKey,
+              'UPDATE',
+              `تم حظر تعديل قسم (${deptKey}) للمستخدم (${actor.user.username}).`
+            );
+            return;
+          }
+          mergedAuthorized[sliceKey] = (rawPayload as any)[sliceKey];
+        }
+      }
+      payload = mergedAuthorized;
+    }
+
     try {
       const saved = await upsertBranchModuleStateInPostgres(branchId, payload, updatedBy, moduleKey);
       cachedBranchModules.set(cacheKey, {
@@ -2016,6 +2814,20 @@ async function startServer() {
         version: saved.version,
         updatedAt: saved.updatedAt,
       });
+      await recordAuditLog(
+        actor.user.username,
+        'MODULE_STATE_UPDATE',
+        `حفظ تحديثات بيانات الأقسام (${moduleKey}) للفرع (${branchId}) بواسطة (${actor.user.username})`,
+        getClientIp(req),
+        branchId,
+        {
+          username: actor.user.username,
+          department: String(body.department || 'modules'),
+          operation: 'UPSERT',
+          recordId: `${branchId}:${moduleKey}`,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
       broadcastWs({
         type: 'module_state_update',
         branchId,

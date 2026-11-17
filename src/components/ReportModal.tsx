@@ -16,6 +16,11 @@ import {
   getRoleNameArabic,
 } from '../permissions';
 import {
+  canUserPrintDepartment,
+  canUserExportDepartment,
+  isSuperAdmin,
+} from '../utils/departmentRbac';
+import {
   X,
   FileSpreadsheet,
   Printer,
@@ -53,9 +58,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   users = [],
   initialReportType = 'bakeries',
 }) => {
+  const isAdminReportUser = isSuperAdmin(currentUser);
   // Report Mode: 'bakeries' | 'debts' | 'bakery-debts' | 'users' | 'annual-averages'
   const [reportType, setReportType] = useState<'bakeries' | 'debts' | 'bakery-debts' | 'users' | 'annual-averages'>(
-    initialReportType
+    initialReportType === 'users' && !isAdminReportUser ? 'bakeries' : initialReportType
   );
   const [includeUsersAppendix, setIncludeUsersAppendix] = useState<boolean>(false);
   const [selectedVillage, setSelectedVillage] = useState('ALL');
@@ -68,11 +74,28 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   const [zoomLevel, setZoomLevel] = useState<number>(100); // 100%, 85%, 75%
   const printAreaRef = useRef<HTMLDivElement | null>(null);
 
+  const activeReportDepartment =
+    reportType === 'debts' || reportType === 'bakery-debts'
+      ? 'debts'
+      : reportType === 'bakeries' || reportType === 'annual-averages'
+      ? 'bakeries'
+      : 'reports';
+  const canPrintCurrentReport =
+    canUserPrintDepartment(currentUser, activeReportDepartment) ||
+    canUserPrintDepartment(currentUser, 'reports');
+  const canExportCurrentReport =
+    canUserExportDepartment(currentUser, activeReportDepartment) ||
+    canUserExportDepartment(currentUser, 'reports');
+
   useEffect(() => {
     if (isOpen && initialReportType) {
-      setReportType(initialReportType);
+      if (initialReportType === 'users' && !isAdminReportUser) {
+        setReportType('bakeries');
+      } else {
+        setReportType(initialReportType);
+      }
     }
-  }, [isOpen, initialReportType]);
+  }, [isOpen, initialReportType, isAdminReportUser]);
 
   const fontSizeClass =
     fontSizeMode === 'large'
@@ -322,7 +345,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
       const totalDue = totalViolations + totalAdded + totalDisposal;
       const totalPaid = paidViolations + paidAdded + paidDisposal;
-      const netRemaining = Math.max(0, totalDue - totalPaid > 0 ? totalDue - totalPaid : sumNetRemaining);
+      const netRemaining = Math.max(0, Number(sumNetRemaining.toFixed(2)));
 
       const repaymentRate =
         totalDue > 0
@@ -452,6 +475,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   // Instant HTML2PDF Download in Landscape A4 with zero main-thread lag
   const handleDownloadPdf = async () => {
+    if (!canExportCurrentReport && !canPrintCurrentReport) return;
     if (!printAreaRef.current || isGeneratingPdf) return;
     setIsGeneratingPdf(true);
     const fontClass =
@@ -475,6 +499,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   // Blazing Fast Isolated Print Engine (Guaranteed Populated A4 Landscape)
   const handlePrint = () => {
+    if (!canPrintCurrentReport) return;
     const fontClass =
       fontSizeMode === 'large'
         ? 'report-font-large'
@@ -487,6 +512,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   // Export Report to CSV with UTF-8 BOM
   const handleExportCSV = () => {
+    if (!canExportCurrentReport) return;
     if (reportType === 'annual-averages') {
       const headers = [
         'م',
@@ -998,33 +1024,39 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               </button>
             </div>
 
-            <button
-              onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-sm cursor-pointer border border-emerald-600/60"
-              title="تصدير كشف إكسيل متكامل بترميز عربي UTF-8"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
-              تصدير Excel
-            </button>
+            {canExportCurrentReport && (
+              <button
+                onClick={handleExportCSV}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-sm cursor-pointer border border-emerald-600/60"
+                title="تصدير كشف إكسيل متكامل بترميز عربي UTF-8"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
+                تصدير Excel
+              </button>
+            )}
 
-            <button
-              onClick={handleDownloadPdf}
-              disabled={isGeneratingPdf}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-red-800 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-sm cursor-pointer border border-red-600/60"
-              title="تنزيل ملف PDF فوري بعرض الصفحة A4 باللون الأسود الصريح"
-            >
-              <Download className="w-4 h-4 text-red-200" />
-              {isGeneratingPdf ? 'جاري تجهيز PDF...' : 'تنزيل PDF'}
-            </button>
+            {(canExportCurrentReport || canPrintCurrentReport) && (
+              <button
+                onClick={handleDownloadPdf}
+                disabled={isGeneratingPdf}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-red-800 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-sm cursor-pointer border border-red-600/60"
+                title="تنزيل ملف PDF فوري بعرض الصفحة A4 باللون الأسود الصريح"
+              >
+                <Download className="w-4 h-4 text-red-200" />
+                {isGeneratingPdf ? 'جاري تجهيز PDF...' : 'تنزيل PDF'}
+              </button>
+            )}
 
-            <button
-              onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-lg cursor-pointer border border-amber-300"
-              title="طباعة فورية سريعة ومنسقة لكامل التقرير بعرض ورق A4 Landscape بدون أي تهنيج"
-            >
-              <Printer className="w-4 h-4 text-slate-950 stroke-[2.5]" />
-              <span>طباعة فورية A4 بالعرض</span>
-            </button>
+            {canPrintCurrentReport && (
+              <button
+                onClick={handlePrint}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-lg cursor-pointer border border-amber-300"
+                title="طباعة فورية سريعة ومنسقة لكامل التقرير بعرض ورق A4 Landscape بدون أي تهنيج"
+              >
+                <Printer className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+                <span>طباعة فورية A4 بالعرض</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -1102,22 +1134,24 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               تقرير المتوسطات السنوية والمرجحة (2023-2025) ({annualWeightedReport.rows.length})
             </button>
 
-            <button
-              type="button"
-              onClick={() => setReportType('users')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
-                reportType === 'users'
-                  ? 'bg-indigo-600 text-white shadow-md font-black ring-2 ring-amber-300'
-                  : 'bg-slate-800 text-amber-300 hover:text-white hover:bg-slate-700 border border-amber-500/40'
-              }`}
-            >
-              <Users className="w-4 h-4 text-amber-300" />
-              كشف المستخدمين والصلاحيات ({users.length})
-            </button>
+            {isAdminReportUser && (
+              <button
+                type="button"
+                onClick={() => setReportType('users')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                  reportType === 'users'
+                    ? 'bg-indigo-600 text-white shadow-md font-black ring-2 ring-amber-300'
+                    : 'bg-slate-800 text-amber-300 hover:text-white hover:bg-slate-700 border border-amber-500/40'
+                }`}
+              >
+                <Users className="w-4 h-4 text-amber-300" />
+                كشف المستخدمين والصلاحيات ({users.length})
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            {reportType !== 'users' && (
+            {reportType !== 'users' && isAdminReportUser && (
               <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 border border-amber-500/50 text-[11px] font-black text-amber-300 cursor-pointer">
                 <input
                   type="checkbox"
