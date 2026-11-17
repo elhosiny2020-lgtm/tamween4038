@@ -1,13 +1,13 @@
 {
   "version": "5.0-supabase-realtime-shield",
   "cleanStartEpoch": "2026-11-15-FRESH-DB-V1",
-  "timestamp": "2026-11-16T22:25:58.110Z",
+  "timestamp": "2026-11-17T11:28:35.650Z",
   "revision": 1,
   "clientId": "postgres-boot",
   "sqlOperation": "SELECT",
   "affectedTable": "bakeries",
-  "sentAt": 1794867958110,
-  "integrityHash": "c373bf63711d81a1160bb37f92605d9619aa14c95d8293fe66f77a703695f563",
+  "sentAt": 1794914915650,
+  "integrityHash": "14f141cc76bd37f44f5644444cabf9d21174c0527cd28b39c0832f606b0d7091",
   "bakeriesCount": 5,
   "debtsCount": 7,
   "data": {
@@ -21,7 +21,7 @@
         "description": "الإدارة التموينية لمركز المحلة الكبرى (القاعدة الأساسية)",
         "createdAt": "2026-11-15T10:08:50.625Z",
         "isDefault": true,
-        "version": 35
+        "version": 53
       },
       {
         "id": "branch-mahalla-city",
@@ -40,7 +40,7 @@
         "description": "الإدارة التموينية لمركز طنطا",
         "createdAt": "2026-11-16T17:28:28.319Z",
         "isDefault": false,
-        "version": 14
+        "version": 32
       },
       {
         "id": "branch-tanta-city",
@@ -50,7 +50,7 @@
         "description": "الإدارة التموينية لبندر طنطا (أول وثان طنطا)",
         "createdAt": "2026-11-16T17:28:28.321Z",
         "isDefault": false,
-        "version": 14
+        "version": 32
       },
       {
         "id": "branch-samanoud",
@@ -60,7 +60,7 @@
         "description": "الإدارة التموينية لمركز ومدينة سمنود (قاعدة بيانات مستقلة)",
         "createdAt": "2026-11-15T10:19:13.706Z",
         "isDefault": false,
-        "version": 34
+        "version": 52
       },
       {
         "id": "branch-zefta",
@@ -70,7 +70,7 @@
         "description": "الإدارة التموينية لمركز ومدينة زفتى",
         "createdAt": "2026-11-16T17:28:28.326Z",
         "isDefault": false,
-        "version": 14
+        "version": 32
       },
       {
         "id": "branch-santa",
@@ -80,7 +80,7 @@
         "description": "الإدارة التموينية لمركز ومدينة السنطة",
         "createdAt": "2026-11-16T17:28:28.443Z",
         "isDefault": false,
-        "version": 14
+        "version": 32
       },
       {
         "id": "branch-kafr-elzayat",
@@ -90,7 +90,7 @@
         "description": "الإدارة التموينية لمركز ومدينة كفر الزيات",
         "createdAt": "2026-11-16T17:28:28.513Z",
         "isDefault": false,
-        "version": 14
+        "version": 32
       },
       {
         "id": "branch-basyoun",
@@ -100,7 +100,7 @@
         "description": "الإدارة التموينية لمركز ومدينة بسيون",
         "createdAt": "2026-11-16T17:28:28.595Z",
         "isDefault": false,
-        "version": 14
+        "version": 32
       },
       {
         "id": "branch-qutour",
@@ -110,7 +110,7 @@
         "description": "الإدارة التموينية لمركز ومدينة قطور",
         "createdAt": "2026-11-16T17:28:28.636Z",
         "isDefault": false,
-        "version": 14
+        "version": 32
       }
     ],
     "villages": [
@@ -234,7 +234,7 @@
         "taxCardDate": "2027-01-10",
         "notes": "مخبز منتظم في الإنتاج وجودة رغيف ممتازة",
         "activityLog": [],
-        "version": 13
+        "version": 31
       },
       {
         "id": "bk-102",
@@ -277,7 +277,7 @@
         "taxCardDate": "2027-12-01",
         "notes": "تم فحص المخبز وسحب عينات دورية",
         "activityLog": [],
-        "version": 13
+        "version": 31
       },
       {
         "id": "bk-103",
@@ -320,7 +320,7 @@
         "taxCardDate": "2026-11-20",
         "notes": "خط إنتاج حديث مطابق للاشتراطات البيئية",
         "activityLog": [],
-        "version": 13
+        "version": 31
       },
       {
         "id": "bk-104",
@@ -363,7 +363,7 @@
         "taxCardDate": "2028-08-14",
         "notes": "تغطية مستمرة لحصة القرية والوحدات المجاورة",
         "activityLog": [],
-        "version": 13
+        "version": 31
       },
       {
         "id": "bk-105",
@@ -406,7 +406,7 @@
         "taxCardDate": "2027-09-22",
         "notes": "رخصة المخبز تحتاج إلى تجديد عاجل",
         "activityLog": [],
-        "version": 13
+        "version": 31
       }
     ],
     "debts": [
@@ -454,7 +454,7 @@
         "schedulePaidInstallments": 0,
         "scheduleStatus": "قيد التحصيل",
         "notes": "غرامة نقص وزن (9 جم · أقل من 10 جرامات) — لائحة الوقائع المصرية بتاريخ 5 نوفمبر 2024 (قابلة للتحديث من الإعدادات)",
-        "version": 11
+        "version": 29
       },
       {
         "id": "debt-lw-1794850068605",
@@ -500,7 +500,7 @@
         "schedulePaidInstallments": 0,
         "scheduleStatus": "قيد التحصيل",
         "notes": "غرامة نقص وزن (9 جم · أقل من 10 جرامات) — لائحة الوقائع المصرية بتاريخ 5 نوفمبر 2024 (قابلة للتحديث من الإعدادات)",
-        "version": 11
+        "version": 29
       },
       {
         "id": "debt-lw-1794850039318",
@@ -546,7 +546,7 @@
         "schedulePaidInstallments": 0,
         "scheduleStatus": "قيد التحصيل",
         "notes": "غرامة نقص وزن (9 جم · أقل من 10 جرامات) — لائحة الوقائع المصرية بتاريخ 5 نوفمبر 2024 (قابلة للتحديث من الإعدادات)",
-        "version": 11
+        "version": 29
       },
       {
         "id": "debt-lw-1794849972791",
@@ -592,7 +592,7 @@
         "schedulePaidInstallments": 0,
         "scheduleStatus": "قيد التحصيل",
         "notes": "غرامة نقص وزن (9 جم · أقل من 10 جرامات) — لائحة الوقائع المصرية بتاريخ 5 نوفمبر 2024 (قابلة للتحديث من الإعدادات)",
-        "version": 11
+        "version": 29
       },
       {
         "id": "dt-201",
@@ -638,7 +638,7 @@
         "schedulePaidInstallments": 0,
         "scheduleStatus": "قيد التحصيل",
         "notes": "تم إخطار صاحب المخبز بإنذار رسمي بسرعة سداد المتبقي",
-        "version": 13
+        "version": 31
       },
       {
         "id": "dt-202",
@@ -684,7 +684,7 @@
         "schedulePaidInstallments": 0,
         "scheduleStatus": "قيد التحصيل",
         "notes": "تم سداد كافة المبالغ المستحقة بالكامل والمخبز خالص المديونية",
-        "version": 13
+        "version": 31
       },
       {
         "id": "dt-203",
@@ -730,7 +730,7 @@
         "schedulePaidInstallments": 0,
         "scheduleStatus": "قيد التحصيل",
         "notes": "مديونية كبرى تتجاوز 20,000 ج.م - مطلوب جدولة دفعات أسبوعية رسمية",
-        "version": 13
+        "version": 31
       }
     ],
     "users": [
@@ -750,7 +750,7 @@
         "customPermissions": [],
         "isActive": true,
         "createdAt": "2026-11-16T17:36:25.836Z",
-        "version": 8
+        "version": 26
       }
     ],
     "dailyTasks": [
@@ -770,7 +770,7 @@
         "taskType": "general",
         "showOnWelcomeDashboard": true,
         "welcomeReminderDate": "2026-11-12",
-        "version": 14
+        "version": 32
       },
       {
         "id": "task-2",
@@ -788,7 +788,7 @@
         "taskType": "general",
         "showOnWelcomeDashboard": true,
         "welcomeReminderDate": "2026-11-14",
-        "version": 14
+        "version": 32
       },
       {
         "id": "task-3",
@@ -805,7 +805,7 @@
         "createdAt": "2026-11-15T17:24:16.415Z",
         "taskType": "general",
         "showOnWelcomeDashboard": false,
-        "version": 13
+        "version": 31
       },
       {
         "id": "task-4",
@@ -822,7 +822,7 @@
         "createdAt": "2026-11-15T17:24:16.415Z",
         "taskType": "general",
         "showOnWelcomeDashboard": false,
-        "version": 13
+        "version": 31
       }
     ],
     "inboxMessages": [
@@ -843,7 +843,7 @@
           "u-2"
         ],
         "timestamp": "2026-11-09 10:30 ص",
-        "version": 31
+        "version": 49
       },
       {
         "id": "msg-1",
@@ -859,7 +859,7 @@
           "u-1"
         ],
         "timestamp": "2026-11-09 09:00 ص",
-        "version": 31
+        "version": 49
       },
       {
         "id": "msg-late14-1794864217411",
@@ -873,7 +873,7 @@
         "content": "إشعار عاجل من شاشة المديونيات بشأن تجاوز مهلة الـ 14 يوماً دون سداد أي قسط: • إبراهيم علي عبدالفتاح رضوان (ماكينة 76319842 - محلة حسن): متبقي 10,000 ج.م — متأخر منذ 19 يوماً بدون سداد قسط",
         "readBy": [],
         "timestamp": "١٦‏/١١‏/٢٠٢٦، ٩:٢٣:٣٧ م",
-        "version": 6
+        "version": 24
       },
       {
         "id": "msg-late14-1794864474801",
@@ -887,7 +887,7 @@
         "content": "إشعار عاجل من شاشة المديونيات بشأن تجاوز مهلة الـ 14 يوماً دون سداد أي قسط: • إبراهيم علي عبدالفتاح رضوان (ماكينة 76319842 - محلة حسن): متبقي 10,000 ج.م — متأخر منذ 19 يوماً بدون سداد قسط",
         "readBy": [],
         "timestamp": "١٦‏/١١‏/٢٠٢٦، ٩:٢٧:٥٤ م",
-        "version": 5
+        "version": 23
       }
     ],
     "systemConfig": {

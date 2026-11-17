@@ -148,6 +148,7 @@ import { InteractiveDashboardPage } from './components/InteractiveDashboardPage'
 import { WelcomeDashboardPage } from './components/WelcomeDashboardPage';
 import { ExecutiveAnalyticsDashboard } from './components/ExecutiveAnalyticsDashboard';
 import { RationCommoditiesSuite, RationSubView } from './components/modules/RationCommoditiesSuite';
+import { InternalTradeSuite, InternalTradeSubView } from './components/modules/InternalTradeSuite';
 import { GrainMaintenanceSuite, GrainSubView } from './components/modules/GrainMaintenanceSuite';
 import { HrPersonnelSuite, HrSubView } from './components/modules/HrPersonnelSuite';
 import type { BranchModulesBundle } from './types/modules';
@@ -509,6 +510,7 @@ export default function App() {
   >('ALL');
   const [modulesBundle, setModulesBundle] = useState<BranchModulesBundle | null>(null);
   const [rationSubView, setRationSubView] = useState<RationSubView>('dashboard');
+  const [internalTradeSubView, setInternalTradeSubView] = useState<InternalTradeSubView>('dashboard');
   const [grainSubView, setGrainSubView] = useState<GrainSubView>('dashboard');
   const [hrSubView, setHrSubView] = useState<HrSubView>('dashboard');
   const [debtsPageSize, setDebtsPageSize] = useState<number>(50);
@@ -2605,8 +2607,6 @@ export default function App() {
               ? 'grain-dashboard'
               : defaultTab === 'commodities'
               ? 'commodities-dashboard'
-              : defaultTab === 'internal-trade'
-              ? 'internal-trade-dashboard'
               : defaultTab === 'debts'
               ? 'debts-records'
               : defaultTab === 'bakeries'
@@ -3360,15 +3360,33 @@ export default function App() {
           setActiveTab('commodities');
         }
         break;
-      case 'commodities-cards':
-        if (canUserAccessTab(appState.currentUser, 'commodities')) {
-          setRationSubView('cards');
-          setActiveTab('commodities');
-        }
-        break;
       case 'commodities-catalog':
         if (canUserAccessTab(appState.currentUser, 'commodities')) {
           setRationSubView('commodities');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-merchants':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('merchants');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-quotas':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('requisitions');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-warehouses':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('warehouses');
+          setActiveTab('commodities');
+        }
+        break;
+      case 'commodities-cards':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('cards');
           setActiveTab('commodities');
         }
         break;
@@ -3384,6 +3402,12 @@ export default function App() {
           setActiveTab('commodities');
         }
         break;
+      case 'commodities-reports':
+        if (canUserAccessTab(appState.currentUser, 'commodities')) {
+          setRationSubView('reports');
+          setActiveTab('commodities');
+        }
+        break;
       case 'commodities-settings':
         if (canUserAccessTab(appState.currentUser, 'commodities')) {
           setRationSubView('settings');
@@ -3392,37 +3416,145 @@ export default function App() {
         break;
       case 'internal-trade-dashboard':
         if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
-          setRationSubView('dashboard');
+          setInternalTradeSubView('dashboard');
           setActiveTab('internal-trade');
         }
         break;
-      case 'internal-trade-merchants':
+      case 'internal-trade-establishments':
         if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
-          setRationSubView('merchants');
+          setInternalTradeSubView('establishments');
           setActiveTab('internal-trade');
         }
         break;
-      case 'internal-trade-warehouses':
+      case 'internal-trade-activities':
         if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
-          setRationSubView('warehouses');
+          setInternalTradeSubView('activities-licenses');
           setActiveTab('internal-trade');
         }
         break;
-      case 'internal-trade-requisitions':
+      case 'internal-trade-map':
         if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
-          setRationSubView('requisitions');
+          setInternalTradeSubView('map');
           setActiveTab('internal-trade');
         }
         break;
-      case 'internal-trade-financial':
+      case 'internal-trade-campaigns':
         if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
-          setRationSubView('financial');
+          setInternalTradeSubView('campaigns');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-violations':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('violations');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-seizures':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('seizures');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-complaints':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('complaints');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-prices':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('prices');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-lpg':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('lpg-circulation');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-petroleum':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('petroleum-circulation');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-fuel-stations':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('fuel-stations');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-lpg-depots':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('lpg-depots');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-comparison':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('village-comparison');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-alerts':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('alerts');
+          setActiveTab('internal-trade');
+        }
+        break;
+      case 'internal-trade-reports':
+        if (canUserAccessTab(appState.currentUser, 'internal-trade')) {
+          setInternalTradeSubView('reports');
           setActiveTab('internal-trade');
         }
         break;
       case 'grain-dashboard':
         if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
           setGrainSubView('dashboard');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-shunas':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('shunas');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-wheat-receipts':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('wheat_receipts_book');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-refrigerators':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('refrigerators');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-mills':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('mills');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-flour-quotas':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('flour_quotas');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-financials':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('financials');
+          setActiveTab('grain-maintenance');
+        }
+        break;
+      case 'grain-reports':
+        if (canUserAccessTab(appState.currentUser, 'grain-maintenance')) {
+          setGrainSubView('reports');
           setActiveTab('grain-maintenance');
         }
         break;
@@ -4287,23 +4419,6 @@ export default function App() {
                   <span>السلع التموينية</span>
                 </button>
               )}
-              {canUserAccessTab(appState.currentUser, 'internal-trade') && (
-                <button
-                  type="button"
-                  data-testid="nav-internal-trade-tab"
-                  onClick={() =>
-                    handleSelectSidebarNav('internal-trade-merchants', '7. قسم التجارة التموينية والداخلية', 'التجار والجمعيتي والمجمعات')
-                  }
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === 'internal-trade'
-                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
-                      : 'text-[#0A1628] hover:bg-white'
-                  }`}
-                >
-                  <Store className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>التجارة الداخلية</span>
-                </button>
-              )}
               {canUserAccessTab(appState.currentUser, 'grain-maintenance') && (
                 <button
                   type="button"
@@ -5024,7 +5139,7 @@ export default function App() {
               }}
               onNavigateTab={(t) => setActiveTab(t)}
             />
-          ) : activeTab === 'commodities' || activeTab === 'internal-trade' ? (
+          ) : activeTab === 'commodities' ? (
             modulesBundle ? (
               <RationCommoditiesSuite
                 key={`${activeTab}-${modulesBundle.branchId}-${rationSubView}`}
@@ -5033,8 +5148,13 @@ export default function App() {
                 branchName={appState.systemConfig.administrationTitle}
                 villages={appState.villages}
                 currentUser={appState.currentUser}
-                initialMode={activeTab === 'internal-trade' ? 'internal_trade' : 'commodities'}
+                initialMode="commodities"
                 initialSubView={rationSubView}
+                bakeriesCount={appState.bakeries.length}
+                totalBakeryDebts={appState.debts.reduce(
+                  (sum, d) => sum + (Number(d.netRemainingDebt) || 0),
+                  0
+                )}
                 onChangeState={(nextRation, actionSummary) =>
                   handleUpdateModulesBundle(
                     (prev) => ({ ...prev, ration: nextRation }),
@@ -5044,7 +5164,30 @@ export default function App() {
               />
             ) : (
               <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
-                جاري تحميل وحدة السلع التموينية والتجارة الداخلية...
+                جاري تحميل وحدة السلع التموينية...
+              </div>
+            )
+          ) : activeTab === 'internal-trade' ? (
+            modulesBundle ? (
+              <InternalTradeSuite
+                key={`internal-trade-${modulesBundle.branchId}-${internalTradeSubView}`}
+                state={modulesBundle.internalTrade}
+                branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
+                branchName={appState.systemConfig.administrationTitle}
+                villages={appState.villages}
+                bakeries={appState.bakeries}
+                currentUser={appState.currentUser}
+                initialSubView={internalTradeSubView}
+                onChangeState={(nextInternalTrade, actionSummary) =>
+                  handleUpdateModulesBundle(
+                    (prev) => ({ ...prev, internalTrade: nextInternalTrade }),
+                    actionSummary || 'تم حفظ تعديلات قسم التجارة الداخلية ومزامنتها مع Supabase'
+                  )
+                }
+              />
+            ) : (
+              <div className="bg-white rounded-2xl p-10 text-center text-sm font-bold text-slate-600">
+                جاري تحميل منظومة التجارة الداخلية والرقابة الموحدة...
               </div>
             )
           ) : activeTab === 'grain-maintenance' ? (
@@ -5055,6 +5198,8 @@ export default function App() {
                 branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                 branchName={appState.systemConfig.administrationTitle}
                 currentUser={appState.currentUser}
+                bakeries={appState.bakeries}
+                villages={appState.villages}
                 initialSubView={grainSubView}
                 onChangeState={(nextGrain, actionSummary) =>
                   handleUpdateModulesBundle(

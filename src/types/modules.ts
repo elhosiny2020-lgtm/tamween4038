@@ -36,8 +36,8 @@ export const DEPARTMENT_SCOPES: DepartmentScopeMeta[] = [
   },
   {
     id: 'internal_trade',
-    label: 'قسم التجارة التموينية والداخلية',
-    description: 'التجار والمنافذ والمخازن والمبيعات والعمولات والتسويات المالية',
+    label: 'قسم التجارة الداخلية والرقابة الموحدة',
+    description: 'المنشآت والحملات والمحاضر والمضبوطات ومحطات الوقود والبوتاجاز ومتوسط نصيب الفرد',
   },
   {
     id: 'grain_maintenance',
@@ -89,13 +89,39 @@ export interface LoafWeightFineRecord {
 // =========================================================================
 // 2. قسم السلع التموينية والتجارة الداخلية
 // =========================================================================
-export type MerchantActivityStatus = 'نشط' | 'موقوف' | 'ملغي';
+export type MerchantActivityStatus = 'نشط' | 'متوقف' | 'إجازة' | 'موقوف' | 'ملغي';
+export type MerchantReviewStatus = 'تمت المراجعة' | 'تحتاج مراجعة' | 'بيانات غير مكتملة';
 export type OutletType = 'تاجر تمويني' | 'منفذ جمعيتي' | 'مجمع استهلاكي';
-export type CommodityUnit = 'كيلو' | 'جرام' | 'لتر' | 'عبوة' | 'قطعة';
+export type CommodityUnit = 'كيلو' | 'جرام' | 'لتر' | 'عبوة' | 'زجاجة' | 'كيس' | 'قطعة';
+export type CommodityAvailabilityStatus = 'متاح' | 'غير متاح' | 'موقوف';
+
+export interface MerchantAuditEntry {
+  id: string;
+  timestamp: string;
+  username: string;
+  action: string;
+  details: string;
+}
+
+export interface MerchantMonthlyArchiveRecord {
+  id: string;
+  monthLabel: string; // مثال: "مايو 2026"
+  importedAt: string;
+  importedBy: string;
+  totalMerchants: number;
+  activeCount: number;
+  stoppedCount: number;
+  onLeaveCount: number;
+  totalInsuranceAmount: number;
+  summaryNotes: string;
+  merchantsSnapshot: RationMerchant[];
+}
 
 export interface RationMerchant {
   id: string;
   serialNo: number;
+  internalCode?: string; // كود داخلي تلقائي للتاجر
+  traderCode?: string; // كود التاجر بالملف الأصلي
   branchId: string;
   merchantName: string;
   ownerName: string;
@@ -115,14 +141,20 @@ export interface RationMerchant {
   licenseIssueDate: string;
   licenseExpiryDate: string;
   warehouseName?: string;
+  registrationDate?: string; // تاريخ تسجيل التاجر
   activityStartDate?: string;
-  cashInsuranceAmount: number; // قيمة التأمين النقدي
+  activityEndDate?: string;
+  monthlyEntitlementQuota?: number; // الحصة الشهرية المستحقة
+  cashInsuranceAmount: number; // مبلغ التأمين بالجنيه
   openingBalance: number;
   linkedCardsCount: number;
   linkedBeneficiariesCount: number;
   activityStatus: MerchantActivityStatus;
+  reviewStatus?: MerchantReviewStatus; // حالة مراجعة البيانات
   wholesaleBranchName: string;
   lastRequisitionDate?: string;
+  attachments?: string[]; // المستندات والمرفقات
+  auditHistory?: MerchantAuditEntry[]; // سجل تاريخي للتعديلات
   notes?: string;
   updatedAt?: string;
 }
@@ -164,6 +196,15 @@ export interface RationCommodity {
   priceStartDate: string;
   priceEndDate?: string;
   isActive: boolean;
+  availabilityStatus?: CommodityAvailabilityStatus;
+  openingBalance?: number;
+  inboundQty?: number;
+  outboundQty?: number;
+  inboundReturns?: number;
+  outboundReturns?: number;
+  minStockLevel?: number;
+  maxStockLevel?: number;
+  batchNumber?: string;
   supplierCompany: string;
   reorderLevel: number;
   expiryDate?: string;
@@ -226,6 +267,7 @@ export interface RationWarehouseBalance {
   approvedAdjustments: number;
   physicalCount?: number; // للجرد الفعلي
   reorderLevel: number;
+  maxStockLevel?: number;
   lastMovementDate?: string;
   expiryDate?: string;
   stagnantDays?: number;
@@ -243,11 +285,16 @@ export interface RationInventoryMovement {
     | 'DISBURSEMENT_OUT'
     | 'RETURN_IN'
     | 'RETURN_OUT'
+    | 'TRANSFER_OUT'
+    | 'TRANSFER_IN'
     | 'ADJUSTMENT_SURPLUS'
     | 'ADJUSTMENT_SHORTAGE'
     | 'REVERSAL';
   merchantId: string;
   warehouseName: string;
+  targetWarehouseName?: string;
+  supplierName?: string;
+  invoiceNumber?: string;
   commodityId: string;
   requestedQty?: number;
   quantity: number;
@@ -257,6 +304,7 @@ export interface RationInventoryMovement {
   balanceBefore: number;
   balanceAfter: number;
   approvedBy: string;
+  isApproved?: boolean;
   isReversed?: boolean;
   reversedByDoc?: string;
   notes?: string;
@@ -266,9 +314,9 @@ export interface RationInventoryMovement {
 export interface RationRequisitionLine {
   commodityId: string;
   commodityName: string;
-  requestedQty: number;
-  approvedQty: number;
-  deliveredQty: number;
+  requestedQty: number; // الكمية المقررة
+  approvedQty: number; // الكمية المستلمة
+  deliveredQty: number; // الكمية الموزعة
   supplyPrice: number;
 }
 
@@ -489,6 +537,7 @@ export interface RationModuleState {
   gasCylinders: GasCylinderRecord[];
   petroleumProducts: PetroleumProductRecord[];
   rationOfficeAccounts: RationOfficeAccountingRecord[];
+  merchantMonthlyArchives?: MerchantMonthlyArchiveRecord[];
   settings: RationDecisionSettings;
   settingsHistory: RationDecisionSettings[];
   auditLogs: ModuleAuditLog[];
@@ -628,7 +677,740 @@ export interface GrainMaintenanceSettings {
   defaultTaxPct: number;
   maxAcceptableGrainLossPct: number;
   defaultReferenceMoisturePct: number;
+  defaultWheatTonPrice: number;
+  defaultFlourTonPrice: number;
+  defaultStandardExtractionPct: number;
+  maxAllowedExtractionVariancePct: number;
+  licenseExpiryWarningDays: number;
+  requireMakerCheckerApproval: boolean;
+  allowQuotaOverIssueWithAdminReason: boolean;
   decisionNote: string;
+}
+
+// -------------------------------------------------------------------------
+// 3.A قاعدة بيانات الشون وتقييم الأصول ودفتر استلام القمح اليومي
+// -------------------------------------------------------------------------
+export type ReceiptApprovalStatus =
+  | 'مسودة'
+  | 'في انتظار المراجعة'
+  | 'معتمد'
+  | 'مرفوض'
+  | 'ملغي';
+
+export interface ShunaRecord {
+  id: string;
+  serialNo: number;
+  shunaCode: string;
+  shunaName: string;
+  village: string;
+  localUnit: string;
+  affiliatedEntity: string;
+  managerName: string;
+  phone: string;
+  totalAreaSqm: number;
+  usedAreaSqm: number;
+  storageCapacityTons: number;
+  openingBalanceTons: number;
+  netTransfersInTons: number;
+  netTransfersOutTons: number;
+  approvedAdjustmentTons: number;
+  tonPrice: number;
+  assetsAndFixturesValue: number;
+  internalEquipmentValue: number;
+  scaleValue: number;
+  handlingEquipmentValue: number;
+  scaleStatus: 'يعمل ومعاير' | 'يحتاج معايرة' | 'تحت الصيانة' | 'متوقف';
+  storageEquipmentStatus: 'ممتازة' | 'جيدة' | 'تحت الصيانة' | 'تحتاج إحلال';
+  operationalStatus: 'تعمل' | 'متوقفة' | 'تحت الصيانة';
+  lastMaintenanceDate: string;
+  nextMaintenanceDate: string;
+  valuationDate: string;
+  evaluatorName: string;
+  notes: string;
+  updatedAt?: string;
+}
+
+export interface WheatDeductionItem {
+  id: string;
+  reasonType: 'رطوبة زائدة' | 'شوائب وغربلة' | 'فرز غير مطابق' | 'أخرى';
+  excludedWeightTons: number;
+  decisionOrReportRef: string;
+  approvedBy: string;
+  notes: string;
+}
+
+export interface DailyWheatReceiptRecord {
+  id: string;
+  serialNo: number;
+  receiptOrderNumber: string; // رقم إذن الاستلام الفريد
+  receiptDate: string;
+  receiptTime: string;
+  shunaCode: string;
+  shunaName: string;
+  supplierName: string;
+  supplierNationalIdOrCode: string;
+  wheatType: 'محلي' | 'مستورد';
+  agriculturalSeason: string;
+  vehicleNumber: string;
+  driverName: string;
+  scaleNumber: string;
+  grossWeightKg: number;
+  tareWeightKg: number;
+  netWeightKg: number; // تلقائي = الوزن القائم - الوزن الفارغ
+  netWeightTons: number; // تلقائي = صافي الوزن بالكيلوجرام ÷ 1000
+  moisturePct: number;
+  impuritiesPct: number;
+  cleanlinessGrade: string; // مثال: 23.5 قيراط / 23 قيراط / 22.5 قيراط
+  qualityGrade: string; // درجة أولى / ثانية / ثالثة
+  excludedWeightTons: number; // مجموع الخصومات المعتمدة فقط
+  deductionsLog: WheatDeductionItem[];
+  acceptedNetWeightTons: number; // تلقائي = صافي الوزن بالطن - الوزن المستبعد المعتمد
+  tonPrice: number;
+  totalSupplyValue: number; // تلقائي = الوزن المقبول بالطن × سعر الطن
+  inspectionReportNumber: string;
+  shunaKeeperName: string;
+  committeeMemberName: string;
+  approvalStatus: ReceiptApprovalStatus;
+  createdBy: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectionOrCancellationReason?: string;
+  notes: string;
+  updatedAt?: string;
+}
+
+export interface ShunaWheatIssueRecord {
+  id: string;
+  serialNo: number;
+  issueOrderNumber: string;
+  issueDate: string;
+  issueTime: string;
+  shunaCode: string;
+  shunaName: string;
+  beneficiaryMillCode: string;
+  beneficiaryMillName: string;
+  wheatType: 'محلي' | 'مستورد';
+  balanceBeforeIssueTons: number;
+  issuedWeightTons: number;
+  balanceAfterIssueTons: number;
+  tonPrice: number;
+  totalIssuedValue: number;
+  vehicleNumber: string;
+  driverName: string;
+  receiverName: string;
+  approvalStatus: ReceiptApprovalStatus;
+  adminOverrideReason?: string;
+  createdBy: string;
+  approvedBy?: string;
+  notes: string;
+}
+
+export interface WheatLedgerMovementRecord {
+  id: string;
+  movementCode: string;
+  movementDate: string;
+  movementTime: string;
+  shunaCode: string;
+  shunaName: string;
+  movementType:
+    | 'رصيد افتتاحي'
+    | 'وارد قمح معتمد'
+    | 'صرف قمح لمطحن'
+    | 'تحويل وارد'
+    | 'تحويل صادر'
+    | 'تسوية جرد معتمدة'
+    | 'عكس قيد';
+  referenceDocNumber: string;
+  balanceBeforeTons: number;
+  quantityTons: number; // موجب للإضافة، سالب للخصم
+  balanceAfterTons: number;
+  tonPrice: number;
+  totalValue: number;
+  approvalStatus: ReceiptApprovalStatus;
+  performedBy: string;
+  notes: string;
+}
+
+export interface ShunaReconciliationRecord {
+  id: string;
+  reconciliationNumber: string;
+  reconciliationDate: string;
+  shunaCode: string;
+  shunaName: string;
+  bookBalanceTons: number;
+  physicalCountTons: number;
+  varianceTons: number; // الرصيد الفعلي - الرصيد الدفتري
+  reconciliationStatus: 'مطابق' | 'عجز' | 'زيادة';
+  committeeHead: string;
+  committeeMembers: string;
+  reasonOrExplanation: string;
+  actionTaken: string;
+  appliedAsApprovedAdjustment: boolean;
+  notes: string;
+}
+
+// -------------------------------------------------------------------------
+// 3.B قاعدة بيانات الثلاجات ومخازن التبريد (8 جداول فرعية مترابطة)
+// -------------------------------------------------------------------------
+export interface RefrigeratorRecord {
+  id: string;
+  serialNo: number;
+  refrigeratorCode: string;
+  refrigeratorName: string;
+  ownerName: string;
+  operatingCompany: string;
+  ownershipType: 'حكومي' | 'خاص' | 'مؤجر';
+  governorate: string;
+  center: string;
+  village: string;
+  detailedAddress: string;
+  phone: string;
+  managerName: string;
+  operationsOfficer: string;
+  coolingRoomsCount: number;
+  freezingRoomsCount: number;
+  totalAreaSqm: number;
+  designCapacityTons: number;
+  operationalCapacityTons: number;
+  coolingSystemType: string;
+  operationalStatus: 'تعمل' | 'متوقفة' | 'تحت الصيانة';
+  startDate: string;
+  lastInspectionDate: string;
+  nextMaintenanceDate: string;
+  notes: string;
+}
+
+export interface RefrigeratorRoomBalance {
+  id: string;
+  refrigeratorCode: string;
+  refrigeratorName: string;
+  roomNumber: string;
+  roomType: 'غرفة تبريد' | 'غرفة تجميد';
+  storedCommodityType: string;
+  roomCapacityTons: number;
+  openingBalanceTons: number;
+  approvedInboundTons: number;
+  approvedOutboundTons: number;
+  requiredTempCelsius: number;
+  roomStatus: 'تعمل' | 'متوقفة' | 'تحت الصيانة';
+  notes: string;
+}
+
+export interface RefrigeratorReceiptRecord {
+  id: string;
+  serialNo: number;
+  receiptOrderNumber: string;
+  receiptDate: string;
+  receiptTime: string;
+  refrigeratorCode: string;
+  refrigeratorName: string;
+  roomNumber: string;
+  depositorOrSupplierName: string;
+  commodityType: string;
+  subCategory: string;
+  packagesCount: number;
+  grossWeightTons: number;
+  tareWeightTons: number;
+  netWeightTons: number;
+  unitOrTonPrice: number;
+  totalValue: number;
+  receivingTempCelsius: number;
+  commodityCondition: 'ممتازة ومطابقة' | 'جيدة' | 'تحتاج فحص' | 'مرفوضة';
+  productionDate: string;
+  expiryDate: string;
+  receiverName: string;
+  approvalStatus: ReceiptApprovalStatus;
+  adminCapacityOverrideReason?: string;
+  notes: string;
+}
+
+export interface RefrigeratorIssueRecord {
+  id: string;
+  serialNo: number;
+  issueOrderNumber: string;
+  issueDate: string;
+  refrigeratorCode: string;
+  refrigeratorName: string;
+  roomNumber: string;
+  beneficiaryEntityName: string;
+  commodityType: string;
+  packagesCount: number;
+  netIssuedWeightTons: number;
+  balanceBeforeIssueTons: number;
+  balanceAfterIssueTons: number;
+  unitOrTonPrice: number;
+  totalIssuedValue: number;
+  issuerName: string;
+  approvalStatus: ReceiptApprovalStatus;
+  notes: string;
+}
+
+export interface RefrigeratorAssetValuation {
+  id: string;
+  refrigeratorCode: string;
+  refrigeratorName: string;
+  landValue: number;
+  buildingsValue: number;
+  coolingRoomsValue: number;
+  coolingUnitsCompressorsValue: number;
+  generatorsValue: number;
+  equipmentAndForkliftsValue: number;
+  scaleValue: number;
+  furnitureAndFixturesValue: number;
+  currentStoredInventoryValue: number;
+  valuationDate: string;
+  evaluatorCommittee: string;
+  notes: string;
+}
+
+export interface RefrigeratorTempLogRecord {
+  id: string;
+  refrigeratorCode: string;
+  refrigeratorName: string;
+  roomNumber: string;
+  commodityType: string;
+  requiredTempCelsius: number;
+  actualTempCelsius: number;
+  measurementDateTime: string;
+  coolingUnitsStatus: 'تعمل بكفاءة' | 'تذبذب تبريد' | 'متوقفة';
+  powerStatus: 'تيار رئيسي منتظم' | 'انقطاع تيار رئيسي' | 'تذبذب جهد';
+  backupGeneratorStatus: 'جاهز احتياطي' | 'يعمل حالياً' | 'عطل بالمولد';
+  alarmStatus: 'طبيعي' | 'إنذار ارتفاع حرارة' | 'إنذار انقطاع كهرباء' | 'إنذار حرج';
+  technicianName: string;
+  notes: string;
+}
+
+export interface RefrigeratorMaintenanceOrder {
+  id: string;
+  orderNumber: string;
+  refrigeratorCode: string;
+  refrigeratorName: string;
+  roomOrEquipmentNumber: string;
+  maintenanceType: 'وقائية' | 'طارئة' | 'دورية';
+  faultDescription: string;
+  reportDate: string;
+  repairStartDate: string;
+  repairEndDate: string;
+  downtimeHours: number;
+  sparePartsUsed: string;
+  partsCost: number;
+  laborCost: number;
+  extraExpenses: number;
+  totalMaintenanceCost: number;
+  technicianOrCompany: string;
+  status: 'جديد' | 'قيد الإصلاح' | 'مكتمل';
+  notes: string;
+}
+
+export interface RefrigeratorFinancialEntry {
+  id: string;
+  documentNumber: string;
+  date: string;
+  refrigeratorCode: string;
+  refrigeratorName: string;
+  pricingMode: 'يومي' | 'شهري' | 'تعاقدي';
+  ratePerTon: number;
+  storedTonsBilled: number;
+  durationUnits: number;
+  electricityExpense: number;
+  maintenanceExpense: number;
+  laborExpense: number;
+  operatingExpense: number;
+  rentOrFeesExpense: number;
+  storageOrOperatingRevenue: number;
+  totalReceivables: number;
+  paidAmount: number;
+  notes: string;
+}
+
+// -------------------------------------------------------------------------
+// 3.C قاعدة بيانات المطاحن ومتابعة التشغيل والإنتاج والاستخراج (9 جداول)
+// -------------------------------------------------------------------------
+export interface MillRecord {
+  id: string;
+  serialNo: number;
+  millCode: string;
+  millName: string;
+  ownerCompany: string;
+  operatingEntity: string;
+  millSectorType: 'قطاع عام' | 'قطاع خاص';
+  governorate: string;
+  center: string;
+  villageOrArea: string;
+  detailedAddress: string;
+  phone: string;
+  managerName: string;
+  technicalOfficer: string;
+  adminOfficer: string;
+  dailyMillingCapacityTons: number;
+  monthlyMillingCapacityTons: number;
+  millingLinesCount: number;
+  shiftsCount: number;
+  dailyOperatingHours: number;
+  wheatTypeUsed: string;
+  producedFlourType: string;
+  operationalStatus: 'يعمل' | 'متوقف' | 'تحت الصيانة';
+  startDate: string;
+  lastInspectionDate: string;
+  notes: string;
+}
+
+export interface MillLicenseDocument {
+  id: string;
+  millCode: string;
+  millName: string;
+  licenseNumber: string;
+  issueDate: string;
+  expiryDate: string;
+  commercialRegNumber: string;
+  taxCardNumber: string;
+  operatingContractNumber: string;
+  ownershipOrLeaseDoc: string;
+  safetyCertificatesStatus: string;
+  lastRenewalDate: string;
+  documentStatus: 'سارية' | 'قاربت على الانتهاء' | 'منتهية' | 'موقوفة';
+  notes: string;
+}
+
+export interface MillWheatReceiptRecord {
+  id: string;
+  serialNo: number;
+  receiptOrderNumber: string;
+  receiptDate: string;
+  millCode: string;
+  millName: string;
+  sourceShunaOrSiloName: string;
+  linkedShunaIssueOrderNumber: string; // مربوط مباشرة بإذن صرف الشونة لمنع الازدواجية
+  wheatType: 'محلي' | 'مستورد' | 'خلط';
+  grossWeightTons: number;
+  tareWeightTons: number;
+  netReceivedWeightTons: number;
+  moisturePct: number;
+  impuritiesPct: number;
+  cleanlinessGrade: string;
+  acceptedMillingWeightTons: number;
+  tonPrice: number;
+  totalValue: number;
+  receiverName: string;
+  approvalStatus: ReceiptApprovalStatus;
+  notes: string;
+}
+
+export interface MillDailyOperationRecord {
+  id: string;
+  serialNo: number;
+  operationDate: string;
+  millCode: string;
+  millName: string;
+  openingWheatBalanceTons: number;
+  inboundWheatTodayTons: number;
+  totalAvailableWheatTons: number;
+  actualMilledWheatTons: number;
+  closingWheatBalanceTons: number;
+  producedFlourTons: number;
+  actualExtractionPct: number;
+  standardExtractionPct: number;
+  producedBranTons: number;
+  branPct: number;
+  secondaryOutputsTons: number;
+  lossOrWasteTons: number;
+  lossPct: number;
+  operatingHours: number;
+  downtimeHours: number;
+  downtimeReason: string;
+  notes: string;
+}
+
+export interface MillProductionRecord {
+  id: string;
+  serialNo: number;
+  batchNumber: string;
+  productionDate: string;
+  millCode: string;
+  millName: string;
+  producedFlourType: string;
+  inputWheatTons: number;
+  outputFlourTons: number;
+  producedSacksCount: number;
+  sackWeightKg: number;
+  targetProductionTons: number;
+  targetAchievementPct: number;
+  tonPrice: number;
+  totalProducedFlourValue: number;
+  flourStockBeforeTons: number;
+  flourStockAfterTons: number;
+  approvalStatus: ReceiptApprovalStatus;
+  notes: string;
+}
+
+export interface MillMachineRecord {
+  id: string;
+  machineCode: string;
+  machineName: string;
+  millCode: string;
+  millName: string;
+  productionLineOrDept: string;
+  manufacturer: string;
+  model: string;
+  serialNumber: string;
+  ratedCapacity: string;
+  installDate: string;
+  estimatedValue: number;
+  status: 'تعمل' | 'متوقفة' | 'تحت الصيانة';
+  lastMaintenanceDate: string;
+  nextMaintenanceDate: string;
+  notes: string;
+}
+
+export interface MillMaintenanceOrder {
+  id: string;
+  orderNumber: string;
+  millCode: string;
+  millName: string;
+  machineName: string;
+  faultType: string;
+  faultDate: string;
+  stopTime: string;
+  repairTime: string;
+  downtimeHours: number;
+  sparePartsUsed: string;
+  partsCost: number;
+  laborCost: number;
+  otherExpenses: number;
+  totalMaintenanceCost: number;
+  engineerOrTechnician: string;
+  status: 'جديد' | 'قيد الإصلاح' | 'مكتمل';
+  notes: string;
+}
+
+export interface MillInspectionVisitRecord {
+  id: string;
+  reportNumber: string;
+  visitDate: string;
+  millCode: string;
+  millName: string;
+  inspectorsCommittee: string;
+  generalCleanlinessStatus: 'مطابق' | 'ملاحظات جزئية' | 'غير مطابق';
+  machineryConditionStatus: 'جيدة' | 'تحتاج صيانة' | 'عطل مؤثر';
+  balancesMatchStatus: 'مطابق' | 'عجز' | 'زيادة';
+  extractionMatchStatus: 'مطابق للمعدل (82%)' | 'انحراف طفيف' | 'مخالف للمواصفات';
+  observedViolations: string;
+  legalOrAdminActions: string;
+  recommendations: string;
+  followUpStatus: 'تم التلافي' | 'قيد المتابعة' | 'أحيل للشئون القانونية';
+}
+
+export interface MillAssetValuation {
+  id: string;
+  millCode: string;
+  millName: string;
+  landValue: number;
+  buildingsValue: number;
+  millingLinesValue: number;
+  internalSilosValue: number;
+  scalesValue: number;
+  auxiliaryEquipmentValue: number;
+  vehiclesValue: number;
+  sparePartsInventoryValue: number;
+  storedWheatValue: number;
+  storedFlourValue: number;
+  valuationDate: string;
+  evaluatorName: string;
+  notes: string;
+}
+
+// -------------------------------------------------------------------------
+// 3.D قاعدة بيانات حصص الدقيق المركزية (7 جداول مترابطة بالمطاحن والمخابز)
+// -------------------------------------------------------------------------
+export interface FlourQuotaMasterRecord {
+  id: string;
+  serialNo: number;
+  quotaCode: string;
+  allocationDecisionNumber: string;
+  decisionDate: string;
+  millCode: string;
+  millName: string;
+  linkedBakeryId?: string; // ربط مباشر ببيانات المخابز في النظام الرئيسي دون تكرار
+  bakeryCode: string;
+  bakeryName: string;
+  ownerName: string;
+  governorate: string;
+  center: string;
+  village: string;
+  localUnit: string;
+  flourType: string;
+  extractionGrade: '82%' | '72%';
+  activityType: 'مخبز بلدي' | 'مخبز طباقي' | 'مستودع دقيق' | 'منفذ';
+  dailyQuotaTons: number;
+  dailyQuotaSacks: number;
+  weeklyQuotaTons: number;
+  monthlyQuotaTons: number;
+  annualQuotaTons: number;
+  effectiveStartDate: string;
+  effectiveEndDate: string;
+  quotaStatus: 'سارية' | 'موقوفة' | 'معدلة' | 'ملغاة';
+  allocationOrAmendmentReason: string;
+  notes: string;
+}
+
+export interface FlourDailyDistributionRecord {
+  id: string;
+  date: string;
+  quotaCode: string;
+  millCode: string;
+  millName: string;
+  bakeryCode: string;
+  bakeryName: string;
+  village: string;
+  localUnit: string;
+  prescribedDailyQuotaTons: number;
+  actualApprovedDisbursedTons: number;
+  remainingDailyTons: number;
+  executionPct: number;
+  issueOrderNumber: string;
+  disbursementStatus: 'تم الصرف بالكامل' | 'صرف جزئي' | 'لم يتم الصرف' | 'موقوف';
+  nonDisbursementOrShortageReason: string;
+  notes: string;
+}
+
+export interface FlourMonthlyAnnualQuotaRecord {
+  id: string;
+  month: string;
+  year: string;
+  quotaCode: string;
+  millCode: string;
+  millName: string;
+  bakeryCode: string;
+  bakeryName: string;
+  village: string;
+  dailyQuotaTons: number;
+  eligibleWorkingDays: number;
+  stopDays: number;
+  nonDisbursementDays: number;
+  prescribedMonthlyQuotaTons: number;
+  actualMonthlyDisbursedTons: number;
+  remainingMonthlyTons: number;
+  monthlyExecutionPct: number;
+  prescribedAnnualQuotaTons: number;
+  actualAnnualDisbursedTons: number;
+  remainingAnnualTons: number;
+  notes: string;
+}
+
+export interface FlourIssueOrderRecord {
+  id: string;
+  serialNo: number;
+  issueOrderNumber: string;
+  issueDate: string;
+  issueTime: string;
+  quotaCode: string;
+  millCode: string;
+  millName: string;
+  bakeryCode: string;
+  bakeryName: string;
+  bakeryOwnerName: string;
+  village: string;
+  localUnit: string;
+  prescribedQuotaTons: number;
+  issuedQuantityTons: number;
+  sacksCount: number;
+  sackWeightKg: number;
+  balanceBeforeIssueTons: number;
+  balanceAfterIssueTons: number;
+  tonPrice: number;
+  totalValue: number;
+  vehicleNumber: string;
+  driverName: string;
+  receiverName: string;
+  approvalStatus: ReceiptApprovalStatus;
+  adminOverrideReason?: string;
+  approvedBy?: string;
+  notes: string;
+}
+
+export interface FlourQuotaAmendmentRecord {
+  id: string;
+  decisionNumber: string;
+  decisionDate: string;
+  quotaCode: string;
+  bakeryCode: string;
+  bakeryName: string;
+  millCode: string;
+  millName: string;
+  previousDailyQuotaTons: number;
+  newDailyQuotaTons: number;
+  changeDeltaTons: number; // الحصة الجديدة - الحصة السابقة
+  amendmentType: 'زيادة' | 'خفض' | 'إيقاف مؤقت' | 'نقل مطحن' | 'إلغاء';
+  reason: string;
+  issuingAuthority: string;
+  effectiveStartDate: string;
+  effectiveEndDate: string;
+  status: 'ساري' | 'منفذ' | 'منتهي';
+  notes: string;
+}
+
+export interface MillBakeryMappingRecord {
+  id: string;
+  mappingCode: string;
+  millCode: string;
+  millName: string;
+  linkedBakeryId?: string;
+  bakeryCode: string;
+  bakeryName: string;
+  ownerName: string;
+  village: string;
+  localUnit: string;
+  dailyQuotaTons: number;
+  monthlyQuotaTons: number;
+  linkStartDate: string;
+  linkEndDate: string;
+  linkStatus: 'نشط' | 'منقول' | 'موقوف';
+  previousMillName?: string;
+  notes: string;
+}
+
+export interface MillFlourStockBalance {
+  id: string;
+  date: string;
+  millCode: string;
+  millName: string;
+  flourType: string;
+  openingBalanceTons: number;
+  approvedProducedTons: number;
+  inboundTons: number;
+  transfersInTons: number;
+  allocatedQuotaTotalTons: number;
+  actualDisbursedToBakeriesTons: number;
+  transfersOutTons: number;
+  approvedAdjustmentsTons: number;
+  notes: string;
+}
+
+export interface GrainDepartmentFinancialEntry {
+  id: string;
+  documentNumber: string;
+  date: string;
+  facilityCategory: 'شونة' | 'ثلاجة' | 'مطحن' | 'حصص دقيق' | 'صيانة مركزية';
+  facilityCode: string;
+  facilityName: string;
+  transactionType:
+    | 'تقييم أصول ثابتة'
+    | 'تقييم مخزون سلعي'
+    | 'قيمة توريد قمح معتمد'
+    | 'قيمة صرف قمح لمطحن'
+    | 'إيراد تخزين وتشغيل'
+    | 'مصروفات تشغيل وكهرباء'
+    | 'تكلفة صيانة وقطع غيار'
+    | 'تحصيل مستحقات'
+    | 'مديونية متبقية';
+  fixedAssetsValuationAmount: number;
+  inventoryValuationAmount: number;
+  revenuesAmount: number;
+  expensesAmount: number;
+  receivablesAmount: number;
+  collectedAmount: number;
+  approvalStatus: ReceiptApprovalStatus;
+  description: string;
 }
 
 export interface GrainMaintenanceState {
@@ -637,6 +1419,37 @@ export interface GrainMaintenanceState {
   spareParts: SparePartItem[];
   technicians: MaintenanceTechnician[];
   grainMovements: GrainMovementRecord[];
+  // الجداول المتكاملة لقسم صيانة الحبوب (الشون، الثلاجات، المطاحن، حصص الدقيق، الحسابات)
+  shunas?: ShunaRecord[];
+  wheatReceipts?: DailyWheatReceiptRecord[];
+  wheatIssues?: ShunaWheatIssueRecord[];
+  wheatLedgerMovements?: WheatLedgerMovementRecord[];
+  shunaReconciliations?: ShunaReconciliationRecord[];
+  refrigerators?: RefrigeratorRecord[];
+  refrigeratorRooms?: RefrigeratorRoomBalance[];
+  refrigeratorReceipts?: RefrigeratorReceiptRecord[];
+  refrigeratorIssues?: RefrigeratorIssueRecord[];
+  refrigeratorAssets?: RefrigeratorAssetValuation[];
+  refrigeratorTempLogs?: RefrigeratorTempLogRecord[];
+  refrigeratorMaintenance?: RefrigeratorMaintenanceOrder[];
+  refrigeratorFinancials?: RefrigeratorFinancialEntry[];
+  mills?: MillRecord[];
+  millLicenses?: MillLicenseDocument[];
+  millWheatReceipts?: MillWheatReceiptRecord[];
+  millDailyOperations?: MillDailyOperationRecord[];
+  millProductions?: MillProductionRecord[];
+  millMachinery?: MillMachineRecord[];
+  millMaintenance?: MillMaintenanceOrder[];
+  millInspections?: MillInspectionVisitRecord[];
+  millAssets?: MillAssetValuation[];
+  flourQuotaMaster?: FlourQuotaMasterRecord[];
+  flourDailyDistributions?: FlourDailyDistributionRecord[];
+  flourMonthlyQuotas?: FlourMonthlyAnnualQuotaRecord[];
+  flourIssues?: FlourIssueOrderRecord[];
+  flourQuotaAmendments?: FlourQuotaAmendmentRecord[];
+  millBakeryMappings?: MillBakeryMappingRecord[];
+  millFlourStockBalances?: MillFlourStockBalance[];
+  centralFinancialLedger?: GrainDepartmentFinancialEntry[];
   settings: GrainMaintenanceSettings;
   auditLogs: ModuleAuditLog[];
 }
@@ -865,9 +1678,329 @@ export interface HrModuleState {
   auditLogs: ModuleAuditLog[];
 }
 
+export type UnifiedEstablishmentType =
+  | 'مخبز بلدي'
+  | 'مخبز سياحي'
+  | 'مخبز إفرنجي'
+  | 'محل تجاري'
+  | 'سوبر ماركت'
+  | 'مخزن تجاري'
+  | 'محطة وقود'
+  | 'مستودع بوتاجاز'
+  | 'موزع أسطوانات بوتاجاز'
+  | 'منشأة أخرى';
+
+export type EstablishmentActivityStatus = 'نشط' | 'متوقف' | 'مغلق' | 'تحت الفحص';
+
+export interface InternalTradeEstablishment {
+  id: string;
+  establishmentCode: string; // كود المنشأة الموحد والفريد
+  linkedBakeryId?: string; // ربط اختياري بجدول المخابز الحالي دون تكرار أو حذف
+  ownerName: string;
+  establishmentName: string;
+  nationalId: string;
+  phone: string;
+  secondaryPhone?: string;
+  governorate: string;
+  center: string;
+  village: string;
+  localUnit: string;
+  detailedAddress: string;
+  establishmentType: UnifiedEstablishmentType;
+  activityType: string;
+  activityCategory: string;
+  commercialRegNumber: string;
+  commercialRegIssueDate: string;
+  commercialRegExpiryDate: string;
+  taxCardNumber: string;
+  taxCardIssueDate: string;
+  licenseNumber: string;
+  licenseIssuingEntity: string;
+  licenseIssueDate: string;
+  licenseExpiryDate: string;
+  activityStatus: EstablishmentActivityStatus;
+  activityStartDate: string;
+  closureReason?: string;
+  closureDecisionNo?: string;
+  closureDate?: string;
+  lat?: number;
+  lng?: number;
+  notes: string;
+  attachments: string[];
+  updatedAt?: string;
+}
+
+export interface InternalTradeCampaign {
+  id: string;
+  campaignNumber: string;
+  campaignDate: string;
+  campaignTime: string;
+  campaignType: 'دورية' | 'مفاجئة' | 'مشتركة' | 'بناءً على شكوى' | 'ليلية';
+  geographicScope: string;
+  village: string;
+  localUnit: string;
+  campaignHead: string;
+  campaignMembers: string[];
+  inspectedCount: number;
+  compliantCount: number;
+  violatingCount: number;
+  reportsIssuedCount: number;
+  totalSeizuresCount: number;
+  totalReservedQtySummary: string;
+  visitedEstablishmentCodes: string[];
+  finalReportSubmitted: boolean;
+  notes: string;
+  attachments: string[];
+  updatedAt?: string;
+}
+
+export interface InternalTradeViolationReport {
+  id: string;
+  reportNumber: string;
+  reportDate: string;
+  reportTime: string;
+  campaignId?: string;
+  ownerName: string;
+  establishmentCode: string;
+  establishmentName: string;
+  activityType: string;
+  address: string;
+  village: string;
+  localUnit: string;
+  violationType: string;
+  violationDescription: string;
+  governingLawOrDecision: string;
+  legalArticle: string;
+  fineAmount: number;
+  issuingEntity: string;
+  caseNumber: string;
+  prosecutionEntity: string;
+  status: 'جديد' | 'تم الإرسال' | 'قيد التحقيق' | 'تم التصالح' | 'تم الفصل فيه';
+  dispositionResult: string;
+  reconciliationAmount: number;
+  paymentDate: string;
+  paymentMethod: string;
+  attachments: string[];
+  updatedAt?: string;
+}
+
+export interface InternalTradeSeizureRecord {
+  id: string;
+  seizureOrderNumber: string;
+  linkedReportNumber: string;
+  seizureDate: string;
+  establishmentCode: string;
+  establishmentName: string;
+  ownerName: string;
+  village: string;
+  commodityType: string;
+  commodityDescription: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  totalValue: number;
+  storageLocation: string;
+  seizureStatus: 'متحفظ عليها' | 'تحت الفحص المعملي' | 'تم الإعدام' | 'تم البيع بالمزاد' | 'تم الإفراج';
+  dispositionDate: string;
+  dispositionEntity: string;
+  dispositionResult: string;
+  notes: string;
+  attachments: string[];
+  updatedAt?: string;
+}
+
+export interface InternalTradeComplaintRecord {
+  id: string;
+  complaintNumber: string;
+  receivedDate: string;
+  source: 'بوابة الشكاوى الحكومية' | 'الخط الساخن 16528' | 'حضور شخصي' | 'مديرية التموين' | 'مواقع التواصل';
+  complainantName: string;
+  phone: string;
+  subject: string;
+  targetEstablishmentCode?: string;
+  targetEstablishmentName: string;
+  targetAddress: string;
+  village: string;
+  localUnit: string;
+  complaintType: 'مغالاة في الأسعار' | 'سلع منتهية الصلاحية' | 'امتناع عن البيع' | 'غش تجاري' | 'نقص وزن / أسطوانات' | 'أخرى';
+  assignedEmployee: string;
+  inspectionDate: string;
+  inspectionResult: string;
+  actionTaken: string;
+  status: 'جديدة' | 'قيد الفحص' | 'تم الفحص والحل' | 'مغلقة';
+  closureDate: string;
+  attachments: string[];
+  updatedAt?: string;
+}
+
+export interface InternalTradeMarketPriceRecord {
+  id: string;
+  commodityCode: string;
+  commodityName: string;
+  category: string;
+  unit: string;
+  declaredPrice: number;
+  actualMarketPrice: number;
+  previousPeriodPrice: number;
+  establishmentCode?: string;
+  establishmentName: string;
+  observationDate: string;
+  monthKey: string;
+  village: string;
+  localUnit: string;
+  observerEmployee: string;
+  notes: string;
+}
+
+export interface LpgVillageCirculationRecord {
+  id: string;
+  serialNo: number;
+  villageCode: string;
+  village: string;
+  localUnit: string;
+  population: number;
+  familiesCount: number;
+  beneficiariesCount: number;
+  depotsCount: number;
+  distributorsCount: number;
+  cylinderType: 'أسطوانة منزلية' | 'أسطوانة تجارية' | 'أسطوانة أخرى';
+  cylinderWeightKg: number;
+  prescribedMonthlyQuota: number;
+  prescribedDailyQuota: number;
+  actualInboundQty: number;
+  actualDisbursedQty: number;
+  monthKey: string;
+  notes: string;
+}
+
+export interface PetroleumVillageCirculationRecord {
+  id: string;
+  serialNo: number;
+  village: string;
+  localUnit: string;
+  population: number;
+  stationsCount: number;
+  fuelType: 'بنزين 80' | 'بنزين 92' | 'بنزين 95' | 'السولار' | 'الكيروسين' | string;
+  unit: 'لتر';
+  openingBalanceLiters: number;
+  inboundLiters: number;
+  disbursedLiters: number;
+  prescribedQuotaLiters: number;
+  monthKey: string;
+  notes: string;
+}
+
+export interface FuelStationControlRecord {
+  id: string;
+  stationCode: string;
+  stationName: string;
+  ownerName: string;
+  managerName: string;
+  village: string;
+  localUnit: string;
+  address: string;
+  distributionCompany: string;
+  availableFuelTypes: string[];
+  tanksCount: number;
+  tankCapacityLiters: number;
+  pumpMetersReadingSummary: string;
+  primaryFuelType: string;
+  openingBalanceLiters: number;
+  inboundLiters: number;
+  soldDisbursedLiters: number;
+  actualStockLiters: number;
+  lastInventoryDate: string;
+  licenseStatus: 'ساري' | 'قارب على الانتهاء' | 'منتهي' | 'موقوف';
+  stationStatus: 'تعمل بانتظام' | 'توقف جزئي' | 'مغلقة إدارياً' | 'تحت الجرد';
+  inspectionActionTaken: string;
+  notes: string;
+}
+
+export interface FuelStationDailyMovement {
+  id: string;
+  stationCode: string;
+  stationName: string;
+  movementDate: string;
+  fuelType: string;
+  movementType: 'استلام وارد' | 'صرف ومبيعات' | 'جرد فعلي';
+  quantityLiters: number;
+  invoiceOrDocNumber: string;
+  inspectorOrOperator: string;
+  notes: string;
+}
+
+export interface LpgDepotControlRecord {
+  id: string;
+  depotCode: string;
+  depotName: string;
+  ownerName: string;
+  managerName: string;
+  address: string;
+  village: string;
+  localUnit: string;
+  licenseNumber: string;
+  licenseExpiryDate: string;
+  prescribedQuota: number;
+  inboundCylinders: number;
+  disbursedCylinders: number;
+  fullCylindersCount: number;
+  emptyCylindersCount: number;
+  damagedCylindersCount: number;
+  inventoryResult: string;
+  campaignsSummary: string;
+  violationsSummary: string;
+  affiliatedDistributorsCount: number;
+  notes: string;
+}
+
+export interface LpgDistributorRecord {
+  id: string;
+  distributorCode: string;
+  distributorName: string;
+  nationalId: string;
+  phone: string;
+  address: string;
+  distributionScopeVillage: string;
+  localUnit: string;
+  affiliatedDepotName: string;
+  prescribedQuota: number;
+  receivedQty: number;
+  distributedQty: number;
+  vehicleDetails: string;
+  licenseNumber: string;
+  status: 'نشط' | 'متوقف' | 'تحت الفحص';
+  previousViolations: string;
+  dailyMonthlyLogSummary: string;
+}
+
+export interface InternalTradeSettings {
+  domesticCylinderWeightKg: number;
+  commercialCylinderWeightKg: number;
+  customPetroleumTypes: string[];
+  licenseAlertDaysBefore: number;
+}
+
+export interface InternalTradeState {
+  establishments: InternalTradeEstablishment[];
+  campaigns: InternalTradeCampaign[];
+  violations: InternalTradeViolationReport[];
+  seizures: InternalTradeSeizureRecord[];
+  complaints: InternalTradeComplaintRecord[];
+  marketPrices: InternalTradeMarketPriceRecord[];
+  lpgVillageCirculation: LpgVillageCirculationRecord[];
+  petroleumVillageCirculation: PetroleumVillageCirculationRecord[];
+  fuelStations: FuelStationControlRecord[];
+  fuelStationMovements: FuelStationDailyMovement[];
+  lpgDepots: LpgDepotControlRecord[];
+  lpgDistributors: LpgDistributorRecord[];
+  settings: InternalTradeSettings;
+  auditLogs: ModuleAuditLog[];
+}
+
 export interface BranchModulesBundle {
   branchId: string;
   ration: RationModuleState;
+  internalTrade?: InternalTradeState;
   grainMaintenance: GrainMaintenanceState;
   hr: HrModuleState;
   updatedAt: string;

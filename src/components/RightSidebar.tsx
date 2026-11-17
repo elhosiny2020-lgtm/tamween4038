@@ -111,17 +111,23 @@ export type SidebarNavId =
   // New Integrated ERP Departmental Menus (Strict Additive Only)
   | 'executive-analytics'
   | 'commodities-dashboard'
-  | 'commodities-cards'
   | 'commodities-catalog'
+  | 'commodities-merchants'
+  | 'commodities-quotas'
+  | 'commodities-warehouses'
+  | 'commodities-cards'
   | 'commodities-disbursements'
   | 'commodities-inspections'
+  | 'commodities-reports'
   | 'commodities-settings'
-  | 'internal-trade-dashboard'
-  | 'internal-trade-merchants'
-  | 'internal-trade-warehouses'
-  | 'internal-trade-requisitions'
-  | 'internal-trade-financial'
   | 'grain-dashboard'
+  | 'grain-shunas'
+  | 'grain-wheat-receipts'
+  | 'grain-refrigerators'
+  | 'grain-mills'
+  | 'grain-flour-quotas'
+  | 'grain-financials'
+  | 'grain-reports'
   | 'grain-assets'
   | 'grain-orders'
   | 'grain-parts'
@@ -133,7 +139,24 @@ export type SidebarNavId =
   | 'hr-leaves'
   | 'hr-payroll'
   | 'hr-loans-promotions'
-  | 'hr-settings';
+  | 'hr-settings'
+  // 7. قسم التجارة الداخلية والرقابة التموينية الموحدة والبوتاجاز والوقود
+  | 'internal-trade-dashboard'
+  | 'internal-trade-establishments'
+  | 'internal-trade-activities'
+  | 'internal-trade-map'
+  | 'internal-trade-campaigns'
+  | 'internal-trade-violations'
+  | 'internal-trade-seizures'
+  | 'internal-trade-complaints'
+  | 'internal-trade-prices'
+  | 'internal-trade-lpg'
+  | 'internal-trade-petroleum'
+  | 'internal-trade-fuel-stations'
+  | 'internal-trade-lpg-depots'
+  | 'internal-trade-comparison'
+  | 'internal-trade-alerts'
+  | 'internal-trade-reports';
 
 interface SidebarSubItem {
   id: SidebarNavId;
@@ -203,8 +226,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
     'group-3': true,
     'group-4': false,
     'group-5': true,
-    'group-6': false,
-    'group-7': false,
+    'group-6': true,
+    'group-7': true,
     'group-8': false,
     'group-9': false,
   });
@@ -426,45 +449,144 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
     {
       id: 'group-6',
       title: '6. قسم السلع التموينية',
-      subtitle: 'البطاقات والمقررات والدعم',
+      subtitle: 'السلع والتجار والحصص والمخازن',
       accentGradient: 'from-[#0D9488] to-cyan-700',
       icon: <ShoppingBasket className="w-4 h-4" />,
       items: [
-        { id: 'commodities-dashboard', label: 'لوحة مؤشرات السلع التموينية', icon: <BarChart3 className="w-3.5 h-3.5" /> },
-        { id: 'commodities-cards', label: 'البطاقات والمستفيدون والمقررات', icon: <Users className="w-3.5 h-3.5" /> },
-        { id: 'commodities-catalog', label: 'دليل السلع وسجل الأسعار', icon: <FileText className="w-3.5 h-3.5" /> },
-        { id: 'commodities-disbursements', label: 'عمليات صرف المواطنين', icon: <CheckSquare className="w-3.5 h-3.5" /> },
-        { id: 'commodities-inspections', label: 'الحملات التفتيشية والشكاوى', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-        { id: 'commodities-settings', label: 'إعدادات القرارات والمنحة 2026', icon: <Settings className="w-3.5 h-3.5" /> },
+        { id: 'commodities-dashboard', label: 'لوحة التحكم الرئيسية للسلع', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+        { id: 'commodities-catalog', label: 'قاعدة بيانات السلع التموينية', icon: <FileText className="w-3.5 h-3.5" /> },
+        {
+          id: 'commodities-merchants',
+          label: 'قاعدة بيانات التجار التموينيين (مايو 2026)',
+          icon: <Store className="w-3.5 h-3.5" />,
+          badge: '116 تاجر',
+          badgeVariant: 'gold',
+        },
+        { id: 'commodities-quotas', label: 'إدارة الحصص التموينية الشهرية', icon: <Calendar className="w-3.5 h-3.5" /> },
+        { id: 'commodities-warehouses', label: 'حركة المخازن والمشتريات', icon: <Database className="w-3.5 h-3.5" /> },
+        { id: 'commodities-cards', label: 'متابعة البطاقات والمستفيدين', icon: <Users className="w-3.5 h-3.5" /> },
+        { id: 'commodities-disbursements', label: 'سجل عمليات صرف المواطنين', icon: <CheckSquare className="w-3.5 h-3.5" /> },
+        { id: 'commodities-inspections', label: 'نظام التنبيهات الذكي والرقابة', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+        { id: 'commodities-reports', label: 'مركز التقارير والطباعة (10 تقارير)', icon: <Printer className="w-3.5 h-3.5" /> },
+        { id: 'commodities-settings', label: 'إعدادات القرارات والضوابط', icon: <Settings className="w-3.5 h-3.5" /> },
       ],
     },
     {
       id: 'group-7',
-      title: '7. قسم التجارة التموينية والداخلية',
-      subtitle: 'التجار والمخازن والعمولات',
-      accentGradient: 'from-indigo-600 to-blue-800',
-      icon: <Store className="w-4 h-4" />,
+      title: '7. قسم التجارة الداخلية',
+      subtitle: 'المركز الرقابي الموحد والبوتاجاز والوقود',
+      accentGradient: 'from-[#0A1931] to-blue-900',
+      icon: <Building2 className="w-4 h-4" />,
       items: [
-        { id: 'internal-trade-dashboard', label: 'لوحة التجارة التموينية والداخلية', icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
-        { id: 'internal-trade-merchants', label: 'التجار والجمعيتي والمجمعات', icon: <Store className="w-3.5 h-3.5" /> },
-        { id: 'internal-trade-warehouses', label: 'المخازن والجرد والتنبيهات', icon: <Database className="w-3.5 h-3.5" /> },
-        { id: 'internal-trade-requisitions', label: 'الاستعاضات وسقف التأمين', icon: <FileText className="w-3.5 h-3.5" /> },
-        { id: 'internal-trade-financial', label: 'كشف الحساب والعمولات والتسويات', icon: <Scale className="w-3.5 h-3.5" /> },
+        {
+          id: 'internal-trade-dashboard',
+          label: 'المركز الرقابي الموحد ولوحة الإحصائيات',
+          icon: <BarChart3 className="w-3.5 h-3.5" />,
+          badge: 'موحد',
+          badgeVariant: 'gold',
+        },
+        {
+          id: 'internal-trade-establishments',
+          label: '1. قاعدة بيانات المحلات والمنشآت التجارية',
+          icon: <Store className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-activities',
+          label: '2-3. الأنشطة والتراخيص والمنشآت المغلقة',
+          icon: <Award className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-map',
+          label: 'خريطة الرقابة التموينية لمركز المحلة',
+          icon: <Eye className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-campaigns',
+          label: '4. الحملات التموينية ومؤشر الأداء ∑',
+          icon: <CheckSquare className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-violations',
+          label: '5-11. المخالفات والمحاضر والتصالحات',
+          icon: <Scale className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-seizures',
+          label: '6. المضبوطات والتحفظات التموينية',
+          icon: <Lock className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-complaints',
+          label: '7. الشكاوى والبلاغات التموينية',
+          icon: <Bell className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-prices',
+          label: '8-9. الأسعار ومتابعة الأسواق والسلع',
+          icon: <TrendingUp className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-lpg',
+          label: 'تداول أسطوانات البوتاجاز ونصيب الفرد ∑',
+          icon: <Calculator className="w-3.5 h-3.5" />,
+          badge: 'أسطوانة',
+          badgeVariant: 'teal',
+        },
+        {
+          id: 'internal-trade-petroleum',
+          label: 'المواد البترولية ونصيب الفرد (باللتر) ∑',
+          icon: <Sliders className="w-3.5 h-3.5" />,
+          badge: 'لتر',
+          badgeVariant: 'info',
+        },
+        {
+          id: 'internal-trade-fuel-stations',
+          label: 'رقابة محطات الوقود والحركة اليومية',
+          icon: <Database className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-lpg-depots',
+          label: 'مستودعات البوتاجاز وسجل الموزعين',
+          icon: <Users className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-comparison',
+          label: 'شاشة المقارنة بين القرى والوحدات',
+          icon: <LayoutDashboard className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'internal-trade-alerts',
+          label: 'التنبيهات الذكية للتجارة الداخلية (6 فئات)',
+          icon: <AlertTriangle className="w-3.5 h-3.5" />,
+          badgeVariant: 'warning',
+        },
+        {
+          id: 'internal-trade-reports',
+          label: '12. مركز التقارير والطباعة (12 تقريراً)',
+          icon: <Printer className="w-3.5 h-3.5" />,
+        },
       ],
     },
     {
       id: 'group-8',
       title: '8. قسم صيانة الحبوب والصوامع',
-      subtitle: 'الأصول وأوامر الصيانة والرطوبة',
+      subtitle: 'الشون والثلاجات والمطاحن وحصص الدقيق',
       accentGradient: 'from-amber-600 to-orange-700',
       icon: <Wrench className="w-4 h-4" />,
       items: [
-        { id: 'grain-dashboard', label: 'لوحة الصيانة ومؤشرات OEE', icon: <BarChart3 className="w-3.5 h-3.5" /> },
-        { id: 'grain-assets', label: 'سجل الصوامع والشون والمعدات', icon: <Building2 className="w-3.5 h-3.5" /> },
+        { id: 'grain-dashboard', label: 'لوحة تحكم صيانة الحبوب الشاملة', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+        { id: 'grain-shunas', label: '1. قاعدة بيانات الشون وتقييم الأصول', icon: <Building2 className="w-3.5 h-3.5" />, badge: 'شون', badgeVariant: 'gold' },
+        { id: 'grain-wheat-receipts', label: 'دفتر استلام القمح اليومي الرسمي', icon: <Scale className="w-3.5 h-3.5" />, badge: '27 عمود', badgeVariant: 'teal' },
+        { id: 'grain-refrigerators', label: '2. قاعدة بيانات الثلاجات ومخازن التبريد', icon: <Database className="w-3.5 h-3.5" />, badge: '8 جداول', badgeVariant: 'info' },
+        { id: 'grain-mills', label: '3. قاعدة بيانات المطاحن والاستخراج', icon: <Calculator className="w-3.5 h-3.5" />, badge: '9 جداول', badgeVariant: 'gold' },
+        { id: 'grain-flour-quotas', label: '4. قاعدة بيانات حصص الدقيق للمخابز', icon: <ShoppingBasket className="w-3.5 h-3.5" />, badge: 'حصص', badgeVariant: 'teal' },
+        { id: 'grain-financials', label: '5. الحسابات المالية الموحدة للقسم', icon: <TrendingUp className="w-3.5 h-3.5" /> },
+        { id: 'grain-reports', label: '6. مركز التقارير والطباعة (A4 & Excel)', icon: <Printer className="w-3.5 h-3.5" /> },
+        { id: 'grain-assets', label: 'الأصول الهندسية والمعدات', icon: <Building2 className="w-3.5 h-3.5" /> },
         { id: 'grain-orders', label: 'أوامر الصيانة الوقائية والطارئة', icon: <Wrench className="w-3.5 h-3.5" /> },
         { id: 'grain-parts', label: 'مخزن قطع الغيار وإعادة الطلب', icon: <Sliders className="w-3.5 h-3.5" /> },
         { id: 'grain-moisture', label: 'تصحيح الرطوبة والفاقد والموازين', icon: <Calculator className="w-3.5 h-3.5" /> },
-        { id: 'grain-alerts', label: 'التنبيهات الهندسية والرقابية', icon: <Bell className="w-3.5 h-3.5" /> },
+        { id: 'grain-alerts', label: 'التنبيهات الهندسية والرقابية الذكية', icon: <Bell className="w-3.5 h-3.5" />, badgeVariant: 'warning' },
       ],
     },
     {

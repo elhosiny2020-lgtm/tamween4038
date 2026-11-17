@@ -21,8 +21,14 @@ import {
   Settings,
   History,
   Plus,
+  FileText,
+  ThermometerSnowflake,
+  Factory,
+  Wheat,
+  Landmark,
+  FileBarChart2,
 } from 'lucide-react';
-import type { AppUser } from '../../types';
+import type { AppUser, Bakery, VillageHierarchy } from '../../types';
 import type {
   GrainMaintenanceState,
   GrainAsset,
@@ -40,6 +46,7 @@ import {
   computeMoistureCorrectedWeight,
   computeGrainStockAndLossSummary,
   computeCostPerTon,
+  computeShunaBookBalanceAndValuation,
 } from '../../utils/grainMaintenanceMath';
 import { exportRowsToArabicCsv, printModuleReportA4 } from '../../services/modulesStorage';
 import {
@@ -53,13 +60,25 @@ import {
   ModuleDeleteConfirmModal,
   type CrudFieldDefinition,
 } from './ModuleCrudShared';
+import { ShunasAndWheatReceiptsView } from './grain/ShunasAndWheatReceiptsView';
+import { RefrigeratorsDatabaseView } from './grain/RefrigeratorsDatabaseView';
+import { MillsDatabaseView } from './grain/MillsDatabaseView';
+import { FlourQuotasDatabaseView } from './grain/FlourQuotasDatabaseView';
+import { GrainFinancialsAndReportsView } from './grain/GrainFinancialsAndReportsView';
 
 export type GrainSubView =
   | 'dashboard'
+  | 'shunas'
+  | 'wheat_receipts_book'
+  | 'refrigerators'
+  | 'mills'
+  | 'flour_quotas'
   | 'assets'
   | 'orders'
   | 'parts'
   | 'grain_moisture'
+  | 'financials'
+  | 'reports'
   | 'alerts'
   | 'settings'
   | 'audit';
@@ -69,6 +88,8 @@ interface GrainMaintenanceSuiteProps {
   branchId: string;
   branchName: string;
   currentUser: AppUser | null;
+  bakeries?: Bakery[];
+  villages?: VillageHierarchy[];
   initialSubView?: GrainSubView;
   onChangeState: (next: GrainMaintenanceState, actionSummary?: string) => void;
 }
@@ -88,6 +109,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
   branchId,
   branchName,
   currentUser,
+  bakeries = [],
+  villages = [],
   initialSubView = 'dashboard',
   onChangeState,
 }) => {
@@ -216,6 +239,38 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
         });
       }
     });
+    (state.refrigeratorTempLogs || []).forEach((t) => {
+      if (t.alarmStatus !== 'طبيعي') {
+        list.push({
+          level: 'high',
+          msg: `إنذار ثلاجة (${t.refrigeratorName} - ${t.roomNumber}): ${t.alarmStatus} (الحرارة الفعلية ${t.actualTempCelsius}°C مقابل المطلوبة ${t.requiredTempCelsius}°C)`,
+        });
+      }
+    });
+    (state.millLicenses || []).forEach((lic) => {
+      if (lic.documentStatus !== 'سارية') {
+        list.push({
+          level: 'med',
+          msg: `تراخيص ومستندات المطحن (${lic.millName}): ${lic.documentStatus} — تاريخ الانتهاء ${lic.expiryDate}`,
+        });
+      }
+    });
+    (state.flourDailyDistributions || []).forEach((fd) => {
+      if (fd.disbursementStatus === 'لم يتم الصرف' || fd.disbursementStatus === 'صرف جزئي') {
+        list.push({
+          level: fd.disbursementStatus === 'لم يتم الصرف' ? 'high' : 'med',
+          msg: `حصة دقيق المخبز (${fd.bakeryName} - ${fd.village}): ${fd.disbursementStatus} — المتبقي اليومي ${fd.remainingDailyTons} طن`,
+        });
+      }
+    });
+    (state.shunaReconciliations || []).forEach((rec) => {
+      if (rec.reconciliationStatus !== 'مطابق') {
+        list.push({
+          level: 'high',
+          msg: `فرق جرد بالشونة (${rec.shunaName}): ${rec.reconciliationStatus} بمقدار (${rec.varianceTons} طن) بمحضر رقم ${rec.reconciliationNumber}`,
+        });
+      }
+    });
     if (
       grainSummary.lossPercentage !== null &&
       grainSummary.lossPercentage > state.settings.maxAcceptableGrainLossPct
@@ -226,7 +281,52 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       });
     }
     return list;
-  }, [state.spareParts, state.assets, grainSummary, state.settings.maxAcceptableGrainLossPct]);
+  }, [
+    state.spareParts,
+    state.assets,
+    state.refrigeratorTempLogs,
+    state.millLicenses,
+    state.flourDailyDistributions,
+    state.shunaReconciliations,
+    grainSummary,
+    state.settings.maxAcceptableGrainLossPct,
+  ]);
+
+  const handleUpdateGrainSubState = (
+    updater: (prev: GrainMaintenanceState) => GrainMaintenanceState,
+    summary: string
+  ) => {
+    const next = updater(state);
+    onChangeState(
+      {
+        ...next,
+        auditLogs: [
+          appendAudit('تعديل', 'قسم صيانة الحبوب', branchId, summary),
+          ...(next.auditLogs || []),
+        ],
+      },
+      summary
+    );
+  };
+
+  const totalShunaApprovedWheatTons = useMemo(() => {
+    return (state.shunas || []).reduce((sum, sh) => {
+      const m = computeShunaBookBalanceAndValuation({
+        shuna: sh,
+        wheatReceipts: state.wheatReceipts || [],
+        wheatIssues: state.wheatIssues || [],
+      });
+      return sum + m.currentBookBalanceTons;
+    }, 0);
+  }, [state.shunas, state.wheatReceipts, state.wheatIssues]);
+
+  const totalDailyFlourQuotaTons = useMemo(() => {
+    return Number(
+      (state.flourQuotaMaster || [])
+        .reduce((s, q) => s + (Number(q.dailyQuotaTons) || 0), 0)
+        .toFixed(3)
+    );
+  }, [state.flourQuotaMaster]);
 
   const previewCorrectedWeight = useMemo(
     () => computeMoistureCorrectedWeight(gmOriginalTons, gmActualMoisture, gmRefMoisture),
@@ -950,12 +1050,19 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
   };
 
   const navItems: { id: GrainSubView; label: string; icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'لوحة الأداء OEE', icon: <Wrench className="w-3.5 h-3.5" /> },
-    { id: 'assets', label: 'الصوامع والأصول', icon: <Warehouse className="w-3.5 h-3.5" /> },
-    { id: 'orders', label: 'أوامر الصيانة والتكلفة', icon: <Cog className="w-3.5 h-3.5" /> },
+    { id: 'dashboard', label: 'لوحة التحكم الشاملة', icon: <Wrench className="w-3.5 h-3.5" /> },
+    { id: 'shunas', label: `الشون وتقييم الأصول (${(state.shunas || []).length})`, icon: <Warehouse className="w-3.5 h-3.5" /> },
+    { id: 'wheat_receipts_book', label: `دفتر استلام القمح اليومي (${(state.wheatReceipts || []).length})`, icon: <FileText className="w-3.5 h-3.5" /> },
+    { id: 'refrigerators', label: `قاعدة بيانات الثلاجات (${(state.refrigerators || []).length})`, icon: <ThermometerSnowflake className="w-3.5 h-3.5" /> },
+    { id: 'mills', label: `قاعدة بيانات المطاحن (${(state.mills || []).length})`, icon: <Factory className="w-3.5 h-3.5" /> },
+    { id: 'flour_quotas', label: `حصص الدقيق والمخابز (${(state.flourQuotaMaster || []).length})`, icon: <Wheat className="w-3.5 h-3.5" /> },
+    { id: 'assets', label: 'الصوامع والمعدات OEE', icon: <Warehouse className="w-3.5 h-3.5" /> },
+    { id: 'orders', label: 'أوامر الصيانة المركزية', icon: <Cog className="w-3.5 h-3.5" /> },
     { id: 'parts', label: 'قطع الغيار والفنيون', icon: <Cog className="w-3.5 h-3.5" /> },
-    { id: 'grain_moisture', label: 'الحبوب والرطوبة والفاقد', icon: <Droplets className="w-3.5 h-3.5" /> },
-    { id: 'alerts', label: `التنبيهات (${smartAlerts.length})`, icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+    { id: 'grain_moisture', label: 'معادلة تصحيح الرطوبة', icon: <Droplets className="w-3.5 h-3.5" /> },
+    { id: 'financials', label: 'الحسابات والتقييم المالي', icon: <Landmark className="w-3.5 h-3.5" /> },
+    { id: 'reports', label: 'مركز التقارير والطباعة', icon: <FileBarChart2 className="w-3.5 h-3.5" /> },
+    { id: 'alerts', label: `التنبيهات الذكية (${smartAlerts.length})`, icon: <AlertTriangle className="w-3.5 h-3.5" /> },
     { id: 'settings', label: 'الإعدادات', icon: <Settings className="w-3.5 h-3.5" /> },
     { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" /> },
   ];
@@ -974,9 +1081,11 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             <Wrench className="w-7 h-7" />
           </div>
           <div>
-            <h2 className="text-xl font-black">منظومة صيانة الحبوب والصوامع والشون ومؤشرات OEE</h2>
+            <h2 className="text-xl font-black">
+              منظومة قسم صيانة الحبوب المتكاملة (الشون • دفتر استلام القمح • الثلاجات • المطاحن • حصص الدقيق)
+            </h2>
             <p className="text-xs text-[#5EEAD4] font-bold mt-0.5">
-              {branchName} • الصوامع والمعدات · أوامر الصيانة · قطع الغيار · معادلة تصحيح الرطوبة والفاقد
+              مديرية التموين والتجارة الداخلية بالغربية • {branchName} • قاعدة بيانات مترابطة ومحمية محاسبياً ورقابياً
             </p>
           </div>
         </div>
@@ -984,58 +1093,19 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() =>
-              exportRowsToArabicCsv(
-                `صيانة_الصوامع_${branchName}`,
-                ['رقم الأمر', 'التاريخ', 'الموقع', 'النوع', 'ساعات العمل', 'تكلفة العمالة', 'قطع الغيار', 'الإجمالي', 'الحالة'],
-                state.orders.map((o) => [
-                  o.orderNumber,
-                  o.requestDate,
-                  o.siteName,
-                  o.maintenanceType,
-                  o.laborHours,
-                  o.laborCost,
-                  o.partsCost,
-                  o.totalRepairCost,
-                  o.status,
-                ])
-              )
-            }
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+            onClick={() => setSubView('wheat_receipts_book')}
+            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow"
           >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>تصدير Excel</span>
+            <FileText className="w-4 h-4" />
+            <span>دفتر استلام القمح اليومي</span>
           </button>
-
           <button
             type="button"
-            onClick={() =>
-              printModuleReportA4({
-                title: 'تقرير صيانة الحبوب والصوامع والشون',
-                subtitle: 'مؤشرات الأداء الفني، أوامر الصيانة، وتصحيح الرطوبة',
-                branchName,
-                headers: ['رقم الأمر', 'الموقع', 'نوع الصيانة', 'التكلفة المباشرة', 'الإجمالي', 'الحالة'],
-                rows: state.orders.map((o) => [
-                  o.orderNumber,
-                  o.siteName,
-                  o.maintenanceType,
-                  `${o.directCost.toLocaleString()} ج.م`,
-                  `${o.totalRepairCost.toLocaleString()} ج.م`,
-                  o.status,
-                ]),
-                summaryItems: [
-                  { label: 'الأصول المسجلة', value: String(state.assets.length) },
-                  { label: 'إجمالي تكلفة الصيانة', value: `${totalMaintenanceCost.toLocaleString()} ج.م` },
-                  { label: 'رصيد الحبوب الدفتري', value: `${grainSummary.bookBalanceTons} طن` },
-                  { label: 'تكلفة الصيانة/طن', value: costPerTon ? `${costPerTon} ج.م` : '—' },
-                ],
-                preparedBy: currentUser?.fullName,
-              })
-            }
-            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+            onClick={() => setSubView('reports')}
+            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
           >
-            <Printer className="w-4 h-4 text-[#D4AF37]" />
-            <span>طباعة A4</span>
+            <Printer className="w-4 h-4" />
+            <span>مركز التقارير A4 و Excel</span>
           </button>
         </div>
       </div>
@@ -1072,38 +1142,154 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
         ))}
       </div>
 
+      {subView === 'shunas' && (
+        <ShunasAndWheatReceiptsView
+          state={state}
+          branchName={branchName}
+          currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          isViewer={isViewer}
+          villages={villages}
+          initialTab="shunas"
+          onUpdateState={handleUpdateGrainSubState}
+          onNotify={notify}
+        />
+      )}
+
+      {subView === 'wheat_receipts_book' && (
+        <ShunasAndWheatReceiptsView
+          state={state}
+          branchName={branchName}
+          currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          isViewer={isViewer}
+          villages={villages}
+          initialTab="receipts_book"
+          onUpdateState={handleUpdateGrainSubState}
+          onNotify={notify}
+        />
+      )}
+
+      {subView === 'refrigerators' && (
+        <RefrigeratorsDatabaseView
+          state={state}
+          branchName={branchName}
+          currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          isViewer={isViewer}
+          villages={villages}
+          onUpdateState={handleUpdateGrainSubState}
+          onNotify={notify}
+        />
+      )}
+
+      {subView === 'mills' && (
+        <MillsDatabaseView
+          state={state}
+          branchName={branchName}
+          currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          isViewer={isViewer}
+          villages={villages}
+          onUpdateState={handleUpdateGrainSubState}
+          onNotify={notify}
+        />
+      )}
+
+      {subView === 'flour_quotas' && (
+        <FlourQuotasDatabaseView
+          state={state}
+          branchName={branchName}
+          currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          isViewer={isViewer}
+          bakeries={bakeries}
+          onUpdateState={handleUpdateGrainSubState}
+          onNotify={notify}
+        />
+      )}
+
+      {subView === 'financials' && (
+        <GrainFinancialsAndReportsView
+          state={state}
+          branchName={branchName}
+          currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          isViewer={isViewer}
+          initialMode="financials"
+          onUpdateState={handleUpdateGrainSubState}
+          onNotify={notify}
+        />
+      )}
+
+      {subView === 'reports' && (
+        <GrainFinancialsAndReportsView
+          state={state}
+          branchName={branchName}
+          currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          isViewer={isViewer}
+          initialMode="reports"
+          onUpdateState={handleUpdateGrainSubState}
+          onNotify={notify}
+        />
+      )}
+
       {subView === 'dashboard' && (
         <div className="space-y-4">
+          {/* المؤشرات التنفيذية الكبرى لقسم صيانة الحبوب */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">الأصول والصوامع المسجلة</div>
-              <div className="text-2xl font-black text-[#0A1628] font-mono mt-1">{state.assets.length}</div>
-              <div className="text-[11px] font-bold text-[#0D9488]">
-                أوامر الصيانة: {state.orders.length}
+            <div
+              onClick={() => setSubView('shunas')}
+              className="bg-white p-4 rounded-2xl border border-amber-200 shadow-sm cursor-pointer hover:border-amber-400 transition-all"
+            >
+              <div className="text-xs font-bold text-slate-500">
+                الشون وأرصدة القمح المعتمدة ({(state.shunas || []).length} شونة)
+              </div>
+              <div className="text-2xl font-black text-amber-800 font-mono mt-1">
+                {totalShunaApprovedWheatTons.toLocaleString('ar-EG')} طن
+              </div>
+              <div className="text-[11px] font-bold text-emerald-700">
+                أذون استلام القمح: {(state.wheatReceipts || []).length} إذن رسمي
               </div>
             </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">إجمالي تكلفة الصيانة</div>
-              <div className="text-2xl font-black text-rose-700 font-mono mt-1">
-                {totalMaintenanceCost.toLocaleString()} ج.م
+
+            <div
+              onClick={() => setSubView('refrigerators')}
+              className="bg-white p-4 rounded-2xl border border-sky-200 shadow-sm cursor-pointer hover:border-sky-400 transition-all"
+            >
+              <div className="text-xs font-bold text-slate-500">
+                قاعدة بيانات الثلاجات ومخازن التبريد
               </div>
-              <div className="text-[11px] font-bold text-slate-500">
-                تكلفة الصيانة/طن: {costPerTon ? `${costPerTon} ج.م` : 'لا توجد كمية'}
+              <div className="text-2xl font-black text-sky-800 font-mono mt-1">
+                {(state.refrigerators || []).length} ثلاجة
               </div>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">رصيد الحبوب الدفتري المصحح</div>
-              <div className="text-2xl font-black text-[#0D9488] font-mono mt-1">
-                {grainSummary.bookBalanceTons.toLocaleString()} طن
-              </div>
-              <div className="text-[11px] font-bold text-amber-700">
-                الفاقد المسجل: {grainSummary.recordedLossTons} طن
+              <div className="text-[11px] font-bold text-slate-600">
+                إجمالي غرف التبريد والتجميد المسجلة: {(state.refrigeratorRooms || []).length} غرفة
               </div>
             </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">التنبيهات الهندسية والمخزنية</div>
-              <div className="text-2xl font-black text-amber-700 font-mono mt-1">{smartAlerts.length}</div>
-              <div className="text-[11px] font-bold text-slate-500">قطع الغيار والمعدات والفاقد</div>
+
+            <div
+              onClick={() => setSubView('mills')}
+              className="bg-white p-4 rounded-2xl border border-indigo-200 shadow-sm cursor-pointer hover:border-indigo-400 transition-all"
+            >
+              <div className="text-xs font-bold text-slate-500">
+                المطاحن التموينية ونسب الاستخراج (82%)
+              </div>
+              <div className="text-2xl font-black text-indigo-900 font-mono mt-1">
+                {(state.mills || []).length} مطحن
+              </div>
+              <div className="text-[11px] font-bold text-emerald-700">
+                القدرة اليومية: {(state.mills || []).reduce((s, m) => s + m.dailyMillingCapacityTons, 0)} طن/يوم
+              </div>
+            </div>
+
+            <div
+              onClick={() => setSubView('flour_quotas')}
+              className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-sm cursor-pointer hover:border-emerald-400 transition-all"
+            >
+              <div className="text-xs font-bold text-slate-500">
+                حصص الدقيق المربوطة بالمخابز
+              </div>
+              <div className="text-2xl font-black text-emerald-800 font-mono mt-1">
+                {totalDailyFlourQuotaTons} طن/يوم
+              </div>
+              <div className="text-[11px] font-bold text-slate-600">
+                عدد الحصص: {(state.flourQuotaMaster || []).length} مخبز • التنبيهات: {smartAlerts.length}
+              </div>
             </div>
           </div>
 

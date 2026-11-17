@@ -40,6 +40,9 @@ import {
   computeMaintenanceOrderCost,
   computeMoistureCorrectedWeight,
 } from '../utils/grainMaintenanceMath';
+import { buildMay2026RationMerchantsList } from '../data/may2026RationMerchants';
+import { createInitialInternalTradeState } from '../data/internalTradeInitialData';
+import { buildGrainDepartmentCollections } from '../data/grainDepartmentInitialData';
 
 const LOCAL_MODULES_STORAGE_PREFIX = 'tamween_branch_modules_v1::';
 
@@ -79,101 +82,7 @@ export function createInitialRationState(
     updatedAt: new Date().toISOString(),
   };
 
-  const merchants: RationMerchant[] = [
-    {
-      id: `${branchId}-m-1`,
-      serialNo: 1,
-      branchId,
-      merchantName: 'تموين النصر الحديث',
-      ownerName: 'أحمد محمود الشهاوي',
-      activityCardNumber: 'ACT-4012',
-      posMachineNumber: 'POS-90011',
-      outletType: 'تاجر تمويني',
-      governorate: 'الغربية',
-      district: branchName,
-      village: v1,
-      localUnit: u1,
-      detailedAddress: `شارع المحطة الرئيسي - ${v1}`,
-      phone: '01012345678',
-      nationalId: '28205121601112',
-      commercialRegNumber: 'CR-77102',
-      taxCardNumber: 'TX-412-901-111',
-      licenseNumber: 'LIC-9011',
-      licenseIssueDate: '2023-02-15',
-      licenseExpiryDate: '2027-02-14',
-      warehouseName: `مخزن جملة ${branchName} 1`,
-      activityStartDate: '2018-04-01',
-      cashInsuranceAmount: 50000,
-      openingBalance: 12500,
-      linkedCardsCount: 380,
-      linkedBeneficiariesCount: 1420,
-      activityStatus: 'نشط',
-      wholesaleBranchName: `فرع جملة ${branchName}`,
-      lastRequisitionDate: today,
-    },
-    {
-      id: `${branchId}-m-2`,
-      serialNo: 2,
-      branchId,
-      merchantName: 'منفذ جمعيتي الأمل',
-      ownerName: 'سارة عبد الرحمن البنا',
-      activityCardNumber: 'ACT-4088',
-      posMachineNumber: 'POS-90045',
-      outletType: 'منفذ جمعيتي',
-      governorate: 'الغربية',
-      district: branchName,
-      village: v2,
-      localUnit: u2,
-      detailedAddress: `ميدان الوحدة المحلية - ${v2}`,
-      phone: '01122334455',
-      nationalId: '29108141602221',
-      commercialRegNumber: 'CR-88210',
-      taxCardNumber: 'TX-519-203-222',
-      licenseNumber: 'LIC-9045',
-      licenseIssueDate: '2024-01-10',
-      licenseExpiryDate: '2026-12-30',
-      warehouseName: `مخزن جملة ${branchName} 1`,
-      activityStartDate: '2020-09-01',
-      cashInsuranceAmount: 40000,
-      openingBalance: 0,
-      linkedCardsCount: 295,
-      linkedBeneficiariesCount: 1090,
-      activityStatus: 'نشط',
-      wholesaleBranchName: `فرع جملة ${branchName}`,
-      lastRequisitionDate: today,
-    },
-    {
-      id: `${branchId}-m-3`,
-      serialNo: 3,
-      branchId,
-      merchantName: 'المجمع الاستهلاكي المركزي',
-      ownerName: 'شركة الدلتا للمجمعات الاستهلاكية',
-      activityCardNumber: 'ACT-4190',
-      posMachineNumber: 'POS-90098',
-      outletType: 'مجمع استهلاكي',
-      governorate: 'الغربية',
-      district: branchName,
-      village: v3,
-      localUnit: u3,
-      detailedAddress: `طريق المركز العمومي - ${v3}`,
-      phone: '0402231100',
-      nationalId: '27503031600553',
-      commercialRegNumber: 'CR-12901',
-      taxCardNumber: 'TX-100-991-300',
-      licenseNumber: 'LIC-9098',
-      licenseIssueDate: '2022-06-01',
-      licenseExpiryDate: '2026-06-01',
-      warehouseName: `مخزن جملة ${branchName} 2`,
-      activityStartDate: '2012-01-01',
-      cashInsuranceAmount: 120000,
-      openingBalance: 18400,
-      linkedCardsCount: 640,
-      linkedBeneficiariesCount: 2380,
-      activityStatus: 'نشط',
-      wholesaleBranchName: `فرع جملة ${branchName}`,
-      lastRequisitionDate: today,
-    },
-  ];
+  const merchants: RationMerchant[] = buildMay2026RationMerchantsList(branchId, branchName, villages);
 
   const commodities: RationCommodity[] = [
     {
@@ -195,6 +104,13 @@ export function createInitialRationState(
       quotaRuleType: 'sugar_rule',
       priceStartDate: '2025-07-01',
       isActive: true,
+      availabilityStatus: 'متاح',
+      openingBalance: 800,
+      inboundQty: 2200,
+      outboundQty: 1650,
+      minStockLevel: 300,
+      maxStockLevel: 5000,
+      batchNumber: 'BCH-SUG-2026-01',
       supplierCompany: 'الشركة العامة لتجارة الجملة',
       reorderLevel: 300,
       expiryDate: '2027-06-30',
@@ -205,7 +121,7 @@ export function createInitialRationState(
       code: 'COM-OIL-800',
       name: 'زيت خليط 800 مللي',
       category: 'سلع أساسية',
-      unit: 'عبوة',
+      unit: 'زجاجة',
       packWeightGramsOrMl: 800,
       officialPrice: 30,
       freeMarketRefPrice: 52,
@@ -219,6 +135,13 @@ export function createInitialRationState(
       quotaRuleType: 'oil_rule',
       priceStartDate: '2025-07-01',
       isActive: true,
+      availabilityStatus: 'متاح',
+      openingBalance: 600,
+      inboundQty: 1800,
+      outboundQty: 1450,
+      minStockLevel: 250,
+      maxStockLevel: 4000,
+      batchNumber: 'BCH-OIL-2026-02',
       supplierCompany: 'الشركة العامة لتجارة الجملة',
       reorderLevel: 250,
       expiryDate: '2027-03-15',
@@ -229,7 +152,7 @@ export function createInitialRationState(
       code: 'COM-PAS-400',
       name: 'مكرونة 400 جرام',
       category: 'سلع جافة',
-      unit: 'عبوة',
+      unit: 'كيس',
       packWeightGramsOrMl: 400,
       officialPrice: 8.5,
       freeMarketRefPrice: 14,
@@ -243,6 +166,13 @@ export function createInitialRationState(
       quotaRuleType: 'rice_pasta_rule',
       priceStartDate: '2025-07-01',
       isActive: true,
+      availabilityStatus: 'متاح',
+      openingBalance: 950,
+      inboundQty: 2600,
+      outboundQty: 2100,
+      minStockLevel: 400,
+      maxStockLevel: 6000,
+      batchNumber: 'BCH-PAS-2026-03',
       supplierCompany: 'شركة المطاحن والمكرونة بالغربية',
       reorderLevel: 400,
       expiryDate: '2026-12-28',
@@ -267,6 +197,13 @@ export function createInitialRationState(
       quotaRuleType: 'custom_rule',
       priceStartDate: '2025-07-01',
       isActive: true,
+      availabilityStatus: 'متاح',
+      openingBalance: 450,
+      inboundQty: 1200,
+      outboundQty: 980,
+      minStockLevel: 200,
+      maxStockLevel: 3500,
+      batchNumber: 'BCH-FLR-2026-04',
       supplierCompany: 'الشركة العامة لتجارة الجملة',
       reorderLevel: 200,
       expiryDate: '2027-01-20',
@@ -714,6 +651,21 @@ export function createInitialRationState(
     gasCylinders,
     petroleumProducts,
     rationOfficeAccounts,
+    merchantMonthlyArchives: [
+      {
+        id: `${branchId}-arch-may2026`,
+        monthLabel: 'تحديث بيانات التجار شهر مايو 2026 (النسخة الأصلية)',
+        importedAt: '2026-05-01 09:00',
+        importedBy: 'النظام الرئيسي',
+        totalMerchants: merchants.length,
+        activeCount: merchants.filter((m) => m.activityStatus === 'نشط').length,
+        stoppedCount: merchants.filter((m) => m.activityStatus === 'متوقف' || m.activityStatus === 'موقوف').length,
+        onLeaveCount: merchants.filter((m) => m.activityStatus === 'إجازة').length,
+        totalInsuranceAmount: merchants.reduce((s, m) => s + (Number(m.cashInsuranceAmount) || 0), 0),
+        summaryNotes: 'النسخة المرجعية المعتمدة من ملف Excel «تحديث بيانات التجار شهر مايو 2026» بإجمالي 116 تاجراً تموينياً.',
+        merchantsSnapshot: merchants,
+      },
+    ],
     complaints: [
       {
         id: `${branchId}-cmp-1`,
@@ -738,7 +690,8 @@ export function createInitialRationState(
 
 export function createInitialGrainMaintenanceState(
   branchId: string,
-  branchName: string
+  branchName: string,
+  villages: VillageHierarchy[] = []
 ): GrainMaintenanceState {
   const today = new Date().toISOString().split('T')[0];
   const assets: GrainAsset[] = [
@@ -962,18 +915,28 @@ export function createInitialGrainMaintenanceState(
     },
   ];
 
+  const grainDeptCollections = buildGrainDepartmentCollections(branchId, branchName, villages);
+
   return {
     assets,
     orders,
     spareParts,
     technicians,
     grainMovements,
+    ...grainDeptCollections,
     settings: {
       defaultIndirectOverheadPct: 10,
       defaultTaxPct: 14,
       maxAcceptableGrainLossPct: 0.5,
       defaultReferenceMoisturePct: 12,
-      decisionNote: 'لائحة تشغيل وصيانة الصوامع والشون القابلة للتعديل',
+      defaultWheatTonPrice: 13333.33,
+      defaultFlourTonPrice: 16000,
+      defaultStandardExtractionPct: 82,
+      maxAllowedExtractionVariancePct: 1.5,
+      licenseExpiryWarningDays: 30,
+      requireMakerCheckerApproval: true,
+      allowQuotaOverIssueWithAdminReason: true,
+      decisionNote: 'لائحة تشغيل وصيانة الصوامع والشون والثلاجات والمطاحن وحصص الدقيق القابلة للتعديل',
     },
     auditLogs: [],
   };
@@ -1352,9 +1315,222 @@ export function createInitialBranchModulesBundle(
   return {
     branchId,
     ration: createInitialRationState(branchId, branchName, villages),
-    grainMaintenance: createInitialGrainMaintenanceState(branchId, branchName),
+    internalTrade: createInitialInternalTradeState(branchId, branchName, villages),
+    grainMaintenance: createInitialGrainMaintenanceState(branchId, branchName, villages),
     hr: createInitialHrState(branchId, branchName),
     updatedAt: new Date().toISOString(),
+  };
+}
+
+function upgradeModulesBundleIfNeeded(
+  bundle: BranchModulesBundle,
+  branchId: string,
+  branchName: string,
+  villages: VillageHierarchy[]
+): { bundle: BranchModulesBundle; upgraded: boolean } {
+  let upgraded = false;
+  let nextRation = bundle.ration;
+
+  if (!Array.isArray(nextRation.merchants) || nextRation.merchants.length < 116) {
+    const fullMayList = buildMay2026RationMerchantsList(branchId, branchName, villages);
+    const existingById = new Map(
+      (nextRation.merchants || []).map((m) => [m.id, m])
+    );
+    const mergedMerchants = fullMayList.map((m) => existingById.get(m.id) || m);
+    nextRation = {
+      ...nextRation,
+      merchants: mergedMerchants,
+      merchantMonthlyArchives:
+        Array.isArray(nextRation.merchantMonthlyArchives) &&
+        nextRation.merchantMonthlyArchives.length > 0
+          ? nextRation.merchantMonthlyArchives
+          : [
+              {
+                id: `${branchId}-arch-may2026`,
+                monthLabel: 'تحديث بيانات التجار شهر مايو 2026 (النسخة الأصلية)',
+                importedAt: '2026-05-01 09:00',
+                importedBy: 'النظام الرئيسي',
+                totalMerchants: mergedMerchants.length,
+                activeCount: mergedMerchants.filter((m) => m.activityStatus === 'نشط').length,
+                stoppedCount: mergedMerchants.filter(
+                  (m) => m.activityStatus === 'متوقف' || m.activityStatus === 'موقوف'
+                ).length,
+                onLeaveCount: mergedMerchants.filter((m) => m.activityStatus === 'إجازة').length,
+                totalInsuranceAmount: mergedMerchants.reduce(
+                  (s, m) => s + (Number(m.cashInsuranceAmount) || 0),
+                  0
+                ),
+                summaryNotes:
+                  'النسخة المرجعية المعتمدة من ملف Excel «تحديث بيانات التجار شهر مايو 2026» بإجمالي 116 تاجراً تموينياً.',
+                merchantsSnapshot: mergedMerchants,
+              },
+            ],
+    };
+    upgraded = true;
+  }
+
+  let nextInternalTrade = bundle.internalTrade;
+  if (!nextInternalTrade || !Array.isArray(nextInternalTrade.establishments)) {
+    nextInternalTrade = createInitialInternalTradeState(branchId, branchName, villages);
+    upgraded = true;
+  }
+
+  let nextGrain = bundle.grainMaintenance;
+  if (
+    !nextGrain.shunas ||
+    !nextGrain.wheatReceipts ||
+    !nextGrain.refrigerators ||
+    !nextGrain.mills ||
+    !nextGrain.flourQuotaMaster
+  ) {
+    const seeded = buildGrainDepartmentCollections(branchId, branchName, villages);
+    nextGrain = {
+      ...nextGrain,
+      shunas: Array.isArray(nextGrain.shunas) && nextGrain.shunas.length > 0 ? nextGrain.shunas : seeded.shunas,
+      wheatReceipts:
+        Array.isArray(nextGrain.wheatReceipts) && nextGrain.wheatReceipts.length > 0
+          ? nextGrain.wheatReceipts
+          : seeded.wheatReceipts,
+      wheatIssues:
+        Array.isArray(nextGrain.wheatIssues) && nextGrain.wheatIssues.length > 0
+          ? nextGrain.wheatIssues
+          : seeded.wheatIssues,
+      wheatLedgerMovements:
+        Array.isArray(nextGrain.wheatLedgerMovements) && nextGrain.wheatLedgerMovements.length > 0
+          ? nextGrain.wheatLedgerMovements
+          : seeded.wheatLedgerMovements,
+      shunaReconciliations:
+        Array.isArray(nextGrain.shunaReconciliations) && nextGrain.shunaReconciliations.length > 0
+          ? nextGrain.shunaReconciliations
+          : seeded.shunaReconciliations,
+      refrigerators:
+        Array.isArray(nextGrain.refrigerators) && nextGrain.refrigerators.length > 0
+          ? nextGrain.refrigerators
+          : seeded.refrigerators,
+      refrigeratorRooms:
+        Array.isArray(nextGrain.refrigeratorRooms) && nextGrain.refrigeratorRooms.length > 0
+          ? nextGrain.refrigeratorRooms
+          : seeded.refrigeratorRooms,
+      refrigeratorReceipts:
+        Array.isArray(nextGrain.refrigeratorReceipts) && nextGrain.refrigeratorReceipts.length > 0
+          ? nextGrain.refrigeratorReceipts
+          : seeded.refrigeratorReceipts,
+      refrigeratorIssues:
+        Array.isArray(nextGrain.refrigeratorIssues) && nextGrain.refrigeratorIssues.length > 0
+          ? nextGrain.refrigeratorIssues
+          : seeded.refrigeratorIssues,
+      refrigeratorAssets:
+        Array.isArray(nextGrain.refrigeratorAssets) && nextGrain.refrigeratorAssets.length > 0
+          ? nextGrain.refrigeratorAssets
+          : seeded.refrigeratorAssets,
+      refrigeratorTempLogs:
+        Array.isArray(nextGrain.refrigeratorTempLogs) && nextGrain.refrigeratorTempLogs.length > 0
+          ? nextGrain.refrigeratorTempLogs
+          : seeded.refrigeratorTempLogs,
+      refrigeratorMaintenance:
+        Array.isArray(nextGrain.refrigeratorMaintenance) && nextGrain.refrigeratorMaintenance.length > 0
+          ? nextGrain.refrigeratorMaintenance
+          : seeded.refrigeratorMaintenance,
+      refrigeratorFinancials:
+        Array.isArray(nextGrain.refrigeratorFinancials) && nextGrain.refrigeratorFinancials.length > 0
+          ? nextGrain.refrigeratorFinancials
+          : seeded.refrigeratorFinancials,
+      mills:
+        Array.isArray(nextGrain.mills) && nextGrain.mills.length > 0 ? nextGrain.mills : seeded.mills,
+      millLicenses:
+        Array.isArray(nextGrain.millLicenses) && nextGrain.millLicenses.length > 0
+          ? nextGrain.millLicenses
+          : seeded.millLicenses,
+      millWheatReceipts:
+        Array.isArray(nextGrain.millWheatReceipts) && nextGrain.millWheatReceipts.length > 0
+          ? nextGrain.millWheatReceipts
+          : seeded.millWheatReceipts,
+      millDailyOperations:
+        Array.isArray(nextGrain.millDailyOperations) && nextGrain.millDailyOperations.length > 0
+          ? nextGrain.millDailyOperations
+          : seeded.millDailyOperations,
+      millProductions:
+        Array.isArray(nextGrain.millProductions) && nextGrain.millProductions.length > 0
+          ? nextGrain.millProductions
+          : seeded.millProductions,
+      millMachinery:
+        Array.isArray(nextGrain.millMachinery) && nextGrain.millMachinery.length > 0
+          ? nextGrain.millMachinery
+          : seeded.millMachinery,
+      millMaintenance:
+        Array.isArray(nextGrain.millMaintenance) && nextGrain.millMaintenance.length > 0
+          ? nextGrain.millMaintenance
+          : seeded.millMaintenance,
+      millInspections:
+        Array.isArray(nextGrain.millInspections) && nextGrain.millInspections.length > 0
+          ? nextGrain.millInspections
+          : seeded.millInspections,
+      millAssets:
+        Array.isArray(nextGrain.millAssets) && nextGrain.millAssets.length > 0
+          ? nextGrain.millAssets
+          : seeded.millAssets,
+      flourQuotaMaster:
+        Array.isArray(nextGrain.flourQuotaMaster) && nextGrain.flourQuotaMaster.length > 0
+          ? nextGrain.flourQuotaMaster
+          : seeded.flourQuotaMaster,
+      flourDailyDistributions:
+        Array.isArray(nextGrain.flourDailyDistributions) && nextGrain.flourDailyDistributions.length > 0
+          ? nextGrain.flourDailyDistributions
+          : seeded.flourDailyDistributions,
+      flourMonthlyQuotas:
+        Array.isArray(nextGrain.flourMonthlyQuotas) && nextGrain.flourMonthlyQuotas.length > 0
+          ? nextGrain.flourMonthlyQuotas
+          : seeded.flourMonthlyQuotas,
+      flourIssues:
+        Array.isArray(nextGrain.flourIssues) && nextGrain.flourIssues.length > 0
+          ? nextGrain.flourIssues
+          : seeded.flourIssues,
+      flourQuotaAmendments:
+        Array.isArray(nextGrain.flourQuotaAmendments) && nextGrain.flourQuotaAmendments.length > 0
+          ? nextGrain.flourQuotaAmendments
+          : seeded.flourQuotaAmendments,
+      millBakeryMappings:
+        Array.isArray(nextGrain.millBakeryMappings) && nextGrain.millBakeryMappings.length > 0
+          ? nextGrain.millBakeryMappings
+          : seeded.millBakeryMappings,
+      millFlourStockBalances:
+        Array.isArray(nextGrain.millFlourStockBalances) && nextGrain.millFlourStockBalances.length > 0
+          ? nextGrain.millFlourStockBalances
+          : seeded.millFlourStockBalances,
+      centralFinancialLedger:
+        Array.isArray(nextGrain.centralFinancialLedger) && nextGrain.centralFinancialLedger.length > 0
+          ? nextGrain.centralFinancialLedger
+          : seeded.centralFinancialLedger,
+      settings: {
+        defaultIndirectOverheadPct: nextGrain.settings?.defaultIndirectOverheadPct ?? 10,
+        defaultTaxPct: nextGrain.settings?.defaultTaxPct ?? 14,
+        maxAcceptableGrainLossPct: nextGrain.settings?.maxAcceptableGrainLossPct ?? 0.5,
+        defaultReferenceMoisturePct: nextGrain.settings?.defaultReferenceMoisturePct ?? 12,
+        defaultWheatTonPrice: nextGrain.settings?.defaultWheatTonPrice ?? 13333.33,
+        defaultFlourTonPrice: nextGrain.settings?.defaultFlourTonPrice ?? 16000,
+        defaultStandardExtractionPct: nextGrain.settings?.defaultStandardExtractionPct ?? 82,
+        maxAllowedExtractionVariancePct: nextGrain.settings?.maxAllowedExtractionVariancePct ?? 1.5,
+        licenseExpiryWarningDays: nextGrain.settings?.licenseExpiryWarningDays ?? 30,
+        requireMakerCheckerApproval: nextGrain.settings?.requireMakerCheckerApproval ?? true,
+        allowQuotaOverIssueWithAdminReason:
+          nextGrain.settings?.allowQuotaOverIssueWithAdminReason ?? true,
+        decisionNote:
+          nextGrain.settings?.decisionNote ||
+          'لائحة تشغيل وصيانة الصوامع والشون والثلاجات والمطاحن وحصص الدقيق القابلة للتعديل',
+      },
+    };
+    upgraded = true;
+  }
+
+  if (!upgraded) return { bundle, upgraded: false };
+  return {
+    bundle: {
+      ...bundle,
+      ration: nextRation,
+      internalTrade: nextInternalTrade,
+      grainMaintenance: nextGrain,
+    },
+    upgraded: true,
   };
 }
 
@@ -1403,8 +1579,16 @@ export async function loadBranchModulesBundle(
     if (resp.ok) {
       const json = await resp.json();
       if (json?.exists && json?.payload?.ration && json?.payload?.grainMaintenance && json?.payload?.hr) {
-        const bundle = json.payload as BranchModulesBundle;
+        const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
+          json.payload as BranchModulesBundle,
+          branchId,
+          branchName,
+          villages
+        );
         writeLocalBranchModulesBundle(branchId, bundle);
+        if (upgraded) {
+          void saveBranchModulesBundle(branchId, bundle, 'ترقية قاعدة بيانات مايو 2026 والتجارة الداخلية');
+        }
         return bundle;
       }
     }
@@ -1422,8 +1606,16 @@ export async function loadBranchModulesBundle(
         .eq('id', `mod__${branchId}__all_modules`)
         .maybeSingle();
       if (data?.payload?.ration && data?.payload?.grainMaintenance && data?.payload?.hr) {
-        const bundle = data.payload as BranchModulesBundle;
+        const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
+          data.payload as BranchModulesBundle,
+          branchId,
+          branchName,
+          villages
+        );
         writeLocalBranchModulesBundle(branchId, bundle);
+        if (upgraded) {
+          void saveBranchModulesBundle(branchId, bundle, 'ترقية قاعدة بيانات مايو 2026 والتجارة الداخلية');
+        }
         return bundle;
       }
     } catch {
@@ -1432,14 +1624,14 @@ export async function loadBranchModulesBundle(
   }
 
   if (local) {
-    // Ensure server & Supabase have the local state persisted
-    void saveBranchModulesBundle(branchId, local, 'مزامنة تلقائية');
-    return local;
+    const { bundle } = upgradeModulesBundleIfNeeded(local, branchId, branchName, villages);
+    writeLocalBranchModulesBundle(branchId, bundle);
+    void saveBranchModulesBundle(branchId, bundle, 'مزامنة تلقائية');
+    return bundle;
   }
 
   const initial = createInitialBranchModulesBundle(branchId, branchName, villages);
   writeLocalBranchModulesBundle(branchId, initial);
-  // Seed asynchronously to backend & Supabase so all devices see the same branch data
   void saveBranchModulesBundle(branchId, initial, 'النظام الرئيسي');
   return initial;
 }

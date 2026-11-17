@@ -5,6 +5,7 @@ import type {
   RationCommodity,
   RationDecisionSettings,
   RationDisbursementRecord,
+  RationMerchant,
   RationRequisition,
   RationWarehouseBalance,
 } from '../types/modules';
@@ -569,3 +570,235 @@ export function computeWarehouseControlEngine(params: {
     alerts,
   };
 }
+
+// =========================================================================
+// 7. المعادلات الخمس التلقائية المعتمدة لقسم السلع التموينية
+// =========================================================================
+
+/**
+ * المعادلة (1): الرصيد الحالي = الرصيد الافتتاحي + الوارد - المنصرف + المرتجعات الداخلة - المرتجعات الخارجة
+ */
+export function computeCommodityCurrentBalance(params: {
+  openingBalance: number;
+  inboundQty: number;
+  outboundQty: number;
+  inboundReturns?: number;
+  outboundReturns?: number;
+  approvedAdjustments?: number;
+}): number {
+  const opening = Math.max(0, Number(params.openingBalance) || 0);
+  const inbound = Math.max(0, Number(params.inboundQty) || 0);
+  const outbound = Math.max(0, Number(params.outboundQty) || 0);
+  const inRet = Math.max(0, Number(params.inboundReturns) || 0);
+  const outRet = Math.max(0, Number(params.outboundReturns) || 0);
+  const adj = Number(params.approvedAdjustments) || 0;
+  return round2(opening + inbound - outbound + inRet - outRet + adj);
+}
+
+/**
+ * المعادلة (2): قيمة المخزون = الرصيد الحالي × سعر الصنف
+ */
+export function computeCommodityStockValue(currentBalance: number, unitPrice: number): number {
+  const bal = Number(currentBalance) || 0;
+  const price = Math.max(0, Number(unitPrice) || 0);
+  return round2(Math.max(0, bal) * price);
+}
+
+/**
+ * المعادلة (3): الكمية المتبقية من الحصة = الكمية المقررة - الكمية المستلمة
+ */
+export function computeRemainingMonthlyQuota(prescribedQty: number, receivedQty: number): number {
+  const prescribed = Math.max(0, Number(prescribedQty) || 0);
+  const received = Math.max(0, Number(receivedQty) || 0);
+  return round2(Math.max(0, prescribed - received));
+}
+
+/**
+ * المعادلة (4): نسبة تنفيذ الحصة = (الكمية الموزعة ÷ الكمية المقررة) × 100
+ * مع الحماية الكاملة من القسمة على صفر.
+ */
+export function computeMonthlyQuotaExecutionPct(distributedQty: number, prescribedQty: number): number {
+  const prescribed = Number(prescribedQty) || 0;
+  const distributed = Math.max(0, Number(distributedQty) || 0);
+  if (prescribed <= 0) return 0;
+  return round2((distributed / prescribed) * 100);
+}
+
+/**
+ * المعادلة (5): قيمة الكميات المنصرفة = الكمية المنصرفة × سعر الصنف
+ */
+export function computeDisbursedQuantityValue(outboundQty: number, unitPrice: number): number {
+  const qty = Math.max(0, Number(outboundQty) || 0);
+  const price = Math.max(0, Number(unitPrice) || 0);
+  return round2(qty * price);
+}
+
+export interface SmartRationAlertItem {
+  id: string;
+  category:
+    | 'LOW_STOCK'
+    | 'NEAR_EXPIRY'
+    | 'DELAYED_QUOTA'
+    | 'INVENTORY_SHORTAGE'
+    | 'INCOMPLETE_DISBURSEMENT'
+    | 'IN_OUT_VARIANCE'
+    | 'EXPIRED_MERCHANT_LICENSE';
+  categoryLabel: string;
+  severity: 'حرجة' | 'متوسطة' | 'تنبيه';
+  entityName: string;
+  message: string;
+  metricValue: string;
+}
+
+/**
+ * نظام التنبيهات الذكي (7 فئات تنبيه تلقائية لقسم السلع التموينية)
+ */
+export function generateSmartRationAlerts(params: {
+  commodities: RationCommodity[];
+  warehouses: RationWarehouseBalance[];
+  merchants: RationMerchant[];
+  requisitions: RationRequisition[];
+  todayIso?: string;
+}): SmartRationAlertItem[] {
+  const alerts: SmartRationAlertItem[] = [];
+  const todayMs = params.todayIso ? new Date(params.todayIso).getTime() : Date.now();
+
+  // 1 & 2 & 4 & 6: فحص المخازن والسلع (انخفاض المخزون، قرب الصلاحية، عجز الجرد، فروق الوارد والمنصرف)
+  for (const w of params.warehouses) {
+    const comm = params.commodities.find((c) => c.id === w.commodityId);
+    const commName = comm?.name || w.commodityId;
+    const minLevel = w.reorderLevel || comm?.minStockLevel || comm?.reorderLevel || 0;
+    const bookBal = computeCommodityCurrentBalance({
+      openingBalance: w.openingBalance,
+      inboundQty: w.totalIn,
+      outboundQty: w.totalOut,
+      inboundReturns: w.inboundReturns,
+      outboundReturns: w.outboundReturns,
+      approvedAdjustments: w.approvedAdjustments,
+    });
+
+    if (bookBal <= minLevel) {
+      alerts.push({
+        id: `low-${w.id}`,
+        category: 'LOW_STOCK',
+        categoryLabel: 'انخفاض المخزون عن الحد الأدنى',
+        severity: bookBal <= minLevel * 0.5 ? 'حرجة' : 'متوسطة',
+        entityName: `${w.warehouseName} — ${commName}`,
+        message: `الرصيد الحالي (${bookBal}) أقل من أو يساوي الحد الأدنى المسموح (${minLevel}).`,
+        metricValue: `${bookBal} / حد ${minLevel}`,
+      });
+    }
+
+    const expDateStr = w.expiryDate || comm?.expiryDate;
+    if (expDateStr) {
+      const expMs = new Date(expDateStr).getTime();
+      if (!Number.isNaN(expMs)) {
+        const daysLeft = Math.ceil((expMs - todayMs) / (1000 * 60 * 60 * 24));
+        if (daysLeft <= 60) {
+          alerts.push({
+            id: `exp-${w.id}`,
+            category: 'NEAR_EXPIRY',
+            categoryLabel: daysLeft < 0 ? 'سلعة منتهية الصلاحية' : 'قرب انتهاء صلاحية السلع',
+            severity: daysLeft <= 15 ? 'حرجة' : 'متوسطة',
+            entityName: `${commName} (${w.warehouseName})`,
+            message:
+              daysLeft < 0
+                ? `انتهت صلاحية التشغيلة بتاريخ ${expDateStr}.`
+                : `يتبقى ${daysLeft} يوماً على انتهاء الصلاحية (${expDateStr}).`,
+            metricValue: `${expDateStr}`,
+          });
+        }
+      }
+    }
+
+    if (typeof w.physicalCount === 'number') {
+      const diff = round2(w.physicalCount - bookBal);
+      if (diff < 0) {
+        alerts.push({
+          id: `shortage-${w.id}`,
+          category: 'INVENTORY_SHORTAGE',
+          categoryLabel: 'وجود عجز مخزني فعلي',
+          severity: 'حرجة',
+          entityName: `${w.warehouseName} — ${commName}`,
+          message: `الجرد الفعلي (${w.physicalCount}) يقل عن الرصيد الدفتري (${bookBal}) بمقدار ${Math.abs(diff)}.`,
+          metricValue: `عجز ${Math.abs(diff)}`,
+        });
+      }
+    }
+
+    if (w.totalOut > w.openingBalance + w.totalIn + w.inboundReturns) {
+      alerts.push({
+        id: `var-${w.id}`,
+        category: 'IN_OUT_VARIANCE',
+        categoryLabel: 'فروق بين الوارد والمنصرف',
+        severity: 'حرجة',
+        entityName: `${w.warehouseName} — ${commName}`,
+        message: `إجمالي المنصرف (${w.totalOut}) يتجاوز إجمالي المتاح (أول المدة + الوارد).`,
+        metricValue: `منصرف ${w.totalOut}`,
+      });
+    }
+  }
+
+  // 3 & 5: تأخر استلام الحصة الشهرية أو عدم صرف الحصة المقررة بالكامل
+  for (const r of params.requisitions) {
+    const m = params.merchants.find((x) => x.id === r.merchantId);
+    const mName = m?.merchantName || r.merchantId;
+    const prescribed = r.lines.reduce((s, l) => s + (Number(l.requestedQty) || 0), 0);
+    const received = r.lines.reduce((s, l) => s + (Number(l.approvedQty) || 0), 0);
+    const distributed = r.lines.reduce((s, l) => s + (Number(l.deliveredQty) || 0), 0);
+    const remQuota = computeRemainingMonthlyQuota(prescribed, received);
+    const execPct = computeMonthlyQuotaExecutionPct(distributed, prescribed);
+
+    if (r.status === 'جديد' || remQuota > 0) {
+      alerts.push({
+        id: `delay-${r.id}`,
+        category: 'DELAYED_QUOTA',
+        categoryLabel: 'تأخر استلام الحصة الشهرية',
+        severity: r.status === 'جديد' ? 'متوسطة' : 'تنبيه',
+        entityName: `${mName} (${r.requestNumber})`,
+        message: `لم يتم استلام كامل الحصة المقررة لشهر ${r.monthKey} (المتبقي غير المستلم: ${remQuota}).`,
+        metricValue: `متبقي ${remQuota}`,
+      });
+    }
+
+    if (prescribed > 0 && execPct < 85) {
+      alerts.push({
+        id: `incomp-${r.id}`,
+        category: 'INCOMPLETE_DISBURSEMENT',
+        categoryLabel: 'عدم صرف الحصة المقررة بالكامل',
+        severity: execPct < 50 ? 'حرجة' : 'متوسطة',
+        entityName: `${mName} (${r.requestNumber})`,
+        message: `نسبة تنفيذ وتوزيع الحصة بلغت ${execPct}% (${distributed} من ${prescribed}).`,
+        metricValue: `${execPct}%`,
+      });
+    }
+  }
+
+  // 7: انتهاء صلاحية تراخيص أو بيانات التاجر
+  for (const m of params.merchants) {
+    const expStr = m.activityEndDate || m.licenseExpiryDate;
+    if (expStr) {
+      const expMs = new Date(expStr).getTime();
+      if (!Number.isNaN(expMs)) {
+        const daysLeft = Math.ceil((expMs - todayMs) / (1000 * 60 * 60 * 24));
+        if (daysLeft <= 45) {
+          alerts.push({
+            id: `lic-${m.id}`,
+            category: 'EXPIRED_MERCHANT_LICENSE',
+            categoryLabel: 'انتهاء صلاحية تراخيص أو بيانات التاجر',
+            severity: daysLeft <= 0 ? 'حرجة' : 'متوسطة',
+            entityName: `${m.merchantName} (${m.ownerName})`,
+            message:
+              daysLeft <= 0
+                ? `انتهت صلاحية ترخيص المنفذ رقم (${m.licenseNumber}) بتاريخ ${expStr}.`
+                : `ينتهي ترخيص المنفذ رقم (${m.licenseNumber}) خلال ${daysLeft} يوماً (${expStr}).`,
+            metricValue: expStr,
+          });
+        }
+      }
+    }
+  }
+
+  return alerts;
+}
+
