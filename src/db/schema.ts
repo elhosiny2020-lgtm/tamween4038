@@ -378,6 +378,22 @@ export const auditLogs = pgTable('audit_logs', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+export const auditDeletionSecurityLog = pgTable(
+  'audit_deletion_security_log',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id').notNull().default('branch-mahalla'),
+    deletedBy: text('deleted_by').notNull(),
+    deletedByFullName: text('deleted_by_full_name').notNull().default(''),
+    targetScope: text('target_scope').notNull(),
+    deletedCount: integer('deleted_count').notNull().default(0),
+    reason: text('reason').notNull().default(''),
+    ipAddress: text('ip_address').notNull().default('127.0.0.1'),
+    createdAt: timestamp('created_at').defaultNow(),
+  },
+  (t) => [index('idx_audit_del_sec_branch_created').on(t.branchId, t.createdAt)]
+);
+
 export const backupSnapshots = pgTable('backup_snapshots', {
   id: text('id').primaryKey(),
   branchId: text('branch_id').default('default'),

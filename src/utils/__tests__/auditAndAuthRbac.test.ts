@@ -37,7 +37,9 @@ import {
 import { resolveModuleCrudPermissions } from '../moduleCrudHelpers.ts';
 import {
   fallbackAuthenticateUser,
+  fallbackDeleteAuditLogs,
   fallbackGetBootstrap,
+  fallbackListAuditDeletionSecurityLogs,
   fallbackListStorageFiles,
   fallbackPurgeAll,
   fallbackQueryTablePaginated,
@@ -467,6 +469,36 @@ test('fallbackStore hashes passwords, sanitizes auth, preserves Mahalla on selec
       status: 'SUCCESS',
     });
     assert.equal(successAuditPage.rows.some((r: any) => r.id === 'aud-test-allowed'), true);
+
+    // 5. Admin-only audit deletion preserves operational records and records immutable security log
+    const delAuditRes = fallbackDeleteAuditLogs({
+      branchId: 'branch-mahalla',
+      ids: ['aud-test-1'],
+      deletedBy: 'admin',
+      deletedByFullName: 'مدير النظام',
+      targetScope: 'سجل التدقيق العام',
+      reason: 'تنظيف تجريبي لسجلات قديمة',
+      ipAddress: '127.0.0.1',
+    });
+    assert.equal(delAuditRes.deletedCount, 1);
+    assert.equal(delAuditRes.securityEntry.deletedBy, 'admin');
+    assert.equal(delAuditRes.securityEntry.deletedCount, 1);
+
+    const remainingAudits = fallbackQueryTablePaginated('audit_logs', {
+      branchId: 'branch-mahalla',
+      status: 'all',
+    });
+    assert.equal(remainingAudits.rows.some((r: any) => r.id === 'aud-test-1'), false);
+    assert.equal(remainingAudits.rows.some((r: any) => r.id === 'aud-test-allowed'), true);
+
+    // Operational bakeries must remain completely untouched
+    const bakeriesAfterAuditDelete = fallbackGetBootstrap('branch-mahalla').bakeries;
+    assert.equal(bakeriesAfterAuditDelete.length, 1);
+    assert.equal(bakeriesAfterAuditDelete[0].id, 'b-mah-1');
+
+    const securityTrail = fallbackListAuditDeletionSecurityLogs('branch-mahalla');
+    assert.equal(securityTrail.length >= 1, true);
+    assert.equal(securityTrail[0].reason, 'تنظيف تجريبي لسجلات قديمة');
   } finally {
     fallbackPurgeAll();
     if (hadExistingFile && previousContent !== null) {

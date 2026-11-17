@@ -47,12 +47,21 @@ export function sanitizeBranchUsers(
   branchName?: string
 ): AppUser[] {
   const cleanBranchId = (branchId || DEFAULT_BRANCH_ID).trim();
-  if (!Array.isArray(users) || users.length === 0) {
-    return INITIAL_USERS.map((u) => ({
-      ...u,
+  const stripSeedUser = (u: AppUser): AppUser => {
+    const { password: rawPass, passwordHash: _ph, gmailPassword: _gp, ...rest } = u as AppUser & {
+      passwordHash?: string;
+    };
+    return {
+      ...rest,
+      hasPassword: Boolean(u.hasPassword || rawPass),
+      gmailEmail: scrubProtectedOwnerEmail(u.gmailEmail),
       branchId: cleanBranchId,
       department: branchName || u.department,
-    }));
+    };
+  };
+
+  if (!Array.isArray(users) || users.length === 0) {
+    return INITIAL_USERS.map(stripSeedUser);
   }
 
   // Strictly reject any user that explicitly belongs to another branch
@@ -61,11 +70,7 @@ export function sanitizeBranchUsers(
   );
 
   if (isolated.length === 0) {
-    return INITIAL_USERS.map((u) => ({
-      ...u,
-      branchId: cleanBranchId,
-      department: branchName || u.department,
-    }));
+    return INITIAL_USERS.map(stripSeedUser);
   }
 
   const seenUsernames = new Set<string>();
@@ -75,10 +80,16 @@ export function sanitizeBranchUsers(
     const normUsername = u.username.trim().toLowerCase();
     if (!normUsername || seenUsernames.has(normUsername)) continue;
     seenUsernames.add(normUsername);
+    const {
+      password: rawPassword,
+      passwordHash: rawHash,
+      gmailPassword: _omitGmailPass,
+      ...restUser
+    } = u as AppUser & { passwordHash?: string };
     result.push({
-      ...u,
+      ...restUser,
       username: u.username.trim(),
-      password: (u.password || '').trim(),
+      hasPassword: Boolean(u.hasPassword || rawPassword || rawHash),
       gmailEmail: scrubProtectedOwnerEmail(u.gmailEmail),
       branchId: cleanBranchId,
       isActive: u.isActive !== false,

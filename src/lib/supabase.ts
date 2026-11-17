@@ -2280,13 +2280,13 @@ export function mapUserToSqlRow(u: any, branchId: string, nowIso: string = new D
     branch_id: u.branchId || branchId || 'branch-mahalla',
     username: String(u.username || ''),
     full_name: String(u.fullName || ''),
-    password_hash: String(u.password || u.passwordHash || ''),
+    password_hash: String(u.passwordHash || ''),
     role: String(u.role || 'inspector'),
     job_title: String(u.jobTitle || ''),
     department: String(u.department || ''),
     phone: String(u.phone || ''),
     gmail_email: String(u.gmailEmail || ''),
-    gmail_password: String(u.gmailPassword || ''),
+    gmail_password: '',
     google_drive_auto_sync: Boolean(u.googleDriveAutoSync),
     custom_permissions: encodedPerms,
     updated_at: nowIso,
@@ -2295,7 +2295,13 @@ export function mapUserToSqlRow(u: any, branchId: string, nowIso: string = new D
 
 export function mapSqlRowToUser(row: any) {
   if (!row) return null;
-  if (row.data_json && row.data_json.id) return row.data_json;
+  if (row.data_json && row.data_json.id) {
+    const { password: _p, passwordHash: _ph, gmailPassword: _gp, ...cleanJson } = row.data_json;
+    return {
+      ...cleanJson,
+      hasPassword: Boolean(row.data_json.hasPassword || _p || _ph),
+    };
+  }
   const rawPerms: string[] = Array.isArray(row.custom_permissions) ? row.custom_permissions.map(String) : [];
   const deptScopes = rawPerms
     .filter((p) => p.startsWith('__dept:'))
@@ -2308,17 +2314,18 @@ export function mapSqlRowToUser(row: any) {
     branchId: String(row.branch_id || 'branch-mahalla'),
     username: String(row.username || ''),
     fullName: String(row.full_name || ''),
-    password: String(row.password_hash || ''),
+    hasPassword: Boolean(row.password_hash),
     role: String(row.role || 'inspector'),
     jobTitle: String(row.job_title || ''),
     department: String(row.department || ''),
     phone: String(row.phone || ''),
     gmailEmail: String(row.gmail_email || ''),
-    gmailPassword: String(row.gmail_password || ''),
     googleDriveAutoSync: Boolean(row.google_drive_auto_sync),
     customPermissions: Array.isArray(row.custom_permissions) ? cleanPerms : undefined,
     allowedDepartments: deptScopes.length > 0 ? deptScopes : row.allowedDepartments,
     applyToAllBranches: applyAll || row.applyToAllBranches || undefined,
+    isActive: row.is_active !== false,
+    isSuperAdmin: Boolean(row.is_super_admin || row.role === 'super_admin' || row.role === 'admin'),
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
     version: Number(row.version || 1),
   };

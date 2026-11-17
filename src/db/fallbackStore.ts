@@ -103,6 +103,17 @@ interface FallbackStoreData {
     ipAddress: string;
     createdAt: string;
   }>;
+  audit_deletion_security_log: Array<{
+    id: string;
+    branchId: string;
+    deletedBy: string;
+    deletedByFullName: string;
+    targetScope: string;
+    deletedCount: number;
+    reason: string;
+    ipAddress: string;
+    createdAt: string;
+  }>;
   storage_files: Record<string, StoredFileEntry>;
   module_states: Record<
     string,
@@ -126,6 +137,7 @@ function createEmptyStore(): FallbackStoreData {
     system_config: [],
     dropdown_lists: [],
     audit_logs: [],
+    audit_deletion_security_log: [],
     storage_files: {},
     module_states: {},
   };
@@ -154,6 +166,9 @@ function loadStore(): FallbackStoreData {
             Array.isArray(parsed.branches) && parsed.branches.length > 0
               ? deduplicateSupplyBranches(parsed.branches)
               : deduplicateSupplyBranches(base.branches),
+          audit_deletion_security_log: Array.isArray(parsed.audit_deletion_security_log)
+            ? parsed.audit_deletion_security_log
+            : [],
           storage_files: parsed.storage_files && typeof parsed.storage_files === 'object' ? parsed.storage_files : {},
           module_states: parsed.module_states && typeof parsed.module_states === 'object' ? parsed.module_states : {},
         };
@@ -1148,4 +1163,76 @@ export function fallbackUpsertBranchModuleState(
   };
   persistStore(store);
   return { version: nextVersion, updatedAt: nowIso };
+}
+
+export function fallbackRecordAuditDeletionSecurityLog(entry: {
+  branchId?: string;
+  deletedBy: string;
+  deletedByFullName?: string;
+  targetScope: string;
+  deletedCount: number;
+  reason: string;
+  ipAddress?: string;
+}) {
+  const store = loadStore();
+  if (!Array.isArray(store.audit_deletion_security_log)) {
+    store.audit_deletion_security_log = [];
+  }
+  const row = {
+    id: `aud-sec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    branchId: entry.branchId || DEFAULT_BRANCH_ID,
+    deletedBy: entry.deletedBy,
+    deletedByFullName: entry.deletedByFullName || entry.deletedBy,
+    targetScope: entry.targetScope,
+    deletedCount: Math.max(0, Number(entry.deletedCount) || 0),
+    reason: entry.reason || '',
+    ipAddress: entry.ipAddress || '127.0.0.1',
+    createdAt: new Date().toISOString(),
+  };
+  store.audit_deletion_security_log.unshift(row);
+  persistStore(store);
+  return row;
+}
+
+export function fallbackListAuditDeletionSecurityLogs(branchId?: string) {
+  const store = loadStore();
+  const list = Array.isArray(store.audit_deletion_security_log)
+    ? store.audit_deletion_security_log
+    : [];
+  if (!branchId || branchId === 'ALL') return [...list];
+  return list.filter((item) => item.branchId === branchId);
+}
+
+export function fallbackDeleteAuditLogs(params: {
+  branchId?: string;
+  ids?: string[];
+  deletedBy: string;
+  deletedByFullName?: string;
+  targetScope: string;
+  reason: string;
+  ipAddress?: string;
+}) {
+  const store = loadStore();
+  const prevLen = store.audit_logs.length;
+  const idsSet = Array.isArray(params.ids) && params.ids.length > 0 ? new Set(params.ids.map(String)) : null;
+
+  store.audit_logs = store.audit_logs.filter((row) => {
+    const branchMatches = !params.branchId || params.branchId === 'ALL' || row.branchId === params.branchId;
+    if (!branchMatches) return true;
+    if (idsSet) return !idsSet.has(String(row.id));
+    return false;
+  });
+
+  const deletedCount = Math.max(0, prevLen - store.audit_logs.length);
+  const securityEntry = fallbackRecordAuditDeletionSecurityLog({
+    branchId: params.branchId && params.branchId !== 'ALL' ? params.branchId : DEFAULT_BRANCH_ID,
+    deletedBy: params.deletedBy,
+    deletedByFullName: params.deletedByFullName,
+    targetScope: params.targetScope,
+    deletedCount,
+    reason: params.reason,
+    ipAddress: params.ipAddress,
+  });
+  persistStore(store);
+  return { deletedCount, securityEntry };
 }

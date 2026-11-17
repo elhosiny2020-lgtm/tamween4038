@@ -10,15 +10,18 @@ import {
   ALLOWED_DB_TABLES,
   DEFAULT_BRANCH_ID,
   authenticateUserInPostgres,
+  deleteAuditLogsInPostgres,
   deleteRowInPostgres,
   deleteStorageFileInPostgres,
   ensurePostgresSchema,
   getBootstrapFromPostgres,
   getStorageFileFromPostgres,
   getUserByIdAndBranchFromPostgres,
+  listAuditDeletionSecurityLogsFromPostgres,
   listStorageFilesInPostgres,
   purgeAllPostgresData,
   queryTablePaginated,
+  recordAuditDeletionSecurityLog,
   recordAuditLog,
   resetNonMahallaBranchesInPostgres,
   syncFullBranchStateToPostgres,
@@ -913,9 +916,10 @@ async function startServer() {
     action: PermissionAction
   ): boolean => {
     if (table === 'audit_logs') {
-      if (action !== 'view') return false;
-      return isUserSuperAdmin(actor);
+      if (action === 'view' || action === 'delete') return isUserSuperAdmin(actor);
+      return false;
     }
+    if (action === 'delete' && !isUserSuperAdmin(actor)) return false;
     if (isUserSuperAdmin(actor)) return true;
     const scope = mapTableToAccessScope(table);
     if (scope === 'super_admin') return false;
@@ -1833,9 +1837,52 @@ async function startServer() {
     }
   });
 
-  // Tamper-Resistant Audit Log Endpoint Protection
+  // Immutable Audit Deletion Security Log: NEVER allow POST/PUT/PATCH/DELETE
+  app.all(['/api/audit-deletion-security-log', '/api/audit-deletion-security-log/*'], async (req, res, next) => {
+    if (req.method.toUpperCase() !== 'GET') {
+      const actor = await resolveAuthenticatedActor(req);
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        403,
+        'audit_deletion_security_log',
+        req.method.toUpperCase(),
+        'سجل تتبع حذف سجلات التدقيق سجل أمني غير قابل للتعديل أو الحذف نهائياً.',
+        'IMMUTABLE_SECURITY_LOG_TAMPER_ATTEMPT'
+      );
+      return;
+    }
+    next();
+  });
+
+  app.get('/api/audit-deletion-security-log', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'audit_deletion_security_log',
+          'VIEW',
+          'الاطلاع على سجل تتبع عمليات حذف التدقيق مقتصر على مدير النظام فقط.'
+        );
+        return;
+      }
+      const branchId = req.query?.branchId ? String(req.query.branchId) : undefined;
+      const rows = await listAuditDeletionSecurityLogsFromPostgres(branchId);
+      res.json({ success: true, rows });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  // Tamper-Resistant Audit Log Endpoint Protection (Allow ONLY Admin DELETE with explicit confirmation & immutable security logging)
   app.all(['/api/audit-logs', '/api/audit-logs/*', '/api/db/audit_logs/:id'], async (req, res, next) => {
-    if (['PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase())) {
+    const method = req.method.toUpperCase();
+    if (['PUT', 'PATCH'].includes(method)) {
       const actor = await resolveAuthenticatedActor(req);
       await denyUnauthorizedAndAudit(
         req,
@@ -1843,13 +1890,89 @@ async function startServer() {
         actor.user,
         403,
         'audit_logs',
-        req.method.toUpperCase(),
-        'محاولة تعديل أو حذف سجل المراجعة والأمان (ممنوع نهائياً — سجل غير قابل للعبث).',
+        method,
+        'محاولة تعديل سجل المراجعة والأمان (ممنوع نهائياً — سجل غير قابل للتعديل).',
         'AUDIT_LOG_TAMPER_ATTEMPT'
       );
       return;
     }
+    if (method === 'DELETE') {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'audit_logs',
+          'DELETE',
+          'حذف سجل التدقيق مقتصر حصرياً على مدير النظام فقط.',
+          'AUDIT_LOG_TAMPER_ATTEMPT'
+        );
+        return;
+      }
+    }
     next();
+  });
+
+  app.delete(['/api/audit-logs', '/api/audit-logs/:id'], async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'audit_logs',
+          'DELETE',
+          'حذف سجل التدقيق مقتصر حصرياً على مدير النظام فقط.'
+        );
+        return;
+      }
+      const confirmDelete =
+        req.body?.confirmDelete === true || req.query?.confirm === 'CONFIRM_DELETE_AUDIT_LOG';
+      if (!confirmDelete) {
+        res.status(400).json({
+          success: false,
+          error: 'يلزم تأكيد صريح (confirmDelete) لتنفيذ حذف سجل التدقيق.',
+        });
+        return;
+      }
+      const reason = String(req.body?.reason || req.query?.reason || '').trim();
+      if (!reason || reason.length < 3) {
+        res.status(400).json({
+          success: false,
+          error: 'يرجى كتابة سبب واضح لعملية حذف سجل التدقيق للتوثيق الأمني.',
+        });
+        return;
+      }
+      const branchId = String(req.body?.branchId || req.query?.branchId || 'ALL');
+      const ids = req.params?.id
+        ? [String(req.params.id)]
+        : Array.isArray(req.body?.ids)
+        ? req.body.ids.map(String)
+        : undefined;
+      const targetScope = String(
+        req.body?.targetScope || (ids?.length ? `system_audit_logs (${ids.length})` : 'system_audit_logs_all')
+      );
+      const result = await deleteAuditLogsInPostgres({
+        branchId,
+        ids,
+        deletedBy: actor.user.username,
+        deletedByFullName: actor.user.fullName,
+        targetScope,
+        reason,
+        ipAddress: getClientIp(req),
+      });
+      res.json({
+        success: true,
+        deletedCount: result.deletedCount,
+        securityEntry: result.securityEntry,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message });
+    }
   });
 
   app.get('/api/audit-logs', async (req, res) => {
@@ -2650,8 +2773,45 @@ async function startServer() {
   const MODULE_SLICE_TO_DEPT: Record<string, SystemDepartmentKey> = {
     ration: 'commodities',
     internal_trade: 'internal_trade',
+    internalTrade: 'internal_trade',
     grain: 'grain_maintenance',
+    grainMaintenance: 'grain_maintenance',
     hr: 'hr',
+  };
+
+  const inspectModuleSliceShrinkage = (prevSlice: any, nextSlice: any): {
+    operationalDeleted: boolean;
+    auditLogsDeletedCount: number;
+  } => {
+    if (!prevSlice || typeof prevSlice !== 'object' || !nextSlice || typeof nextSlice !== 'object') {
+      return { operationalDeleted: false, auditLogsDeletedCount: 0 };
+    }
+    let operationalDeleted = false;
+    let auditLogsDeletedCount = 0;
+
+    for (const [propKey, prevVal] of Object.entries(prevSlice)) {
+      if (!Array.isArray(prevVal) || prevVal.length === 0) continue;
+      const nextVal = Array.isArray((nextSlice as any)[propKey]) ? (nextSlice as any)[propKey] : [];
+      const nextIds = new Set(
+        nextVal.map((item: any) => (item && typeof item === 'object' && item.id ? String(item.id) : '')).filter(Boolean)
+      );
+      let missingCount = 0;
+      for (const prevItem of prevVal) {
+        if (prevItem && typeof prevItem === 'object' && prevItem.id) {
+          if (!nextIds.has(String(prevItem.id))) {
+            missingCount += 1;
+          }
+        }
+      }
+      if (missingCount > 0) {
+        if (propKey === 'auditLogs') {
+          auditLogsDeletedCount += missingCount;
+        } else if (propKey !== 'readAlertIds') {
+          operationalDeleted = true;
+        }
+      }
+    }
+    return { operationalDeleted, auditLogsDeletedCount };
   };
 
   const filterModulePayloadByRbac = (payload: any, actor: AppUser): any => {
@@ -2742,6 +2902,124 @@ async function startServer() {
     }
   });
 
+  app.post('/api/modules/:branchId/audit-logs/delete', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.authenticated ? 403 : 401,
+        'audit_logs',
+        'DELETE',
+        'حذف سجل التدقيق الداخلي للأقسام مقتصر حصرياً على مدير النظام فقط.'
+      );
+      return;
+    }
+
+    const branchId = String(req.params.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    const body = req.body || {};
+    if (body.confirmDelete !== true) {
+      res.status(400).json({ success: false, error: 'يلزم التأكيد الصريح لحذف سجل التدقيق.' });
+      return;
+    }
+    const reason = String(body.reason || '').trim();
+    if (!reason || reason.length < 3) {
+      res.status(400).json({ success: false, error: 'يرجى إدخال سبب حذف سجل التدقيق.' });
+      return;
+    }
+
+    const sliceKey = String(body.sliceKey || 'ration') as
+      | 'ration'
+      | 'internalTrade'
+      | 'grainMaintenance'
+      | 'hr';
+    const allowedSlices = new Set(['ration', 'internalTrade', 'grainMaintenance', 'hr']);
+    if (!allowedSlices.has(sliceKey)) {
+      res.status(400).json({ success: false, error: 'نطاق القسم غير صالح.' });
+      return;
+    }
+
+    const moduleKey = String(body.moduleKey || 'all_modules').trim() || 'all_modules';
+    const cacheKey = `${branchId}::${moduleKey}`;
+    const existingResult = await getBranchModuleStateFromPostgres(branchId, moduleKey).catch(() => ({
+      exists: false,
+      payload: null,
+      version: 0,
+      updatedAt: null,
+    }));
+    const currentPayload = existingResult.exists
+      ? existingResult.payload
+      : cachedBranchModules.get(cacheKey)?.payload;
+
+    if (!currentPayload || typeof currentPayload !== 'object' || !currentPayload[sliceKey]) {
+      res.status(404).json({ success: false, error: 'بيانات القسم غير موجودة في قاعدة البيانات.' });
+      return;
+    }
+
+    const prevLogs = Array.isArray(currentPayload[sliceKey].auditLogs)
+      ? currentPayload[sliceKey].auditLogs
+      : [];
+    const targetIds =
+      Array.isArray(body.ids) && body.ids.length > 0 ? new Set(body.ids.map(String)) : null;
+
+    // Delete ONLY from auditLogs; NEVER touch operational data arrays
+    const nextLogs = targetIds
+      ? prevLogs.filter((entry: any) => !targetIds.has(String(entry?.id || '')))
+      : [];
+    const deletedCount = Math.max(0, prevLogs.length - nextLogs.length);
+
+    const updatedPayload = {
+      ...currentPayload,
+      updatedAt: new Date().toISOString(),
+      [sliceKey]: {
+        ...currentPayload[sliceKey],
+        auditLogs: nextLogs,
+      },
+    };
+
+    try {
+      const saved = await upsertBranchModuleStateInPostgres(
+        branchId,
+        updatedPayload,
+        actor.user.username,
+        moduleKey
+      );
+      cachedBranchModules.set(cacheKey, {
+        payload: updatedPayload,
+        version: saved.version,
+        updatedAt: saved.updatedAt,
+      });
+      const securityEntry = await recordAuditDeletionSecurityLog({
+        branchId,
+        deletedBy: actor.user.username,
+        deletedByFullName: actor.user.fullName,
+        targetScope: `module_${sliceKey}_audit_logs`,
+        deletedCount,
+        reason,
+        ipAddress: getClientIp(req),
+      });
+      broadcastWs({
+        type: 'module_state_update',
+        branchId,
+        moduleKey,
+        payload: updatedPayload,
+        version: saved.version,
+        updatedAt: saved.updatedAt,
+        clientId: String(body.clientId || ''),
+      });
+      res.json({
+        success: true,
+        deletedCount,
+        remainingCount: nextLogs.length,
+        securityEntry,
+        version: saved.version,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل حذف سجل التدقيق.' });
+    }
+  });
+
   app.post('/api/modules/:branchId', async (req, res) => {
     const actor = await resolveAuthenticatedActor(req);
     if (!actor.authenticated || !actor.user) {
@@ -2784,14 +3062,15 @@ async function startServer() {
 
       for (const [sliceKey, deptKey] of Object.entries(MODULE_SLICE_TO_DEPT)) {
         if (!(sliceKey in (rawPayload || {}))) continue;
-        const incomingJson = JSON.stringify((rawPayload as any)[sliceKey]);
-        const prevJson = JSON.stringify((prevPayload as any)?.[sliceKey]);
+        const incomingSlice = (rawPayload as any)[sliceKey];
+        const prevSlice = (prevPayload as any)?.[sliceKey];
+        const incomingJson = JSON.stringify(incomingSlice);
+        const prevJson = JSON.stringify(prevSlice);
         const sliceChanged = incomingJson !== prevJson;
         if (sliceChanged || targetSlice === deptKey) {
           const canMutate =
             hasDepartmentPermission(actor.user, deptKey, 'insert') ||
-            hasDepartmentPermission(actor.user, deptKey, 'update') ||
-            hasDepartmentPermission(actor.user, deptKey, 'delete');
+            hasDepartmentPermission(actor.user, deptKey, 'update');
           if (!canMutate) {
             await denyUnauthorizedAndAudit(
               req,
@@ -2804,7 +3083,21 @@ async function startServer() {
             );
             return;
           }
-          mergedAuthorized[sliceKey] = (rawPayload as any)[sliceKey];
+          const shrinkCheck = inspectModuleSliceShrinkage(prevSlice, incomingSlice);
+          if (shrinkCheck.operationalDeleted || shrinkCheck.auditLogsDeletedCount > 0) {
+            await denyUnauthorizedAndAudit(
+              req,
+              res,
+              actor.user,
+              403,
+              deptKey,
+              'DELETE',
+              `تم حظر حذف السجلات أو سجل التدقيق في قسم (${deptKey}) لأن الحذف مقتصر على مدير النظام فقط.`,
+              'NON_ADMIN_DELETE_BLOCKED'
+            );
+            return;
+          }
+          mergedAuthorized[sliceKey] = incomingSlice;
         }
       }
       payload = mergedAuthorized;

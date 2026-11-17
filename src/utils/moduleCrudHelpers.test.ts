@@ -49,6 +49,20 @@ describe('moduleCrudHelpers — RBAC & Relational Integrity & Audit', () => {
     assert.equal(viewerPerms.canEdit, false);
     assert.equal(viewerPerms.canDelete, false);
     assert.equal(viewerPerms.isReadOnly, true);
+
+    const supervisorUser: AppUser = {
+      ...adminUser,
+      id: 'u3',
+      role: 'supervisor',
+      isSuperAdmin: false,
+      departmentPermissions: {
+        commodities: { view: true, insert: true, update: true, delete: true, print: true, export: true },
+      },
+    };
+    const supervisorPerms = resolveModuleCrudPermissions(supervisorUser, false, 'commodities');
+    assert.equal(supervisorPerms.canAdd, true);
+    assert.equal(supervisorPerms.canEdit, true);
+    assert.equal(supervisorPerms.canDelete, false);
   });
 
   it('checkRationDeleteIntegrity prevents deleting linked merchants, commodities, and cards, and allows unlinked ones', () => {

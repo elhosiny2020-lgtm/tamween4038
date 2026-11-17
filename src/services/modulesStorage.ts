@@ -1685,6 +1685,16 @@ export async function loadBranchModulesBundle(
   return initial;
 }
 
+const activeBroadcastChannels = new Map<string, any>();
+
+function getOrCreateBroadcastChannel(sb: any, branchId: string) {
+  const existing = activeBroadcastChannels.get(branchId);
+  if (existing) return existing;
+  const ch = sb.channel(`tamween-modules-${branchId}`);
+  activeBroadcastChannels.set(branchId, ch);
+  return ch;
+}
+
 let inFlightSavePromise: Promise<ModuleSaveResult> | null = null;
 
 export async function saveBranchModulesBundle(
@@ -1748,8 +1758,8 @@ export async function saveBranchModulesBundle(
         if (!error) {
           supaOk = true;
         }
-        // Broadcast via Supabase Realtime channel for instant multi-device sync
-        const ch = sb.channel(`tamween-modules-${branchId}`);
+        // Broadcast via reused Supabase Realtime channel for instant multi-device sync
+        const ch = getOrCreateBroadcastChannel(sb, branchId);
         void ch.send({
           type: 'broadcast',
           event: 'module_bundle_sync',
@@ -1793,6 +1803,14 @@ export function subscribeBranchModulesRealtime(
   if (!sb) return () => {};
 
   const snapshotRowId = `mod__${branchId}__all_modules`;
+  const existing = activeBroadcastChannels.get(branchId);
+  if (existing) {
+    try {
+      void sb.removeChannel(existing);
+    } catch {}
+    activeBroadcastChannels.delete(branchId);
+  }
+
   const channel = sb
     .channel(`tamween-modules-${branchId}`)
     .on(
@@ -1826,8 +1844,13 @@ export function subscribeBranchModulesRealtime(
     )
     .subscribe();
 
+  activeBroadcastChannels.set(branchId, channel);
+
   return () => {
     try {
+      if (activeBroadcastChannels.get(branchId) === channel) {
+        activeBroadcastChannels.delete(branchId);
+      }
       void sb.removeChannel(channel);
     } catch {}
   };

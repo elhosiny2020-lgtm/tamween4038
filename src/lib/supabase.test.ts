@@ -754,16 +754,17 @@ test('Normalized SQL mappers maintain exact column parity with schema.sql (no da
       id: 'u-norm-1',
       username: 'auditor_1',
       fullName: 'مراجع مالي',
-      password: 'secret',
+      passwordHash: 'scrypt$hashed',
       role: 'auditor',
       createdAt: '2026-11-15',
     } as any,
     'branch-mahalla'
   );
   assert.strictEqual(userSql.id, 'u-norm-1');
-  assert.strictEqual(userSql.password_hash, 'secret');
+  assert.strictEqual(userSql.password_hash, 'scrypt$hashed');
   assert.strictEqual((userSql as any).data_json, undefined);
-  assert.strictEqual(mapSqlRowToUser(userSql)?.password, 'secret');
+  assert.strictEqual((mapSqlRowToUser(userSql) as any)?.password, undefined);
+  assert.strictEqual((mapSqlRowToUser(userSql) as any)?.hasPassword, true);
 
   const taskSql = mapTaskToSqlRow(
     {

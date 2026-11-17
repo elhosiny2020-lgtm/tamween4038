@@ -83,15 +83,18 @@ import { resolveUserDepartmentMatrix } from '../utils/departmentRbac.ts';
 import { INITIAL_USERS } from '../defaultData.ts';
 import {
   fallbackAuthenticateUser,
+  fallbackDeleteAuditLogs,
   fallbackDeleteRow,
   fallbackDeleteStorageFile,
   fallbackGetBootstrap,
   fallbackGetBranchModuleState,
   fallbackGetStorageFile,
   fallbackGetUserByIdAndBranch,
+  fallbackListAuditDeletionSecurityLogs,
   fallbackListStorageFiles,
   fallbackPurgeAll,
   fallbackQueryTablePaginated,
+  fallbackRecordAuditDeletionSecurityLog,
   fallbackResetNonMahallaBranches,
   fallbackSyncFullBranchState,
   fallbackSyncHighDebtAlerts,
@@ -182,6 +185,21 @@ export async function ensurePostgresSchema(): Promise<void> {
                ADD COLUMN IF NOT EXISTS operation TEXT DEFAULT '',
                ADD COLUMN IF NOT EXISTS record_id TEXT DEFAULT '',
                ADD COLUMN IF NOT EXISTS result TEXT DEFAULT 'SUCCESS'`
+          )
+          .catch(() => {}),
+        pool
+          .query(
+            `CREATE TABLE IF NOT EXISTS public.audit_deletion_security_log (
+              id TEXT PRIMARY KEY,
+              branch_id TEXT NOT NULL DEFAULT 'branch-mahalla',
+              deleted_by TEXT NOT NULL,
+              deleted_by_full_name TEXT NOT NULL DEFAULT '',
+              target_scope TEXT NOT NULL,
+              deleted_count INTEGER NOT NULL DEFAULT 0,
+              reason TEXT NOT NULL DEFAULT '',
+              ip_address TEXT NOT NULL DEFAULT '127.0.0.1',
+              created_at TIMESTAMPTZ DEFAULT NOW()
+            )`
           )
           .catch(() => {}),
       ]);
@@ -2539,6 +2557,200 @@ export async function upsertBranchModuleStateInPostgres(
       return fallbackUpsertBranchModuleState(cleanBranch, payload, updatedBy, moduleKey);
     }
     throw err;
+  }
+}
+
+export interface AuditDeletionSecurityEntry {
+  id: string;
+  branchId: string;
+  deletedBy: string;
+  deletedByFullName: string;
+  targetScope: string;
+  deletedCount: number;
+  reason: string;
+  ipAddress: string;
+  createdAt: string;
+}
+
+export async function recordAuditDeletionSecurityLog(entry: {
+  branchId?: string;
+  deletedBy: string;
+  deletedByFullName?: string;
+  targetScope: string;
+  deletedCount: number;
+  reason: string;
+  ipAddress?: string;
+}): Promise<AuditDeletionSecurityEntry> {
+  await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackRecordAuditDeletionSecurityLog(entry);
+  }
+  const id = `aud-sec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const cleanBranch = (entry.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  try {
+    const res = await pool.query(
+      `INSERT INTO public.audit_deletion_security_log
+        (id, branch_id, deleted_by, deleted_by_full_name, target_scope, deleted_count, reason, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        id,
+        cleanBranch,
+        entry.deletedBy,
+        entry.deletedByFullName || entry.deletedBy,
+        entry.targetScope,
+        Math.max(0, Number(entry.deletedCount) || 0),
+        entry.reason || '',
+        entry.ipAddress || '127.0.0.1',
+      ]
+    );
+    const r = res.rows[0];
+    return {
+      id: String(r.id),
+      branchId: String(r.branch_id || cleanBranch),
+      deletedBy: String(r.deleted_by || entry.deletedBy),
+      deletedByFullName: String(r.deleted_by_full_name || entry.deletedBy),
+      targetScope: String(r.target_scope || entry.targetScope),
+      deletedCount: Number(r.deleted_count || 0),
+      reason: String(r.reason || ''),
+      ipAddress: String(r.ip_address || '127.0.0.1'),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+    };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackRecordAuditDeletionSecurityLog(entry);
+    }
+    throw err;
+  }
+}
+
+export async function listAuditDeletionSecurityLogsFromPostgres(
+  branchId?: string
+): Promise<AuditDeletionSecurityEntry[]> {
+  await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackListAuditDeletionSecurityLogs(branchId);
+  }
+  try {
+    const useBranch = Boolean(branchId && branchId !== 'ALL');
+    const res = await pool.query(
+      useBranch
+        ? `SELECT * FROM public.audit_deletion_security_log WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 500`
+        : `SELECT * FROM public.audit_deletion_security_log ORDER BY created_at DESC LIMIT 500`,
+      useBranch ? [branchId] : []
+    );
+    return res.rows.map((r) => ({
+      id: String(r.id),
+      branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
+      deletedBy: String(r.deleted_by || ''),
+      deletedByFullName: String(r.deleted_by_full_name || ''),
+      targetScope: String(r.target_scope || ''),
+      deletedCount: Number(r.deleted_count || 0),
+      reason: String(r.reason || ''),
+      ipAddress: String(r.ip_address || '127.0.0.1'),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+    }));
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackListAuditDeletionSecurityLogs(branchId);
+    }
+    throw err;
+  }
+}
+
+export async function deleteAuditLogsInPostgres(params: {
+  branchId?: string;
+  ids?: string[];
+  deletedBy: string;
+  deletedByFullName?: string;
+  targetScope: string;
+  reason: string;
+  ipAddress?: string;
+}): Promise<{ deletedCount: number; securityEntry: AuditDeletionSecurityEntry }> {
+  await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackDeleteAuditLogs(params);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let delRes;
+    const hasIds = Array.isArray(params.ids) && params.ids.length > 0;
+    const useBranch = Boolean(params.branchId && params.branchId !== 'ALL');
+    if (hasIds) {
+      const numericIds = params.ids!.map((v) => Number(v)).filter((n) => Number.isFinite(n));
+      if (numericIds.length === 0) {
+        await client.query('COMMIT');
+        const secEntry = await recordAuditDeletionSecurityLog({
+          branchId: params.branchId && params.branchId !== 'ALL' ? params.branchId : DEFAULT_BRANCH_ID,
+          deletedBy: params.deletedBy,
+          deletedByFullName: params.deletedByFullName,
+          targetScope: params.targetScope,
+          deletedCount: 0,
+          reason: params.reason,
+          ipAddress: params.ipAddress,
+        });
+        return { deletedCount: 0, securityEntry: secEntry };
+      }
+      delRes = await client.query(
+        useBranch
+          ? `DELETE FROM public.audit_logs WHERE id = ANY($1::int[]) AND branch_id = $2 RETURNING id`
+          : `DELETE FROM public.audit_logs WHERE id = ANY($1::int[]) RETURNING id`,
+        useBranch ? [numericIds, params.branchId] : [numericIds]
+      );
+    } else if (useBranch) {
+      delRes = await client.query(`DELETE FROM public.audit_logs WHERE branch_id = $1 RETURNING id`, [
+        params.branchId,
+      ]);
+    } else {
+      delRes = await client.query(`DELETE FROM public.audit_logs RETURNING id`);
+    }
+    const deletedCount = delRes.rows.length;
+    const secId = `aud-sec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const cleanBranch = (params.branchId && params.branchId !== 'ALL' ? params.branchId : DEFAULT_BRANCH_ID).trim();
+    const secRes = await client.query(
+      `INSERT INTO public.audit_deletion_security_log
+        (id, branch_id, deleted_by, deleted_by_full_name, target_scope, deleted_count, reason, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        secId,
+        cleanBranch,
+        params.deletedBy,
+        params.deletedByFullName || params.deletedBy,
+        params.targetScope,
+        deletedCount,
+        params.reason || '',
+        params.ipAddress || '127.0.0.1',
+      ]
+    );
+    await client.query('COMMIT');
+    const r = secRes.rows[0];
+    return {
+      deletedCount,
+      securityEntry: {
+        id: String(r.id),
+        branchId: String(r.branch_id || cleanBranch),
+        deletedBy: String(r.deleted_by || params.deletedBy),
+        deletedByFullName: String(r.deleted_by_full_name || params.deletedBy),
+        targetScope: String(r.target_scope || params.targetScope),
+        deletedCount: Number(r.deleted_count || 0),
+        reason: String(r.reason || ''),
+        ipAddress: String(r.ip_address || '127.0.0.1'),
+        createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+      },
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackDeleteAuditLogs(params);
+    }
+    throw err;
+  } finally {
+    client.release();
   }
 }
 

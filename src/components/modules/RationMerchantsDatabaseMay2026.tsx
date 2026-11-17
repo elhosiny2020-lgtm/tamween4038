@@ -36,6 +36,9 @@ import {
 } from '../../utils/internalTradeMathEngine';
 import { buildMay2026RationMerchantsList } from '../../data/may2026RationMerchants';
 import { resolveModuleCrudPermissions } from '../../utils/moduleCrudHelpers';
+import { isSuperAdmin } from '../../utils/departmentRbac';
+import { groupRecordsByLocalUnit } from '../../utils/tableGroupingHelpers';
+import { LocalUnitSubtotalRow, VillageGrandTotalRow } from './ModuleCrudShared';
 
 interface Props {
   state: RationModuleState;
@@ -73,10 +76,11 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   canWrite,
   onUpdateMerchants,
 }) => {
-  const { canPrint, canExport } = useMemo(
+  const { canPrint, canExport, canDelete } = useMemo(
     () => resolveModuleCrudPermissions(currentUser ?? null, false, 'commodities'),
     [currentUser]
   );
+  const adminUser = useMemo(() => isSuperAdmin(currentUser), [currentUser]);
   const [subTab, setSubTab] = useState<ActiveSubTab>('table');
   const [searchQuery, setSearchQuery] = useState('');
   const [villageFilter, setVillageFilter] = useState('ALL');
@@ -1350,7 +1354,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
           </div>
 
           {/* Main Paginated Merchants Table */}
-          <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-[600px]">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl enlarged-bold-table">
             <table className="w-full text-xs border-collapse">
               <thead className="bg-[#0A1931] text-white sticky top-0 z-10">
                 <tr>
@@ -1368,90 +1372,148 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 </tr>
               </thead>
               <tbody>
-                {paginatedMerchants.map((m) => {
-                  const statusColor =
-                    m.activityStatus === 'نشط'
-                      ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                      : m.activityStatus === 'إجازة'
-                      ? 'bg-amber-100 text-amber-900 border-amber-300'
-                      : 'bg-rose-100 text-rose-900 border-rose-300';
+                {(() => {
+                  const grouped = groupRecordsByLocalUnit({
+                    rows: paginatedMerchants,
+                    getLocalUnit: (m) => m.localUnit,
+                    numericFields: [
+                      { key: 'cashInsuranceAmount', getValue: (m) => Number(m.cashInsuranceAmount) || 0 },
+                    ],
+                  });
                   return (
-                    <tr
-                      key={m.id}
-                      className="border-b border-slate-200 hover:bg-slate-50 transition-colors"
-                    >
-                      <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
-                        {m.serialNo}
-                      </td>
-                      <td className="p-2.5 font-black text-slate-900">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedMerchantId(m.id)}
-                          className="text-right hover:text-teal-700 hover:underline cursor-pointer"
-                        >
-                          {m.merchantName}
-                        </button>
-                        <div className="text-[10px] text-slate-500 font-bold">
-                          {m.village} · {m.localUnit} {m.phone ? `· ${m.phone}` : ''}
-                        </div>
-                      </td>
-                      <td className="p-2.5 text-center font-mono tabular-nums text-slate-700">
-                        {m.nationalId || (
-                          <span className="text-rose-600 font-black">غير مسجل</span>
-                        )}
-                      </td>
-                      <td className="p-2.5 text-center font-mono tabular-nums font-black text-teal-800">
-                        {m.traderCode || m.activityCardNumber || '-'}
-                      </td>
-                      <td className="p-2.5 text-center font-mono tabular-nums font-black text-slate-800">
-                        {m.posMachineNumber}
-                      </td>
-                      <td className="p-2.5 text-slate-700 font-bold">{m.detailedAddress}</td>
-                      <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
-                        {m.cashInsuranceAmount.toLocaleString()} ج.م
-                      </td>
-                      <td className="p-2.5 text-center font-mono text-[11px] font-bold text-slate-700">
-                        <div>سجل: {m.commercialRegNumber || '—'}</div>
-                        <div className="text-teal-800">رخصة: {m.licenseNumber || '—'}</div>
-                      </td>
-                      <td className="p-2.5 text-center font-mono text-[10px] font-bold">
-                        <div>رخصة: {m.licenseExpiryDate || '—'}</div>
-                        <div>ضريبية: {m.taxCardExpiryDate || '—'}</div>
-                        <div>سجل: {m.commercialRegExpiryDate || '—'}</div>
-                      </td>
-                      <td className="p-2.5 text-center">
-                        <span
-                          className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] font-black border ${statusColor}`}
-                        >
-                          {m.activityStatus === 'موقوف' ? 'متوقف' : m.activityStatus}
-                        </span>
-                      </td>
-                      <td className="p-2.5 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedMerchantId(m.id)}
-                            title="فتح ملف التاجر الشخصي"
-                            className="px-2.5 py-1 rounded-lg bg-[#0A1931] text-white text-[11px] font-black hover:bg-slate-800 cursor-pointer flex items-center gap-1"
-                          >
-                            <Eye className="w-3 h-3" />
-                            ملف التاجر
-                          </button>
-                          {canWrite && (
-                            <button
-                              type="button"
-                              onClick={() => openEditMerchant(m)}
-                              title="تعديل بيانات التاجر"
-                              className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold cursor-pointer"
-                            >
-                              <Edit3 className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                    <>
+                      {grouped.groups.map((grp) => (
+                        <React.Fragment key={grp.localUnit}>
+                          {grp.rows.map((m) => {
+                            const statusColor =
+                              m.activityStatus === 'نشط'
+                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                : m.activityStatus === 'إجازة'
+                                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                : 'bg-rose-100 text-rose-900 border-rose-300';
+                            return (
+                              <tr
+                                key={m.id}
+                                className="border-b border-slate-200 hover:bg-slate-50 transition-colors"
+                              >
+                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
+                                  {m.serialNo}
+                                </td>
+                                <td className="p-2.5 font-black text-slate-900">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedMerchantId(m.id)}
+                                    className="text-right hover:text-teal-700 hover:underline cursor-pointer"
+                                  >
+                                    {m.merchantName}
+                                  </button>
+                                  <div className="text-[10px] text-slate-500 font-bold">
+                                    {m.village} · {m.localUnit} {m.phone ? `· ${m.phone}` : ''}
+                                  </div>
+                                </td>
+                                <td className="p-2.5 text-center font-mono tabular-nums text-slate-700">
+                                  {m.nationalId || (
+                                    <span className="text-rose-600 font-black">غير مسجل</span>
+                                  )}
+                                </td>
+                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-teal-800">
+                                  {m.traderCode || m.activityCardNumber || '-'}
+                                </td>
+                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-slate-800">
+                                  {m.posMachineNumber}
+                                </td>
+                                <td className="p-2.5 text-slate-700 font-bold">{m.detailedAddress}</td>
+                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
+                                  {m.cashInsuranceAmount.toLocaleString()} ج.م
+                                </td>
+                                <td className="p-2.5 text-center font-mono text-[11px] font-bold text-slate-700">
+                                  <div>سجل: {m.commercialRegNumber || '—'}</div>
+                                  <div className="text-teal-800">رخصة: {m.licenseNumber || '—'}</div>
+                                </td>
+                                <td className="p-2.5 text-center font-mono text-[10px] font-bold">
+                                  <div>رخصة: {m.licenseExpiryDate || '—'}</div>
+                                  <div>ضريبية: {m.taxCardExpiryDate || '—'}</div>
+                                  <div>سجل: {m.commercialRegExpiryDate || '—'}</div>
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  <span
+                                    className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] font-black border ${statusColor}`}
+                                  >
+                                    {m.activityStatus === 'موقوف' ? 'متوقف' : m.activityStatus}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  <div className="flex items-center justify-center gap-1 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedMerchantId(m.id)}
+                                      title="العين السحرية — عرض ملف التاجر"
+                                      data-testid={`may26-view-${m.id}`}
+                                      className="px-2.5 py-1 rounded-lg bg-teal-600 text-white text-[11px] font-black hover:bg-teal-700 cursor-pointer flex items-center gap-1"
+                                    >
+                                      <Eye className="w-3 h-3" />
+                                      عرض
+                                    </button>
+                                    {canWrite && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openEditMerchant(m)}
+                                        title="تعديل بيانات التاجر"
+                                        data-testid={`may26-edit-${m.id}`}
+                                        className="px-2 py-1 rounded-lg bg-[#0A1931] hover:bg-slate-800 text-white text-[11px] font-black cursor-pointer flex items-center gap-1"
+                                      >
+                                        <Edit3 className="w-3 h-3 text-[#D4AF37]" />
+                                        تعديل
+                                      </button>
+                                    )}
+                                    {(canDelete || adminUser) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const nextList = merchants.filter((x) => x.id !== m.id);
+                                          onUpdateMerchants(
+                                            nextList,
+                                            archives,
+                                            `حذف التاجر (${m.merchantName}) بصلاحية مدير النظام`
+                                          );
+                                          setBannerMessage(`تم حذف التاجر (${m.merchantName}) بصلاحية مدير النظام.`);
+                                        }}
+                                        title="حذف (الإدمن فقط)"
+                                        data-testid={`may26-delete-${m.id}`}
+                                        className="px-2 py-1 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 text-[11px] font-black cursor-pointer"
+                                      >
+                                        حذف
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          <LocalUnitSubtotalRow
+                            unitName={grp.localUnit}
+                            recordCount={grp.count}
+                            labelColSpan={6}
+                            metricCells={[
+                              { content: `${(grp.subtotals.cashInsuranceAmount || 0).toLocaleString()} ج.م`, mono: true },
+                              { colSpan: 4, content: 'مجموع التأمين النقدي للوحدة المحلية' },
+                            ]}
+                          />
+                        </React.Fragment>
+                      ))}
+                      {grouped.groups.length > 0 && (
+                        <VillageGrandTotalRow
+                          totalCount={grouped.grandTotalCount}
+                          labelColSpan={6}
+                          metricCells={[
+                            { content: `${(grouped.grandTotals.cashInsuranceAmount || 0).toLocaleString()} ج.م`, mono: true },
+                            { colSpan: 4, content: 'مجموع صافي صفوف الوحدات المحلية' },
+                          ]}
+                        />
+                      )}
+                    </>
                   );
-                })}
+                })()}
               </tbody>
             </table>
           </div>
@@ -1750,7 +1812,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                     مقارنة الحقل السابق بالحقل الجديد
                   </span>
                 </h6>
-                <div className="overflow-x-auto max-h-[300px]">
+                <div className="overflow-x-auto enlarged-bold-table">
                   <table className="w-full text-[11px] border-collapse">
                     <thead className="bg-[#0A1931] text-white sticky top-0">
                       <tr>
@@ -1968,7 +2030,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </div>
               <h4 className="text-sm font-black text-[#0A1931] mt-1">{activeReportPayload.title}</h4>
             </div>
-            <div className="overflow-x-auto max-h-[450px]">
+            <div className="overflow-x-auto enlarged-bold-table">
               <table className="w-full text-xs border-collapse bg-white">
                 <thead className="bg-[#0A1931] text-white sticky top-0">
                   <tr>

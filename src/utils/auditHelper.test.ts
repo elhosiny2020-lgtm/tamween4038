@@ -519,17 +519,19 @@ test('branchAuthVault strictly isolates usernames, passwords, and permissions pe
   const samanoudOnly = sanitizeBranchUsers(mixedUsers, 'branch-samanoud', 'إدارة تموين سمنود');
   const mahallaOnly = sanitizeBranchUsers(mixedUsers, 'branch-mahalla', 'إدارة تموين مركز المحلة الكبرى');
 
-  // Samanoud vault must ONLY contain Samanoud user and NEVER see Mahalla user
+  // Samanoud vault must ONLY contain Samanoud user and NEVER see Mahalla user or expose plaintext passwords
   assert.equal(samanoudOnly.length, 1);
   assert.equal(samanoudOnly[0].username, 'samanoud_mgr');
-  assert.equal(samanoudOnly[0].password, 'SamanoudSecretPassword1!');
+  assert.equal(samanoudOnly[0].password, undefined);
+  assert.equal(samanoudOnly[0].hasPassword, true);
   assert.equal(samanoudOnly[0].branchId, 'branch-samanoud');
   assert.equal(samanoudOnly.some((u) => u.username === 'mahalla_mgr'), false);
 
-  // Mahalla vault must ONLY contain Mahalla user and NEVER see Samanoud user
+  // Mahalla vault must ONLY contain Mahalla user and NEVER see Samanoud user or expose plaintext passwords
   assert.equal(mahallaOnly.length, 1);
   assert.equal(mahallaOnly[0].username, 'mahalla_mgr');
-  assert.equal(mahallaOnly[0].password, 'MahallaSecretPassword2!');
+  assert.equal(mahallaOnly[0].password, undefined);
+  assert.equal(mahallaOnly[0].hasPassword, true);
   assert.equal(mahallaOnly[0].branchId, 'branch-mahalla');
   assert.equal(mahallaOnly.some((u) => u.username === 'samanoud_mgr'), false);
 });

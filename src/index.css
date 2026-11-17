@@ -296,6 +296,7 @@ table th {
 
 /* Summary / Totals Row Styling */
 tr.summary-row,
+tr.grand-total-row,
 tfoot tr {
   background: linear-gradient(90deg, #0A1628 0%, #0F1E36 60%, #0D9488 100%) !important;
   color: #ffffff !important;
@@ -303,9 +304,43 @@ tfoot tr {
 }
 
 tr.summary-row td,
+tr.grand-total-row td,
 tfoot tr td {
   color: #ffffff !important;
-  border-color: rgba(212, 175, 55, 0.3) !important;
+  border-color: rgba(212, 175, 55, 0.35) !important;
+  font-weight: 900 !important;
+}
+
+/* Local Unit Subtotal Row Styling (إجمالي الوحدة المحلية) */
+tr.unit-subtotal-row {
+  background: linear-gradient(90deg, #E6FFFA 0%, #F0FDFA 55%, #FEF3C7 100%) !important;
+  color: #0A1628 !important;
+  border-top: 2px solid #0D9488 !important;
+  border-bottom: 2px solid #0A1628 !important;
+}
+
+tr.unit-subtotal-row td {
+  color: #0A1628 !important;
+  font-weight: 900 !important;
+  border-color: rgba(13, 148, 136, 0.35) !important;
+}
+
+/* Enlarged +2 steps & bold font classes for Ration Commodities & Internal Trade tables */
+.enlarged-bold-table table th {
+  font-size: 0.95rem !important;
+  font-weight: 900 !important;
+  padding: 0.72rem 0.65rem !important;
+}
+
+.enlarged-bold-table table td {
+  font-size: 0.92rem !important;
+  font-weight: 800 !important;
+  padding: 0.68rem 0.65rem !important;
+}
+
+.enlarged-bold-table table td *,
+.enlarged-bold-table table th * {
+  font-weight: 800 !important;
 }
 
 /* Official Print Styles */

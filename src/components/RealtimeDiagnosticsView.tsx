@@ -724,7 +724,7 @@ export const RealtimeDiagnosticsView: React.FC<RealtimeDiagnosticsViewProps> = (
         </div>
 
         {/* Structured DataGrid Table (Last 50 Realtime Events) */}
-        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/90 max-h-[540px] overflow-y-auto">
+        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/90">
           <table
             data-testid="realtime-events-datagrid"
             className="w-full text-right border-collapse text-xs"

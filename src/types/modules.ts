@@ -525,6 +525,8 @@ export interface PetroleumProductRecord {
   stationName: string;
   licenseNumber: string;
   ownerName: string;
+  localUnit?: string;
+  village?: string;
   productName: 'السولار' | 'بنزين 80' | 'بنزين 92' | 'بنزين 95' | 'مازوت' | string;
   openingStock: number; // liters
   receipts: number;
@@ -581,6 +583,7 @@ export interface RationModuleState {
   petroleumProducts: PetroleumProductRecord[];
   rationOfficeAccounts: RationOfficeAccountingRecord[];
   merchantMonthlyArchives?: MerchantMonthlyArchiveRecord[];
+  readAlertIds?: string[];
   settings: RationDecisionSettings;
   settingsHistory: RationDecisionSettings[];
   auditLogs: ModuleAuditLog[];
@@ -1555,6 +1558,9 @@ export interface HrEmployee {
   fileNumber: string;
   // Public Service & Contract Employees Specific Fields
   employeeType?: 'خدمة عامة' | 'استعانة' | 'تعيين دائم' | string;
+  assistanceType?: string;
+  contractNumber?: string;
+  localUnit?: string;
   qualification?: string; // المؤهل الدراسي
   contractEndDate?: string; // تاريخ انتهاء التعاقد YYYY-MM-DD
   contractDurationText?: string; // مدة التعاقد
@@ -2036,6 +2042,7 @@ export interface InternalTradeState {
   fuelStationMovements: FuelStationDailyMovement[];
   lpgDepots: LpgDepotControlRecord[];
   lpgDistributors: LpgDistributorRecord[];
+  readAlertIds?: string[];
   settings: InternalTradeSettings;
   auditLogs: ModuleAuditLog[];
 }

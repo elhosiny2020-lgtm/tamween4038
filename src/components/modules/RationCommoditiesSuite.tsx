@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BarChart,
   Bar,
@@ -33,6 +33,7 @@ import {
   Users,
   Flame,
   Fuel,
+  Bell,
 } from 'lucide-react';
 import type {
   AppUser,
@@ -82,12 +83,26 @@ import {
   checkRationDeleteIntegrity,
   resolveModuleCrudPermissions,
 } from '../../utils/moduleCrudHelpers';
+import { isSuperAdmin } from '../../utils/departmentRbac';
+import { groupRecordsByLocalUnit } from '../../utils/tableGroupingHelpers';
+import {
+  buildCommoditiesDepartmentAlerts,
+  canDeleteDepartmentAlert,
+  canViewDepartmentAlerts,
+  countUnreadDepartmentAlerts,
+} from '../../utils/moduleAlertsEngine';
 import {
   ModuleTableToolbar,
   ModuleRowActions,
   ModuleFormModal,
   ModuleDeleteConfirmModal,
+  ModuleRecordProfileModal,
+  LocalUnitSubtotalRow,
+  VillageGrandTotalRow,
+  AuditLogAdminToolbar,
+  DepartmentAlertsPanel,
   type CrudFieldDefinition,
+  type RecordProfileSection,
 } from './ModuleCrudShared';
 
 export type RationSubView =
@@ -104,6 +119,7 @@ export type RationSubView =
   | 'gas_cylinders'
   | 'petroleum'
   | 'ration_accounting'
+  | 'alerts'
   | 'settings'
   | 'audit';
 
@@ -150,6 +166,19 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     initialSubView || (initialMode === 'internal_trade' ? 'merchants' : 'dashboard')
   );
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [profileView, setProfileView] = useState<{
+    title: string;
+    subtitle?: string;
+    badgeText?: string;
+    updatedAt?: string;
+    sections: RecordProfileSection[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (initialSubView) {
+      setSubView(initialSubView);
+    }
+  }, [initialSubView]);
 
   // Reports Center State
   const [selectedReportType, setSelectedReportType] = useState<RationReportType>('RPT_BALANCES');
@@ -264,9 +293,19 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
 
   // Settings Editor Draft
   const [settingsDraft, setSettingsDraft] = useState(state.settings);
+  useEffect(() => {
+    setSettingsDraft(state.settings);
+  }, [state.settings]);
   const [merchantRegistryPage, setMerchantRegistryPage] = useState<number>(1);
   const [merchantRegistryPageSize, setMerchantRegistryPageSize] = useState<number>(25);
   const [alertDocFilter, setAlertDocFilter] = useState<'ALL' | 'ALERT_ONLY'>('ALERT_ONLY');
+
+  const canSeeAlerts = useMemo(() => canViewDepartmentAlerts(currentUser, 'commodities'), [currentUser]);
+  const deptAlerts = useMemo(() => buildCommoditiesDepartmentAlerts(state), [state]);
+  const unreadAlertsCount = useMemo(
+    () => countUnreadDepartmentAlerts(deptAlerts, state.readAlertIds || []),
+    [deptAlerts, state.readAlertIds]
+  );
 
   const appendAudit = (
     actionType: ModuleAuditLog['actionType'],
@@ -437,6 +476,104 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
         .includes(q)
     );
   }, [state.commodities, commoditySearch]);
+
+  const merchantById = useMemo(
+    () => new Map(state.merchants.map((m) => [m.id, m])),
+    [state.merchants]
+  );
+
+  const commodityById = useMemo(
+    () => new Map(state.commodities.map((c) => [c.id, c])),
+    [state.commodities]
+  );
+
+  const paginatedFilteredMerchants = useMemo(
+    () =>
+      filteredMerchants.slice(
+        (merchantRegistryPage - 1) * merchantRegistryPageSize,
+        merchantRegistryPage * merchantRegistryPageSize
+      ),
+    [filteredMerchants, merchantRegistryPage, merchantRegistryPageSize]
+  );
+
+  const merchantsGrouped = useMemo(
+    () =>
+      groupRecordsByLocalUnit({
+        rows: paginatedFilteredMerchants,
+        getLocalUnit: (m) => m.localUnit || m.village,
+        numericFields: [
+          { key: 'cashInsuranceAmount', getValue: (m) => Number(m.cashInsuranceAmount) || 0 },
+          {
+            key: 'monthlyQuota',
+            getValue: (m) =>
+              m.monthlyEntitlementQuota ||
+              round2((Number(m.linkedBeneficiariesCount) || 0) * state.settings.supportPerBeneficiary),
+          },
+        ],
+      }),
+    [paginatedFilteredMerchants, state.settings.supportPerBeneficiary]
+  );
+
+  const cardsGrouped = useMemo(
+    () =>
+      groupRecordsByLocalUnit({
+        rows: state.cards,
+        getLocalUnit: (c) => c.localUnit || merchantById.get(c.merchantId)?.localUnit || c.village,
+        numericFields: [
+          { key: 'eligibleCount', getValue: (c) => countEligibleBeneficiaries(c.members) },
+          { key: 'totalMembers', getValue: (c) => c.members.length },
+        ],
+      }),
+    [state.cards, merchantById]
+  );
+
+  const disbursementsGrouped = useMemo(
+    () =>
+      groupRecordsByLocalUnit({
+        rows: state.disbursements,
+        getLocalUnit: (d) => {
+          const m = merchantById.get(d.merchantId);
+          return m?.localUnit || m?.village;
+        },
+        numericFields: [
+          { key: 'quantity', getValue: (d) => Number(d.quantity) || 0 },
+          { key: 'totalSaleValue', getValue: (d) => Number(d.totalSaleValue) || 0 },
+          { key: 'supportDeducted', getValue: (d) => Number(d.supportDeducted) || 0 },
+          { key: 'citizenPaidAmount', getValue: (d) => Number(d.citizenPaidAmount) || 0 },
+          { key: 'commissionEarned', getValue: (d) => Number(d.commissionEarned) || 0 },
+        ],
+      }),
+    [state.disbursements, merchantById]
+  );
+
+  const requisitionsGrouped = useMemo(
+    () =>
+      groupRecordsByLocalUnit({
+        rows: state.requisitions,
+        getLocalUnit: (r) => {
+          const m = merchantById.get(r.merchantId);
+          return m?.localUnit || m?.village;
+        },
+        numericFields: [
+          { key: 'requestedQty', getValue: (r) => Number(r.lines[0]?.requestedQty) || 0 },
+          { key: 'approvedQty', getValue: (r) => Number(r.lines[0]?.approvedQty) || 0 },
+          { key: 'deliveredQty', getValue: (r) => Number(r.lines[0]?.deliveredQty) || 0 },
+          {
+            key: 'remainingQty',
+            getValue: (r) =>
+              computeRemainingMonthlyQuota(Number(r.lines[0]?.requestedQty) || 0, Number(r.lines[0]?.approvedQty) || 0),
+          },
+          {
+            key: 'quotaVal',
+            getValue: (r) => round2((Number(r.lines[0]?.requestedQty) || 0) * (Number(r.lines[0]?.supplyPrice) || 0)),
+          },
+        ],
+        deriveMetrics: (totals) => ({
+          execPct: computeMonthlyQuotaExecutionPct(totals.deliveredQty || 0, totals.requestedQty || 0),
+        }),
+      }),
+    [state.requisitions, merchantById]
+  );
 
   const selectedCard = useMemo(
     () => state.cards.find((c) => c.id === selectedCardId) || state.cards[0] || null,
@@ -850,6 +987,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
       if (duplicate) return 'رقم ماكينة الصرف POS مسجل لمنفذ آخر بالفعل.';
 
       if (mode === 'add') {
+        const traderCodeVal = String(values.traderCode || '').trim();
         const created: RationMerchant = {
           id: `${branchId}-m-${Date.now()}`,
           serialNo: state.merchants.length + 1,
@@ -857,6 +995,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           merchantName: name,
           ownerName: owner,
           posMachineNumber: String(values.posMachineNumber).trim(),
+          traderCode: traderCodeVal || undefined,
+          activityCardNumber: traderCodeVal || undefined,
           outletType: values.outletType as OutletType,
           governorate: 'الغربية',
           district: branchName,
@@ -870,6 +1010,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           licenseNumber: String(values.licenseNumber).trim(),
           licenseIssueDate: String(values.activityStartDate || today),
           licenseExpiryDate: String(values.licenseExpiryDate || '2027-12-31'),
+          taxCardExpiryDate: String(values.taxCardExpiryDate || '2027-08-15'),
+          commercialRegExpiryDate: String(values.commercialRegExpiryDate || '2027-09-30'),
           activityStartDate: String(values.activityStartDate || today),
           activityEndDate: String(values.licenseExpiryDate || '2027-12-31'),
           monthlyEntitlementQuota: Math.max(0, Number(values.monthlyEntitlementQuota) || 0),
@@ -892,6 +1034,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
         notify('ok', `تم إضافة المنفذ (${created.merchantName}) بنجاح.`);
       } else if (targetId) {
         const prev = state.merchants.find((m) => m.id === targetId);
+        const traderCodeVal = String(values.traderCode || prev?.traderCode || '').trim();
         const updatedList = state.merchants.map((m) =>
           m.id === targetId
             ? {
@@ -905,11 +1048,15 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 nationalId: String(values.nationalId || m.nationalId || '').trim(),
                 commercialRegNumber: String(values.commercialRegNumber || m.commercialRegNumber || '').trim(),
                 taxCardNumber: String(values.taxCardNumber || m.taxCardNumber || '').trim(),
+                traderCode: traderCodeVal || undefined,
+                activityCardNumber: traderCodeVal || m.activityCardNumber,
                 posMachineNumber: String(values.posMachineNumber).trim(),
                 licenseNumber: String(values.licenseNumber).trim(),
                 activityStartDate: String(values.activityStartDate || m.activityStartDate || today),
                 activityEndDate: String(values.licenseExpiryDate || m.licenseExpiryDate),
                 licenseExpiryDate: String(values.licenseExpiryDate || m.licenseExpiryDate),
+                taxCardExpiryDate: String(values.taxCardExpiryDate || m.taxCardExpiryDate || '2027-08-15'),
+                commercialRegExpiryDate: String(values.commercialRegExpiryDate || m.commercialRegExpiryDate || '2027-09-30'),
                 monthlyEntitlementQuota: Math.max(0, Number(values.monthlyEntitlementQuota) || 0),
                 cashInsuranceAmount: Math.max(0, Number(values.cashInsuranceAmount) || 0),
                 openingBalance: Number(values.openingBalance) || 0,
@@ -2585,13 +2732,22 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     { id: 'cards', label: 'البطاقات والمستفيدين', icon: <CreditCard className="w-3.5 h-3.5" /> },
     { id: 'disbursements', label: 'عمليات صرف المواطنين', icon: <Receipt className="w-3.5 h-3.5" /> },
     { id: 'inspections', label: `التنبيهات الذكية والرقابة (${smartAlerts.length})`, icon: <ShieldAlert className="w-3.5 h-3.5" /> },
+    ...(canSeeAlerts
+      ? [
+          {
+            id: 'alerts' as RationSubView,
+            label: `التنبيهات والإشعارات (${unreadAlertsCount})`,
+            icon: <Bell className="w-3.5 h-3.5" />,
+          },
+        ]
+      : []),
     { id: 'reports', label: 'مركز التقارير والطباعة (10)', icon: <Printer className="w-3.5 h-3.5" /> },
     { id: 'settings', label: 'إعدادات القرارات', icon: <Settings className="w-3.5 h-3.5" /> },
     { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" /> },
   ];
 
   return (
-    <div className="space-y-4" dir="rtl" data-testid="ration-commodities-suite">
+    <div className="space-y-4 enlarged-bold-table" dir="rtl" data-testid="ration-commodities-suite">
       {/* Header Banner */}
       <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0D9488] text-white rounded-2xl p-5 shadow-lg border border-[#D4AF37]/40 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -2992,116 +3148,172 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {filteredMerchants
-                    .slice(
-                      (merchantRegistryPage - 1) * merchantRegistryPageSize,
-                      merchantRegistryPage * merchantRegistryPageSize
-                    )
-                    .map((m, idx) => {
-                      const monthlyQuota =
-                        m.monthlyEntitlementQuota ||
-                        round2(m.linkedBeneficiariesCount * state.settings.supportPerBeneficiary);
-                      return (
-                        <tr key={m.id} className="hover:bg-slate-50">
-                          <td className="py-2 px-2 font-mono">
-                            {(merchantRegistryPage - 1) * merchantRegistryPageSize + idx + 1}
-                          </td>
-                          <td className="py-2 px-2 text-right">
-                            <div className="font-black text-[#0A1628]">{m.ownerName}</div>
-                            <div className="text-[11px] text-slate-500">{m.merchantName} ({m.outletType})</div>
-                          </td>
-                          <td className="py-2 px-2 font-mono">{m.nationalId || '-'}</td>
-                          <td className="py-2 px-2 font-mono text-[11px]">
-                            <div className="font-black text-teal-800">{m.traderCode || m.activityCardNumber || '-'}</div>
-                            <div className="font-black text-[#0A1628]">POS: {m.posMachineNumber}</div>
-                          </td>
-                          <td className="py-2 px-2 font-mono text-[11px]">
-                            <div>س.ت: {m.commercialRegNumber || '-'}</div>
-                            <div className="text-teal-800">رخصة: {m.licenseNumber || '-'}</div>
-                            <div className="text-slate-500">ب.ض: {m.taxCardNumber || '-'}</div>
-                          </td>
-                          <td className="py-2 px-2 font-mono text-[10px]">
-                            <div>رخصة: {m.licenseExpiryDate || '-'}</div>
-                            <div>ضريبية: {m.taxCardExpiryDate || '-'}</div>
-                            <div>سجل: {m.commercialRegExpiryDate || '-'}</div>
-                          </td>
-                          <td className="py-2 px-2 text-[11px]">
-                            <div>{m.detailedAddress}</div>
-                            <div className="text-slate-500">{m.village} · {m.localUnit}</div>
-                          </td>
-                          <td className="py-2 px-2 font-mono tabular-nums font-black text-[#0A1628]">
-                            {m.cashInsuranceAmount.toLocaleString()} ج.م
-                          </td>
-                          <td className="py-2 px-2 font-mono tabular-nums text-[#0D9488] font-black">
-                            {monthlyQuota.toLocaleString()} ج.م
-                          </td>
-                          <td className="py-2 px-2">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
-                                m.activityStatus === 'نشط'
-                                  ? 'bg-emerald-100 text-emerald-900'
-                                  : 'bg-rose-100 text-rose-900'
-                              }`}
-                            >
-                              {m.activityStatus}
-                            </span>
-                          </td>
-                          <td className="py-2 px-2">
-                            <ModuleRowActions
-                              entityLabel={m.merchantName}
-                              updatedAt={m.updatedAt}
-                              permissions={permissions}
-                              testIdPrefix={`merchant-${m.id}`}
-                              onEdit={() =>
-                                setActiveModal({
-                                  mode: 'edit',
-                                  entity: 'merchant',
-                                  targetId: m.id,
-                                  title: `تعديل بيانات التاجر والمنفذ: ${m.merchantName}`,
-                                  fields: merchantFields,
-                                  initialValues: {
-                                    ...m,
-                                    traderCode: m.traderCode || m.activityCardNumber || '',
-                                    taxCardExpiryDate: m.taxCardExpiryDate || '2027-08-15',
-                                    commercialRegExpiryDate: m.commercialRegExpiryDate || '2027-09-30',
-                                    activityStartDate: m.activityStartDate || m.licenseIssueDate,
-                                    monthlyEntitlementQuota: monthlyQuota,
-                                  },
-                                })
-                              }
-                              onDelete={() => {
-                                const check = checkRationDeleteIntegrity(state, 'merchant', m.id);
-                                setDeleteTarget({
-                                  entityTitle: `حذف المنفذ التمويني: ${m.merchantName}`,
-                                  summary: [
-                                    { label: 'اسم المنفذ', value: m.merchantName },
-                                    { label: 'اسم التاجر', value: m.ownerName },
-                                    { label: 'القرية', value: m.village },
-                                    { label: 'رقم المنفذ', value: m.posMachineNumber },
-                                  ],
-                                  canDelete: check.canDelete,
-                                  blockReason: check.reason,
-                                  onConfirm: () => {
-                                    onChangeState(
+                  {merchantsGrouped.groups.map((grp) => (
+                    <React.Fragment key={grp.localUnit}>
+                      {grp.rows.map((m, idx) => {
+                        const monthlyQuota =
+                          m.monthlyEntitlementQuota ||
+                          round2(m.linkedBeneficiariesCount * state.settings.supportPerBeneficiary);
+                        return (
+                          <tr key={m.id} className="hover:bg-slate-50">
+                            <td className="py-2 px-2 font-mono">{idx + 1}</td>
+                            <td className="py-2 px-2 text-right">
+                              <div className="font-black text-[#0A1628]">{m.ownerName}</div>
+                              <div className="text-[11px] text-slate-500">{m.merchantName} ({m.outletType})</div>
+                            </td>
+                            <td className="py-2 px-2 font-mono">{m.nationalId || '-'}</td>
+                            <td className="py-2 px-2 font-mono text-[11px]">
+                              <div className="font-black text-teal-800">{m.traderCode || m.activityCardNumber || '-'}</div>
+                              <div className="font-black text-[#0A1628]">POS: {m.posMachineNumber}</div>
+                            </td>
+                            <td className="py-2 px-2 font-mono text-[11px]">
+                              <div>س.ت: {m.commercialRegNumber || '-'}</div>
+                              <div className="text-teal-800">رخصة: {m.licenseNumber || '-'}</div>
+                              <div className="text-slate-500">ب.ض: {m.taxCardNumber || '-'}</div>
+                            </td>
+                            <td className="py-2 px-2 font-mono text-[10px]">
+                              <div>رخصة: {m.licenseExpiryDate || '-'}</div>
+                              <div>ضريبية: {m.taxCardExpiryDate || '-'}</div>
+                              <div>سجل: {m.commercialRegExpiryDate || '-'}</div>
+                            </td>
+                            <td className="py-2 px-2 text-[11px]">
+                              <div>{m.detailedAddress}</div>
+                              <div className="text-slate-500">{m.village} · {m.localUnit}</div>
+                            </td>
+                            <td className="py-2 px-2 font-mono tabular-nums font-black text-[#0A1628]">
+                              {m.cashInsuranceAmount.toLocaleString()} ج.م
+                            </td>
+                            <td className="py-2 px-2 font-mono tabular-nums text-[#0D9488] font-black">
+                              {monthlyQuota.toLocaleString()} ج.م
+                            </td>
+                            <td className="py-2 px-2">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+                                  m.activityStatus === 'نشط'
+                                    ? 'bg-emerald-100 text-emerald-900'
+                                    : 'bg-rose-100 text-rose-900'
+                                }`}
+                              >
+                                {m.activityStatus}
+                              </span>
+                            </td>
+                            <td className="py-2 px-2">
+                              <ModuleRowActions
+                                entityLabel={m.merchantName}
+                                updatedAt={m.updatedAt}
+                                permissions={permissions}
+                                testIdPrefix={`merchant-${m.id}`}
+                                onView={() =>
+                                  setProfileView({
+                                    title: m.merchantName,
+                                    subtitle: `${m.outletType} — ${m.village} / ${m.localUnit}`,
+                                    badgeText: m.activityStatus,
+                                    updatedAt: m.updatedAt,
+                                    sections: [
                                       {
-                                        ...state,
-                                        merchants: state.merchants.filter((x) => x.id !== m.id),
-                                        auditLogs: [
-                                          appendAudit('حذف', 'سجل التجار والمنافذ', m.id, `حذف المنفذ ${m.merchantName}`),
-                                          ...state.auditLogs,
+                                        title: 'البيانات التعريفية والربط الإداري',
+                                        fields: [
+                                          { label: 'اسم التاجر رباعياً', value: m.ownerName },
+                                          { label: 'اسم المنفذ التمويني', value: m.merchantName },
+                                          { label: 'الرقم القومي', value: m.nationalId, mono: true },
+                                          { label: 'كود التاجر', value: m.traderCode || m.activityCardNumber, mono: true },
+                                          { label: 'رقم ماكينة الصرف POS', value: m.posMachineNumber, mono: true, highlight: true },
+                                          { label: 'رقم الهاتف', value: m.phone, mono: true },
+                                          { label: 'القرية', value: m.village },
+                                          { label: 'الوحدة المحلية', value: m.localUnit },
+                                          { label: 'العنوان بالتفصيل', value: m.detailedAddress },
                                         ],
                                       },
-                                      `تم حذف المنفذ (${m.merchantName}) من Supabase`
-                                    );
-                                    notify('ok', `تم حذف المنفذ (${m.merchantName}) بنجاح.`);
-                                  },
-                                });
-                              }}
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
+                                      {
+                                        title: 'التراخيص والمستندات والتأمينات',
+                                        fields: [
+                                          { label: 'رقم الترخيص', value: m.licenseNumber, mono: true },
+                                          { label: 'انتهاء الرخصة', value: m.licenseExpiryDate, mono: true },
+                                          { label: 'البطاقة الضريبية', value: m.taxCardNumber, mono: true },
+                                          { label: 'انتهاء البطاقة الضريبية', value: m.taxCardExpiryDate, mono: true },
+                                          { label: 'السجل التجاري', value: m.commercialRegNumber, mono: true },
+                                          { label: 'انتهاء السجل التجاري', value: m.commercialRegExpiryDate, mono: true },
+                                          { label: 'مبلغ التأمين', value: `${m.cashInsuranceAmount.toLocaleString()} ج.م`, mono: true, highlight: true },
+                                          { label: 'البطاقات / المستفيدون', value: `${m.linkedCardsCount} بطاقة / ${m.linkedBeneficiariesCount} فرد`, mono: true },
+                                          { label: 'الحصة الشهرية المستحقة', value: `${monthlyQuota.toLocaleString()} ج.م`, mono: true },
+                                        ],
+                                      },
+                                    ],
+                                  })
+                                }
+                                onEdit={() =>
+                                  setActiveModal({
+                                    mode: 'edit',
+                                    entity: 'merchant',
+                                    targetId: m.id,
+                                    title: `تعديل بيانات التاجر والمنفذ: ${m.merchantName}`,
+                                    fields: merchantFields,
+                                    initialValues: {
+                                      ...m,
+                                      traderCode: m.traderCode || m.activityCardNumber || '',
+                                      taxCardExpiryDate: m.taxCardExpiryDate || '2027-08-15',
+                                      commercialRegExpiryDate: m.commercialRegExpiryDate || '2027-09-30',
+                                      activityStartDate: m.activityStartDate || m.licenseIssueDate,
+                                      monthlyEntitlementQuota: monthlyQuota,
+                                    },
+                                  })
+                                }
+                                onDelete={() => {
+                                  const check = checkRationDeleteIntegrity(state, 'merchant', m.id);
+                                  setDeleteTarget({
+                                    entityTitle: `حذف المنفذ التمويني: ${m.merchantName}`,
+                                    summary: [
+                                      { label: 'اسم المنفذ', value: m.merchantName },
+                                      { label: 'اسم التاجر', value: m.ownerName },
+                                      { label: 'القرية', value: m.village },
+                                      { label: 'رقم المنفذ', value: m.posMachineNumber },
+                                    ],
+                                    canDelete: check.canDelete,
+                                    blockReason: check.reason,
+                                    onConfirm: () => {
+                                      onChangeState(
+                                        {
+                                          ...state,
+                                          merchants: state.merchants.filter((x) => x.id !== m.id),
+                                          auditLogs: [
+                                            appendAudit('حذف', 'سجل التجار والمنافذ', m.id, `حذف المنفذ ${m.merchantName}`),
+                                            ...state.auditLogs,
+                                          ],
+                                        },
+                                        `تم حذف المنفذ (${m.merchantName}) من Supabase`
+                                      );
+                                      notify('ok', `تم حذف المنفذ (${m.merchantName}) بنجاح.`);
+                                    },
+                                  });
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <LocalUnitSubtotalRow
+                        unitName={grp.localUnit}
+                        recordCount={grp.count}
+                        labelColSpan={7}
+                        metricCells={[
+                          { content: `${grp.subtotals.cashInsuranceAmount.toLocaleString()} ج.م`, mono: true },
+                          { content: `${grp.subtotals.monthlyQuota.toLocaleString()} ج.م`, mono: true },
+                          { colSpan: 2, content: '' },
+                        ]}
+                      />
+                    </React.Fragment>
+                  ))}
+                  {merchantsGrouped.groups.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={merchantsGrouped.grandTotalCount}
+                      labelColSpan={7}
+                      metricCells={[
+                        { content: `${merchantsGrouped.grandTotals.cashInsuranceAmount.toLocaleString()} ج.م`, mono: true },
+                        { content: `${merchantsGrouped.grandTotals.monthlyQuota.toLocaleString()} ج.م`, mono: true },
+                        { colSpan: 2, content: '' },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -3156,78 +3368,123 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
-                {state.cards.map((c) => {
-                  const m = state.merchants.find((x) => x.id === c.merchantId);
-                  const elig = countEligibleBeneficiaries(c.members);
-                  return (
-                    <tr
-                      key={c.id}
-                      onClick={() => setSelectedCardId(c.id)}
-                      className={`cursor-pointer transition ${
-                        selectedCard?.id === c.id ? 'bg-teal-50/70' : 'hover:bg-slate-50'
-                      }`}
-                    >
-                      <td className="py-2 px-2 font-mono font-black text-[#0A1628]">{c.cardNumber}</td>
-                      <td className="py-2 px-2 text-right font-black">{c.headOfFamilyName}</td>
-                      <td className="py-2 px-2 font-mono">{c.headNationalId}</td>
-                      <td className="py-2 px-2">{m?.merchantName || c.merchantId}</td>
-                      <td className="py-2 px-2">{c.village}</td>
-                      <td className="py-2 px-2 font-mono text-[#0D9488]">
-                        {elig} / {c.members.length}
-                      </td>
-                      <td className="py-2 px-2">
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 text-[11px] font-black">
-                          {c.status}
-                        </span>
-                      </td>
-                      <td className="py-2 px-2" onClick={(e) => e.stopPropagation()}>
-                        <ModuleRowActions
-                          entityLabel={`بطاقة ${c.cardNumber}`}
-                          updatedAt={c.updatedAt}
-                          permissions={permissions}
-                          testIdPrefix={`card-${c.id}`}
-                          onEdit={() =>
-                            setActiveModal({
-                              mode: 'edit',
-                              entity: 'card',
-                              targetId: c.id,
-                              title: `تعديل البطاقة التموينية: ${c.cardNumber}`,
-                              fields: cardFields,
-                              initialValues: { ...c },
-                            })
-                          }
-                          onDelete={() => {
-                            const check = checkRationDeleteIntegrity(state, 'card', c.id);
-                            setDeleteTarget({
-                              entityTitle: `حذف البطاقة التموينية: ${c.cardNumber}`,
-                              summary: [
-                                { label: 'رقم البطاقة', value: c.cardNumber },
-                                { label: 'رب الأسرة', value: c.headOfFamilyName },
-                                { label: 'عدد الأفراد', value: c.members.length },
-                              ],
-                              canDelete: check.canDelete,
-                              blockReason: check.reason,
-                              onConfirm: () => {
-                                onChangeState(
-                                  {
-                                    ...state,
-                                    cards: state.cards.filter((x) => x.id !== c.id),
-                                    auditLogs: [
-                                      appendAudit('حذف', 'البطاقات التموينية', c.id, `حذف بطاقة ${c.cardNumber}`),
-                                      ...state.auditLogs,
-                                    ],
+                {cardsGrouped.groups.map((grp) => (
+                  <React.Fragment key={grp.localUnit}>
+                    {grp.rows.map((c) => {
+                      const m = merchantById.get(c.merchantId);
+                      const elig = countEligibleBeneficiaries(c.members);
+                      return (
+                        <tr
+                          key={c.id}
+                          onClick={() => setSelectedCardId(c.id)}
+                          className={`cursor-pointer transition ${
+                            selectedCard?.id === c.id ? 'bg-teal-50/70' : 'hover:bg-slate-50'
+                          }`}
+                        >
+                          <td className="py-2 px-2 font-mono font-black text-[#0A1628]">{c.cardNumber}</td>
+                          <td className="py-2 px-2 text-right font-black">{c.headOfFamilyName}</td>
+                          <td className="py-2 px-2 font-mono">{c.headNationalId}</td>
+                          <td className="py-2 px-2">{m?.merchantName || c.merchantId}</td>
+                          <td className="py-2 px-2">{c.village} · {c.localUnit}</td>
+                          <td className="py-2 px-2 font-mono text-[#0D9488]">
+                            {elig} / {c.members.length}
+                          </td>
+                          <td className="py-2 px-2">
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 text-[11px] font-black">
+                              {c.status}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2" onClick={(e) => e.stopPropagation()}>
+                            <ModuleRowActions
+                              entityLabel={`بطاقة ${c.cardNumber}`}
+                              updatedAt={c.updatedAt}
+                              permissions={permissions}
+                              testIdPrefix={`card-${c.id}`}
+                              onView={() =>
+                                setProfileView({
+                                  title: `البطاقة التموينية رقم ${c.cardNumber}`,
+                                  subtitle: `رب الأسرة: ${c.headOfFamilyName} — ${c.village} / ${c.localUnit}`,
+                                  badgeText: c.status,
+                                  updatedAt: c.updatedAt,
+                                  sections: [
+                                    {
+                                      title: 'بيانات البطاقة التموينية',
+                                      fields: [
+                                        { label: 'رقم البطاقة', value: c.cardNumber, mono: true, highlight: true },
+                                        { label: 'رب الأسرة', value: c.headOfFamilyName },
+                                        { label: 'الرقم القومي لرب الأسرة', value: c.headNationalId, mono: true },
+                                        { label: 'المنفذ التمويني المربوط', value: m?.merchantName || c.merchantId },
+                                        { label: 'القرية / الوحدة المحلية', value: `${c.village} · ${c.localUnit}` },
+                                        { label: 'الأفراد (مستحق / إجمالي)', value: `${elig} / ${c.members.length}`, mono: true },
+                                        { label: 'المنحة الإضافية', value: c.hasAdditionalGrant ? `${c.additionalGrantAmount || 0} ج.م` : 'غير مشمولة', mono: true },
+                                      ],
+                                    },
+                                  ],
+                                })
+                              }
+                              onEdit={() =>
+                                setActiveModal({
+                                  mode: 'edit',
+                                  entity: 'card',
+                                  targetId: c.id,
+                                  title: `تعديل البطاقة التموينية: ${c.cardNumber}`,
+                                  fields: cardFields,
+                                  initialValues: { ...c },
+                                })
+                              }
+                              onDelete={() => {
+                                const check = checkRationDeleteIntegrity(state, 'card', c.id);
+                                setDeleteTarget({
+                                  entityTitle: `حذف البطاقة التموينية: ${c.cardNumber}`,
+                                  summary: [
+                                    { label: 'رقم البطاقة', value: c.cardNumber },
+                                    { label: 'رب الأسرة', value: c.headOfFamilyName },
+                                    { label: 'عدد الأفراد', value: c.members.length },
+                                  ],
+                                  canDelete: check.canDelete,
+                                  blockReason: check.reason,
+                                  onConfirm: () => {
+                                    onChangeState(
+                                      {
+                                        ...state,
+                                        cards: state.cards.filter((x) => x.id !== c.id),
+                                        auditLogs: [
+                                          appendAudit('حذف', 'البطاقات التموينية', c.id, `حذف بطاقة ${c.cardNumber}`),
+                                          ...state.auditLogs,
+                                        ],
+                                      },
+                                      `تم حذف البطاقة (${c.cardNumber})`
+                                    );
+                                    notify('ok', `تم حذف البطاقة التموينية (${c.cardNumber}) بنجاح.`);
                                   },
-                                  `تم حذف البطاقة (${c.cardNumber})`
-                                );
-                                notify('ok', `تم حذف البطاقة التموينية (${c.cardNumber}) بنجاح.`);
-                              },
-                            });
-                          }}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
+                                });
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <LocalUnitSubtotalRow
+                      unitName={grp.localUnit}
+                      recordCount={grp.count}
+                      labelColSpan={5}
+                      metricCells={[
+                        { content: `${grp.subtotals.eligibleCount} / ${grp.subtotals.totalMembers}`, mono: true },
+                        { colSpan: 2, content: '' },
+                      ]}
+                    />
+                  </React.Fragment>
+                ))}
+                {cardsGrouped.groups.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={cardsGrouped.grandTotalCount}
+                    labelColSpan={5}
+                    metricCells={[
+                      { content: `${cardsGrouped.grandTotals.eligibleCount} / ${cardsGrouped.grandTotals.totalMembers}`, mono: true },
+                      { colSpan: 2, content: '' },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -3302,6 +3559,25 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                           <ModuleRowActions
                             entityLabel={mb.fullName}
                             permissions={permissions}
+                            onView={() =>
+                              setProfileView({
+                                title: mb.fullName,
+                                subtitle: `البطاقة التموينية رقم ${selectedCard.cardNumber}`,
+                                badgeText: mb.status,
+                                sections: [
+                                  {
+                                    title: 'بيانات الفرد المستفيد',
+                                    fields: [
+                                      { label: 'الاسم الكامل', value: mb.fullName },
+                                      { label: 'الرقم القومي', value: mb.nationalId, mono: true },
+                                      { label: 'صلة القرابة', value: mb.relation },
+                                      { label: 'حالة الاستحقاق', value: mb.status, highlight: true },
+                                      { label: 'سبب الإيقاف', value: mb.suspensionReason },
+                                    ],
+                                  },
+                                ],
+                              })
+                            }
                             onEdit={() =>
                               setActiveModal({
                                 mode: 'edit',
@@ -3566,6 +3842,38 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                             updatedAt={c.updatedAt}
                             permissions={permissions}
                             testIdPrefix={`commodity-${c.id}`}
+                            onView={() =>
+                              setProfileView({
+                                title: c.name,
+                                subtitle: `${c.code} — ${c.category} (${c.unit})`,
+                                badgeText: avail,
+                                updatedAt: c.updatedAt,
+                                sections: [
+                                  {
+                                    title: 'بيانات السلعة والتسعير',
+                                    fields: [
+                                      { label: 'كود الصنف', value: c.code, mono: true },
+                                      { label: 'اسم السلعة', value: c.name },
+                                      { label: 'التصنيف / الوحدة', value: `${c.category} (${c.unit})` },
+                                      { label: 'السعر الرسمي', value: `${c.officialPrice} ج.م`, mono: true, highlight: true },
+                                      { label: 'تكلفة التوريد', value: `${c.supplyCostPrice} ج.م`, mono: true },
+                                      { label: 'رقم القرار المرجعي', value: c.decisionNumber, mono: true },
+                                    ],
+                                  },
+                                  {
+                                    title: 'المخزون والمورد',
+                                    fields: [
+                                      { label: 'الافتتاحي / الوارد / المنصرف', value: `${openBal} / ${inQty} / ${outQty}`, mono: true },
+                                      { label: 'الرصيد الحالي', value: curBal, mono: true, highlight: true },
+                                      { label: 'قيمة المخزون', value: `${stockVal.toLocaleString()} ج.م`, mono: true },
+                                      { label: 'الشركة الموردة', value: c.supplierCompany },
+                                      { label: 'رقم التشغيلة', value: c.batchNumber, mono: true },
+                                      { label: 'تاريخ الصلاحية', value: c.expiryDate, mono: true },
+                                    ],
+                                  },
+                                ],
+                              })
+                            }
                             onEdit={() =>
                               setActiveModal({
                                 mode: 'edit',
@@ -3726,66 +4034,125 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
-                {state.disbursements.map((d) => {
-                  const comm = state.commodities.find((c) => c.id === d.commodityId);
-                  return (
-                    <tr key={d.id}>
-                      <td className="py-2 px-2 font-mono">{d.operationNumber}</td>
-                      <td className="py-2 px-2 font-mono">{d.date}</td>
-                      <td className="py-2 px-2">{comm?.name || d.commodityId}</td>
-                      <td className="py-2 px-2 font-mono">{d.quantity}</td>
-                      <td className="py-2 px-2 font-mono">{d.officialUnitPriceAtSale} ج.م</td>
-                      <td className="py-2 px-2 font-mono font-black">{d.totalSaleValue} ج.م</td>
-                      <td className="py-2 px-2 font-mono text-[#0D9488]">{d.supportDeducted} ج.م</td>
-                      <td className="py-2 px-2 font-mono">{d.citizenPaidAmount} ج.م</td>
-                      <td className="py-2 px-2 font-mono text-emerald-700">{d.commissionEarned} ج.م</td>
-                      <td className="py-2 px-2">
-                        <ModuleRowActions
-                          entityLabel={`عملية ${d.operationNumber}`}
-                          updatedAt={d.updatedAt}
-                          permissions={permissions}
-                          testIdPrefix={`disb-${d.id}`}
-                          onEdit={() =>
-                            setActiveModal({
-                              mode: 'edit',
-                              entity: 'disbursement',
-                              targetId: d.id,
-                              title: `تعديل عملية الصرف: ${d.operationNumber}`,
-                              fields: disbursementFields,
-                              initialValues: { ...d },
-                            })
-                          }
-                          onDelete={() =>
-                            setDeleteTarget({
-                              entityTitle: `حذف عملية الصرف: ${d.operationNumber}`,
-                              summary: [
-                                { label: 'رقم العملية', value: d.operationNumber },
-                                { label: 'السلعة', value: comm?.name || d.commodityId },
-                                { label: 'الكمية', value: d.quantity },
-                                { label: 'القيمة', value: `${d.totalSaleValue} ج.م` },
-                              ],
-                              canDelete: true,
-                              onConfirm: () => {
-                                onChangeState(
-                                  {
-                                    ...state,
-                                    disbursements: state.disbursements.filter((x) => x.id !== d.id),
-                                    auditLogs: [
-                                      appendAudit('حذف', 'صرف المواطنين', d.id, d.operationNumber),
-                                      ...state.auditLogs,
-                                    ],
+                {disbursementsGrouped.groups.map((grp) => (
+                  <React.Fragment key={grp.localUnit}>
+                    {grp.rows.map((d) => {
+                      const comm = commodityById.get(d.commodityId);
+                      const merch = merchantById.get(d.merchantId);
+                      return (
+                        <tr key={d.id}>
+                          <td className="py-2 px-2 font-mono">{d.operationNumber}</td>
+                          <td className="py-2 px-2 font-mono">{d.date}</td>
+                          <td className="py-2 px-2">{comm?.name || d.commodityId}</td>
+                          <td className="py-2 px-2 font-mono">{d.quantity}</td>
+                          <td className="py-2 px-2 font-mono">{d.officialUnitPriceAtSale} ج.م</td>
+                          <td className="py-2 px-2 font-mono font-black">{d.totalSaleValue} ج.م</td>
+                          <td className="py-2 px-2 font-mono text-[#0D9488]">{d.supportDeducted} ج.م</td>
+                          <td className="py-2 px-2 font-mono">{d.citizenPaidAmount} ج.م</td>
+                          <td className="py-2 px-2 font-mono text-emerald-700">{d.commissionEarned} ج.م</td>
+                          <td className="py-2 px-2">
+                            <ModuleRowActions
+                              entityLabel={`عملية ${d.operationNumber}`}
+                              updatedAt={d.updatedAt}
+                              permissions={permissions}
+                              testIdPrefix={`disb-${d.id}`}
+                              onView={() =>
+                                setProfileView({
+                                  title: `عملية صرف رقم ${d.operationNumber}`,
+                                  subtitle: `${comm?.name || d.commodityId} — منفذ: ${merch?.merchantName || d.merchantId}`,
+                                  badgeText: d.collectionMethod,
+                                  updatedAt: d.updatedAt,
+                                  sections: [
+                                    {
+                                      title: 'تفاصيل عملية الصرف',
+                                      fields: [
+                                        { label: 'رقم العملية POS', value: d.operationNumber, mono: true, highlight: true },
+                                        { label: 'التاريخ', value: d.date, mono: true },
+                                        { label: 'السلعة التموينية', value: comm?.name || d.commodityId },
+                                        { label: 'الكمية المنصرفة', value: d.quantity, mono: true },
+                                        { label: 'سعر الوحدة', value: `${d.officialUnitPriceAtSale} ج.م`, mono: true },
+                                        { label: 'إجمالي قيمة البيع', value: `${d.totalSaleValue} ج.م`, mono: true, highlight: true },
+                                        { label: 'الدعم المخصوم', value: `${d.supportDeducted} ج.م`, mono: true },
+                                        { label: 'فرق المواطن', value: `${d.citizenPaidAmount} ج.م`, mono: true },
+                                        { label: 'عمولة التاجر', value: `${d.commissionEarned} ج.م`, mono: true },
+                                        { label: 'القائم بالصرف', value: d.employeeName },
+                                      ],
+                                    },
+                                  ],
+                                })
+                              }
+                              onEdit={() =>
+                                setActiveModal({
+                                  mode: 'edit',
+                                  entity: 'disbursement',
+                                  targetId: d.id,
+                                  title: `تعديل عملية الصرف: ${d.operationNumber}`,
+                                  fields: disbursementFields,
+                                  initialValues: { ...d },
+                                })
+                              }
+                              onDelete={() =>
+                                setDeleteTarget({
+                                  entityTitle: `حذف عملية الصرف: ${d.operationNumber}`,
+                                  summary: [
+                                    { label: 'رقم العملية', value: d.operationNumber },
+                                    { label: 'السلعة', value: comm?.name || d.commodityId },
+                                    { label: 'الكمية', value: d.quantity },
+                                    { label: 'القيمة', value: `${d.totalSaleValue} ج.م` },
+                                  ],
+                                  canDelete: true,
+                                  onConfirm: () => {
+                                    onChangeState(
+                                      {
+                                        ...state,
+                                        disbursements: state.disbursements.filter((x) => x.id !== d.id),
+                                        auditLogs: [
+                                          appendAudit('حذف', 'صرف المواطنين', d.id, d.operationNumber),
+                                          ...state.auditLogs,
+                                        ],
+                                      },
+                                      `تم حذف عملية الصرف (${d.operationNumber})`
+                                    );
+                                    notify('ok', `تم حذف عملية الصرف (${d.operationNumber}) بنجاح.`);
                                   },
-                                  `تم حذف عملية الصرف (${d.operationNumber})`
-                                );
-                                notify('ok', `تم حذف عملية الصرف (${d.operationNumber}) بنجاح.`);
-                              },
-                            })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <LocalUnitSubtotalRow
+                      unitName={grp.localUnit}
+                      recordCount={grp.count}
+                      labelColSpan={3}
+                      metricCells={[
+                        { content: grp.subtotals.quantity, mono: true },
+                        { content: '—' },
+                        { content: `${grp.subtotals.totalSaleValue.toLocaleString()} ج.م`, mono: true },
+                        { content: `${grp.subtotals.supportDeducted.toLocaleString()} ج.م`, mono: true },
+                        { content: `${grp.subtotals.citizenPaidAmount.toLocaleString()} ج.م`, mono: true },
+                        { content: `${grp.subtotals.commissionEarned.toLocaleString()} ج.م`, mono: true },
+                        { content: '' },
+                      ]}
+                    />
+                  </React.Fragment>
+                ))}
+                {disbursementsGrouped.groups.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={disbursementsGrouped.grandTotalCount}
+                    labelColSpan={3}
+                    metricCells={[
+                      { content: disbursementsGrouped.grandTotals.quantity, mono: true },
+                      { content: '—' },
+                      { content: `${disbursementsGrouped.grandTotals.totalSaleValue.toLocaleString()} ج.م`, mono: true },
+                      { content: `${disbursementsGrouped.grandTotals.supportDeducted.toLocaleString()} ج.م`, mono: true },
+                      { content: `${disbursementsGrouped.grandTotals.citizenPaidAmount.toLocaleString()} ج.م`, mono: true },
+                      { content: `${disbursementsGrouped.grandTotals.commissionEarned.toLocaleString()} ج.م`, mono: true },
+                      { content: '' },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -3877,6 +4244,30 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                           updatedAt={w.updatedAt}
                           permissions={permissions}
                           testIdPrefix={`warehouse-${w.id}`}
+                          onView={() =>
+                            setProfileView({
+                              title: w.warehouseName,
+                              subtitle: `السلعة: ${comm?.name || w.commodityId}`,
+                              badgeText: status.alerts.length === 0 ? 'مطابق وآمن' : 'تنبيه مخزني',
+                              updatedAt: w.updatedAt,
+                              sections: [
+                                {
+                                  title: 'تفاصيل رصيد المخزن والجرد الفعلي',
+                                  fields: [
+                                    { label: 'اسم المخزن', value: w.warehouseName },
+                                    { label: 'السلعة', value: comm?.name || w.commodityId },
+                                    { label: 'الرصيد الافتتاحي', value: w.openingBalance, mono: true },
+                                    { label: 'إجمالي الوارد', value: w.totalIn, mono: true },
+                                    { label: 'إجمالي المنصرف', value: w.totalOut, mono: true },
+                                    { label: 'المرتجع (داخل / خارج)', value: `+${w.inboundReturns} / -${w.outboundReturns}`, mono: true },
+                                    { label: 'الرصيد الدفتري الحالي', value: status.bookBalance, mono: true, highlight: true },
+                                    { label: 'قيمة المخزون', value: `${status.stockValue.toLocaleString()} ج.م`, mono: true },
+                                    { label: 'الجرد الفعلي / الفرق', value: `${w.physicalCount ?? status.bookBalance} (${status.varianceType}: ${status.inventoryVariance})`, mono: true },
+                                  ],
+                                },
+                              ],
+                            })
+                          }
                           onEdit={() =>
                             setActiveModal({
                               mode: 'edit',
@@ -4009,6 +4400,32 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                               </button>
                             ) : undefined
                           }
+                          onView={() =>
+                            setProfileView({
+                              title: `حركة مخزنية رقم ${mv.documentNumber}`,
+                              subtitle: `${mv.warehouseName} — ${comm?.name || mv.commodityId}`,
+                              badgeText: mv.movementType,
+                              updatedAt: mv.updatedAt,
+                              sections: [
+                                {
+                                  title: 'تفاصيل المستند المخزني',
+                                  fields: [
+                                    { label: 'رقم المستند', value: mv.documentNumber, mono: true, highlight: true },
+                                    { label: 'التاريخ', value: mv.movementDate, mono: true },
+                                    { label: 'نوع الحركة', value: mv.movementType },
+                                    { label: 'المخزن', value: mv.warehouseName },
+                                    { label: 'السلعة', value: comm?.name || mv.commodityId },
+                                    { label: 'الكمية', value: mv.quantity, mono: true },
+                                    { label: 'سعر الوحدة', value: `${mv.unitPrice} ج.م`, mono: true },
+                                    { label: 'إجمالي القيمة', value: `${mv.totalValue.toLocaleString()} ج.م`, mono: true, highlight: true },
+                                    { label: 'المسؤول المعتمد', value: mv.approvedBy },
+                                    { label: 'المورد / الفاتورة', value: `${mv.supplierName || '—'} ${mv.invoiceNumber || ''}` },
+                                    { label: 'ملاحظات', value: mv.notes },
+                                  ],
+                                },
+                              ],
+                            })
+                          }
                           onEdit={() =>
                             setActiveModal({
                               mode: 'edit',
@@ -4102,116 +4519,183 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
-                {state.requisitions.map((r) => {
-                  const m = state.merchants.find((x) => x.id === r.merchantId);
-                  const line0 = r.lines[0];
-                  const prescribed = line0?.requestedQty || 0;
-                  const received = line0?.approvedQty || 0;
-                  const distributed = line0?.deliveredQty || 0;
-                  const remainingQty = computeRemainingMonthlyQuota(prescribed, received);
-                  const execPct = computeMonthlyQuotaExecutionPct(distributed, prescribed);
-                  const quotaVal = round2(prescribed * (line0?.supplyPrice || 0));
-                  const tCode = r.traderCode || m?.traderCode || m?.activityCardNumber || '-';
-                  const posNo = r.posMachineNumber || m?.posMachineNumber || '-';
-                  return (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className="py-2 px-2 font-mono font-black">{r.monthKey}</td>
-                      <td className="py-2 px-2 text-right font-black text-[#0A1628]">
-                        {m?.merchantName || r.merchantId}
-                      </td>
-                      <td className="py-2 px-2 font-mono font-black text-teal-800">{tCode}</td>
-                      <td className="py-2 px-2 font-mono font-black text-[#0A1628]">{posNo}</td>
-                      <td className="py-2 px-2 font-mono text-[11px]">
-                        {m?.linkedCardsCount || r.linkedCardsCount} بطاقة / {m?.linkedBeneficiariesCount || r.linkedBeneficiariesCount} فرد
-                      </td>
-                      <td className="py-2 px-2 font-black text-[#0D9488]">{line0?.commodityName || '-'}</td>
-                      <td className="py-2 px-2 font-mono font-black">{prescribed}</td>
-                      <td className="py-2 px-2 font-mono text-emerald-700">{received}</td>
-                      <td className="py-2 px-2 font-mono text-blue-700">{distributed}</td>
-                      <td className="py-2 px-2 font-mono font-black text-amber-700">{remainingQty}</td>
-                      <td className="py-2 px-2 font-mono font-black">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[11px] ${
-                            execPct >= 85
-                              ? 'bg-emerald-100 text-emerald-900'
-                              : execPct >= 50
-                              ? 'bg-amber-100 text-amber-900'
-                              : 'bg-rose-100 text-rose-900'
-                          }`}
-                        >
-                          {execPct}%
-                        </span>
-                      </td>
-                      <td className="py-2 px-2 font-mono text-[#0A1628] font-black">
-                        {quotaVal.toLocaleString()} ج.م
-                      </td>
-                      <td className="py-2 px-2 font-mono text-[11px]">{r.deliveryDate || r.requestDate}</td>
-                      <td className="py-2 px-2 font-black text-emerald-700">{r.status}</td>
-                      <td className="py-2 px-2">
-                        <ModuleRowActions
-                          entityLabel={`حصة ${r.requestNumber}`}
-                          updatedAt={r.updatedAt}
-                          permissions={permissions}
-                          testIdPrefix={`requisition-${r.id}`}
-                          onEdit={() =>
-                            setActiveModal({
-                              mode: 'edit',
-                              entity: 'requisition',
-                              targetId: r.id,
-                              title: `تعديل وتسوية الحصة الشهرية: ${r.requestNumber}`,
-                              fields: requisitionFields,
-                              initialValues: {
-                                requestNumber: r.requestNumber,
-                                invoiceNumber: r.invoiceNumber,
-                                monthKey: r.monthKey,
-                                requestDate: r.requestDate,
-                                merchantId: r.merchantId,
-                                traderCode: tCode,
-                                posMachineNumber: posNo,
-                                commodityId: line0?.commodityId || state.commodities[0]?.id || '',
-                                requestedQty: prescribed,
-                                approvedQty: received,
-                                deliveredQty: distributed,
-                                status: r.status,
-                                notes: r.notes || '',
-                              },
-                            })
-                          }
-                          onDelete={() =>
-                            setDeleteTarget({
-                              entityTitle: `حذف سجل الحصة الشهرية: ${r.requestNumber}`,
-                              summary: [
-                                { label: 'رقم السجل', value: r.requestNumber },
-                                { label: 'المنفذ', value: m?.merchantName || r.merchantId },
-                                { label: 'كود التاجر / الماكينة', value: `${tCode} / ${posNo}` },
-                                { label: 'القيمة', value: `${quotaVal} ج.م` },
-                              ],
-                              canDelete: r.status === 'جديد' || r.status === 'ملغي',
-                              blockReason:
-                                r.status !== 'جديد' && r.status !== 'ملغي'
-                                  ? 'لا يمكن حذف حصة شهرية معتمدة أو منفذة مباشرة؛ يمكنك تعديلها لتسجيل تسوية موثقة في سجل التعديلات.'
-                                  : undefined,
-                              onConfirm: () => {
-                                onChangeState(
-                                  {
-                                    ...state,
-                                    requisitions: state.requisitions.filter((x) => x.id !== r.id),
-                                    auditLogs: [
-                                      appendAudit('حذف', 'الحصص التموينية الشهرية', r.id, r.requestNumber),
-                                      ...state.auditLogs,
-                                    ],
+                {requisitionsGrouped.groups.map((grp) => (
+                  <React.Fragment key={grp.localUnit}>
+                    {grp.rows.map((r) => {
+                      const m = merchantById.get(r.merchantId);
+                      const line0 = r.lines[0];
+                      const prescribed = line0?.requestedQty || 0;
+                      const received = line0?.approvedQty || 0;
+                      const distributed = line0?.deliveredQty || 0;
+                      const remainingQty = computeRemainingMonthlyQuota(prescribed, received);
+                      const execPct = computeMonthlyQuotaExecutionPct(distributed, prescribed);
+                      const quotaVal = round2(prescribed * (line0?.supplyPrice || 0));
+                      const tCode = r.traderCode || m?.traderCode || m?.activityCardNumber || '-';
+                      const posNo = r.posMachineNumber || m?.posMachineNumber || '-';
+                      return (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="py-2 px-2 font-mono font-black">{r.monthKey}</td>
+                          <td className="py-2 px-2 text-right font-black text-[#0A1628]">
+                            {m?.merchantName || r.merchantId}
+                          </td>
+                          <td className="py-2 px-2 font-mono font-black text-teal-800">{tCode}</td>
+                          <td className="py-2 px-2 font-mono font-black text-[#0A1628]">{posNo}</td>
+                          <td className="py-2 px-2 font-mono text-[11px]">
+                            {m?.linkedCardsCount || r.linkedCardsCount} بطاقة / {m?.linkedBeneficiariesCount || r.linkedBeneficiariesCount} فرد
+                          </td>
+                          <td className="py-2 px-2 font-black text-[#0D9488]">{line0?.commodityName || '-'}</td>
+                          <td className="py-2 px-2 font-mono font-black">{prescribed}</td>
+                          <td className="py-2 px-2 font-mono text-emerald-700">{received}</td>
+                          <td className="py-2 px-2 font-mono text-blue-700">{distributed}</td>
+                          <td className="py-2 px-2 font-mono font-black text-amber-700">{remainingQty}</td>
+                          <td className="py-2 px-2 font-mono font-black">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[11px] ${
+                                execPct >= 85
+                                  ? 'bg-emerald-100 text-emerald-900'
+                                  : execPct >= 50
+                                  ? 'bg-amber-100 text-amber-900'
+                                  : 'bg-rose-100 text-rose-900'
+                              }`}
+                            >
+                              {execPct}%
+                            </span>
+                          </td>
+                          <td className="py-2 px-2 font-mono text-[#0A1628] font-black">
+                            {quotaVal.toLocaleString()} ج.م
+                          </td>
+                          <td className="py-2 px-2 font-mono text-[11px]">{r.deliveryDate || r.requestDate}</td>
+                          <td className="py-2 px-2 font-black text-emerald-700">{r.status}</td>
+                          <td className="py-2 px-2">
+                            <ModuleRowActions
+                              entityLabel={`حصة ${r.requestNumber}`}
+                              updatedAt={r.updatedAt}
+                              permissions={permissions}
+                              testIdPrefix={`requisition-${r.id}`}
+                              onView={() =>
+                                setProfileView({
+                                  title: `سجل الحصة الشهرية رقم ${r.requestNumber}`,
+                                  subtitle: `${m?.merchantName || r.merchantId} — ${r.monthKey}`,
+                                  badgeText: r.status,
+                                  updatedAt: r.updatedAt,
+                                  sections: [
+                                    {
+                                      title: 'بيانات المنفذ والربط',
+                                      fields: [
+                                        { label: 'رقم السجل', value: r.requestNumber, mono: true },
+                                        { label: 'رقم الفاتورة', value: r.invoiceNumber, mono: true },
+                                        { label: 'اسم التاجر / المنفذ', value: m?.merchantName || r.merchantId },
+                                        { label: 'كود التاجر', value: tCode, mono: true, highlight: true },
+                                        { label: 'رقم ماكينة التاجر POS', value: posNo, mono: true, highlight: true },
+                                        { label: 'الوحدة المحلية', value: m?.localUnit || m?.village || '—' },
+                                      ],
+                                    },
+                                    {
+                                      title: 'المقررات ونسبة التنفيذ',
+                                      fields: [
+                                        { label: 'اسم السلعة', value: line0?.commodityName || '-' },
+                                        { label: 'الكمية المقررة', value: prescribed, mono: true },
+                                        { label: 'الكمية المستلمة', value: received, mono: true },
+                                        { label: 'الكمية الموزعة', value: distributed, mono: true },
+                                        { label: 'الكمية المتبقية', value: remainingQty, mono: true },
+                                        { label: 'نسبة التنفيذ', value: `${execPct}%`, mono: true, highlight: true },
+                                        { label: 'قيمة الحصة', value: `${quotaVal.toLocaleString()} ج.م`, mono: true },
+                                        { label: 'ملاحظات', value: r.notes },
+                                      ],
+                                    },
+                                  ],
+                                })
+                              }
+                              onEdit={() =>
+                                setActiveModal({
+                                  mode: 'edit',
+                                  entity: 'requisition',
+                                  targetId: r.id,
+                                  title: `تعديل وتسوية الحصة الشهرية: ${r.requestNumber}`,
+                                  fields: requisitionFields,
+                                  initialValues: {
+                                    requestNumber: r.requestNumber,
+                                    invoiceNumber: r.invoiceNumber,
+                                    monthKey: r.monthKey,
+                                    requestDate: r.requestDate,
+                                    merchantId: r.merchantId,
+                                    traderCode: tCode,
+                                    posMachineNumber: posNo,
+                                    commodityId: line0?.commodityId || state.commodities[0]?.id || '',
+                                    requestedQty: prescribed,
+                                    approvedQty: received,
+                                    deliveredQty: distributed,
+                                    status: r.status,
+                                    notes: r.notes || '',
                                   },
-                                  `تم حذف سجل الحصة (${r.requestNumber})`
-                                );
-                                notify('ok', `تم حذف سجل الحصة (${r.requestNumber}) بنجاح.`);
-                              },
-                            })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
+                                })
+                              }
+                              onDelete={() =>
+                                setDeleteTarget({
+                                  entityTitle: `حذف سجل الحصة الشهرية: ${r.requestNumber}`,
+                                  summary: [
+                                    { label: 'رقم السجل', value: r.requestNumber },
+                                    { label: 'المنفذ', value: m?.merchantName || r.merchantId },
+                                    { label: 'كود التاجر / الماكينة', value: `${tCode} / ${posNo}` },
+                                    { label: 'القيمة', value: `${quotaVal} ج.م` },
+                                  ],
+                                  canDelete: r.status === 'جديد' || r.status === 'ملغي',
+                                  blockReason:
+                                    r.status !== 'جديد' && r.status !== 'ملغي'
+                                      ? 'لا يمكن حذف حصة شهرية معتمدة أو منفذة مباشرة؛ يمكنك تعديلها لتسجيل تسوية موثقة في سجل التعديلات.'
+                                      : undefined,
+                                  onConfirm: () => {
+                                    onChangeState(
+                                      {
+                                        ...state,
+                                        requisitions: state.requisitions.filter((x) => x.id !== r.id),
+                                        auditLogs: [
+                                          appendAudit('حذف', 'الحصص التموينية الشهرية', r.id, r.requestNumber),
+                                          ...state.auditLogs,
+                                        ],
+                                      },
+                                      `تم حذف سجل الحصة (${r.requestNumber})`
+                                    );
+                                    notify('ok', `تم حذف سجل الحصة (${r.requestNumber}) بنجاح.`);
+                                  },
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <LocalUnitSubtotalRow
+                      unitName={grp.localUnit}
+                      recordCount={grp.count}
+                      labelColSpan={6}
+                      metricCells={[
+                        { content: grp.subtotals.requestedQty, mono: true },
+                        { content: grp.subtotals.approvedQty, mono: true },
+                        { content: grp.subtotals.deliveredQty, mono: true },
+                        { content: grp.subtotals.remainingQty, mono: true },
+                        { content: `${grp.subtotals.execPct}%`, mono: true },
+                        { content: `${grp.subtotals.quotaVal.toLocaleString()} ج.م`, mono: true },
+                        { colSpan: 3, content: '' },
+                      ]}
+                    />
+                  </React.Fragment>
+                ))}
+                {requisitionsGrouped.groups.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={requisitionsGrouped.grandTotalCount}
+                    labelColSpan={6}
+                    metricCells={[
+                      { content: requisitionsGrouped.grandTotals.requestedQty, mono: true },
+                      { content: requisitionsGrouped.grandTotals.approvedQty, mono: true },
+                      { content: requisitionsGrouped.grandTotals.deliveredQty, mono: true },
+                      { content: requisitionsGrouped.grandTotals.remainingQty, mono: true },
+                      { content: `${requisitionsGrouped.grandTotals.execPct}%`, mono: true },
+                      { content: `${requisitionsGrouped.grandTotals.quotaVal.toLocaleString()} ج.م`, mono: true },
+                      { colSpan: 3, content: '' },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -4235,9 +4719,9 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               </div>
             </div>
 
-            <div className="overflow-x-auto max-h-[380px]">
+            <div className="overflow-x-auto">
               <table className="w-full text-xs text-center border-collapse">
-                <thead className="bg-[#0A1628] text-white font-black sticky top-0">
+                <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2 px-2 border border-slate-700">فئة التنبيه الذكي</th>
                     <th className="py-2 px-2 border border-slate-700">الأولوية</th>
@@ -4321,9 +4805,9 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               </div>
             </div>
 
-            <div className="overflow-x-auto max-h-[420px]">
+            <div className="overflow-x-auto">
               <table className="w-full text-xs text-center border-collapse">
-                <thead className="bg-[#0A1628] text-white font-black sticky top-0">
+                <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2 px-2 border border-slate-700 text-right">اسم التاجر التمويني</th>
                     <th className="py-2 px-2 border border-slate-700">الرقم القومي</th>
@@ -4465,6 +4949,31 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                             updatedAt={ins.updatedAt}
                             permissions={permissions}
                             testIdPrefix={`inspection-${ins.id}`}
+                            onView={() =>
+                              setProfileView({
+                                title: `محضر التفتيش رقم ${ins.reportNumber}`,
+                                subtitle: `${m?.merchantName || ins.village} — ${ins.inspectionResult}`,
+                                badgeText: ins.dispositionStatus,
+                                updatedAt: ins.updatedAt,
+                                sections: [
+                                  {
+                                    title: 'بيانات المحضر والمخالفة',
+                                    fields: [
+                                      { label: 'رقم المحضر', value: ins.reportNumber, mono: true, highlight: true },
+                                      { label: 'التاريخ والوقت', value: ins.inspectionDateTime.replace('T', ' '), mono: true },
+                                      { label: 'المنفذ التمويني', value: m?.merchantName || ins.village },
+                                      { label: 'القرية', value: ins.village },
+                                      { label: 'اسم المفتش', value: ins.inspectorName },
+                                      { label: 'نوع المخالفة', value: ins.violationType },
+                                      { label: 'الكمية المخالفة', value: ins.violationQuantity, mono: true },
+                                      { label: 'القيمة المالية', value: `${ins.financialValue.toLocaleString()} ج.م`, mono: true, highlight: true },
+                                      { label: 'الإجراء القانوني', value: ins.legalAction },
+                                      { label: 'وصف المخالفة', value: ins.violationDescription },
+                                    ],
+                                  },
+                                ],
+                              })
+                            }
                             onEdit={() =>
                               setActiveModal({
                                 mode: 'edit',
@@ -4575,6 +5084,30 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                           updatedAt={c.updatedAt}
                           permissions={permissions}
                           testIdPrefix={`complaint-${c.id}`}
+                          onView={() =>
+                            setProfileView({
+                              title: `شكوى رقم ${c.ticketNumber}`,
+                              subtitle: `مقدم الشكوى: ${c.citizenName} (${c.village})`,
+                              badgeText: c.status,
+                              updatedAt: c.updatedAt,
+                              sections: [
+                                {
+                                  title: 'تفاصيل الشكوى والإجراءات',
+                                  fields: [
+                                    { label: 'رقم الشكوى', value: c.ticketNumber, mono: true, highlight: true },
+                                    { label: 'التاريخ', value: c.date, mono: true },
+                                    { label: 'اسم المواطن', value: c.citizenName },
+                                    { label: 'الهاتف', value: c.phone, mono: true },
+                                    { label: 'القرية', value: c.village },
+                                    { label: 'التصنيف', value: c.category },
+                                    { label: 'الحالة', value: c.status, highlight: true },
+                                    { label: 'تفاصيل الشكوى', value: c.details },
+                                    { label: 'نتيجة الفحص والإفادة', value: c.resolution },
+                                  ],
+                                },
+                              ],
+                            })
+                          }
                           onEdit={() =>
                             setActiveModal({
                               mode: 'edit',
@@ -4907,40 +5440,80 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
         </form>
       )}
 
+      {/* SubView: Department Alerts & Notifications */}
+      {subView === 'alerts' && canSeeAlerts && (
+        <DepartmentAlertsPanel
+          title="مركز التنبيهات والإشعارات الداخلية — قسم السلع التموينية"
+          departmentLabel="قسم السلع التموينية"
+          alerts={deptAlerts}
+          readAlertIds={state.readAlertIds || []}
+          canDeleteAlerts={canDeleteDepartmentAlert(currentUser)}
+          onMarkRead={(alertId) =>
+            onChangeState({
+              ...state,
+              readAlertIds: Array.from(new Set([...(state.readAlertIds || []), alertId])),
+            })
+          }
+          onMarkAllRead={(allIds) =>
+            onChangeState({
+              ...state,
+              readAlertIds: Array.from(new Set([...(state.readAlertIds || []), ...allIds])),
+            })
+          }
+        />
+      )}
+
       {/* SubView 11: Audit Trail */}
       {subView === 'audit' && (
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <h3 className="text-sm font-black text-[#0A1628] mb-3">
-            سجل التدقيق والمراجعة لقسم السلع التموينية ({state.auditLogs.length})
-          </h3>
-          <table className="w-full text-xs text-center border-collapse">
-            <thead className="bg-[#0A1628] text-white font-black">
-              <tr>
-                <th className="py-2 px-2 border border-slate-700">الوقت</th>
-                <th className="py-2 px-2 border border-slate-700">المستخدم</th>
-                <th className="py-2 px-2 border border-slate-700">الإجراء</th>
-                <th className="py-2 px-2 border border-slate-700">الشاشة</th>
-                <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 font-bold">
-              {state.auditLogs.length === 0 ? (
+        <div className="space-y-4">
+          <AuditLogAdminToolbar
+            branchId={branchId}
+            sliceKey="ration"
+            scopeLabel="قسم السلع التموينية"
+            totalLogsCount={state.auditLogs.length}
+            isSuperAdmin={isSuperAdmin(currentUser)}
+            onAuditLogsCleared={() => {
+              onChangeState(
+                { ...state, auditLogs: [] },
+                'تم حذف سجل التدقيق لقسم السلع التموينية وتوثيق العملية في سجل الأمان'
+              );
+              notify('ok', 'تم حذف سجل التدقيق لقسم السلع التموينية وتوثيق العملية في سجل الأمان.');
+            }}
+          />
+
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+            <h3 className="text-sm font-black text-[#0A1628] mb-3">
+              سجل التدقيق والمراجعة لقسم السلع التموينية ({state.auditLogs.length})
+            </h3>
+            <table className="w-full text-xs text-center border-collapse">
+              <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
-                  <td colSpan={5} className="py-6 text-slate-400">لم تُسجل حركات تعديل بعد في هذه الجلسة</td>
+                  <th className="py-2 px-2 border border-slate-700">الوقت</th>
+                  <th className="py-2 px-2 border border-slate-700">المستخدم</th>
+                  <th className="py-2 px-2 border border-slate-700">الإجراء</th>
+                  <th className="py-2 px-2 border border-slate-700">الشاشة</th>
+                  <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
                 </tr>
-              ) : (
-                state.auditLogs.map((a) => (
-                  <tr key={a.id}>
-                    <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
-                    <td className="py-2 px-2">{a.userFullName}</td>
-                    <td className="py-2 px-2 font-black text-[#0D9488]">{a.actionType}</td>
-                    <td className="py-2 px-2">{a.entityName}</td>
-                    <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+              </thead>
+              <tbody className="divide-y divide-slate-200 font-bold">
+                {state.auditLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-slate-400">لم تُسجل حركات تعديل بعد في هذه الجلسة</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  state.auditLogs.map((a) => (
+                    <tr key={a.id}>
+                      <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
+                      <td className="py-2 px-2">{a.userFullName}</td>
+                      <td className="py-2 px-2 font-black text-[#0D9488]">{a.actionType}</td>
+                      <td className="py-2 px-2">{a.entityName}</td>
+                      <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -4965,6 +5538,19 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               }
             }
           }}
+        />
+      )}
+
+      {/* Magic Eye Read-Only Profile Modal */}
+      {profileView && (
+        <ModuleRecordProfileModal
+          isOpen={true}
+          title={profileView.title}
+          subtitle={profileView.subtitle}
+          badgeText={profileView.badgeText}
+          sections={profileView.sections}
+          updatedAt={profileView.updatedAt}
+          onClose={() => setProfileView(null)}
         />
       )}
 

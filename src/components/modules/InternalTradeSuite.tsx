@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import {
   Building2,
   ShieldCheck,
@@ -48,6 +48,7 @@ import type {
   LpgDistributorRecord,
   UnifiedEstablishmentType,
   EstablishmentActivityStatus,
+  ModuleAuditLog,
 } from '../../types/modules';
 import {
   calculateCampaignViolationRate,
@@ -59,6 +60,28 @@ import {
 } from '../../utils/internalTradeMathEngine';
 import { createInitialInternalTradeState } from '../../data/internalTradeInitialData';
 import { resolveModuleCrudPermissions } from '../../utils/moduleCrudHelpers';
+import { isSuperAdmin } from '../../utils/departmentRbac';
+import {
+  groupRecordsByLocalUnit,
+  normalizeLocalUnitLabel,
+  roundMetric2,
+} from '../../utils/tableGroupingHelpers';
+import {
+  buildInternalTradeDepartmentAlerts,
+  canDeleteDepartmentAlert,
+  canViewDepartmentAlerts,
+  countUnreadDepartmentAlerts,
+} from '../../utils/moduleAlertsEngine';
+import {
+  AuditLogAdminToolbar,
+  DepartmentAlertsPanel,
+  LocalUnitSubtotalRow,
+  ModuleDeleteConfirmModal,
+  ModuleRecordProfileModal,
+  ModuleRowActions,
+  VillageGrandTotalRow,
+  type RecordProfileSection,
+} from './ModuleCrudShared';
 
 export type InternalTradeSubView =
   | 'dashboard'
@@ -76,7 +99,8 @@ export type InternalTradeSubView =
   | 'lpg-depots'
   | 'village-comparison'
   | 'alerts'
-  | 'reports';
+  | 'reports'
+  | 'audit';
 
 interface InternalTradeSuiteProps {
   state?: InternalTradeState;
@@ -127,31 +151,76 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
   );
 
   const [subView, setSubView] = useState<InternalTradeSubView>(initialSubView);
+  useEffect(() => {
+    setSubView(initialSubView);
+  }, [initialSubView]);
+
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [filterVillage, setFilterVillage] = useState<string>('ALL');
   const [filterLocalUnit, setFilterLocalUnit] = useState<string>('ALL');
   const [filterEstType, setFilterEstType] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [includeLinkedBakeries, setIncludeLinkedBakeries] = useState<boolean>(true);
+  const [estPage, setEstPage] = useState<number>(1);
+  const [estPageSize, setEstPageSize] = useState<number>(25);
+
+  useEffect(() => {
+    setEstPage(1);
+  }, [deferredSearchQuery, filterVillage, filterLocalUnit, filterEstType, filterStatus, includeLinkedBakeries]);
 
   // Historical Dossier Modal state
   const [selectedDossierEst, setSelectedDossierEst] = useState<InternalTradeEstablishment | null>(null);
   const [dossierActiveTab, setDossierActiveTab] = useState<'overview' | 'timeline' | 'violations' | 'print'>('timeline');
+
+  // Unified Magic Eye Read-Only Modal & Admin Delete Confirm Modal
+  const [profileModal, setProfileModal] = useState<{
+    title: string;
+    subtitle?: string;
+    badgeText?: string;
+    sections: RecordProfileSection[];
+    updatedAt?: string;
+  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    title: string;
+    summary: { label: string; value: string | number }[];
+    onConfirm: () => void;
+  } | null>(null);
 
   // Add/Edit Modals
   const [isEstModalOpen, setIsEstModalOpen] = useState(false);
   const [editingEst, setEditingEst] = useState<InternalTradeEstablishment | null>(null);
 
   const [isCampaignModalOpen, setIsCampaignModalOpen] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState<InternalTradeCampaign | null>(null);
+
   const [isViolationModalOpen, setIsViolationModalOpen] = useState(false);
+  const [editingViolation, setEditingViolation] = useState<InternalTradeViolationReport | null>(null);
+
   const [isSeizureModalOpen, setIsSeizureModalOpen] = useState(false);
+  const [editingSeizure, setEditingSeizure] = useState<InternalTradeSeizureRecord | null>(null);
+
   const [isComplaintModalOpen, setIsComplaintModalOpen] = useState(false);
+  const [editingComplaint, setEditingComplaint] = useState<InternalTradeComplaintRecord | null>(null);
+
   const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
+  const [editingPrice, setEditingPrice] = useState<InternalTradeMarketPriceRecord | null>(null);
+
   const [isLpgQuotaModalOpen, setIsLpgQuotaModalOpen] = useState(false);
   const [editingLpgRecord, setEditingLpgRecord] = useState<LpgVillageCirculationRecord | null>(null);
+
   const [isPetroQuotaModalOpen, setIsPetroQuotaModalOpen] = useState(false);
   const [editingPetroRecord, setEditingPetroRecord] = useState<PetroleumVillageCirculationRecord | null>(null);
+
   const [isMovementModalOpen, setIsMovementModalOpen] = useState(false);
+  const [isFuelStationModalOpen, setIsFuelStationModalOpen] = useState(false);
+  const [editingFuelStation, setEditingFuelStation] = useState<FuelStationControlRecord | null>(null);
+
+  const [isLpgDepotModalOpen, setIsLpgDepotModalOpen] = useState(false);
+  const [editingLpgDepot, setEditingLpgDepot] = useState<LpgDepotControlRecord | null>(null);
+
+  const [isLpgDistModalOpen, setIsLpgDistModalOpen] = useState(false);
+  const [editingLpgDist, setEditingLpgDist] = useState<LpgDistributorRecord | null>(null);
 
   // Village comparison selection
   const [compareVillagesSelected, setCompareVillagesSelected] = useState<string[]>(() =>
@@ -165,7 +234,61 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
     () => resolveModuleCrudPermissions(currentUser ?? null, false, 'internal_trade'),
     [currentUser]
   );
-  const isReadOnly = permissions.isReadOnly;
+  const isAdmin = useMemo(() => isSuperAdmin(currentUser), [currentUser]);
+  const canSeeAlerts = useMemo(
+    () => canViewDepartmentAlerts(currentUser, 'internal_trade'),
+    [currentUser]
+  );
+
+  const commitInternalTradeState = (
+    nextSlice: Partial<InternalTradeState>,
+    actionSummary: string,
+    audit?: {
+      actionType: ModuleAuditLog['actionType'];
+      entityName: string;
+      entityId: string;
+      beforeSummary?: string;
+      afterSummary?: string;
+    }
+  ) => {
+    const baseLogs = state.auditLogs || [];
+    const nextLogs = audit
+      ? [
+          {
+            id: `it-aud-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            branchId,
+            module: 'internal_trade' as const,
+            timestamp: new Date().toISOString(),
+            username: currentUser?.username || 'system',
+            userFullName: currentUser?.fullName || currentUser?.username || 'مستخدم النظام',
+            actionType: audit.actionType,
+            entityName: audit.entityName,
+            entityId: audit.entityId,
+            beforeSummary: audit.beforeSummary,
+            afterSummary: audit.afterSummary,
+          },
+          ...baseLogs,
+        ]
+      : baseLogs;
+
+    onChangeState(
+      {
+        ...state,
+        ...nextSlice,
+        auditLogs: nextLogs,
+      },
+      actionSummary
+    );
+  };
+
+  const departmentAlerts = useMemo(
+    () => buildInternalTradeDepartmentAlerts(state),
+    [state]
+  );
+  const unreadAlertsCount = useMemo(
+    () => countUnreadDepartmentAlerts(departmentAlerts, state.readAlertIds || []),
+    [departmentAlerts, state.readAlertIds]
+  );
 
   const uniqueVillages = useMemo(() => {
     const set = new Set<string>();
@@ -240,43 +363,107 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
     return [...state.establishments, ...mappedBakeriesAsEstablishments];
   }, [state.establishments, mappedBakeriesAsEstablishments]);
 
+  // Indexed Violation Lookups (O(1) per establishment — eliminates search/render freeze)
+  const { violationCountByCode, violationSearchTextByCode } = useMemo(() => {
+    const countMap = new Map<string, number>();
+    const reportMap = new Map<string, string>();
+    for (const v of state.violations) {
+      countMap.set(v.establishmentCode, (countMap.get(v.establishmentCode) || 0) + 1);
+      const prev = reportMap.get(v.establishmentCode) || '';
+      reportMap.set(v.establishmentCode, `${prev} ${String(v.reportNumber || '').toLowerCase()}`);
+    }
+    return { violationCountByCode: countMap, violationSearchTextByCode: reportMap };
+  }, [state.violations]);
+
+  const indexedEstablishments = useMemo(() => {
+    return allUnifiedEstablishments.map((e) => ({
+      est: e,
+      searchBlob: [
+        e.establishmentCode,
+        e.ownerName,
+        e.establishmentName,
+        e.nationalId,
+        e.phone,
+        e.commercialRegNumber,
+        e.taxCardNumber,
+        e.licenseNumber,
+        e.village,
+        e.localUnit,
+        e.activityType,
+        violationSearchTextByCode.get(e.establishmentCode) || '',
+      ]
+        .join(' ')
+        .toLowerCase(),
+    }));
+  }, [allUnifiedEstablishments, violationSearchTextByCode]);
+
   const filteredEstablishments = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return allUnifiedEstablishments.filter((e) => {
-      if (filterVillage !== 'ALL' && e.village !== filterVillage) return false;
-      if (filterLocalUnit !== 'ALL' && e.localUnit !== filterLocalUnit) return false;
-      if (filterEstType !== 'ALL' && e.establishmentType !== filterEstType) return false;
-      if (filterStatus !== 'ALL' && e.activityStatus !== filterStatus) return false;
-      if (!q) return true;
-      const relatedViolationMatch = state.violations.some(
-        (v) =>
-          v.establishmentCode === e.establishmentCode &&
-          v.reportNumber.toLowerCase().includes(q)
-      );
-      return (
-        e.establishmentCode.toLowerCase().includes(q) ||
-        e.ownerName.toLowerCase().includes(q) ||
-        e.establishmentName.toLowerCase().includes(q) ||
-        e.nationalId.toLowerCase().includes(q) ||
-        e.phone.toLowerCase().includes(q) ||
-        e.commercialRegNumber.toLowerCase().includes(q) ||
-        e.taxCardNumber.toLowerCase().includes(q) ||
-        e.licenseNumber.toLowerCase().includes(q) ||
-        e.village.toLowerCase().includes(q) ||
-        e.localUnit.toLowerCase().includes(q) ||
-        e.activityType.toLowerCase().includes(q) ||
-        relatedViolationMatch
-      );
-    });
+    const q = deferredSearchQuery.trim().toLowerCase();
+    const out: InternalTradeEstablishment[] = [];
+    for (const item of indexedEstablishments) {
+      const e = item.est;
+      if (filterVillage !== 'ALL' && e.village !== filterVillage) continue;
+      if (filterLocalUnit !== 'ALL' && e.localUnit !== filterLocalUnit) continue;
+      if (filterEstType !== 'ALL' && e.establishmentType !== filterEstType) continue;
+      if (filterStatus !== 'ALL' && e.activityStatus !== filterStatus) continue;
+      if (q && !item.searchBlob.includes(q)) continue;
+      out.push(e);
+    }
+    return out;
   }, [
-    allUnifiedEstablishments,
-    searchQuery,
+    indexedEstablishments,
+    deferredSearchQuery,
     filterVillage,
     filterLocalUnit,
     filterEstType,
     filterStatus,
-    state.violations,
   ]);
+
+  const estTotalPages = Math.max(1, Math.ceil(filteredEstablishments.length / estPageSize));
+  const safeEstPage = Math.min(estPage, estTotalPages);
+  const paginatedEstablishments = useMemo(() => {
+    const start = (safeEstPage - 1) * estPageSize;
+    return filteredEstablishments.slice(start, start + estPageSize);
+  }, [filteredEstablishments, safeEstPage, estPageSize]);
+
+  const groupedEstablishmentsPage = useMemo(
+    () =>
+      groupRecordsByLocalUnit({
+        rows: paginatedEstablishments,
+        getLocalUnit: (e) => e.localUnit || e.village,
+        numericFields: [
+          {
+            key: 'violationsCount',
+            getValue: (e) => violationCountByCode.get(e.establishmentCode) || 0,
+          },
+          {
+            key: 'activeCount',
+            getValue: (e) => (e.activityStatus === 'نشط' ? 1 : 0),
+          },
+        ],
+        sortUnitsAlphabetically: true,
+      }),
+    [paginatedEstablishments, violationCountByCode]
+  );
+
+  const groupedAllEstablishmentsGrand = useMemo(
+    () =>
+      groupRecordsByLocalUnit({
+        rows: filteredEstablishments,
+        getLocalUnit: (e) => e.localUnit || e.village,
+        numericFields: [
+          {
+            key: 'violationsCount',
+            getValue: (e) => violationCountByCode.get(e.establishmentCode) || 0,
+          },
+          {
+            key: 'activeCount',
+            getValue: (e) => (e.activityStatus === 'نشط' ? 1 : 0),
+          },
+        ],
+      }),
+    [filteredEstablishments, violationCountByCode]
+  );
 
   // Compute LPG Metrics for all villages
   const lpgCalculatedRows = useMemo(() => {
@@ -712,93 +899,127 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
     setTimeout(triggerPrint, 120);
   };
 
-  // Sub-Navigation Tabs
-  const navButtons: { id: InternalTradeSubView; label: string; icon: React.ReactNode; badge?: number | string }[] = [
-    { id: 'dashboard', label: 'المركز الرقابي الموحد', icon: <BarChart3 className="w-4 h-4" /> },
+  // Categorized Sub-Navigation Groups (no cramped horizontal scrollbar)
+  const navGroups: {
+    groupTitle: string;
+    buttons: { id: InternalTradeSubView; label: string; icon: React.ReactNode; badge?: number | string }[];
+  }[] = [
     {
-      id: 'establishments',
-      label: '1. المحلات والمنشآت الموحدة',
-      icon: <Store className="w-4 h-4" />,
-      badge: allUnifiedEstablishments.length,
+      groupTitle: 'المنشآت والأنشطة والخريطة',
+      buttons: [
+        { id: 'dashboard', label: 'المركز الرقابي الموحد', icon: <BarChart3 className="w-4 h-4" /> },
+        {
+          id: 'establishments',
+          label: '1. المحلات والمنشآت',
+          icon: <Store className="w-4 h-4" />,
+          badge: allUnifiedEstablishments.length,
+        },
+        {
+          id: 'activities-licenses',
+          label: '2-3. الأنشطة والتراخيص والمغلقة',
+          icon: <Award className="w-4 h-4" />,
+        },
+        { id: 'map', label: 'خريطة الرقابة', icon: <MapPin className="w-4 h-4" /> },
+      ],
     },
     {
-      id: 'activities-licenses',
-      label: '2-3. الأنشطة والتراخيص والمغلقة',
-      icon: <Award className="w-4 h-4" />,
-    },
-    { id: 'map', label: 'خريطة الرقابة التموينية', icon: <MapPin className="w-4 h-4" /> },
-    {
-      id: 'campaigns',
-      label: '4. الحملات التموينية ومؤشر الأداء',
-      icon: <ShieldCheck className="w-4 h-4" />,
-      badge: state.campaigns.length,
-    },
-    {
-      id: 'violations',
-      label: '5-11. المحاضر والمخالفات والتصالحات',
-      icon: <Scale className="w-4 h-4" />,
-      badge: state.violations.length,
-    },
-    {
-      id: 'seizures',
-      label: '6. المضبوطات والتحفظات',
-      icon: <Lock className="w-4 h-4" />,
-      badge: state.seizures.length,
-    },
-    {
-      id: 'complaints',
-      label: '7. الشكاوى والبلاغات',
-      icon: <Bell className="w-4 h-4" />,
-      badge: state.complaints.length,
-    },
-    {
-      id: 'prices',
-      label: '8-9. الأسعار ومتابعة الأسواق',
-      icon: <TrendingUp className="w-4 h-4" />,
-    },
-    {
-      id: 'lpg-circulation',
-      label: 'تداول أسطوانات البوتاجاز ونصيب الفرد',
-      icon: <Flame className="w-4 h-4 text-orange-600" />,
-      badge: `${state.lpgVillageCirculation.length} قرى`,
+      groupTitle: 'الحملات والمحاضر والشكاوى والأسعار',
+      buttons: [
+        {
+          id: 'campaigns',
+          label: '4. الحملات التموينية',
+          icon: <ShieldCheck className="w-4 h-4" />,
+          badge: state.campaigns.length,
+        },
+        {
+          id: 'violations',
+          label: '5-11. المحاضر والتصالحات',
+          icon: <Scale className="w-4 h-4" />,
+          badge: state.violations.length,
+        },
+        {
+          id: 'seizures',
+          label: '6. المضبوطات والتحفظات',
+          icon: <Lock className="w-4 h-4" />,
+          badge: state.seizures.length,
+        },
+        {
+          id: 'complaints',
+          label: '7. الشكاوى والبلاغات',
+          icon: <Bell className="w-4 h-4" />,
+          badge: state.complaints.length,
+        },
+        {
+          id: 'prices',
+          label: '8-9. الأسعار والأسواق',
+          icon: <TrendingUp className="w-4 h-4" />,
+          badge: state.marketPrices.length,
+        },
+      ],
     },
     {
-      id: 'petroleum-circulation',
-      label: 'المواد البترولية ونصيب الفرد (باللتر)',
-      icon: <Fuel className="w-4 h-4 text-blue-700" />,
+      groupTitle: 'تداول البوتاجاز والمواد البترولية',
+      buttons: [
+        {
+          id: 'lpg-circulation',
+          label: 'تداول البوتاجاز ونصيب الفرد',
+          icon: <Flame className="w-4 h-4 text-orange-600" />,
+          badge: `${state.lpgVillageCirculation.length} قرى`,
+        },
+        {
+          id: 'petroleum-circulation',
+          label: 'المواد البترولية (باللتر)',
+          icon: <Fuel className="w-4 h-4 text-blue-700" />,
+        },
+        {
+          id: 'fuel-stations',
+          label: 'رقابة محطات الوقود',
+          icon: <Fuel className="w-4 h-4" />,
+          badge: state.fuelStations.length,
+        },
+        {
+          id: 'lpg-depots',
+          label: 'مستودعات البوتاجاز والموزعون',
+          icon: <Building2 className="w-4 h-4" />,
+          badge: state.lpgDepots.length + state.lpgDistributors.length,
+        },
+        {
+          id: 'village-comparison',
+          label: 'مقارنة القرى والوحدات',
+          icon: <Layers className="w-4 h-4" />,
+        },
+      ],
     },
     {
-      id: 'fuel-stations',
-      label: 'رقابة محطات الوقود والحركة اليومية',
-      icon: <Fuel className="w-4 h-4" />,
-      badge: state.fuelStations.length,
-    },
-    {
-      id: 'lpg-depots',
-      label: 'مستودعات البوتاجاز والموزعون',
-      icon: <Building2 className="w-4 h-4" />,
-      badge: state.lpgDepots.length + state.lpgDistributors.length,
-    },
-    {
-      id: 'village-comparison',
-      label: 'مقارنة القرى والوحدات المحلية',
-      icon: <Layers className="w-4 h-4" />,
-    },
-    {
-      id: 'alerts',
-      label: 'التنبيهات الذكية (6 فئات)',
-      icon: <AlertTriangle className="w-4 h-4 text-amber-600" />,
-      badge: smartAlerts.length,
-    },
-    {
-      id: 'reports',
-      label: '12. مركز التقارير والطباعة (12 تقريراً)',
-      icon: <Printer className="w-4 h-4" />,
+      groupTitle: 'التنبيهات والتقارير وسجل التدقيق',
+      buttons: [
+        ...(canSeeAlerts
+          ? [
+              {
+                id: 'alerts' as const,
+                label: 'التنبيهات والإشعارات',
+                icon: <AlertTriangle className="w-4 h-4 text-amber-600" />,
+                badge: unreadAlertsCount > 0 ? unreadAlertsCount : departmentAlerts.length,
+              },
+            ]
+          : []),
+        {
+          id: 'reports',
+          label: '12. مركز التقارير والطباعة',
+          icon: <Printer className="w-4 h-4" />,
+        },
+        {
+          id: 'audit',
+          label: 'سجل التدقيق والأمان',
+          icon: <History className="w-4 h-4" />,
+          badge: (state.auditLogs || []).length,
+        },
+      ],
     },
   ];
 
   return (
-    <div dir="rtl" className="space-y-5 text-[#0A1931]">
+    <div dir="rtl" className="space-y-5 text-[#0A1931] enlarged-bold-table">
       {/* Executive Header Banner — Matte White & Royal Navy */}
       <div className="bg-white border-2 border-[#0A1931] rounded-3xl p-6 shadow-md">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -839,7 +1060,10 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setIsCampaignModalOpen(true)}
+              onClick={() => {
+                setEditingCampaign(null);
+                setIsCampaignModalOpen(true);
+              }}
               disabled={!permissions.canAdd}
               className="px-4 py-2.5 bg-white hover:bg-[#0A1931] text-[#0A1931] hover:text-white border-2 border-[#0A1931] rounded-xl text-xs font-black flex items-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
             >
@@ -848,7 +1072,10 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setIsViolationModalOpen(true)}
+              onClick={() => {
+                setEditingViolation(null);
+                setIsViolationModalOpen(true);
+              }}
               disabled={!permissions.canAdd}
               className="px-4 py-2.5 bg-white hover:bg-[#0A1931] text-[#0A1931] hover:text-white border-2 border-[#0A1931] rounded-xl text-xs font-black flex items-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
             >
@@ -866,36 +1093,51 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
           </div>
         </div>
 
-        {/* Large Bold White Sub-Navigation Bar */}
-        <div className="mt-5 pt-4 border-t border-slate-200 flex items-center gap-2 overflow-x-auto pb-1">
-          {navButtons.map((btn) => {
-            const active = subView === btn.id;
-            return (
-              <button
-                key={btn.id}
-                type="button"
-                data-testid={`internal-trade-tab-${btn.id}`}
-                onClick={() => setSubView(btn.id)}
-                className={`px-3.5 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 shrink-0 border-2 transition cursor-pointer shadow-2xs ${
-                  active
-                    ? 'bg-[#0A1931] text-white border-[#0A1931]'
-                    : 'bg-white hover:bg-slate-100 text-[#0A1931] border-slate-300 hover:border-[#0A1931]'
-                }`}
-              >
-                {btn.icon}
-                <span>{btn.label}</span>
-                {btn.badge !== undefined && (
-                  <span
-                    className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-black ${
-                      active ? 'bg-[#D4AF37] text-[#0A1931]' : 'bg-slate-100 text-[#0A1931]'
-                    }`}
-                  >
-                    {btn.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* Categorized Sub-Navigation Cards (Clear Large Bold Buttons — Zero Horizontal Scrollbar) */}
+        <div
+          className="mt-5 pt-4 border-t border-slate-200 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3"
+          data-testid="internal-trade-categorized-tabs"
+        >
+          {navGroups.map((group) => (
+            <div
+              key={group.groupTitle}
+              className="bg-[#F8FAFC] border border-slate-200 rounded-2xl p-2.5 space-y-2"
+            >
+              <div className="text-[11px] font-black text-[#0A1931] px-2 py-1 rounded-lg bg-slate-200/70">
+                {group.groupTitle}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {group.buttons.map((btn) => {
+                  const active = subView === btn.id;
+                  return (
+                    <button
+                      key={btn.id}
+                      type="button"
+                      data-testid={`internal-trade-tab-${btn.id}`}
+                      onClick={() => setSubView(btn.id)}
+                      className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 border-2 transition cursor-pointer shadow-2xs ${
+                        active
+                          ? 'bg-[#0A1931] text-white border-[#0A1931]'
+                          : 'bg-white hover:bg-slate-100 text-[#0A1931] border-slate-300 hover:border-[#0A1931]'
+                      }`}
+                    >
+                      {btn.icon}
+                      <span>{btn.label}</span>
+                      {btn.badge !== undefined && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-black ${
+                            active ? 'bg-[#D4AF37] text-[#0A1931]' : 'bg-slate-100 text-[#0A1931]'
+                          }`}
+                        >
+                          {btn.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -1254,7 +1496,46 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             </select>
           </div>
 
-          {/* Unified Establishments Table */}
+          {/* Pagination Controls */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold bg-[#F8FAFC] px-3.5 py-2 rounded-xl border border-slate-200">
+            <span>
+              إجمالي النتائج: <strong className="font-mono text-[#0A1931]">{filteredEstablishments.length}</strong> منشأة (صفحة{' '}
+              <strong className="font-mono">{safeEstPage}</strong> من <strong className="font-mono">{estTotalPages}</strong>)
+            </span>
+            <div className="flex items-center gap-2">
+              <select
+                value={estPageSize}
+                onChange={(e) => {
+                  setEstPageSize(Number(e.target.value) || 25);
+                  setEstPage(1);
+                }}
+                aria-label="عدد السجلات بالصفحة"
+                className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-mono text-xs"
+              >
+                <option value={25}>25 / صفحة</option>
+                <option value={50}>50 / صفحة</option>
+                <option value={100}>100 / صفحة</option>
+              </select>
+              <button
+                type="button"
+                disabled={safeEstPage <= 1}
+                onClick={() => setEstPage((p) => Math.max(1, p - 1))}
+                className="px-3 py-1 bg-white border border-slate-300 rounded-lg font-black disabled:opacity-40 cursor-pointer"
+              >
+                السابق
+              </button>
+              <button
+                type="button"
+                disabled={safeEstPage >= estTotalPages}
+                onClick={() => setEstPage((p) => Math.min(estTotalPages, p + 1))}
+                className="px-3 py-1 bg-white border border-slate-300 rounded-lg font-black disabled:opacity-40 cursor-pointer"
+              >
+                التالي
+              </button>
+            </div>
+          </div>
+
+          {/* Unified Establishments Table Grouped by Local Unit */}
           <div className="overflow-x-auto border border-slate-200 rounded-2xl">
             <table className="w-full text-right text-xs">
               <thead className="bg-[#0A1931] text-white font-black">
@@ -1267,100 +1548,211 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   <th className="py-3 px-3">السجل التجاري والبطاقة الضريبية</th>
                   <th className="py-3 px-3">رقم الترخيص وانتهاؤه</th>
                   <th className="py-3 px-3">الحالة</th>
-                  <th className="py-3 px-3 text-center">إجراءات والملف التاريخي</th>
+                  <th className="py-3 px-3 text-center">الإجراءات والملف التاريخي</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {filteredEstablishments.slice(0, 80).map((est) => {
-                  const vioCount = state.violations.filter(
-                    (v) => v.establishmentCode === est.establishmentCode
-                  ).length;
-                  return (
-                    <tr key={est.id} className="hover:bg-slate-50 transition">
-                      <td className="py-2.5 px-3 font-mono font-black text-[#0A1931]">
-                        {est.establishmentCode}
-                      </td>
-                      <td className="py-2.5 px-3 font-black text-[#0A1931]">
-                        <div>{est.establishmentName}</div>
-                        <div className="text-[11px] font-semibold text-slate-500">{est.detailedAddress}</div>
-                      </td>
-                      <td className="py-2.5 px-3 font-bold">
-                        <div>{est.ownerName}</div>
-                        <div className="text-[11px] font-mono text-slate-500">
-                          قومي: {est.nationalId} | ت: {est.phone}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 border border-slate-300 font-black text-[11px]">
-                          {est.establishmentType}
-                        </span>
-                        <div className="text-[11px] font-semibold text-slate-600 mt-0.5">
-                          {est.activityType}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 font-bold">
-                        <div>{est.village}</div>
-                        <div className="text-[11px] text-slate-500">{est.localUnit}</div>
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-[11px]">
-                        <div>س.ت: {est.commercialRegNumber}</div>
-                        <div className="text-slate-500">ب.ض: {est.taxCardNumber}</div>
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-[11px]">
-                        <div className="font-bold">{est.licenseNumber}</div>
-                        <div className="text-slate-500">ينتهي: {est.licenseExpiryDate}</div>
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span
-                          className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-black ${
-                            est.activityStatus === 'نشط'
-                              ? 'bg-emerald-100 text-emerald-900'
-                              : est.activityStatus === 'مغلق'
-                              ? 'bg-rose-100 text-rose-900'
-                              : est.activityStatus === 'متوقف'
-                              ? 'bg-amber-100 text-amber-900'
-                              : 'bg-blue-100 text-blue-900'
-                          }`}
-                        >
-                          {est.activityStatus}
-                        </span>
-                        {vioCount > 0 && (
-                          <div className="text-[10px] font-black text-rose-700 mt-1">
-                            {vioCount} محاضر مسجلة
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedDossierEst(est);
-                              setDossierActiveTab('timeline');
-                            }}
-                            className="px-2.5 py-1.5 bg-[#0A1931] hover:bg-[#152C52] text-white rounded-lg text-[11px] font-black flex items-center gap-1 cursor-pointer"
-                          >
-                            <History className="w-3.5 h-3.5 text-[#D4AF37]" />
-                            <span>الملف التاريخي</span>
-                          </button>
-                          {!est.linkedBakeryId && permissions.canEdit && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingEst(est);
-                                setIsEstModalOpen(true);
-                              }}
-                              className="p-1.5 bg-slate-100 hover:bg-slate-200 text-[#0A1931] rounded-lg cursor-pointer"
-                              title="تعديل المنشأة"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {paginatedEstablishments.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center font-black text-slate-500">
+                      لا توجد منشآت مطابقة لخيارات البحث أو التصفية الحالية.
+                    </td>
+                  </tr>
+                ) : (
+                  <>
+                    {groupedEstablishmentsPage.groups.map((grp) => (
+                      <React.Fragment key={`est-grp-${grp.localUnit}`}>
+                        {grp.rows.map((est) => {
+                          const vioCount = violationCountByCode.get(est.establishmentCode) || 0;
+                          return (
+                            <tr key={est.id} className="hover:bg-slate-50 transition">
+                              <td className="py-2.5 px-3 font-mono font-black text-[#0A1931]">
+                                {est.establishmentCode}
+                              </td>
+                              <td className="py-2.5 px-3 font-black text-[#0A1931]">
+                                <div>{est.establishmentName}</div>
+                                <div className="text-[11px] font-semibold text-slate-500">{est.detailedAddress}</div>
+                              </td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div>{est.ownerName}</div>
+                                <div className="text-[11px] font-mono text-slate-500">
+                                  قومي: {est.nationalId} | ت: {est.phone}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 border border-slate-300 font-black text-[11px]">
+                                  {est.establishmentType}
+                                </span>
+                                <div className="text-[11px] font-semibold text-slate-600 mt-0.5">
+                                  {est.activityType}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div>{est.village}</div>
+                                <div className="text-[11px] text-slate-500">{est.localUnit}</div>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-[11px]">
+                                <div>س.ت: {est.commercialRegNumber}</div>
+                                <div className="text-slate-500">ب.ض: {est.taxCardNumber}</div>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-[11px]">
+                                <div className="font-bold">{est.licenseNumber}</div>
+                                <div className="text-slate-500">ينتهي: {est.licenseExpiryDate}</div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span
+                                  className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-black ${
+                                    est.activityStatus === 'نشط'
+                                      ? 'bg-emerald-100 text-emerald-900'
+                                      : est.activityStatus === 'مغلق'
+                                      ? 'bg-rose-100 text-rose-900'
+                                      : est.activityStatus === 'متوقف'
+                                      ? 'bg-amber-100 text-amber-900'
+                                      : 'bg-blue-100 text-blue-900'
+                                  }`}
+                                >
+                                  {est.activityStatus}
+                                </span>
+                                {vioCount > 0 && (
+                                  <div className="text-[10px] font-black text-rose-700 mt-1">
+                                    {vioCount} محاضر مسجلة
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <ModuleRowActions
+                                  entityLabel={est.establishmentName}
+                                  updatedAt={est.updatedAt}
+                                  permissions={{
+                                    ...permissions,
+                                    canEdit: !est.linkedBakeryId && permissions.canEdit,
+                                    canDelete: !est.linkedBakeryId && permissions.canDelete,
+                                  }}
+                                  testIdPrefix={`it-est-${est.id}`}
+                                  extraAction={
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedDossierEst(est);
+                                        setDossierActiveTab('timeline');
+                                      }}
+                                      className="px-2 py-1 bg-[#0A1931] hover:bg-[#152C52] text-white rounded-lg text-[11px] font-black inline-flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <History className="w-3 h-3 text-[#D4AF37]" />
+                                      <span>الملف</span>
+                                    </button>
+                                  }
+                                  onView={() =>
+                                    setProfileModal({
+                                      title: `منشأة: ${est.establishmentName}`,
+                                      subtitle: `${est.establishmentCode} — ${est.village} (${est.localUnit})`,
+                                      badgeText: est.establishmentType,
+                                      updatedAt: est.updatedAt,
+                                      sections: [
+                                        {
+                                          title: 'البيانات الأساسية والمالك',
+                                          fields: [
+                                            { label: 'كود المنشأة', value: est.establishmentCode, mono: true },
+                                            { label: 'اسم المنشأة', value: est.establishmentName, highlight: true },
+                                            { label: 'اسم المالك', value: est.ownerName },
+                                            { label: 'الرقم القومي', value: est.nationalId, mono: true },
+                                            { label: 'رقم الهاتف', value: est.phone, mono: true },
+                                            { label: 'القرية والوحدة المحلية', value: `${est.village} / ${est.localUnit}` },
+                                            { label: 'العنوان التفصيلي', value: est.detailedAddress },
+                                            { label: 'نوع النشاط', value: `${est.establishmentType} — ${est.activityType}` },
+                                            { label: 'الحالة', value: est.activityStatus, highlight: true },
+                                          ],
+                                        },
+                                        {
+                                          title: 'التراخيص والسجل التجاري والبطاقة الضريبية',
+                                          fields: [
+                                            { label: 'رقم السجل التجاري', value: est.commercialRegNumber, mono: true },
+                                            { label: 'انتهاء السجل التجاري', value: est.commercialRegExpiryDate, mono: true },
+                                            { label: 'البطاقة الضريبية', value: est.taxCardNumber, mono: true },
+                                            { label: 'رقم الترخيص', value: est.licenseNumber, mono: true },
+                                            { label: 'انتهاء الترخيص', value: est.licenseExpiryDate, mono: true },
+                                            { label: 'جهة الإصدار', value: est.licenseIssuingEntity },
+                                            { label: 'عدد المحاضر المسجلة', value: vioCount, mono: true },
+                                            { label: 'ملاحظات', value: est.notes },
+                                          ],
+                                        },
+                                      ],
+                                    })
+                                  }
+                                  onEdit={
+                                    !est.linkedBakeryId
+                                      ? () => {
+                                          setEditingEst(est);
+                                          setIsEstModalOpen(true);
+                                        }
+                                      : undefined
+                                  }
+                                  onDelete={
+                                    !est.linkedBakeryId
+                                      ? () =>
+                                          setDeleteTarget({
+                                            title: est.establishmentName,
+                                            summary: [
+                                              { label: 'كود المنشأة', value: est.establishmentCode },
+                                              { label: 'المالك', value: est.ownerName },
+                                              { label: 'القرية', value: est.village },
+                                            ],
+                                            onConfirm: () =>
+                                              commitInternalTradeState(
+                                                {
+                                                  establishments: state.establishments.filter(
+                                                    (x) => x.id !== est.id
+                                                  ),
+                                                },
+                                                `تم حذف المنشأة "${est.establishmentName}" (${est.establishmentCode})`,
+                                                {
+                                                  actionType: 'حذف',
+                                                  entityName: 'منشأة تجارية',
+                                                  entityId: est.establishmentCode,
+                                                  beforeSummary: est.establishmentName,
+                                                }
+                                              ),
+                                          })
+                                      : undefined
+                                  }
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        <LocalUnitSubtotalRow
+                          unitName={grp.localUnit}
+                          recordCount={grp.count}
+                          labelColSpan={7}
+                          metricCells={[
+                            {
+                              content: `نشط: ${grp.subtotals.activeCount || 0} | محاضر: ${grp.subtotals.violationsCount || 0}`,
+                              align: 'center',
+                              mono: true,
+                            },
+                            { content: `${grp.count} منشأة بالصفحة`, align: 'center', mono: true },
+                          ]}
+                        />
+                      </React.Fragment>
+                    ))}
+                    <VillageGrandTotalRow
+                      totalCount={groupedAllEstablishmentsGrand.grandTotalCount}
+                      labelColSpan={7}
+                      metricCells={[
+                        {
+                          content: `إجمالي النشط: ${groupedAllEstablishmentsGrand.grandTotals.activeCount || 0} | المحاضر: ${groupedAllEstablishmentsGrand.grandTotals.violationsCount || 0}`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        {
+                          content: `${groupedAllEstablishmentsGrand.grandTotalCount} منشأة`,
+                          align: 'center',
+                          mono: true,
+                        },
+                      ]}
+                    />
+                  </>
+                )}
               </tbody>
             </table>
           </div>
@@ -1603,12 +1995,15 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 4. قاعدة بيانات الحملات التموينية ومؤشر أداء الحملات التلقائي
               </h2>
               <p className="text-xs font-bold text-slate-500">
-                تُحسب نسبة المنشآت المخالفة ونسبة الالتزام ومعدل تحرير المحاضر تلقائياً مع الحماية الكاملة من القسمة على صفر
+                تُحسب نسبة المنشآت المخالفة ونسبة الالتزام ومعدل تحرير المحاضر تلقائياً مع التجميع حسب الوحدة المحلية
               </p>
             </div>
             <button
               type="button"
-              onClick={() => setIsCampaignModalOpen(true)}
+              onClick={() => {
+                setEditingCampaign(null);
+                setIsCampaignModalOpen(true);
+              }}
               disabled={!permissions.canAdd}
               className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
@@ -1623,7 +2018,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 <tr>
                   <th className="py-3 px-3">رقم الحملة</th>
                   <th className="py-3 px-3">التاريخ والنوع</th>
-                  <th className="py-3 px-3">النطاق الجغرافي / القرية</th>
+                  <th className="py-3 px-3">النطاق الجغرافي / الوحدة المحلية</th>
                   <th className="py-3 px-3">رئيس وأعضاء الحملة</th>
                   <th className="py-3 px-3 text-center">المفتش عليها</th>
                   <th className="py-3 px-3 text-center">السليمة</th>
@@ -1633,66 +2028,197 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   <th className="py-3 px-3 text-center">نسبة الالتزام ∑</th>
                   <th className="py-3 px-3 text-center">معدل المحاضر ∑</th>
                   <th className="py-3 px-3">المضبوطات والتقرير</th>
+                  <th className="py-3 px-3 text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {state.campaigns.map((c) => {
-                  const vioRate = calculateCampaignViolationRate(c.violatingCount, c.inspectedCount);
-                  const compRate = calculateCampaignComplianceRate(c.compliantCount, c.inspectedCount);
-                  const repRate = calculateCampaignReportRate(c.reportsIssuedCount, c.inspectedCount);
-                  return (
-                    <tr key={c.id} className="hover:bg-slate-50">
-                      <td className="py-2.5 px-3 font-mono font-black">{c.campaignNumber}</td>
-                      <td className="py-2.5 px-3 font-bold">
-                        <div>{c.campaignDate} ({c.campaignTime})</div>
-                        <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-slate-100 text-[10px] font-black">
-                          حملة {c.campaignType}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 font-bold">
-                        <div>{c.geographicScope}</div>
-                        <div className="text-[11px] text-slate-500">{c.localUnit}</div>
-                      </td>
-                      <td className="py-2.5 px-3 font-bold">
-                        <div className="text-[#0A1931]">رئيس: {c.campaignHead}</div>
-                        <div className="text-[11px] text-slate-500">
-                          الأعضاء: {c.campaignMembers.join('، ')}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono font-black">{c.inspectedCount}</td>
-                      <td className="py-2.5 px-3 text-center font-mono font-black text-emerald-700">
-                        {c.compliantCount}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono font-black text-rose-700">
-                        {c.violatingCount}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono font-black text-indigo-800">
-                        {c.reportsIssuedCount}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono font-black text-rose-700 bg-rose-50/50">
-                        {vioRate}%
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono font-black text-emerald-700 bg-emerald-50/50">
-                        {compRate}%
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono font-black text-blue-800 bg-blue-50/50">
-                        {repRate}%
-                      </td>
-                      <td className="py-2.5 px-3 text-[11px] font-bold">
-                        <div>{c.totalReservedQtySummary}</div>
-                        <span
-                          className={`inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-black ${
-                            c.finalReportSubmitted
-                              ? 'bg-emerald-100 text-emerald-900'
-                              : 'bg-amber-100 text-amber-900'
-                          }`}
-                        >
-                          {c.finalReportSubmitted ? 'تم تقديم التقرير النهائي' : 'بانتظار التقرير النهائي'}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {state.campaigns.length === 0 ? (
+                  <tr>
+                    <td colSpan={13} className="py-8 text-center font-black text-slate-500">
+                      لا توجد حملات تموينية مسجلة حتى الآن.
+                    </td>
+                  </tr>
+                ) : (
+                  (() => {
+                    const groupedCamps = groupRecordsByLocalUnit({
+                      rows: state.campaigns,
+                      getLocalUnit: (c) => c.localUnit || c.village,
+                      numericFields: [
+                        { key: 'inspected', getValue: (c) => c.inspectedCount },
+                        { key: 'compliant', getValue: (c) => c.compliantCount },
+                        { key: 'violating', getValue: (c) => c.violatingCount },
+                        { key: 'reports', getValue: (c) => c.reportsIssuedCount },
+                      ],
+                      deriveMetrics: (sums) => ({
+                        vioRate: calculateCampaignViolationRate(sums.violating, sums.inspected),
+                        compRate: calculateCampaignComplianceRate(sums.compliant, sums.inspected),
+                        repRate: calculateCampaignReportRate(sums.reports, sums.inspected),
+                      }),
+                      sortUnitsAlphabetically: true,
+                    });
+                    return (
+                      <>
+                        {groupedCamps.groups.map((grp) => (
+                          <React.Fragment key={`camp-grp-${grp.localUnit}`}>
+                            {grp.rows.map((c) => {
+                              const vioRate = calculateCampaignViolationRate(c.violatingCount, c.inspectedCount);
+                              const compRate = calculateCampaignComplianceRate(c.compliantCount, c.inspectedCount);
+                              const repRate = calculateCampaignReportRate(c.reportsIssuedCount, c.inspectedCount);
+                              return (
+                                <tr key={c.id} className="hover:bg-slate-50">
+                                  <td className="py-2.5 px-3 font-mono font-black">{c.campaignNumber}</td>
+                                  <td className="py-2.5 px-3 font-bold">
+                                    <div>
+                                      {c.campaignDate} ({c.campaignTime})
+                                    </div>
+                                    <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-slate-100 text-[10px] font-black">
+                                      حملة {c.campaignType}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 px-3 font-bold">
+                                    <div>{c.geographicScope}</div>
+                                    <div className="text-[11px] text-slate-500">{c.localUnit}</div>
+                                  </td>
+                                  <td className="py-2.5 px-3 font-bold">
+                                    <div className="text-[#0A1931]">رئيس: {c.campaignHead}</div>
+                                    <div className="text-[11px] text-slate-500">
+                                      الأعضاء: {(c.campaignMembers || []).join('، ')}
+                                    </div>
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center font-mono font-black">{c.inspectedCount}</td>
+                                  <td className="py-2.5 px-3 text-center font-mono font-black text-emerald-700">
+                                    {c.compliantCount}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center font-mono font-black text-rose-700">
+                                    {c.violatingCount}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center font-mono font-black text-indigo-800">
+                                    {c.reportsIssuedCount}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center font-mono font-black text-rose-700 bg-rose-50/50">
+                                    {vioRate}%
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center font-mono font-black text-emerald-700 bg-emerald-50/50">
+                                    {compRate}%
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center font-mono font-black text-blue-800 bg-blue-50/50">
+                                    {repRate}%
+                                  </td>
+                                  <td className="py-2.5 px-3 text-[11px] font-bold">
+                                    <div>{c.totalReservedQtySummary}</div>
+                                    <span
+                                      className={`inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-black ${
+                                        c.finalReportSubmitted
+                                          ? 'bg-emerald-100 text-emerald-900'
+                                          : 'bg-amber-100 text-amber-900'
+                                      }`}
+                                    >
+                                      {c.finalReportSubmitted ? 'تم تقديم التقرير النهائي' : 'بانتظار التقرير النهائي'}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center">
+                                    <ModuleRowActions
+                                      entityLabel={`الحملة ${c.campaignNumber}`}
+                                      updatedAt={c.updatedAt}
+                                      permissions={permissions}
+                                      testIdPrefix={`it-camp-${c.id}`}
+                                      onView={() =>
+                                        setProfileModal({
+                                          title: `حملة تموينية: ${c.campaignNumber}`,
+                                          subtitle: `${c.village} (${c.localUnit})`,
+                                          badgeText: `حملة ${c.campaignType}`,
+                                          updatedAt: c.updatedAt,
+                                          sections: [
+                                            {
+                                              title: 'بيانات الحملة الميدانية',
+                                              fields: [
+                                                { label: 'رقم الحملة', value: c.campaignNumber, mono: true },
+                                                { label: 'التاريخ والوقت', value: `${c.campaignDate} (${c.campaignTime})`, mono: true },
+                                                { label: 'القرية والوحدة المحلية', value: `${c.village} / ${c.localUnit}` },
+                                                { label: 'النطاق الجغرافي', value: c.geographicScope },
+                                                { label: 'رئيس الحملة', value: c.campaignHead, highlight: true },
+                                                { label: 'الأعضاء', value: (c.campaignMembers || []).join('، ') },
+                                              ],
+                                            },
+                                            {
+                                              title: 'نتائج التفتيش ومؤشرات الأداء',
+                                              fields: [
+                                                { label: 'المنشآت المفتش عليها', value: c.inspectedCount, mono: true },
+                                                { label: 'السليمة', value: `${c.compliantCount} (${compRate}%)`, mono: true },
+                                                { label: 'المخالفة', value: `${c.violatingCount} (${vioRate}%)`, mono: true },
+                                                { label: 'المحاضر المحررة', value: `${c.reportsIssuedCount} (${repRate}%)`, mono: true },
+                                                { label: 'ملخص المضبوطات', value: c.totalReservedQtySummary },
+                                                { label: 'التقرير النهائي', value: c.finalReportSubmitted ? 'معتمد ومقدم' : 'قيد الاستكمال' },
+                                              ],
+                                            },
+                                          ],
+                                        })
+                                      }
+                                      onEdit={() => {
+                                        setEditingCampaign(c);
+                                        setIsCampaignModalOpen(true);
+                                      }}
+                                      onDelete={() =>
+                                        setDeleteTarget({
+                                          title: `الحملة ${c.campaignNumber}`,
+                                          summary: [
+                                            { label: 'رقم الحملة', value: c.campaignNumber },
+                                            { label: 'القرية', value: c.village },
+                                            { label: 'رئيس الحملة', value: c.campaignHead },
+                                          ],
+                                          onConfirm: () =>
+                                            commitInternalTradeState(
+                                              { campaigns: state.campaigns.filter((x) => x.id !== c.id) },
+                                              `تم حذف الحملة التموينية رقم ${c.campaignNumber}`,
+                                              {
+                                                actionType: 'حذف',
+                                                entityName: 'حملة تموينية',
+                                                entityId: c.campaignNumber,
+                                                beforeSummary: c.geographicScope,
+                                              }
+                                            ),
+                                        })
+                                      }
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            <LocalUnitSubtotalRow
+                              unitName={grp.localUnit}
+                              recordCount={grp.count}
+                              labelColSpan={4}
+                              metricCells={[
+                                { content: grp.subtotals.inspected, mono: true },
+                                { content: grp.subtotals.compliant, mono: true },
+                                { content: grp.subtotals.violating, mono: true },
+                                { content: grp.subtotals.reports, mono: true },
+                                { content: `${grp.subtotals.vioRate}%`, mono: true },
+                                { content: `${grp.subtotals.compRate}%`, mono: true },
+                                { content: `${grp.subtotals.repRate}%`, mono: true },
+                                { content: '—', colSpan: 2 },
+                              ]}
+                            />
+                          </React.Fragment>
+                        ))}
+                        <VillageGrandTotalRow
+                          totalCount={groupedCamps.grandTotalCount}
+                          labelColSpan={4}
+                          metricCells={[
+                            { content: groupedCamps.grandTotals.inspected, mono: true },
+                            { content: groupedCamps.grandTotals.compliant, mono: true },
+                            { content: groupedCamps.grandTotals.violating, mono: true },
+                            { content: groupedCamps.grandTotals.reports, mono: true },
+                            { content: `${groupedCamps.grandTotals.vioRate}%`, mono: true },
+                            { content: `${groupedCamps.grandTotals.compRate}%`, mono: true },
+                            { content: `${groupedCamps.grandTotals.repRate}%`, mono: true },
+                            { content: '—', colSpan: 2 },
+                          ]}
+                        />
+                      </>
+                    );
+                  })()
+                )}
               </tbody>
             </table>
           </div>
@@ -1715,7 +2241,10 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => setIsViolationModalOpen(true)}
+              onClick={() => {
+                setEditingViolation(null);
+                setIsViolationModalOpen(true);
+              }}
               disabled={!permissions.canAdd}
               className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
@@ -1731,61 +2260,175 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   <th className="py-3 px-3">رقم المحضر</th>
                   <th className="py-3 px-3">التاريخ</th>
                   <th className="py-3 px-3">المنشأة والمخالف</th>
-                  <th className="py-3 px-3">القرية</th>
+                  <th className="py-3 px-3">القرية / الوحدة المحلية</th>
                   <th className="py-3 px-3">نوع ووصف المخالفة</th>
                   <th className="py-3 px-3">القانون والمادة</th>
                   <th className="py-3 px-3">رقم القضية والنيابة</th>
                   <th className="py-3 px-3">الغرامة / مبلغ التصالح</th>
                   <th className="py-3 px-3">حالة المحضر</th>
+                  <th className="py-3 px-3 text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {state.violations.map((v) => (
-                  <tr key={v.id} className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-mono font-black text-rose-800">{v.reportNumber}</td>
-                    <td className="py-2.5 px-3 font-mono font-bold">{v.reportDate}</td>
-                    <td className="py-2.5 px-3 font-bold">
-                      <div className="font-black text-[#0A1931]">{v.establishmentName}</div>
-                      <div className="text-[11px] text-slate-500">
-                        المخالف: {v.ownerName} ({v.establishmentCode})
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3 font-bold">{v.village}</td>
-                    <td className="py-2.5 px-3">
-                      <div className="font-black text-rose-900">{v.violationType}</div>
-                      <div className="text-[11px] text-slate-600">{v.violationDescription}</div>
-                    </td>
-                    <td className="py-2.5 px-3 text-[11px] font-bold">
-                      <div>{v.governingLawOrDecision}</div>
-                      <div className="text-slate-500">{v.legalArticle}</div>
-                    </td>
-                    <td className="py-2.5 px-3 text-[11px] font-bold">
-                      <div>{v.caseNumber || 'قيد القيد'}</div>
-                      <div className="text-slate-500">{v.prosecutionEntity}</div>
-                    </td>
-                    <td className="py-2.5 px-3 font-mono font-black">
-                      <div>مقررة: {v.fineAmount.toLocaleString()} ج.م</div>
-                      {v.reconciliationAmount > 0 && (
-                        <div className="text-emerald-700">
-                          مسدد تصالح: {v.reconciliationAmount.toLocaleString()} ج.م
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span
-                        className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-black ${
-                          v.status === 'تم التصالح'
-                            ? 'bg-emerald-100 text-emerald-900'
-                            : v.status === 'جديد'
-                            ? 'bg-rose-100 text-rose-900'
-                            : 'bg-amber-100 text-amber-900'
-                        }`}
-                      >
-                        {v.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {(() => {
+                  const groupedVio = groupRecordsByLocalUnit({
+                    rows: state.violations,
+                    getLocalUnit: (v) => v.localUnit || v.village,
+                    numericFields: [
+                      { key: 'fineAmount', getValue: (v) => v.fineAmount },
+                      { key: 'reconciliationAmount', getValue: (v) => v.reconciliationAmount },
+                    ],
+                    sortUnitsAlphabetically: true,
+                  });
+                  return (
+                    <>
+                      {groupedVio.groups.map((grp) => (
+                        <React.Fragment key={`vio-grp-${grp.localUnit}`}>
+                          {grp.rows.map((v) => (
+                            <tr key={v.id} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3 font-mono font-black text-rose-800">{v.reportNumber}</td>
+                              <td className="py-2.5 px-3 font-mono font-bold">{v.reportDate}</td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div className="font-black text-[#0A1931]">{v.establishmentName}</div>
+                                <div className="text-[11px] text-slate-500">
+                                  المخالف: {v.ownerName} ({v.establishmentCode})
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div>{v.village}</div>
+                                <div className="text-[11px] text-slate-500">{v.localUnit}</div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-black text-rose-900">{v.violationType}</div>
+                                <div className="text-[11px] text-slate-600">{v.violationDescription}</div>
+                              </td>
+                              <td className="py-2.5 px-3 text-[11px] font-bold">
+                                <div>{v.governingLawOrDecision}</div>
+                                <div className="text-slate-500">{v.legalArticle}</div>
+                              </td>
+                              <td className="py-2.5 px-3 text-[11px] font-bold">
+                                <div>{v.caseNumber || 'قيد القيد'}</div>
+                                <div className="text-slate-500">{v.prosecutionEntity}</div>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-black">
+                                <div>مقررة: {v.fineAmount.toLocaleString()} ج.م</div>
+                                {v.reconciliationAmount > 0 && (
+                                  <div className="text-emerald-700">
+                                    مسدد تصالح: {v.reconciliationAmount.toLocaleString()} ج.م
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span
+                                  className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-black ${
+                                    v.status === 'تم التصالح'
+                                      ? 'bg-emerald-100 text-emerald-900'
+                                      : v.status === 'جديد'
+                                      ? 'bg-rose-100 text-rose-900'
+                                      : 'bg-amber-100 text-amber-900'
+                                  }`}
+                                >
+                                  {v.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <ModuleRowActions
+                                  entityLabel={`محضر ${v.reportNumber}`}
+                                  updatedAt={v.updatedAt}
+                                  permissions={permissions}
+                                  testIdPrefix={`it-vio-${v.id}`}
+                                  onView={() =>
+                                    setProfileModal({
+                                      title: `محضر مخالفة: ${v.reportNumber}`,
+                                      subtitle: `${v.establishmentName} — ${v.village}`,
+                                      badgeText: v.status,
+                                      updatedAt: v.updatedAt,
+                                      sections: [
+                                        {
+                                          title: 'بيانات المحضر والمنشأة',
+                                          fields: [
+                                            { label: 'رقم المحضر', value: v.reportNumber, mono: true },
+                                            { label: 'تاريخ المحضر', value: v.reportDate, mono: true },
+                                            { label: 'المنشأة والكود', value: `${v.establishmentName} (${v.establishmentCode})` },
+                                            { label: 'المخالف', value: v.ownerName },
+                                            { label: 'القرية والوحدة المحلية', value: `${v.village} / ${v.localUnit}` },
+                                            { label: 'نوع المخالفة', value: v.violationType, highlight: true },
+                                            { label: 'الوصف', value: v.violationDescription },
+                                          ],
+                                        },
+                                        {
+                                          title: 'القيد القانوني والتصالحات',
+                                          fields: [
+                                            { label: 'القانون والمادة', value: `${v.governingLawOrDecision} — ${v.legalArticle}` },
+                                            { label: 'رقم القضية', value: v.caseNumber || '—', mono: true },
+                                            { label: 'النيابة المختصة', value: v.prosecutionEntity },
+                                            { label: 'الغرامة المقررة', value: `${v.fineAmount.toLocaleString()} ج.م`, mono: true },
+                                            { label: 'مبلغ التصالح المسدد', value: `${v.reconciliationAmount.toLocaleString()} ج.م`, mono: true },
+                                            { label: 'نتيجة التصرف', value: v.dispositionResult },
+                                          ],
+                                        },
+                                      ],
+                                    })
+                                  }
+                                  onEdit={() => {
+                                    setEditingViolation(v);
+                                    setIsViolationModalOpen(true);
+                                  }}
+                                  onDelete={() =>
+                                    setDeleteTarget({
+                                      title: `محضر ${v.reportNumber}`,
+                                      summary: [
+                                        { label: 'رقم المحضر', value: v.reportNumber },
+                                        { label: 'المنشأة', value: v.establishmentName },
+                                        { label: 'الغرامة', value: `${v.fineAmount.toLocaleString()} ج.م` },
+                                      ],
+                                      onConfirm: () =>
+                                        commitInternalTradeState(
+                                          { violations: state.violations.filter((x) => x.id !== v.id) },
+                                          `تم حذف المحضر رقم ${v.reportNumber}`,
+                                          {
+                                            actionType: 'حذف',
+                                            entityName: 'محضر مخالفة',
+                                            entityId: v.reportNumber,
+                                            beforeSummary: v.establishmentName,
+                                          }
+                                        ),
+                                    })
+                                  }
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                          <LocalUnitSubtotalRow
+                            unitName={grp.localUnit}
+                            recordCount={grp.count}
+                            labelColSpan={7}
+                            metricCells={[
+                              {
+                                content: `غرامات: ${grp.subtotals.fineAmount.toLocaleString()} | تصالح: ${grp.subtotals.reconciliationAmount.toLocaleString()} ج.م`,
+                                mono: true,
+                                align: 'right',
+                              },
+                              { content: `${grp.count} محاضر`, colSpan: 2, mono: true },
+                            ]}
+                          />
+                        </React.Fragment>
+                      ))}
+                      <VillageGrandTotalRow
+                        totalCount={groupedVio.grandTotalCount}
+                        labelColSpan={7}
+                        metricCells={[
+                          {
+                            content: `إجمالي الغرامات: ${groupedVio.grandTotals.fineAmount.toLocaleString()} | التصالح: ${groupedVio.grandTotals.reconciliationAmount.toLocaleString()} ج.م`,
+                            mono: true,
+                            align: 'right',
+                          },
+                          { content: `${groupedVio.grandTotalCount} محاضر`, colSpan: 2, mono: true },
+                        ]}
+                      />
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>
@@ -1808,7 +2451,10 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => setIsSeizureModalOpen(true)}
+              onClick={() => {
+                setEditingSeizure(null);
+                setIsSeizureModalOpen(true);
+              }}
               disabled={!permissions.canAdd}
               className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
@@ -1830,37 +2476,134 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   <th className="py-3 px-3">سعر الوحدة</th>
                   <th className="py-3 px-3">إجمالي القيمة ∑</th>
                   <th className="py-3 px-3">مكان التحفظ والحالة</th>
+                  <th className="py-3 px-3 text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {state.seizures.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-mono font-black">{s.seizureOrderNumber}</td>
-                    <td className="py-2.5 px-3 font-mono font-bold text-rose-800">{s.linkedReportNumber}</td>
-                    <td className="py-2.5 px-3 font-mono">{s.seizureDate}</td>
-                    <td className="py-2.5 px-3 font-bold">
-                      <div>{s.establishmentName}</div>
-                      <div className="text-[11px] text-slate-500">{s.village}</div>
-                    </td>
-                    <td className="py-2.5 px-3 font-bold">
-                      <div>{s.commodityType}</div>
-                      <div className="text-[11px] text-slate-500">{s.commodityDescription}</div>
-                    </td>
-                    <td className="py-2.5 px-3 font-mono font-black">
-                      {s.quantity.toLocaleString()} {s.unit}
-                    </td>
-                    <td className="py-2.5 px-3 font-mono">{s.unitPrice.toLocaleString()} ج.م</td>
-                    <td className="py-2.5 px-3 font-mono font-black text-amber-800 bg-amber-50/60">
-                      {(s.quantity * s.unitPrice).toLocaleString()} ج.م
-                    </td>
-                    <td className="py-2.5 px-3 text-[11px] font-bold">
-                      <div>{s.storageLocation}</div>
-                      <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-black">
-                        {s.seizureStatus}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {(() => {
+                  const groupedSeiz = groupRecordsByLocalUnit({
+                    rows: state.seizures,
+                    getLocalUnit: (s) => s.village,
+                    numericFields: [
+                      { key: 'quantity', getValue: (s) => s.quantity },
+                      { key: 'totalValue', getValue: (s) => s.quantity * s.unitPrice },
+                    ],
+                    sortUnitsAlphabetically: true,
+                  });
+                  return (
+                    <>
+                      {groupedSeiz.groups.map((grp) => (
+                        <React.Fragment key={`sez-grp-${grp.localUnit}`}>
+                          {grp.rows.map((s) => (
+                            <tr key={s.id} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3 font-mono font-black">{s.seizureOrderNumber}</td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-rose-800">{s.linkedReportNumber}</td>
+                              <td className="py-2.5 px-3 font-mono">{s.seizureDate}</td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div>{s.establishmentName}</div>
+                                <div className="text-[11px] text-slate-500">{s.village}</div>
+                              </td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div>{s.commodityType}</div>
+                                <div className="text-[11px] text-slate-500">{s.commodityDescription}</div>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-black">
+                                {s.quantity.toLocaleString()} {s.unit}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono">{s.unitPrice.toLocaleString()} ج.م</td>
+                              <td className="py-2.5 px-3 font-mono font-black text-amber-800 bg-amber-50/60">
+                                {(s.quantity * s.unitPrice).toLocaleString()} ج.م
+                              </td>
+                              <td className="py-2.5 px-3 text-[11px] font-bold">
+                                <div>{s.storageLocation}</div>
+                                <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-black">
+                                  {s.seizureStatus}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <ModuleRowActions
+                                  entityLabel={`حرز ${s.seizureOrderNumber}`}
+                                  updatedAt={s.updatedAt}
+                                  permissions={permissions}
+                                  testIdPrefix={`it-sez-${s.id}`}
+                                  onView={() =>
+                                    setProfileModal({
+                                      title: `محضر ضبط وتحفظ: ${s.seizureOrderNumber}`,
+                                      subtitle: `${s.establishmentName} — ${s.village}`,
+                                      badgeText: s.seizureStatus,
+                                      updatedAt: s.updatedAt,
+                                      sections: [
+                                        {
+                                          title: 'بيانات الضبطية',
+                                          fields: [
+                                            { label: 'رقم أمر الضبط', value: s.seizureOrderNumber, mono: true },
+                                            { label: 'المحضر المرتبط', value: s.linkedReportNumber, mono: true },
+                                            { label: 'التاريخ', value: s.seizureDate, mono: true },
+                                            { label: 'المنشأة والقرية', value: `${s.establishmentName} — ${s.village}` },
+                                            { label: 'السلعة المضبوطة', value: s.commodityType, highlight: true },
+                                            { label: 'الكمية وسعر الوحدة', value: `${s.quantity} ${s.unit} × ${s.unitPrice} ج.م`, mono: true },
+                                            { label: 'إجمالي القيمة التقديرية', value: `${(s.quantity * s.unitPrice).toLocaleString()} ج.م`, mono: true, highlight: true },
+                                            { label: 'مكان التحفظ', value: s.storageLocation },
+                                          ],
+                                        },
+                                      ],
+                                    })
+                                  }
+                                  onEdit={() => {
+                                    setEditingSeizure(s);
+                                    setIsSeizureModalOpen(true);
+                                  }}
+                                  onDelete={() =>
+                                    setDeleteTarget({
+                                      title: `حرز ${s.seizureOrderNumber}`,
+                                      summary: [
+                                        { label: 'رقم الضبط', value: s.seizureOrderNumber },
+                                        { label: 'السلعة', value: s.commodityType },
+                                        { label: 'القيمة', value: `${(s.quantity * s.unitPrice).toLocaleString()} ج.م` },
+                                      ],
+                                      onConfirm: () =>
+                                        commitInternalTradeState(
+                                          { seizures: state.seizures.filter((x) => x.id !== s.id) },
+                                          `تم حذف محضر الضبط رقم ${s.seizureOrderNumber}`,
+                                          {
+                                            actionType: 'حذف',
+                                            entityName: 'ضبطية وتحفظ',
+                                            entityId: s.seizureOrderNumber,
+                                            beforeSummary: s.commodityType,
+                                          }
+                                        ),
+                                    })
+                                  }
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                          <LocalUnitSubtotalRow
+                            unitName={grp.localUnit}
+                            recordCount={grp.count}
+                            labelColSpan={5}
+                            metricCells={[
+                              { content: grp.subtotals.quantity.toLocaleString(), mono: true },
+                              { content: '—' },
+                              { content: `${grp.subtotals.totalValue.toLocaleString()} ج.م`, mono: true },
+                              { content: `${grp.count} أحراز`, colSpan: 2, mono: true },
+                            ]}
+                          />
+                        </React.Fragment>
+                      ))}
+                      <VillageGrandTotalRow
+                        totalCount={groupedSeiz.grandTotalCount}
+                        labelColSpan={5}
+                        metricCells={[
+                          { content: groupedSeiz.grandTotals.quantity.toLocaleString(), mono: true },
+                          { content: '—' },
+                          { content: `${groupedSeiz.grandTotals.totalValue.toLocaleString()} ج.م`, mono: true },
+                          { content: `${groupedSeiz.grandTotalCount} أحراز`, colSpan: 2, mono: true },
+                        ]}
+                      />
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>
@@ -1883,7 +2626,10 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => setIsComplaintModalOpen(true)}
+              onClick={() => {
+                setEditingComplaint(null);
+                setIsComplaintModalOpen(true);
+              }}
               disabled={!permissions.canAdd}
               className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
@@ -1899,51 +2645,158 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   <th className="py-3 px-3">رقم الشكوى</th>
                   <th className="py-3 px-3">تاريخ الورود والمصدر</th>
                   <th className="py-3 px-3">مقدم الشكوى</th>
-                  <th className="py-3 px-3">المنشأة المشكو في حقها</th>
+                  <th className="py-3 px-3">المنشأة المشكو في حقها / الوحدة</th>
                   <th className="py-3 px-3">نوع وموضوع الشكوى</th>
                   <th className="py-3 px-3">المفتش المكلف والنتيجة</th>
                   <th className="py-3 px-3">الحالة</th>
+                  <th className="py-3 px-3 text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {state.complaints.map((cmp) => (
-                  <tr key={cmp.id} className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-mono font-black">{cmp.complaintNumber}</td>
-                    <td className="py-2.5 px-3 font-bold">
-                      <div>{cmp.receivedDate}</div>
-                      <div className="text-[11px] text-slate-500">{cmp.source}</div>
-                    </td>
-                    <td className="py-2.5 px-3 font-bold">
-                      <div>{cmp.complainantName}</div>
-                      <div className="text-[11px] font-mono text-slate-500">{cmp.phone}</div>
-                    </td>
-                    <td className="py-2.5 px-3 font-bold">
-                      <div>{cmp.targetEstablishmentName}</div>
-                      <div className="text-[11px] text-slate-500">{cmp.village}</div>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-900 font-black text-[10px]">
-                        {cmp.complaintType}
-                      </span>
-                      <div className="text-[11px] font-semibold mt-0.5">{cmp.subject}</div>
-                    </td>
-                    <td className="py-2.5 px-3 text-[11px] font-bold">
-                      <div>المفتش: {cmp.assignedEmployee}</div>
-                      <div className="text-slate-600">{cmp.inspectionResult}</div>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span
-                        className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-black ${
-                          cmp.status === 'تم الفحص والحل' || cmp.status === 'مغلقة'
-                            ? 'bg-emerald-100 text-emerald-900'
-                            : 'bg-amber-100 text-amber-900'
-                        }`}
-                      >
-                        {cmp.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {(() => {
+                  const groupedCmp = groupRecordsByLocalUnit({
+                    rows: state.complaints,
+                    getLocalUnit: (c) => c.localUnit || c.village,
+                    numericFields: [
+                      {
+                        key: 'resolved',
+                        getValue: (c) => (c.status === 'تم الفحص والحل' || c.status === 'مغلقة' ? 1 : 0),
+                      },
+                      {
+                        key: 'open',
+                        getValue: (c) => (c.status === 'تم الفحص والحل' || c.status === 'مغلقة' ? 0 : 1),
+                      },
+                    ],
+                    sortUnitsAlphabetically: true,
+                  });
+                  return (
+                    <>
+                      {groupedCmp.groups.map((grp) => (
+                        <React.Fragment key={`cmp-grp-${grp.localUnit}`}>
+                          {grp.rows.map((cmp) => (
+                            <tr key={cmp.id} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3 font-mono font-black">{cmp.complaintNumber}</td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div>{cmp.receivedDate}</div>
+                                <div className="text-[11px] text-slate-500">{cmp.source}</div>
+                              </td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div>{cmp.complainantName}</div>
+                                <div className="text-[11px] font-mono text-slate-500">{cmp.phone}</div>
+                              </td>
+                              <td className="py-2.5 px-3 font-bold">
+                                <div>{cmp.targetEstablishmentName}</div>
+                                <div className="text-[11px] text-slate-500">
+                                  {cmp.village} ({cmp.localUnit})
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-900 font-black text-[10px]">
+                                  {cmp.complaintType}
+                                </span>
+                                <div className="text-[11px] font-semibold mt-0.5">{cmp.subject}</div>
+                              </td>
+                              <td className="py-2.5 px-3 text-[11px] font-bold">
+                                <div>المفتش: {cmp.assignedEmployee}</div>
+                                <div className="text-slate-600">{cmp.inspectionResult}</div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span
+                                  className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-black ${
+                                    cmp.status === 'تم الفحص والحل' || cmp.status === 'مغلقة'
+                                      ? 'bg-emerald-100 text-emerald-900'
+                                      : 'bg-amber-100 text-amber-900'
+                                  }`}
+                                >
+                                  {cmp.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <ModuleRowActions
+                                  entityLabel={`شكوى ${cmp.complaintNumber}`}
+                                  updatedAt={cmp.updatedAt}
+                                  permissions={permissions}
+                                  testIdPrefix={`it-cmp-${cmp.id}`}
+                                  onView={() =>
+                                    setProfileModal({
+                                      title: `شكوى رقم: ${cmp.complaintNumber}`,
+                                      subtitle: `${cmp.source} — ${cmp.receivedDate}`,
+                                      badgeText: cmp.status,
+                                      updatedAt: cmp.updatedAt,
+                                      sections: [
+                                        {
+                                          title: 'بيانات الشكوى والنتيجة',
+                                          fields: [
+                                            { label: 'رقم الشكوى', value: cmp.complaintNumber, mono: true },
+                                            { label: 'مقدم الشكوى', value: `${cmp.complainantName} (${cmp.phone})` },
+                                            { label: 'المشكو في حقه', value: cmp.targetEstablishmentName, highlight: true },
+                                            { label: 'القرية والوحدة', value: `${cmp.village} / ${cmp.localUnit}` },
+                                            { label: 'النوع', value: cmp.complaintType },
+                                            { label: 'الموضوع', value: cmp.subject },
+                                            { label: 'المفتش المكلف', value: cmp.assignedEmployee },
+                                            { label: 'نتيجة الفحص والإجراء', value: `${cmp.inspectionResult} — ${cmp.actionTaken}` },
+                                          ],
+                                        },
+                                      ],
+                                    })
+                                  }
+                                  onEdit={() => {
+                                    setEditingComplaint(cmp);
+                                    setIsComplaintModalOpen(true);
+                                  }}
+                                  onDelete={() =>
+                                    setDeleteTarget({
+                                      title: `شكوى ${cmp.complaintNumber}`,
+                                      summary: [
+                                        { label: 'رقم الشكوى', value: cmp.complaintNumber },
+                                        { label: 'مقدم الشكوى', value: cmp.complainantName },
+                                        { label: 'المشكو في حقه', value: cmp.targetEstablishmentName },
+                                      ],
+                                      onConfirm: () =>
+                                        commitInternalTradeState(
+                                          { complaints: state.complaints.filter((x) => x.id !== cmp.id) },
+                                          `تم حذف الشكوى رقم ${cmp.complaintNumber}`,
+                                          {
+                                            actionType: 'حذف',
+                                            entityName: 'شكوى وبلاغ',
+                                            entityId: cmp.complaintNumber,
+                                            beforeSummary: cmp.subject,
+                                          }
+                                        ),
+                                    })
+                                  }
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                          <LocalUnitSubtotalRow
+                            unitName={grp.localUnit}
+                            recordCount={grp.count}
+                            labelColSpan={6}
+                            metricCells={[
+                              {
+                                content: `محلولة: ${grp.subtotals.resolved} | قيد المتابعة: ${grp.subtotals.open}`,
+                                mono: true,
+                                colSpan: 2,
+                              },
+                            ]}
+                          />
+                        </React.Fragment>
+                      ))}
+                      <VillageGrandTotalRow
+                        totalCount={groupedCmp.grandTotalCount}
+                        labelColSpan={6}
+                        metricCells={[
+                          {
+                            content: `إجمالي محلولة: ${groupedCmp.grandTotals.resolved} | مفتوحة: ${groupedCmp.grandTotals.open}`,
+                            mono: true,
+                            colSpan: 2,
+                          },
+                        ]}
+                      />
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>
@@ -1966,7 +2819,10 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => setIsPriceModalOpen(true)}
+              onClick={() => {
+                setEditingPrice(null);
+                setIsPriceModalOpen(true);
+              }}
               disabled={!permissions.canAdd}
               className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
@@ -1988,50 +2844,144 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   <th className="py-3 px-3">نسبة التغير عن الفترة السابقة ∑</th>
                   <th className="py-3 px-3">المنشأة والقرية</th>
                   <th className="py-3 px-3">تاريخ الرصد والمفتش</th>
+                  <th className="py-3 px-3 text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {state.marketPrices.map((p) => {
-                  const diff = Number((p.actualMarketPrice - p.declaredPrice).toFixed(2));
-                  const changePct =
-                    p.previousPeriodPrice > 0
-                      ? Number(
-                          (((p.actualMarketPrice - p.previousPeriodPrice) / p.previousPeriodPrice) * 100).toFixed(1)
-                        )
-                      : 0;
+                {(() => {
+                  const groupedPrices = groupRecordsByLocalUnit({
+                    rows: state.marketPrices,
+                    getLocalUnit: (p) => p.localUnit || p.village,
+                    numericFields: [
+                      { key: 'overpriceCount', getValue: (p) => (p.actualMarketPrice > p.declaredPrice ? 1 : 0) },
+                    ],
+                    sortUnitsAlphabetically: true,
+                  });
                   return (
-                    <tr key={p.id} className="hover:bg-slate-50">
-                      <td className="py-2.5 px-3 font-mono font-black">{p.commodityCode}</td>
-                      <td className="py-2.5 px-3 font-bold">
-                        <div className="font-black">{p.commodityName}</div>
-                        <div className="text-[11px] text-slate-500">{p.category}</div>
-                      </td>
-                      <td className="py-2.5 px-3 font-bold">{p.unit}</td>
-                      <td className="py-2.5 px-3 font-mono font-bold">{p.declaredPrice} ج.م</td>
-                      <td className="py-2.5 px-3 font-mono font-black text-[#0A1931]">
-                        {p.actualMarketPrice} ج.م
-                      </td>
-                      <td
-                        className={`py-2.5 px-3 font-mono font-black ${
-                          diff > 0 ? 'text-rose-700 bg-rose-50/50' : 'text-emerald-700 bg-emerald-50/50'
-                        }`}
-                      >
-                        {diff > 0 ? `+${diff}` : diff} ج.م
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-bold">
-                        {changePct > 0 ? `+${changePct}%` : `${changePct}%`}
-                      </td>
-                      <td className="py-2.5 px-3 font-bold">
-                        <div>{p.establishmentName}</div>
-                        <div className="text-[11px] text-slate-500">{p.village}</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-[11px] font-bold">
-                        <div>{p.observationDate}</div>
-                        <div className="text-slate-500">{p.observerEmployee}</div>
-                      </td>
-                    </tr>
+                    <>
+                      {groupedPrices.groups.map((grp) => (
+                        <React.Fragment key={`prc-grp-${grp.localUnit}`}>
+                          {grp.rows.map((p) => {
+                            const diff = Number((p.actualMarketPrice - p.declaredPrice).toFixed(2));
+                            const changePct =
+                              p.previousPeriodPrice > 0
+                                ? Number(
+                                    (((p.actualMarketPrice - p.previousPeriodPrice) / p.previousPeriodPrice) * 100).toFixed(1)
+                                  )
+                                : 0;
+                            return (
+                              <tr key={p.id} className="hover:bg-slate-50">
+                                <td className="py-2.5 px-3 font-mono font-black">{p.commodityCode}</td>
+                                <td className="py-2.5 px-3 font-bold">
+                                  <div className="font-black">{p.commodityName}</div>
+                                  <div className="text-[11px] text-slate-500">{p.category}</div>
+                                </td>
+                                <td className="py-2.5 px-3 font-bold">{p.unit}</td>
+                                <td className="py-2.5 px-3 font-mono font-bold">{p.declaredPrice} ج.م</td>
+                                <td className="py-2.5 px-3 font-mono font-black text-[#0A1931]">
+                                  {p.actualMarketPrice} ج.م
+                                </td>
+                                <td
+                                  className={`py-2.5 px-3 font-mono font-black ${
+                                    diff > 0 ? 'text-rose-700 bg-rose-50/50' : 'text-emerald-700 bg-emerald-50/50'
+                                  }`}
+                                >
+                                  {diff > 0 ? `+${diff}` : diff} ج.م
+                                </td>
+                                <td className="py-2.5 px-3 font-mono font-bold">
+                                  {changePct > 0 ? `+${changePct}%` : `${changePct}%`}
+                                </td>
+                                <td className="py-2.5 px-3 font-bold">
+                                  <div>{p.establishmentName}</div>
+                                  <div className="text-[11px] text-slate-500">{p.village}</div>
+                                </td>
+                                <td className="py-2.5 px-3 text-[11px] font-bold">
+                                  <div>{p.observationDate}</div>
+                                  <div className="text-slate-500">{p.observerEmployee}</div>
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <ModuleRowActions
+                                    entityLabel={`رصد ${p.commodityName}`}
+                                    permissions={permissions}
+                                    testIdPrefix={`it-prc-${p.id}`}
+                                    onView={() =>
+                                      setProfileModal({
+                                        title: `رصد سعر سلعة: ${p.commodityName}`,
+                                        subtitle: `${p.establishmentName} — ${p.village}`,
+                                        badgeText: p.category,
+                                        sections: [
+                                          {
+                                            title: 'مؤشرات السعر والمتابعة',
+                                            fields: [
+                                              { label: 'كود السلعة', value: p.commodityCode, mono: true },
+                                              { label: 'اسم السلعة والوحدة', value: `${p.commodityName} (${p.unit})` },
+                                              { label: 'السعر الرسمي', value: `${p.declaredPrice} ج.م`, mono: true },
+                                              { label: 'السعر الفعلي بالسوق', value: `${p.actualMarketPrice} ج.م`, mono: true, highlight: true },
+                                              { label: 'الفرق السعري', value: `${diff > 0 ? `+${diff}` : diff} ج.م`, mono: true },
+                                              { label: 'تاريخ الرصد والمفتش', value: `${p.observationDate} — ${p.observerEmployee}` },
+                                            ],
+                                          },
+                                        ],
+                                      })
+                                    }
+                                    onEdit={() => {
+                                      setEditingPrice(p);
+                                      setIsPriceModalOpen(true);
+                                    }}
+                                    onDelete={() =>
+                                      setDeleteTarget({
+                                        title: `رصد ${p.commodityName}`,
+                                        summary: [
+                                          { label: 'السلعة', value: p.commodityName },
+                                          { label: 'المنشأة', value: p.establishmentName },
+                                          { label: 'السعر الفعلي', value: `${p.actualMarketPrice} ج.م` },
+                                        ],
+                                        onConfirm: () =>
+                                          commitInternalTradeState(
+                                            { marketPrices: state.marketPrices.filter((x) => x.id !== p.id) },
+                                            `تم حذف رصد السعر للسلعة "${p.commodityName}"`,
+                                            {
+                                              actionType: 'حذف',
+                                              entityName: 'رصد سعر سلعة',
+                                              entityId: p.commodityCode,
+                                              beforeSummary: p.commodityName,
+                                            }
+                                          ),
+                                      })
+                                    }
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          <LocalUnitSubtotalRow
+                            unitName={grp.localUnit}
+                            recordCount={grp.count}
+                            labelColSpan={7}
+                            metricCells={[
+                              {
+                                content: `تجاوز سعر رسمي: ${grp.subtotals.overpriceCount} من ${grp.count} سلع`,
+                                colSpan: 3,
+                                mono: true,
+                              },
+                            ]}
+                          />
+                        </React.Fragment>
+                      ))}
+                      <VillageGrandTotalRow
+                        totalCount={groupedPrices.grandTotalCount}
+                        labelColSpan={7}
+                        metricCells={[
+                          {
+                            content: `إجمالي سلع متجاوزة للسعر الرسمي: ${groupedPrices.grandTotals.overpriceCount}`,
+                            colSpan: 3,
+                            mono: true,
+                          },
+                        ]}
+                      />
+                    </>
                   );
-                })}
+                })()}
               </tbody>
             </table>
           </div>
