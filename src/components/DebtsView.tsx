@@ -3322,6 +3322,22 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
   }, [violationTypes, violationType]);
   const [violationAmount, setViolationAmount] = useState<number>(debtToEdit?.violationAmount || 0);
   const [oldViolations, setOldViolations] = useState<number>(debtToEdit?.oldViolations || 0);
+  const [shortageGrams, setShortageGrams] = useState<number>(debtToEdit?.shortageGrams || 0);
+  const [prescribedWeightGrams, setPrescribedWeightGrams] = useState<number>(
+    debtToEdit?.prescribedWeightGrams || 90
+  );
+  const selectedBakeryObj = bakeries.find((b) => b.id === selectedBakeryId) || bakeries[0];
+  const bagPriceForWeight = Number(selectedBakeryObj?.flourBagPrice) || 950;
+  const quotaForWeight = Number(selectedBakeryObj?.insuranceQuota) || 10;
+  const weightFineCalculatedAmount =
+    Number(prescribedWeightGrams) > 0
+      ? Math.round(
+          ((Number(shortageGrams) || 0) / Number(prescribedWeightGrams)) *
+            bagPriceForWeight *
+            quotaForWeight *
+            100
+        ) / 100
+      : 0;
 
   // Violation Payment
   const [violationPaymentDate, setViolationPaymentDate] = useState(
@@ -3972,6 +3988,52 @@ const DebtModalForm: React.FC<DebtModalFormProps> = ({
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 col-span-2 p-3 bg-amber-50/80 border border-amber-300 rounded-xl">
+                <div>
+                  <label className="block text-[11px] font-black text-amber-950 mb-1">
+                    مقدار النقص بالجرام (مقدار النقص)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={shortageGrams}
+                    onChange={(e) => setShortageGrams(Math.max(0, parseFloat(e.target.value) || 0))}
+                    placeholder="مثال: 9"
+                    className="w-full px-2.5 py-1.5 bg-white border border-amber-400 rounded-lg text-xs font-black num-enlarged text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-black text-amber-950 mb-1">
+                    وزن الرغيف المقرر (الافتراضي 90 جم)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={prescribedWeightGrams}
+                    onChange={(e) => setPrescribedWeightGrams(Math.max(1, parseFloat(e.target.value) || 90))}
+                    placeholder="90"
+                    className="w-full px-2.5 py-1.5 bg-white border border-amber-400 rounded-lg text-xs font-black num-enlarged text-center"
+                  />
+                </div>
+                <div className="col-span-2 flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-amber-200">
+                  <span className="text-[11px] font-bold text-amber-900">
+                    غرامة نقص الوزن المحسوبة: <strong className="font-black text-red-700">{weightFineCalculatedAmount.toLocaleString()} ج.م</strong> (بالمعادلة: (النقص ÷ {prescribedWeightGrams}) × {bagPriceForWeight} × {quotaForWeight})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setViolationAmount(weightFineCalculatedAmount);
+                      setViolationType('نقص وزن الرغيف البلدي المدعم');
+                      setFineAppliedNotice(`تم تطبيق غرامة نقص الوزن (${weightFineCalculatedAmount.toLocaleString()} ج.م) تلقائياً في قيمة المخالفة!`);
+                      setTimeout(() => setFineAppliedNotice(''), 5000);
+                    }}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-black cursor-pointer shadow"
+                  >
+                    تطبيق الغرامة المحسوبة في المخالفة ✓
+                  </button>
+                </div>
               </div>
 
               <div>

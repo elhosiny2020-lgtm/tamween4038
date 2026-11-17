@@ -136,6 +136,9 @@ export interface DebtRecord {
 
   // تفاصيل غرامة نقص وزن الرغيف (بقائمة ومودال احتساب غرامة نقص الوزن دون تغيير القيود القديمة)
   weightFineDetails?: LoafWeightFineRecord;
+  shortageGrams?: number; // مقدار النقص بالجرام
+  prescribedWeightGrams?: number; // وزن الرغيف المقرر
+  weightFineCalculatedAmount?: number; // قيمة غرامة نقص الوزن
 
   notes?: string;
 }

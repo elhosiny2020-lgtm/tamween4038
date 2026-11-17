@@ -2153,3 +2153,31 @@ export function calculateCoverageRatio(
   return Math.round(((actual / Math.max(1, quota)) * 100 + Number.EPSILON) * 100) / 100;
 }
 
+/**
+ * دالة حساب غرامة نقص وزن الرغيف:
+ * المعادلة المعتمدة: (مقدار النقص ÷ 90) × سعر الشيكارة × الحصة التموينية
+ * مع مراعاة التقريب لأقرب قرش والتحقق من القيم السالبة والقسمة على صفر.
+ */
+export function calculateLoafWeightShortageFine(
+  shortageGrams: number,
+  bagPrice: number,
+  insuranceQuota: number,
+  prescribedWeight: number = 90
+): number {
+  const shortage = Number(shortageGrams) || 0;
+  const price = Number(bagPrice) || 0;
+  const quota = Number(insuranceQuota) || 0;
+  const prescribed = Number(prescribedWeight) > 0 ? Number(prescribedWeight) : 90;
+
+  // التحقق من القيم السالبة
+  if (shortage <= 0 || price < 0 || quota < 0) {
+    return 0;
+  }
+
+  // المعادلة: (مقدار النقص ÷ الوزن المقرر 90) × سعر الشيكارة × الحصة التموينية
+  const fine = (shortage / prescribed) * price * quota;
+
+  // التقريب لأقرب قرش (منزلتين عشريتين)
+  return Math.round((fine + Number.EPSILON) * 100) / 100;
+}
+

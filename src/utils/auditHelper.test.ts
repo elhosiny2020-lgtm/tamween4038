@@ -23,6 +23,7 @@ import {
   calculatePerBakeryAverage,
   findLocalUnitDemographics,
   syncLocalUnitDemographicsAcrossBakeries,
+  calculateLoafWeightShortageFine,
 } from './auditHelper';
 import { DailyBakeryTask, SupplyBranch } from '../types';
 
@@ -1106,5 +1107,21 @@ test('Protected owner email is scrubbed from public config, users, and lists', (
   for (const u of INITIAL_USERS) {
     assert.equal(isProtectedOwnerEmail(u.gmailEmail), false);
   }
+});
+
+test('calculateLoafWeightShortageFine computes fine accurately with rounding, negative checks, and zero shortage prevention', () => {
+  // Example: shortage = 9g, bagPrice = 600, quota = 20, prescribed = 90
+  // Formula: (9 / 90) * 600 * 20 = 1200
+  assert.equal(calculateLoafWeightShortageFine(9, 600, 20, 90), 1200);
+
+  // Rounding test (7g shortage, 600 bag price, 20 quota, 90 prescribed)
+  // (7 / 90) * 600 * 20 = 933.3333333333334 -> rounded to 933.33
+  assert.equal(calculateLoafWeightShortageFine(7, 600, 20, 90), 933.33);
+
+  // Negative values or zero shortage return 0
+  assert.equal(calculateLoafWeightShortageFine(-9, 600, 20, 90), 0);
+  assert.equal(calculateLoafWeightShortageFine(9, -600, 20, 90), 0);
+  assert.equal(calculateLoafWeightShortageFine(9, 600, -20, 90), 0);
+  assert.equal(calculateLoafWeightShortageFine(0, 600, 20, 90), 0);
 });
 
