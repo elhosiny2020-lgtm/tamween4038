@@ -34,6 +34,8 @@ import type {
 import {
   hashPasswordScrypt,
   isScryptHash,
+  normalizeDigits,
+  sanitizeSystemConfigForClient,
   sanitizeUserForClient,
   sanitizeUsersForClient,
   verifyPasswordScrypt,
@@ -266,7 +268,7 @@ export function fallbackGetBootstrap(requestedBranchId = DEFAULT_BRANCH_ID): Pos
     dailyTasks: store.daily_tasks.filter((t) => t.branchId === branchId),
     inboxMessages: store.inbox_messages.filter((m) => m.branchId === branchId),
     highDebtAlerts: store.high_debt_alerts.filter((a) => a.branchId === branchId).slice(0, 250),
-    systemConfig: cfg?.systemConfig || null,
+    systemConfig: cfg?.systemConfig ? sanitizeSystemConfigForClient(cfg.systemConfig) : null,
     columnTitles: cfg?.columnTitles || null,
     activityStatuses: cfg?.activityStatuses || [],
     dropdownLists,
@@ -578,26 +580,55 @@ function upsertInStoreInternal(
       const idx = store.system_config.findIndex((c) => c.branchId === effectiveBranchId);
       const existing = idx >= 0 ? store.system_config[idx] : null;
       const cfg = (payload.systemConfig || payload) as SystemConfig;
+
+      const hashVaultPassIfPlain = (candidate: string | undefined, fallbackStored: string): string => {
+        const raw = String(candidate || '').trim();
+        if (!raw || raw === '••••••••') return fallbackStored;
+        return isScryptHash(raw) ? raw : hashPasswordScrypt(raw);
+      };
+
+      const existingPass =
+        existing?.systemConfig?.vaultPasscode || hashPasswordScrypt(DEFAULT_VAULT_PASSCODE);
+      const resolvedVaultPass = hashVaultPassIfPlain(cfg.vaultPasscode, existingPass);
+
+      const rawCredMap =
+        cfg.branchVaultCredentials && typeof cfg.branchVaultCredentials === 'object'
+          ? cfg.branchVaultCredentials
+          : existing?.systemConfig?.branchVaultCredentials;
+      let resolvedCredMap: Record<string, any> | undefined = undefined;
+      if (rawCredMap && typeof rawCredMap === 'object') {
+        resolvedCredMap = {};
+        for (const [bKey, cred] of Object.entries(rawCredMap)) {
+          if (!cred || typeof cred !== 'object') continue;
+          const prevCred = existing?.systemConfig?.branchVaultCredentials?.[bKey];
+          const prevCredPass = prevCred?.password || resolvedVaultPass;
+          resolvedCredMap[bKey] = {
+            ...cred,
+            username: normalizeDigits(String((cred as any).username || prevCred?.username || DEFAULT_VAULT_USERNAME)),
+            password: hashVaultPassIfPlain((cred as any).password, prevCredPass),
+          };
+        }
+      }
+
+      const resolvedVaultUser = String(
+        cfg.vaultUsername ?? existing?.systemConfig?.vaultUsername ?? DEFAULT_VAULT_USERNAME
+      );
+
       const mergedDailyAlertConfig = {
         ...(existing?.systemConfig?.dailyAlertConfig || {}),
         ...(cfg.dailyAlertConfig || {}),
-        vaultUsername: String(
-          cfg.vaultUsername ?? existing?.systemConfig?.vaultUsername ?? DEFAULT_VAULT_USERNAME
-        ),
-        vaultPasscode: String(
-          cfg.vaultPasscode ?? existing?.systemConfig?.vaultPasscode ?? DEFAULT_VAULT_PASSCODE
-        ),
-        branchVaultCredentials:
-          cfg.branchVaultCredentials ?? existing?.systemConfig?.branchVaultCredentials ?? undefined,
+        vaultUsername: resolvedVaultUser,
+        vaultPasscode: resolvedVaultPass,
+        branchVaultCredentials: resolvedCredMap,
       };
       const nextRow = {
         branchId: effectiveBranchId,
         systemConfig: {
           ...(existing?.systemConfig || {}),
           ...cfg,
-          vaultUsername: mergedDailyAlertConfig.vaultUsername,
-          vaultPasscode: mergedDailyAlertConfig.vaultPasscode,
-          branchVaultCredentials: mergedDailyAlertConfig.branchVaultCredentials,
+          vaultUsername: resolvedVaultUser,
+          vaultPasscode: resolvedVaultPass,
+          branchVaultCredentials: resolvedCredMap,
           dailyAlertConfig: mergedDailyAlertConfig,
         } as SystemConfig,
         columnTitles: payload.columnTitles || existing?.columnTitles || {},
@@ -608,7 +639,14 @@ function upsertInStoreInternal(
       };
       if (idx >= 0) store.system_config[idx] = nextRow;
       else store.system_config.push(nextRow);
-      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
+      return {
+        success: true,
+        operation: idx >= 0 ? 'UPDATE' : 'INSERT',
+        row: {
+          ...nextRow,
+          systemConfig: sanitizeSystemConfigForClient(nextRow.systemConfig),
+        },
+      };
     }
 
     case 'dropdown_lists': {
@@ -931,19 +969,44 @@ export function fallbackAuthenticateUser(
   const store = loadStore();
   const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
   const branchUsers = store.app_users.filter((u) => u.branchId === effectiveBranchId);
+  const isProd =
+    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
 
   // Seed initial users into branch store if none exist yet
   if (branchUsers.length === 0) {
-    for (const seed of INITIAL_USERS) {
-      upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
-        ...seed,
-        id: effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`,
-        branchId: effectiveBranchId,
-        isSuperAdmin: seed.role === 'admin',
-        isActive: seed.isActive !== false,
-      });
+    const envAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
+    if (isProd) {
+      if (envAdminPass) {
+        const adminSeed = INITIAL_USERS.find((u) => u.role === 'admin');
+        if (adminSeed) {
+          upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
+            ...adminSeed,
+            id: effectiveBranchId === DEFAULT_BRANCH_ID ? adminSeed.id : `${adminSeed.id}__${effectiveBranchId}`,
+            branchId: effectiveBranchId,
+            password: envAdminPass,
+            isSuperAdmin: true,
+            isActive: true,
+          });
+          persistStore(store);
+        }
+      } else {
+        console.warn('[SECURITY NOTICE] Production branch has no users and INITIAL_ADMIN_PASSWORD is not set; skipping default user seeding.');
+      }
+    } else {
+      for (const seed of INITIAL_USERS) {
+        const resolvedSeedPass =
+          seed.role === 'admin' && envAdminPass ? envAdminPass : seed.password;
+        upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
+          ...seed,
+          id: effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`,
+          branchId: effectiveBranchId,
+          password: resolvedSeedPass,
+          isSuperAdmin: seed.role === 'admin',
+          isActive: seed.isActive !== false,
+        });
+      }
+      persistStore(store);
     }
-    persistStore(store);
   }
 
   const target = usernameOrName.trim().toLowerCase();
@@ -955,9 +1018,11 @@ export function fallbackAuthenticateUser(
   if (!matched) {
     return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
   }
-  const seedUser = INITIAL_USERS.find(
-    (u) => (u.username || '').toLowerCase() === target || (u.fullName || '').toLowerCase() === target
-  );
+  const seedUser = isProd
+    ? null
+    : INITIAL_USERS.find(
+        (u) => (u.username || '').toLowerCase() === target || (u.fullName || '').toLowerCase() === target
+      );
   const effectiveStoredPassword = matched.password || (seedUser ? seedUser.password : '');
   if (!verifyPasswordScrypt(password, effectiveStoredPassword)) {
     return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
@@ -1240,3 +1305,69 @@ export function fallbackDeleteAuditLogs(params: {
   persistStore(store);
   return { deletedCount, securityEntry };
 }
+
+export function fallbackVerifyVaultCredentials(params: {
+  branchId: string;
+  enteredUsername?: string;
+  enteredPassword: string;
+}): boolean {
+  const store = loadStore();
+  const effectiveBranchId = params.branchId || DEFAULT_BRANCH_ID;
+  const cfg =
+    store.system_config.find((c) => c.branchId === effectiveBranchId)?.systemConfig ||
+    store.system_config.find((c) => c.branchId === DEFAULT_BRANCH_ID)?.systemConfig;
+  const cred = cfg?.branchVaultCredentials?.[effectiveBranchId];
+  const targetUser = normalizeDigits(
+    String(cred?.username || cfg?.vaultUsername || DEFAULT_VAULT_USERNAME)
+  ).toLowerCase();
+  const isProd =
+    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+  const defaultVaultPass = isProd
+    ? String(process.env.INITIAL_VAULT_PASSCODE || '').trim()
+    : DEFAULT_VAULT_PASSCODE;
+  const targetPass = String(cred?.password || cfg?.vaultPasscode || defaultVaultPass);
+  if (!targetPass) return false;
+  if (!verifyPasswordScrypt(params.enteredPassword, targetPass)) return false;
+
+  const cleanUser = normalizeDigits(String(params.enteredUsername || '')).toLowerCase();
+  if (cleanUser) return cleanUser === targetUser;
+  return targetUser === DEFAULT_VAULT_USERNAME.toLowerCase();
+}
+
+export function fallbackUpdateVaultCredentials(params: {
+  targetScope: 'all' | string;
+  newUsername: string;
+  newPassword: string;
+}): { updatedBranches: string[] } {
+  const store = loadStore();
+  const cleanUser = normalizeDigits(params.newUsername) || DEFAULT_VAULT_USERNAME;
+  const hashedPass = hashPasswordScrypt(params.newPassword);
+  const targetIds =
+    params.targetScope === 'all' || params.targetScope === 'ALL'
+      ? deduplicateSupplyBranches(store.branches).map((b) => b.id)
+      : [params.targetScope];
+  const nowIso = new Date().toISOString();
+
+  for (const bId of targetIds) {
+    const existing = store.system_config.find((c) => c.branchId === bId)?.systemConfig || ({} as SystemConfig);
+    const existingMap = { ...(existing.branchVaultCredentials || {}) };
+    existingMap[bId] = {
+      branchId: bId,
+      username: cleanUser,
+      password: hashedPass,
+      updatedAt: nowIso,
+    };
+    upsertInStoreInternal(store, 'system_config', bId, {
+      branchId: bId,
+      systemConfig: {
+        ...existing,
+        vaultUsername: cleanUser,
+        vaultPasscode: hashedPass,
+        branchVaultCredentials: existingMap,
+      },
+    });
+  }
+  persistStore(store);
+  return { updatedBranches: targetIds };
+}
+

@@ -4,9 +4,13 @@ dist
 .playwright-cli
 coverage
 *.log
+*.bak
 .env
-.env.local
+.env.*
 verify_home.png
+.tamween_*.json
+supabase_config.json
 tamween_latest_backup.json
+tamween_pg_fallback_store.json
 tamween-system.html
 tamween-cloudflare-vercel-deployment.zip

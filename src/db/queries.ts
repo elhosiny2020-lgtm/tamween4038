@@ -76,6 +76,8 @@ import {
 import {
   hashPasswordScrypt,
   isScryptHash,
+  normalizeDigits,
+  sanitizeSystemConfigForClient,
   sanitizeUserForClient,
   verifyPasswordScrypt,
 } from '../utils/serverAuth.ts';
@@ -98,9 +100,11 @@ import {
   fallbackResetNonMahallaBranches,
   fallbackSyncFullBranchState,
   fallbackSyncHighDebtAlerts,
+  fallbackUpdateVaultCredentials,
   fallbackUpsertBranchModuleState,
   fallbackUpsertRow,
   fallbackUpsertStorageFile,
+  fallbackVerifyVaultCredentials,
   isPostgresUnavailableError,
 } from './fallbackStore.ts';
 
@@ -236,20 +240,25 @@ export async function ensurePostgresSchema(): Promise<void> {
           .catch(() => {}),
       ]);
 
-      const hashedAdminPass = hashPasswordScrypt('admin');
-      await pool
-        .query(
-          `INSERT INTO public.app_users (
-            id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions, is_active, is_super_admin
+      const isProd =
+        process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+      const initialAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
+      if (!isProd || initialAdminPass) {
+        const hashedAdminPass = hashPasswordScrypt(initialAdminPass || 'admin');
+        await pool
+          .query(
+            `INSERT INTO public.app_users (
+              id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions, is_active, is_super_admin
+            )
+            SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', $1, 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb, TRUE, TRUE
+            WHERE NOT EXISTS (
+              SELECT 1 FROM public.app_users WHERE branch_id = 'branch-mahalla' AND lower(username) = 'admin'
+            )
+            ON CONFLICT (id) DO NOTHING`,
+            [hashedAdminPass]
           )
-          SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', $1, 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb, TRUE, TRUE
-          WHERE NOT EXISTS (
-            SELECT 1 FROM public.app_users WHERE branch_id = 'branch-mahalla' AND lower(username) = 'admin'
-          )
-          ON CONFLICT (id) DO NOTHING`,
-          [hashedAdminPass]
-        )
-        .catch(() => {});
+          .catch(() => {});
+      }
       // Auto-upgrade any legacy plaintext passwords stored in app_users to scrypt
       const legacyUsersRes = await pool
         .query(`SELECT id, password_hash FROM public.app_users`)
@@ -527,24 +536,13 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
     case 'system_config':
       return {
         branchId: String(row.branch_id || DEFAULT_BRANCH_ID),
-        systemConfig: {
+        systemConfig: sanitizeSystemConfigForClient({
           governorateTitle: String(row.governorate_title || ''),
           directorateTitle: String(row.directorate_title || ''),
           administrationTitle: String(row.administration_title || ''),
           englishSubtitle: String(row.english_subtitle || ''),
           logoBase64: String(row.logo_base64 || ''),
           debtAlertThreshold: Number(row.debt_alert_threshold || 50000),
-          vaultUsername: String(
-            row.daily_alert_config?.vaultUsername || DEFAULT_VAULT_USERNAME
-          ),
-          vaultPasscode: String(
-            row.daily_alert_config?.vaultPasscode || row.vault_passcode || DEFAULT_VAULT_PASSCODE
-          ),
-          branchVaultCredentials:
-            row.daily_alert_config?.branchVaultCredentials &&
-            typeof row.daily_alert_config.branchVaultCredentials === 'object'
-              ? row.daily_alert_config.branchVaultCredentials
-              : undefined,
           dailyAlertConfig: row.daily_alert_config
             ? {
                 ...row.daily_alert_config,
@@ -556,7 +554,7 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
           rolePermissions: row.role_permissions || undefined,
           roleLabels: row.role_labels || undefined,
           customRoles: Array.isArray(row.custom_roles) ? row.custom_roles : undefined,
-        } as SystemConfig,
+        } as SystemConfig),
         columnTitles: (row.column_titles || {}) as Partial<ColumnTitles>,
         activityStatuses: Array.isArray(row.activity_statuses) ? row.activity_statuses : [],
         version: Number(row.version || 1),
@@ -1467,6 +1465,36 @@ export async function upsertRowWithClient(
       const cfg = (payload.systemConfig || payload) as SystemConfig;
       const colTitles = payload.columnTitles || existingRow?.column_titles || {};
       const actStatuses = payload.activityStatuses || existingRow?.activity_statuses || [];
+      const hashVaultPassIfPlain = (candidate: string | undefined, fallbackStored: string): string => {
+        const raw = String(candidate || '').trim();
+        if (!raw || raw === '••••••••') return fallbackStored;
+        return isScryptHash(raw) ? raw : hashPasswordScrypt(raw);
+      };
+      const existingPass =
+        existingRow?.daily_alert_config?.vaultPasscode ||
+        existingRow?.vault_passcode ||
+        hashPasswordScrypt(DEFAULT_VAULT_PASSCODE);
+      const resolvedVaultPass = hashVaultPassIfPlain(cfg.vaultPasscode, existingPass);
+      const rawCredMap =
+        cfg.branchVaultCredentials && typeof cfg.branchVaultCredentials === 'object'
+          ? cfg.branchVaultCredentials
+          : existingRow?.daily_alert_config?.branchVaultCredentials;
+      let resolvedCredMap: Record<string, any> | undefined = undefined;
+      if (rawCredMap && typeof rawCredMap === 'object') {
+        resolvedCredMap = {};
+        for (const [bKey, cred] of Object.entries(rawCredMap)) {
+          if (!cred || typeof cred !== 'object') continue;
+          const prevCred = existingRow?.daily_alert_config?.branchVaultCredentials?.[bKey];
+          const prevCredPass = prevCred?.password || resolvedVaultPass;
+          resolvedCredMap[bKey] = {
+            ...cred,
+            username: normalizeDigits(
+              String((cred as any).username || prevCred?.username || DEFAULT_VAULT_USERNAME)
+            ),
+            password: hashVaultPassIfPlain((cred as any).password, prevCredPass),
+          };
+        }
+      }
       const mergedDailyAlertConfig = {
         ...(existingRow?.daily_alert_config || {}),
         ...(cfg.dailyAlertConfig || {}),
@@ -1475,15 +1503,8 @@ export async function upsertRowWithClient(
             existingRow?.daily_alert_config?.vaultUsername ??
             DEFAULT_VAULT_USERNAME
         ),
-        vaultPasscode: String(
-          cfg.vaultPasscode ??
-            existingRow?.daily_alert_config?.vaultPasscode ??
-            DEFAULT_VAULT_PASSCODE
-        ),
-        branchVaultCredentials:
-          cfg.branchVaultCredentials ??
-          existingRow?.daily_alert_config?.branchVaultCredentials ??
-          undefined,
+        vaultPasscode: resolvedVaultPass,
+        branchVaultCredentials: resolvedCredMap,
       };
       const res = await client.query(
         `INSERT INTO public.system_config (
@@ -2038,16 +2059,38 @@ export async function authenticateUserInPostgres(
       `SELECT * FROM public.app_users WHERE branch_id = $1`,
       [effectiveBranchId]
     );
+    const isProd =
+      process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
     if (usersRes.rows.length === 0) {
-      for (const seed of INITIAL_USERS) {
-        const seedId = effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`;
-        await upsertRowInPostgres('app_users', effectiveBranchId, {
-          ...seed,
-          id: seedId,
-          branchId: effectiveBranchId,
-          isSuperAdmin: seed.role === 'admin',
-          isActive: seed.isActive !== false,
-        });
+      const envAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
+      if (isProd) {
+        if (envAdminPass) {
+          const adminSeed = INITIAL_USERS.find((u) => u.role === 'admin');
+          if (adminSeed) {
+            const seedId = effectiveBranchId === DEFAULT_BRANCH_ID ? adminSeed.id : `${adminSeed.id}__${effectiveBranchId}`;
+            await upsertRowInPostgres('app_users', effectiveBranchId, {
+              ...adminSeed,
+              id: seedId,
+              branchId: effectiveBranchId,
+              password: envAdminPass,
+              isSuperAdmin: true,
+              isActive: true,
+            });
+          }
+        }
+      } else {
+        for (const seed of INITIAL_USERS) {
+          const seedId = effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`;
+          const resolvedPass = seed.role === 'admin' && envAdminPass ? envAdminPass : seed.password;
+          await upsertRowInPostgres('app_users', effectiveBranchId, {
+            ...seed,
+            id: seedId,
+            branchId: effectiveBranchId,
+            password: resolvedPass,
+            isSuperAdmin: seed.role === 'admin',
+            isActive: seed.isActive !== false,
+          });
+        }
       }
       usersRes = await pool.query(
         `SELECT * FROM public.app_users WHERE branch_id = $1`,
@@ -2753,4 +2796,101 @@ export async function deleteAuditLogsInPostgres(params: {
     client.release();
   }
 }
+
+export async function verifyVaultCredentialsInPostgres(params: {
+  branchId: string;
+  enteredUsername?: string;
+  enteredPassword: string;
+}): Promise<boolean> {
+  await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackVerifyVaultCredentials(params);
+  }
+  const effectiveBranchId = params.branchId || DEFAULT_BRANCH_ID;
+  try {
+    const res = await pool.query(
+      `SELECT daily_alert_config FROM public.system_config WHERE branch_id IN ($1, $2)`,
+      [effectiveBranchId, DEFAULT_BRANCH_ID]
+    );
+    const branchRow = res.rows.find((r) => r.branch_id === effectiveBranchId) || res.rows[0];
+    const alertCfg = branchRow?.daily_alert_config || {};
+    const cred = alertCfg?.branchVaultCredentials?.[effectiveBranchId];
+    const targetUser = normalizeDigits(
+      String(cred?.username || alertCfg?.vaultUsername || DEFAULT_VAULT_USERNAME)
+    ).toLowerCase();
+    const isProd =
+      process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+    const defaultVaultPass = isProd
+      ? String(process.env.INITIAL_VAULT_PASSCODE || '').trim()
+      : DEFAULT_VAULT_PASSCODE;
+    const targetPass = String(cred?.password || alertCfg?.vaultPasscode || defaultVaultPass);
+    if (!targetPass) return false;
+    if (!verifyPasswordScrypt(params.enteredPassword, targetPass)) return false;
+
+    const cleanUser = normalizeDigits(String(params.enteredUsername || '')).toLowerCase();
+    if (cleanUser) return cleanUser === targetUser;
+    return targetUser === DEFAULT_VAULT_USERNAME.toLowerCase();
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackVerifyVaultCredentials(params);
+    }
+    throw err;
+  }
+}
+
+export async function updateVaultCredentialsInPostgres(params: {
+  targetScope: 'all' | string;
+  newUsername: string;
+  newPassword: string;
+}): Promise<{ updatedBranches: string[] }> {
+  await ensurePostgresSchema();
+  if (pgFallbackMode) {
+    return fallbackUpdateVaultCredentials(params);
+  }
+  const cleanUser = normalizeDigits(params.newUsername) || DEFAULT_VAULT_USERNAME;
+  const hashedPass = hashPasswordScrypt(params.newPassword);
+  const nowIso = new Date().toISOString();
+  try {
+    const branchesRes = await pool.query(`SELECT id FROM public.branches`);
+    const allIds = branchesRes.rows.map((r) => String(r.id)).filter(Boolean);
+    const targetIds =
+      params.targetScope === 'all' || params.targetScope === 'ALL'
+        ? allIds.length > 0
+          ? allIds
+          : [DEFAULT_BRANCH_ID]
+        : [params.targetScope];
+
+    for (const bId of targetIds) {
+      const res = await pool.query(
+        `SELECT daily_alert_config FROM public.system_config WHERE branch_id = $1`,
+        [bId]
+      );
+      const prevAlertCfg = res.rows[0]?.daily_alert_config || {};
+      const nextMap = { ...(prevAlertCfg.branchVaultCredentials || {}) };
+      nextMap[bId] = {
+        branchId: bId,
+        username: cleanUser,
+        password: hashedPass,
+        updatedAt: nowIso,
+      };
+      await upsertRowInPostgres('system_config', bId, {
+        branchId: bId,
+        systemConfig: {
+          vaultUsername: cleanUser,
+          vaultPasscode: hashedPass,
+          branchVaultCredentials: nextMap,
+        },
+      });
+    }
+    return { updatedBranches: targetIds };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackUpdateVaultCredentials(params);
+    }
+    throw err;
+  }
+}
+
 

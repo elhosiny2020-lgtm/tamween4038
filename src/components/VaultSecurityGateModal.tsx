@@ -29,8 +29,15 @@ interface VaultSecurityGateModalProps {
   branchCredentialsMap?: Record<string, BranchVaultCredential>;
   onClose: () => void;
   onUnlockSuccess: () => void;
+  onVerifyCredentials?: (params: {
+    branchId: string;
+    username: string;
+    passcode: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   onChangeCredentials: (params: {
     targetScope: 'all' | string;
+    currentUsername?: string;
+    currentPasscode?: string;
     newUsername: string;
     newPasscode: string;
   }) => Promise<void> | void;
@@ -47,6 +54,7 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
   branchCredentialsMap,
   onClose,
   onUnlockSuccess,
+  onVerifyCredentials,
   onChangeCredentials,
 }) => {
   const [activeTab, setActiveTab] = useState<'unlock' | 'change_passcode'>(initialMode);
@@ -96,10 +104,33 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
 
   const activeBranchObj = branches.find((b) => b.id === selectedUnlockBranchId);
 
-  const handleUnlockSubmit = (e: React.FormEvent) => {
+  const handleUnlockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
+
+    if (onVerifyCredentials) {
+      setIsSaving(true);
+      try {
+        const remoteCheck = await onVerifyCredentials({
+          branchId: selectedUnlockBranchId,
+          username: usernameInput,
+          passcode: passcodeInput,
+        });
+        if (!remoteCheck.ok) {
+          setErrorMsg(
+            remoteCheck.error ||
+              'اسم المستخدم (Username) أو الرقم السري (Password) غير صحيح! الدخول محظور تماماً لغير المصرح لهم.'
+          );
+          setPasscodeInput('');
+          return;
+        }
+        onUnlockSuccess();
+        return;
+      } finally {
+        setIsSaving(false);
+      }
+    }
 
     const isValid = verifyBranchVaultCredentials({
       branchId: selectedUnlockBranchId,
@@ -127,31 +158,51 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    const verifyBranchId = targetScope === 'all' ? activeBranchId : targetScope;
-    const validationRes = validateNewBranchVaultCredentials({
-      branchId: verifyBranchId,
-      currentUsername: oldUsernameInput,
-      currentPassword: oldPasscodeInput,
-      newUsername: newUsernameInput,
-      newPassword: newPasscodeInput,
-      confirmNewPassword: confirmPasscodeInput,
-      branches,
-      credentialsMap: branchCredentialsMap,
-      fallbackUsername: globalUsername,
-      fallbackPasscode: currentPasscode,
-    });
-
-    if (!validationRes.valid) {
-      setErrorMsg(validationRes.error || 'بيانات غير صالحة.');
+    const trimmedNewUser = newUsernameInput.trim();
+    const trimmedNewPass = newPasscodeInput.trim();
+    const trimmedConfirmPass = confirmPasscodeInput.trim();
+    if (!oldPasscodeInput.trim() || !trimmedNewUser || !trimmedNewPass) {
+      setErrorMsg('يرجى إدخال جميع الحقول المطلوبة.');
       return;
+    }
+    if (trimmedNewPass.length < 4) {
+      setErrorMsg('الرقم السري الجديد يجب أن لا يقل عن 4 أحرف/أرقام.');
+      return;
+    }
+    if (trimmedNewPass !== trimmedConfirmPass) {
+      setErrorMsg('تأكيد الرقم السري الجديد غير مطابق.');
+      return;
+    }
+
+    if (!onVerifyCredentials) {
+      const verifyBranchId = targetScope === 'all' ? activeBranchId : targetScope;
+      const validationRes = validateNewBranchVaultCredentials({
+        branchId: verifyBranchId,
+        currentUsername: oldUsernameInput,
+        currentPassword: oldPasscodeInput,
+        newUsername: trimmedNewUser,
+        newPassword: trimmedNewPass,
+        confirmNewPassword: trimmedConfirmPass,
+        branches,
+        credentialsMap: branchCredentialsMap,
+        fallbackUsername: globalUsername,
+        fallbackPasscode: currentPasscode,
+      });
+
+      if (!validationRes.valid) {
+        setErrorMsg(validationRes.error || 'بيانات غير صالحة.');
+        return;
+      }
     }
 
     try {
       setIsSaving(true);
       await onChangeCredentials({
         targetScope,
-        newUsername: newUsernameInput.trim(),
-        newPasscode: newPasscodeInput.trim(),
+        currentUsername: oldUsernameInput.trim(),
+        currentPasscode: oldPasscodeInput.trim(),
+        newUsername: trimmedNewUser,
+        newPasscode: trimmedNewPass,
       });
       setOldUsernameInput('');
       setOldPasscodeInput('');

@@ -30,7 +30,7 @@ import type {
   SparePartItem,
 } from '../types/modules';
 import type { VillageHierarchy } from '../types';
-import { getSecurityShieldHeaders, getSupabaseClient, SESSION_CLIENT_ID } from '../lib/supabase';
+import { getAuthSessionToken, getSecurityShieldHeaders, getSupabaseClient, SESSION_CLIENT_ID } from '../lib/supabase';
 import {
   computeAttendanceMetrics,
   computeEmployeePayrollLine,
@@ -1619,30 +1619,33 @@ export async function loadBranchModulesBundle(
 ): Promise<BranchModulesBundle> {
   const local = readLocalBranchModulesBundle(branchId);
 
-  try {
-    const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
-      headers: {
-        ...getSecurityShieldHeaders(),
-      },
-    });
-    if (resp.ok) {
-      const json = await resp.json();
-      if (json?.exists && json?.payload?.ration && json?.payload?.grainMaintenance && json?.payload?.hr) {
-        const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
-          json.payload as BranchModulesBundle,
-          branchId,
-          branchName,
-          villages
-        );
-        writeLocalBranchModulesBundle(branchId, bundle);
-        if (upgraded) {
-          void saveBranchModulesBundle(branchId, bundle, 'ترقية قاعدة بيانات مايو 2026 والتجارة الداخلية');
+  if (getAuthSessionToken()) {
+    try {
+      const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
+        credentials: 'same-origin',
+        headers: {
+          ...getSecurityShieldHeaders(false),
+        },
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json?.exists && json?.payload?.ration && json?.payload?.grainMaintenance && json?.payload?.hr) {
+          const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
+            json.payload as BranchModulesBundle,
+            branchId,
+            branchName,
+            villages
+          );
+          writeLocalBranchModulesBundle(branchId, bundle);
+          if (upgraded) {
+            void saveBranchModulesBundle(branchId, bundle, 'ترقية قاعدة بيانات مايو 2026 والتجارة الداخلية');
+          }
+          return bundle;
         }
-        return bundle;
       }
+    } catch {
+      // fallback cleanly to Supabase or local seed
     }
-  } catch {
-    // fallback cleanly to Supabase or local seed
   }
 
   // Check Supabase directly if configured
@@ -1718,29 +1721,31 @@ export async function saveBranchModulesBundle(
     let version = 1;
     let lastErr = '';
 
-    try {
-      const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getSecurityShieldHeaders(),
-        },
-        body: JSON.stringify({
-          moduleKey: 'all_modules',
-          payload: withTimestamp,
-          updatedBy,
-          clientId: SESSION_CLIENT_ID,
-        }),
-      });
-      if (resp.ok) {
-        const json = await resp.json();
-        serverOk = Boolean(json?.success);
-        if (typeof json?.version === 'number') version = json.version;
-      } else {
-        lastErr = `HTTP ${resp.status}`;
+    if (getAuthSessionToken()) {
+      try {
+        const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            ...getSecurityShieldHeaders(),
+          },
+          body: JSON.stringify({
+            moduleKey: 'all_modules',
+            payload: withTimestamp,
+            updatedBy,
+            clientId: SESSION_CLIENT_ID,
+          }),
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          serverOk = Boolean(json?.success);
+          if (typeof json?.version === 'number') version = json.version;
+        } else {
+          lastErr = `HTTP ${resp.status}`;
+        }
+      } catch (e: any) {
+        lastErr = e?.message || 'تعذر الاتصال بالخادم';
       }
-    } catch (e: any) {
-      lastErr = e?.message || 'تعذر الاتصال بالخادم';
     }
 
     const sb = getSupabaseClient();

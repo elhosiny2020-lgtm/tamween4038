@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useDeferredValue } from 'react';
+import DOMPurify from 'dompurify';
 import {
   Building2,
   ShieldCheck,
@@ -985,10 +986,20 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
   // Official Iframe A4 Print Helper (zero window.open)
   const handlePrintOfficialReport = (title: string, tableHtml: string) => {
     if (!permissions.canPrint) return;
-    const escTitle = String(title)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    const escapeHtmlText = (val: unknown) =>
+      String(val ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    const escTitle = escapeHtmlText(title);
+    const escBranchName = escapeHtmlText(branchName);
+    const escUserName = escapeHtmlText(currentUser?.fullName || 'مسؤول الرقابة التموينية');
+    const safeTableHtml = DOMPurify.sanitize(String(tableHtml || ''), {
+      USE_PROFILES: { html: true },
+      ADD_ATTR: ['dir', 'colspan', 'rowspan', 'style', 'class'],
+    });
     const htmlDoc = `<!DOCTYPE html>
       <html lang="ar" dir="rtl">
       <head>
@@ -1012,17 +1023,17 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
           <div class="header-right">
             <h3>محافظة الغربية</h3>
             <h3>مديرية التموين والتجارة الداخلية بالغربية</h3>
-            <h2>${branchName} — قسم التجارة الداخلية والرقابة الموحدة</h2>
+            <h2>${escBranchName} — قسم التجارة الداخلية والرقابة الموحدة</h2>
           </div>
           <div class="header-left">
-            <p><strong>تاريخ التقرير:</strong> ${new Date().toLocaleDateString('ar-EG')}</p>
-            <p><strong>المستخدم:</strong> ${currentUser?.fullName || 'مسؤول الرقابة التموينية'}</p>
+            <p><strong>تاريخ التقرير:</strong> ${escapeHtmlText(new Date().toLocaleDateString('ar-EG'))}</p>
+            <p><strong>المستخدم:</strong> ${escUserName}</p>
           </div>
         </div>
         <div class="report-title">
           <h2>${escTitle}</h2>
         </div>
-        ${tableHtml}
+        ${safeTableHtml}
         <div class="signatures">
           <div>المختص / مفتش التجارة الداخلية<br/><br/>.........................</div>
           <div>رئيس قسم التجارة الداخلية<br/><br/>.........................</div>

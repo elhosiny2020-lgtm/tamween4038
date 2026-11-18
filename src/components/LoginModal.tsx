@@ -69,6 +69,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setError('يرجى إدخال الاسم بالكامل واسم المستخدم وكلمة المرور');
         return;
       }
+      if (
+        normalizedInputPass.length < 8 ||
+        !/[a-zA-Z\u0600-\u06FF]/.test(normalizedInputPass) ||
+        !/\d/.test(normalizedInputPass)
+      ) {
+        setError('كلمة المرور يجب أن تتكون من 8 أحرف على الأقل وتحتوي على أحرف وأرقام.');
+        return;
+      }
       const poolOfUsers = Array.isArray(users) && users.length > 0 ? users : INITIAL_USERS;
       const exists = poolOfUsers.some((u) => (u.username || '').toLowerCase() === trimmedUser);
       if (exists) {
@@ -125,7 +133,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           });
           return;
         }
-        if (resp.status === 400 || resp.status === 401 || resp.status === 403) {
+        if (
+          resp.status === 400 ||
+          resp.status === 401 ||
+          resp.status === 403 ||
+          resp.status === 429
+        ) {
           setIsSubmitting(false);
           setError(data?.error || 'اسم المستخدم أو كلمة المرور غير صحيحة');
           return;
@@ -225,10 +238,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
               <div className="space-y-1">
                 <div className="text-sm font-black text-[#D4AF37] tracking-wide">
-                  {activeBranch?.governorate || systemConfig?.governorateTitle || 'محافظة الغربية'}
+                  {activeBranch?.governorate ||
+                    activeBranch?.governorateTitle ||
+                    systemConfig?.governorateTitle ||
+                    'محافظة الغربية'}
                 </div>
                 <h1 className="text-lg sm:text-xl font-black text-white leading-snug">
                   {activeBranch?.directorate ||
+                    activeBranch?.directorateTitle ||
                     systemConfig?.directorateTitle ||
                     'مديرية التموين والتجارة الداخلية بالغربية'}
                 </h1>
@@ -325,7 +342,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 >
                   {branches.map((branch) => (
                     <option key={branch.id} value={branch.id}>
-                      {branch.name} — ({branch.governorate})
+                      {branch.name} — ({branch.governorate || branch.governorateTitle || 'محافظة الغربية'})
                     </option>
                   ))}
                 </select>

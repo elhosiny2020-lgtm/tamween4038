@@ -292,6 +292,7 @@ import {
   setStoredVaultPasscode,
   getBranchVaultCredentialsMap,
   updateBranchVaultCredentialsMap,
+  verifyBranchVaultCredentials,
 } from './utils/branchVaultUtils';
 import { HighDebtAlertNotification, DailyDebtEmailLogEntry } from './types';
 import {
@@ -728,7 +729,9 @@ export default function App() {
   );
 
   // Sync High-Debt Alerts & Threshold live across all devices on Supabase Realtime
+  const isAuthenticatedUser = Boolean(appState?.currentUser);
   useEffect(() => {
+    if (!isAuthenticatedUser) return;
     let disposed = false;
 
     fetchHighDebtAlertsFromSupabase()
@@ -796,7 +799,7 @@ export default function App() {
       disposed = true;
       unsubAlerts();
     };
-  }, []);
+  }, [isAuthenticatedUser]);
 
   // Format current Arabic clock timestamp
   const getArabicTimestamp = () => {
@@ -1127,6 +1130,7 @@ export default function App() {
 
     // 1. Deferred initial external Supabase pull (avoids duplicating loadInitialState boot read)
     const bootSupaTimer = setTimeout(() => {
+      if (!latestAppStateRef.current?.currentUser && !getAuthSessionToken()) return;
       fetchDatabaseFromSupabase()
         .then((supaRes) => {
           if (
@@ -1283,6 +1287,22 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAuthenticatedUser || !getAuthSessionToken()) return;
+    fetchDatabaseFromSupabase()
+      .then((supaRes) => {
+        if (
+          supaRes &&
+          supaRes.success &&
+          supaRes.data &&
+          (!supaRes.timestamp || supaRes.timestamp !== lastAppliedCloudTimestampRef.current)
+        ) {
+          applyIncomingCloudStateRef.current?.(supaRes.data, supaRes.timestamp);
+        }
+      })
+      .catch(() => {});
+  }, [isAuthenticatedUser]);
+
   // Load & WebSocket-sync isolated departmental ERP modules bundle for active branch
   const isAppStateReady = Boolean(appState);
   const activeBranchIdForModules = appState?.activeBranchId || DEFAULT_BRANCH_ID;
@@ -1290,7 +1310,7 @@ export default function App() {
     appState?.systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى';
 
   useEffect(() => {
-    if (!isAppStateReady || !appState) return;
+    if (!isAppStateReady || !appState || !isAuthenticatedUser) return;
     let cancelled = false;
     loadBranchModulesBundle(
       activeBranchIdForModules,
@@ -1311,7 +1331,7 @@ export default function App() {
       cancelled = true;
       unsubSupaRt();
     };
-  }, [isAppStateReady, activeBranchIdForModules, activeBranchNameForModules]);
+  }, [isAppStateReady, isAuthenticatedUser, activeBranchIdForModules, activeBranchNameForModules]);
 
   useEffect(() => {
     const unsubWs = addSharedWebSocketListener((msg) => {
@@ -2409,7 +2429,7 @@ export default function App() {
   // Handle Logout (Terminates session safely without resetting data)
   const handleLogout = useCallback((reason?: string) => {
     const headers = getSecurityShieldHeaders(false);
-    fetch('/api/auth/logout', { method: 'POST', headers }).catch(() => {});
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers }).catch(() => {});
     setAuthSessionToken(null);
     saveSessionUser(null);
     setLogoutReason(reason || null);
@@ -2420,8 +2440,9 @@ export default function App() {
   const handleResetNonMahallaBranches = useCallback(async () => {
     const resp = await fetch('/api/branches/reset-non-default', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: getSecurityShieldHeaders(true),
-      body: JSON.stringify({}),
+      body: JSON.stringify({ confirmReset: true }),
     });
     const json = await resp.json().catch(() => null);
     if (!resp.ok || !json?.success) {
@@ -2738,6 +2759,62 @@ export default function App() {
       window.removeEventListener('beforeunload', handlePageExit);
     };
   }, [appState?.currentUser, handleLogout]);
+
+  const handleVerifyVaultOnServer = useCallback(
+    async ({
+      branchId,
+      username,
+      passcode,
+    }: {
+      branchId: string;
+      username: string;
+      passcode: string;
+    }): Promise<{ ok: boolean; error?: string }> => {
+      const isHttp =
+        typeof window !== 'undefined' &&
+        (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+      if (isHttp && navigator.onLine !== false) {
+        try {
+          const resp = await fetch('/api/vault/verify', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: getSecurityShieldHeaders(true),
+            body: JSON.stringify({ branchId, username, passcode }),
+          });
+          const json = await resp.json().catch(() => null);
+          if (resp.ok && json?.verified) {
+            return { ok: true };
+          }
+          if (resp.status === 400 || resp.status === 401 || resp.status === 403 || resp.status === 429) {
+            return { ok: false, error: json?.error };
+          }
+        } catch {
+          // Offline / unreachable fallback handled below
+        }
+      }
+      const latest = latestAppStateRef.current;
+      const branchesSnapshot = deduplicateSupplyBranches(latest?.branches || getBranchesList());
+      const fallbackPass = getStoredVaultPasscode(latest?.systemConfig?.vaultPasscode);
+      const fallbackUser = getStoredVaultUsername(latest?.systemConfig?.vaultUsername);
+      const credsMap = getBranchVaultCredentialsMap(
+        branchesSnapshot,
+        latest?.systemConfig?.branchVaultCredentials,
+        fallbackUser,
+        fallbackPass
+      );
+      const isValidLocal = verifyBranchVaultCredentials({
+        branchId,
+        enteredUsername: username,
+        enteredPassword: passcode,
+        branches: branchesSnapshot,
+        credentialsMap: credsMap,
+        fallbackUsername: fallbackUser,
+        fallbackPasscode: fallbackPass,
+      });
+      return { ok: isValidLocal };
+    },
+    []
+  );
 
   if (!appState) {
     return (
@@ -3939,8 +4016,40 @@ export default function App() {
   const handleUpdateVaultPasscode = async (
     newPasscode: string,
     newUsername?: string,
-    targetBranchId: string | 'ALL' = 'ALL'
+    targetBranchId: string | 'ALL' = 'ALL',
+    currentCredentials?: { currentUsername?: string; currentPasscode?: string }
   ) => {
+    const isHttp =
+      typeof window !== 'undefined' &&
+      (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+    const activeBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+
+    if (isHttp && navigator.onLine !== false && currentCredentials?.currentPasscode) {
+      const resp = await fetch('/api/vault/credentials', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: getSecurityShieldHeaders(true),
+        body: JSON.stringify({
+          targetScope: targetBranchId === 'ALL' ? 'all' : targetBranchId,
+          currentBranchId: activeBranchId,
+          currentUsername: currentCredentials.currentUsername || '',
+          currentPasscode: currentCredentials.currentPasscode,
+          newUsername: (newUsername || '').trim() || configuredVaultUsername,
+          newPasscode: newPasscode.trim(),
+        }),
+      });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json?.success) {
+        throw new Error(json?.error || 'تعذر تحديث بيانات بوابة الحماية في الخادم.');
+      }
+      setSaveToast({
+        id: Date.now(),
+        message: 'تم تشفير وتحديث بيانات بوابة الحماية السرية في قاعدة البيانات بنجاح.',
+        timestamp: getArabicTimestamp(),
+      });
+      return;
+    }
+
     const normalizedPass = setStoredVaultPasscode(newPasscode, newUsername);
     const normalizedUser = getStoredVaultUsername(newUsername || configuredVaultUsername);
     const updatedCredentialsMap = updateBranchVaultCredentialsMap({
@@ -3953,7 +4062,6 @@ export default function App() {
       fallbackPasscode: configuredVaultPasscode,
     });
 
-    const activeBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const activeBranchCred = updatedCredentialsMap[activeBranchId];
     const nextConfig: SystemConfig = {
       ...appState.systemConfig,
@@ -3988,47 +4096,6 @@ export default function App() {
           },
           operation: 'UPDATE',
         });
-        if (targetBranchId === 'ALL') {
-          for (const br of cleanBranchesList) {
-            if (br.id === activeBranchId) continue;
-            await saveRowToDb({
-              table: 'system_config',
-              branchId: br.id,
-              row: {
-                branchId: br.id,
-                systemConfig: {
-                  ...nextConfig,
-                  administrationTitle: br.name,
-                  vaultUsername: normalizedUser,
-                  vaultPasscode: normalizedPass,
-                  branchVaultCredentials: updatedCredentialsMap,
-                },
-                columnTitles: appState.columnTitles,
-                activityStatuses: appState.activityStatuses,
-              },
-              operation: 'UPDATE',
-            }).catch(() => {});
-          }
-        } else if (targetBranchId !== activeBranchId) {
-          const targetBrObj = cleanBranchesList.find((b) => b.id === targetBranchId);
-          await saveRowToDb({
-            table: 'system_config',
-            branchId: targetBranchId,
-            row: {
-              branchId: targetBranchId,
-              systemConfig: {
-                ...nextConfig,
-                administrationTitle: targetBrObj?.name || nextConfig.administrationTitle,
-                vaultUsername: normalizedUser,
-                vaultPasscode: normalizedPass,
-                branchVaultCredentials: updatedCredentialsMap,
-              },
-              columnTitles: appState.columnTitles,
-              activityStatuses: appState.activityStatuses,
-            },
-            operation: 'UPDATE',
-          }).catch(() => {});
-        }
         return primaryRes;
       },
     });
@@ -8463,6 +8530,7 @@ export default function App() {
           branchCredentialsMap={configuredBranchCredentialsMap}
           globalUsername={configuredVaultUsername}
           currentPasscode={configuredVaultPasscode}
+          onVerifyCredentials={handleVerifyVaultOnServer}
           onUnlockSuccess={() => {
             setIsVaultUnlocked(true);
             const pendingFn = vaultGateModal.onAfterUnlock;
@@ -8471,11 +8539,18 @@ export default function App() {
               pendingFn();
             }
           }}
-          onChangeCredentials={async ({ targetScope, newUsername, newPasscode }) => {
+          onChangeCredentials={async ({
+            targetScope,
+            currentUsername,
+            currentPasscode,
+            newUsername,
+            newPasscode,
+          }) => {
             await handleUpdateVaultPasscode(
               newPasscode,
               newUsername,
-              targetScope === 'all' ? 'ALL' : targetScope
+              targetScope === 'all' ? 'ALL' : targetScope,
+              { currentUsername, currentPasscode }
             );
           }}
         />

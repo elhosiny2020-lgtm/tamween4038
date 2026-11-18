@@ -381,37 +381,35 @@ CREATE TRIGGER trg_dropdown_lists_version BEFORE UPDATE ON public.dropdown_lists
 -- الأمان وسياسات الوصول على مستوى الصف (Row Level Security - RLS)
 -- =========================================================================
 ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.branches FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.villages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.villages FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.bakeries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bakeries FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.debts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.debts FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.app_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_users FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.app_departments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_departments FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.user_department_permissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_department_permissions FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.daily_tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.daily_tasks FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.inbox_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inbox_messages FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.high_debt_alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.high_debt_alerts FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.system_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.system_config FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.dropdown_lists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dropdown_lists FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.backup_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.backup_snapshots FORCE ROW LEVEL SECURITY;
 
 -- دالة مساعدة للتحقق من الدور والصلاحية في JWT عند تفعيل Supabase Auth (Fail-Closed: Default Empty Role)
-CREATE OR REPLACE FUNCTION public.is_tamween_authorized_writer()
-RETURNS BOOLEAN AS $$
-BEGIN
-  RETURN auth.role() = 'authenticated'
-    AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'app_role'), '') IN ('super_admin', 'admin', 'supervisor', 'inspector', 'data_entry');
-END;
-$$ LANGUAGE plpgsql STABLE;
-
-CREATE OR REPLACE FUNCTION public.is_tamween_admin_user()
-RETURNS BOOLEAN AS $$
-BEGIN
-  RETURN auth.role() = 'authenticated'
-    AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'app_role'), '') IN ('super_admin', 'admin', 'supervisor');
-END;
-$$ LANGUAGE plpgsql STABLE;
-
 CREATE OR REPLACE FUNCTION public.is_tamween_super_admin()
 RETURNS BOOLEAN AS $$
 BEGIN
@@ -421,7 +419,42 @@ BEGIN
       OR COALESCE((auth.jwt() -> 'app_metadata' ->> 'is_super_admin'), 'false') = 'true'
     );
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION public.can_access_branch(target_branch_id TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  jwt_branch TEXT;
+BEGIN
+  IF auth.role() <> 'authenticated' THEN
+    RETURN FALSE;
+  END IF;
+  IF public.is_tamween_super_admin() THEN
+    RETURN TRUE;
+  END IF;
+  jwt_branch := COALESCE((auth.jwt() -> 'app_metadata' ->> 'branch_id'), '');
+  IF jwt_branch = '' OR target_branch_id IS NULL OR target_branch_id = '' THEN
+    RETURN FALSE;
+  END IF;
+  RETURN jwt_branch = target_branch_id;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION public.is_tamween_authorized_writer()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN auth.role() = 'authenticated'
+    AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'app_role'), '') IN ('super_admin', 'admin', 'supervisor', 'inspector', 'data_entry');
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION public.is_tamween_admin_user()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN auth.role() = 'authenticated'
+    AND COALESCE((auth.jwt() -> 'app_metadata' ->> 'app_role'), '') IN ('super_admin', 'admin', 'supervisor');
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
 
 CREATE OR REPLACE FUNCTION public.has_department_permission(dept_id TEXT, perm_action TEXT)
 RETURNS BOOLEAN AS $$
@@ -455,9 +488,9 @@ BEGIN
 
   RETURN COALESCE(allowed, FALSE);
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
 
--- سياسات القراءة والكتابة الآمنة على مستوى الصف (RLS Policies - Granular & Fail-Closed)
+-- سياسات القراءة والكتابة الآمنة على مستوى الصف (RLS Policies - Granular & Branch Isolated, Fail-Closed)
 DO $$
 DECLARE
   tbl TEXT;
@@ -478,9 +511,15 @@ BEGIN
       -- سجل المراجعة غير قابل للتعديل أو الحذف لأي مستخدم، والقراءة متاحة فقط لـ Super Admin
       EXECUTE 'CREATE POLICY "Tamween read policy on audit_logs" ON public.audit_logs FOR SELECT USING (public.is_tamween_super_admin())';
       EXECUTE 'CREATE POLICY "Tamween write policy on audit_logs" ON public.audit_logs FOR INSERT WITH CHECK (auth.role() = ''authenticated'')';
-    ELSIF tbl IN ('branches', 'app_users', 'system_config', 'user_department_permissions', 'backup_snapshots') THEN
+    ELSIF tbl = 'branches' THEN
+      EXECUTE 'CREATE POLICY "Tamween read policy on branches" ON public.branches FOR SELECT USING (public.can_access_branch(id))';
+      EXECUTE 'CREATE POLICY "Tamween write policy on branches" ON public.branches FOR ALL USING (public.is_tamween_super_admin()) WITH CHECK (public.is_tamween_super_admin())';
+    ELSIF tbl = 'app_departments' THEN
+      EXECUTE 'CREATE POLICY "Tamween read policy on app_departments" ON public.app_departments FOR SELECT USING (auth.role() = ''authenticated'')';
+      EXECUTE 'CREATE POLICY "Tamween write policy on app_departments" ON public.app_departments FOR ALL USING (public.is_tamween_super_admin()) WITH CHECK (public.is_tamween_super_admin())';
+    ELSIF tbl IN ('app_users', 'system_config', 'user_department_permissions', 'backup_snapshots') THEN
       EXECUTE format(
-        'CREATE POLICY "Tamween read policy on %s" ON public.%I FOR SELECT USING (auth.role() = ''authenticated'')',
+        'CREATE POLICY "Tamween read policy on %s" ON public.%I FOR SELECT USING (public.is_tamween_super_admin() OR public.can_access_branch(branch_id))',
         tbl, tbl
       );
       EXECUTE format(
@@ -488,30 +527,30 @@ BEGIN
         tbl, tbl
       );
     ELSIF tbl = 'bakeries' THEN
-      EXECUTE 'CREATE POLICY "Tamween read policy on bakeries" ON public.bakeries FOR SELECT USING (public.has_department_permission(''bakeries'', ''view'') OR public.has_department_permission(''debts'', ''view'') OR public.has_department_permission(''reports'', ''view''))';
-      EXECUTE 'CREATE POLICY "Tamween write policy on bakeries" ON public.bakeries FOR INSERT WITH CHECK (public.has_department_permission(''bakeries'', ''insert''))';
-      EXECUTE 'CREATE POLICY "Tamween update policy on bakeries" ON public.bakeries FOR UPDATE USING (public.has_department_permission(''bakeries'', ''update'')) WITH CHECK (public.has_department_permission(''bakeries'', ''update''))';
-      EXECUTE 'CREATE POLICY "Tamween delete policy on bakeries" ON public.bakeries FOR DELETE USING (public.has_department_permission(''bakeries'', ''delete''))';
+      EXECUTE 'CREATE POLICY "Tamween read policy on bakeries" ON public.bakeries FOR SELECT USING (public.can_access_branch(branch_id) AND (public.has_department_permission(''bakeries'', ''view'') OR public.has_department_permission(''debts'', ''view'') OR public.has_department_permission(''reports'', ''view'')))';
+      EXECUTE 'CREATE POLICY "Tamween write policy on bakeries" ON public.bakeries FOR INSERT WITH CHECK (public.can_access_branch(branch_id) AND public.has_department_permission(''bakeries'', ''insert''))';
+      EXECUTE 'CREATE POLICY "Tamween update policy on bakeries" ON public.bakeries FOR UPDATE USING (public.can_access_branch(branch_id) AND public.has_department_permission(''bakeries'', ''update'')) WITH CHECK (public.can_access_branch(branch_id) AND public.has_department_permission(''bakeries'', ''update''))';
+      EXECUTE 'CREATE POLICY "Tamween delete policy on bakeries" ON public.bakeries FOR DELETE USING (public.can_access_branch(branch_id) AND public.has_department_permission(''bakeries'', ''delete''))';
     ELSIF tbl = 'debts' THEN
-      EXECUTE 'CREATE POLICY "Tamween read policy on debts" ON public.debts FOR SELECT USING (public.has_department_permission(''debts'', ''view'') OR public.has_department_permission(''reports'', ''view''))';
-      EXECUTE 'CREATE POLICY "Tamween write policy on debts" ON public.debts FOR INSERT WITH CHECK (public.has_department_permission(''debts'', ''insert''))';
-      EXECUTE 'CREATE POLICY "Tamween update policy on debts" ON public.debts FOR UPDATE USING (public.has_department_permission(''debts'', ''update'')) WITH CHECK (public.has_department_permission(''debts'', ''update''))';
-      EXECUTE 'CREATE POLICY "Tamween delete policy on debts" ON public.debts FOR DELETE USING (public.has_department_permission(''debts'', ''delete''))';
+      EXECUTE 'CREATE POLICY "Tamween read policy on debts" ON public.debts FOR SELECT USING (public.can_access_branch(branch_id) AND (public.has_department_permission(''debts'', ''view'') OR public.has_department_permission(''reports'', ''view'')))';
+      EXECUTE 'CREATE POLICY "Tamween write policy on debts" ON public.debts FOR INSERT WITH CHECK (public.can_access_branch(branch_id) AND public.has_department_permission(''debts'', ''insert''))';
+      EXECUTE 'CREATE POLICY "Tamween update policy on debts" ON public.debts FOR UPDATE USING (public.can_access_branch(branch_id) AND public.has_department_permission(''debts'', ''update'')) WITH CHECK (public.can_access_branch(branch_id) AND public.has_department_permission(''debts'', ''update''))';
+      EXECUTE 'CREATE POLICY "Tamween delete policy on debts" ON public.debts FOR DELETE USING (public.can_access_branch(branch_id) AND public.has_department_permission(''debts'', ''delete''))';
     ELSE
       EXECUTE format(
-        'CREATE POLICY "Tamween read policy on %s" ON public.%I FOR SELECT USING (auth.role() = ''authenticated'')',
+        'CREATE POLICY "Tamween read policy on %s" ON public.%I FOR SELECT USING (public.can_access_branch(branch_id))',
         tbl, tbl
       );
       EXECUTE format(
-        'CREATE POLICY "Tamween write policy on %s" ON public.%I FOR INSERT WITH CHECK (public.is_tamween_authorized_writer())',
+        'CREATE POLICY "Tamween write policy on %s" ON public.%I FOR INSERT WITH CHECK (public.can_access_branch(branch_id) AND public.is_tamween_authorized_writer())',
         tbl, tbl
       );
       EXECUTE format(
-        'CREATE POLICY "Tamween update policy on %s" ON public.%I FOR UPDATE USING (public.is_tamween_authorized_writer()) WITH CHECK (public.is_tamween_authorized_writer())',
+        'CREATE POLICY "Tamween update policy on %s" ON public.%I FOR UPDATE USING (public.can_access_branch(branch_id) AND public.is_tamween_authorized_writer()) WITH CHECK (public.can_access_branch(branch_id) AND public.is_tamween_authorized_writer())',
         tbl, tbl
       );
       EXECUTE format(
-        'CREATE POLICY "Tamween delete policy on %s" ON public.%I FOR DELETE USING (public.is_tamween_authorized_writer())',
+        'CREATE POLICY "Tamween delete policy on %s" ON public.%I FOR DELETE USING (public.can_access_branch(branch_id) AND public.is_tamween_authorized_writer())',
         tbl, tbl
       );
     END IF;
@@ -553,7 +592,7 @@ BEGIN
 END $$;
 
 -- =========================================================================
--- إعداد حاوية التخزين السحابي (Supabase Storage Bucket) وسياسات الوصول الآمنة
+-- إعداد حاوية التخزين السحابي (Supabase Storage Bucket) وسياسات الوصول الآمنة (Authenticated Only)
 -- =========================================================================
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('tamween-backups', 'tamween-backups', false)
@@ -561,18 +600,19 @@ ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
 
 DROP POLICY IF EXISTS "Tamween storage read policy" ON storage.objects;
 CREATE POLICY "Tamween storage read policy" ON storage.objects
-  FOR SELECT USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated'));
+  FOR SELECT USING (bucket_id = 'tamween-backups' AND auth.role() = 'authenticated');
 
 DROP POLICY IF EXISTS "Tamween storage insert policy" ON storage.objects;
 CREATE POLICY "Tamween storage insert policy" ON storage.objects
-  FOR INSERT WITH CHECK (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
+  FOR INSERT WITH CHECK (bucket_id = 'tamween-backups' AND auth.role() = 'authenticated' AND public.is_tamween_authorized_writer());
 
 DROP POLICY IF EXISTS "Tamween storage update policy" ON storage.objects;
 CREATE POLICY "Tamween storage update policy" ON storage.objects
-  FOR UPDATE USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer())
-  WITH CHECK (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
+  FOR UPDATE USING (bucket_id = 'tamween-backups' AND auth.role() = 'authenticated' AND public.is_tamween_authorized_writer())
+  WITH CHECK (bucket_id = 'tamween-backups' AND auth.role() = 'authenticated' AND public.is_tamween_authorized_writer());
 
 DROP POLICY IF EXISTS "Tamween storage delete policy" ON storage.objects;
 CREATE POLICY "Tamween storage delete policy" ON storage.objects
-  FOR DELETE USING (bucket_id = 'tamween-backups' AND auth.role() IN ('anon', 'authenticated') AND public.is_tamween_authorized_writer());
+  FOR DELETE USING (bucket_id = 'tamween-backups' AND auth.role() = 'authenticated' AND public.is_tamween_super_admin());
+
 

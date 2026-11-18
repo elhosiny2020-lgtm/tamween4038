@@ -3,29 +3,84 @@ import type { AppUser } from '../types.ts';
 
 const SCRYPT_PREFIX = 'scrypt$';
 const TOKEN_VERSION = 'v1';
-const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+export const SESSION_COOKIE_NAME = 'tamween_session';
+export const SESSION_TTL_MS = 1000 * 60 * 60 * 2; // 2 hours
+const MIN_PRODUCTION_SECRET_LENGTH = 32;
 
-// Ephemeral fallback secret per process run if env secret is absent, derived deterministically with project salt when env var provided
+// Ephemeral fallback secret per process run if env secret is absent in non-production
 const PROCESS_FALLBACK_SECRET = crypto.randomBytes(32).toString('hex');
+let devFallbackWarned = false;
 
-function getSessionSigningSecret(): string {
-  return (
-    process.env.TAMWEEN_SESSION_SECRET ||
-    process.env.APP_SECURITY_SALT ||
-    process.env.API_SECURITY_SHIELD_TOKEN ||
-    PROCESS_FALLBACK_SECRET
-  );
+export function getSessionSigningSecret(): string {
+  const envSecret = String(
+    process.env.TAMWEEN_SESSION_SECRET || process.env.APP_SECURITY_SALT || ''
+  ).trim();
+  const isProd =
+    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+
+  if (envSecret && envSecret.length >= MIN_PRODUCTION_SECRET_LENGTH) {
+    return envSecret;
+  }
+
+  if (isProd) {
+    if (!envSecret) {
+      throw new Error(
+        'FATAL SECURITY ERROR: TAMWEEN_SESSION_SECRET (min 32 chars) must be set in production.'
+      );
+    }
+    throw new Error(
+      `FATAL SECURITY ERROR: TAMWEEN_SESSION_SECRET must be at least ${MIN_PRODUCTION_SECRET_LENGTH} characters in production.`
+    );
+  }
+
+  if (!devFallbackWarned) {
+    devFallbackWarned = true;
+    console.warn(
+      '[SECURITY NOTICE] TAMWEEN_SESSION_SECRET not set (or <32 chars); using ephemeral per-process CSPRNG secret for development.'
+    );
+  }
+  return envSecret || PROCESS_FALLBACK_SECRET;
+}
+
+export function getDbIntegritySecret(): string {
+  const envSecret = String(process.env.TAMWEEN_DB_HMAC_SECRET || '').trim();
+  const isProd =
+    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+  if (envSecret && envSecret.length >= MIN_PRODUCTION_SECRET_LENGTH) {
+    return envSecret;
+  }
+  if (isProd) {
+    throw new Error(
+      `FATAL SECURITY ERROR: TAMWEEN_DB_HMAC_SECRET must be set (>= ${MIN_PRODUCTION_SECRET_LENGTH} chars) in production.`
+    );
+  }
+  return envSecret || PROCESS_FALLBACK_SECRET;
 }
 
 export function isScryptHash(value: string | undefined | null): boolean {
   return typeof value === 'string' && value.startsWith(SCRYPT_PREFIX) && value.split('$').length === 3;
 }
 
-function normalizeDigits(input: string): string {
+export function normalizeDigits(input: string): string {
   const ar = '٠١٢٣٤٥٦٧٨٩';
+  const fa = '۰۱۲۳۴۵۶۷۸۹';
   return String(input || '')
     .trim()
-    .replace(/[٠-٩]/g, (d) => String(ar.indexOf(d)));
+    .replace(/[٠-٩]/g, (d) => String(ar.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String(fa.indexOf(d)));
+}
+
+export function validatePasswordComplexity(password: string): { valid: boolean; error?: string } {
+  const clean = normalizeDigits(password);
+  if (clean.length < 8) {
+    return { valid: false, error: 'كلمة المرور يجب أن تتكون من 8 أحرف على الأقل.' };
+  }
+  const hasLetter = /[a-zA-Z\u0600-\u06FF]/.test(clean);
+  const hasDigit = /\d/.test(clean);
+  if (!hasLetter || !hasDigit) {
+    return { valid: false, error: 'كلمة المرور يجب أن تحتوي على أحرف وأرقام على الأقل.' };
+  }
+  return { valid: true };
 }
 
 export function hashPasswordScrypt(password: string, customSaltHex?: string): string {
@@ -56,16 +111,16 @@ export function verifyPasswordScrypt(password: string, storedHash: string | unde
     }
   }
 
-  // Legacy un-migrated plain/digit-normalized password comparison using timingSafeEqual
+  // Constant-time comparison using SHA-256 digest of equal lengths for legacy un-migrated values
   const normalizedStored = normalizeDigits(stored);
-  const inputBuf = Buffer.from(input, 'utf8');
-  const storedBuf = Buffer.from(normalizedStored, 'utf8');
-  if (inputBuf.length !== storedBuf.length) return false;
-  return crypto.timingSafeEqual(inputBuf, storedBuf);
+  const inputDigest = crypto.createHash('sha256').update(input, 'utf8').digest();
+  const storedDigest = crypto.createHash('sha256').update(normalizedStored, 'utf8').digest();
+  return crypto.timingSafeEqual(inputDigest, storedDigest);
 }
 
 export interface SessionTokenPayload {
   v: string;
+  jti: string;
   userId: string;
   branchId: string;
   username: string;
@@ -73,6 +128,43 @@ export interface SessionTokenPayload {
   isSuperAdmin: boolean;
   iat: number;
   exp: number;
+}
+
+// In-memory JTI & per-user token revocation store with periodic TTL cleanup
+const revokedJtiMap = new Map<string, number>();
+const userRevokedBeforeMap = new Map<string, number>();
+
+function pruneRevocationStore(): void {
+  const now = Date.now();
+  for (const [jti, exp] of revokedJtiMap.entries()) {
+    if (now > exp) {
+      revokedJtiMap.delete(jti);
+    }
+  }
+}
+
+export function revokeSessionToken(token: string | undefined | null): boolean {
+  const decoded = verifySessionToken(token);
+  if (!decoded?.jti) return false;
+  pruneRevocationStore();
+  revokedJtiMap.set(decoded.jti, decoded.exp || Date.now() + SESSION_TTL_MS);
+  return true;
+}
+
+export function revokeAllUserTokens(userId: string): void {
+  if (!userId) return;
+  userRevokedBeforeMap.set(String(userId), Date.now());
+}
+
+export function isSessionPayloadRevoked(decoded: SessionTokenPayload): boolean {
+  if (decoded.jti && revokedJtiMap.has(decoded.jti)) {
+    return true;
+  }
+  const userRevokedAt = userRevokedBeforeMap.get(String(decoded.userId));
+  if (typeof userRevokedAt === 'number' && decoded.iat <= userRevokedAt) {
+    return true;
+  }
+  return false;
 }
 
 export function createSessionToken(params: {
@@ -86,13 +178,14 @@ export function createSessionToken(params: {
   const now = Date.now();
   const payload: SessionTokenPayload = {
     v: TOKEN_VERSION,
+    jti: crypto.randomUUID(),
     userId: String(params.userId),
     branchId: String(params.branchId || 'branch-mahalla'),
     username: String(params.username),
     role: String(params.role || 'viewer'),
     isSuperAdmin: Boolean(params.isSuperAdmin),
     iat: now,
-    exp: now + (params.ttlMs || TOKEN_TTL_MS),
+    exp: now + (params.ttlMs || SESSION_TTL_MS),
   };
   const bodyB64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const sig = crypto
@@ -124,18 +217,40 @@ export function verifySessionToken(token: string | undefined | null): SessionTok
     const decoded = JSON.parse(Buffer.from(bodyB64, 'base64url').toString('utf8')) as SessionTokenPayload;
     if (!decoded || !decoded.userId || !decoded.username) return null;
     if (typeof decoded.exp === 'number' && Date.now() > decoded.exp) return null;
+    if (isSessionPayloadRevoked(decoded)) return null;
     return decoded;
   } catch {
     return null;
   }
 }
 
-export function sanitizeUserForClient<T extends Partial<AppUser> & Record<string, any>>(user: T): Omit<T, 'password' | 'passwordHash' | 'gmailPassword'> {
+export function parseCookieHeader(cookieHeader: string | undefined | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!cookieHeader || typeof cookieHeader !== 'string') return out;
+  const pairs = cookieHeader.split(';');
+  for (const pair of pairs) {
+    const idx = pair.indexOf('=');
+    if (idx <= 0) continue;
+    const key = pair.slice(0, idx).trim();
+    const val = pair.slice(idx + 1).trim();
+    if (!key) continue;
+    try {
+      out[key] = decodeURIComponent(val);
+    } catch {
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
+export function sanitizeUserForClient<T extends Partial<AppUser> & Record<string, any>>(
+  user: T
+): Omit<T, 'password' | 'passwordHash' | 'gmailPassword'> {
   if (!user || typeof user !== 'object') return user;
   const { password: _p, passwordHash: _ph, gmailPassword: _gp, ...safeRest } = user;
   return {
     ...safeRest,
-    hasPassword: Boolean(_p || _ph),
+    hasPassword: Boolean(_p || _ph || (user as any).hasPassword),
   } as any;
 }
 
@@ -145,3 +260,23 @@ export function sanitizeUsersForClient<T extends Partial<AppUser> & Record<strin
   if (!Array.isArray(users)) return [];
   return users.map((u) => sanitizeUserForClient(u));
 }
+
+export function sanitizeSystemConfigForClient<T extends Record<string, any> | null | undefined>(cfg: T): T {
+  if (!cfg || typeof cfg !== 'object') return cfg;
+  const clone: Record<string, any> = { ...cfg };
+  // Never leak plaintext vault passcodes or branch vault credentials over network responses
+  delete clone.vaultPasscode;
+  delete clone.vaultUsername;
+  delete clone.branchVaultCredentials;
+  if (clone.dailyAlertConfig && typeof clone.dailyAlertConfig === 'object') {
+    const {
+      vaultPasscode: _vp,
+      vaultUsername: _vu,
+      branchVaultCredentials: _bvc,
+      ...restAlertCfg
+    } = clone.dailyAlertConfig;
+    clone.dailyAlertConfig = restAlertCfg;
+  }
+  return clone as T;
+}
+

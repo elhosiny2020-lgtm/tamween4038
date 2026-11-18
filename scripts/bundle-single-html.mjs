@@ -64,6 +64,8 @@ if (jsFiles.length > 0) {
       if (typeof window !== 'undefined' && navigator.onLine) {
         var s = document.createElement('script');
         s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        s.integrity = 'sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==';
+        s.crossOrigin = 'anonymous';
         s.async = true;
         document.head.appendChild(s);
       }

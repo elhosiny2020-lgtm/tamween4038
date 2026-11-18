@@ -1,6 +1,11 @@
+import DOMPurify from 'dompurify';
+
 // Ultra-fast, zero-lag Print & PDF Engine for Arabic RTL Governmental Reports
 // Completely eliminates html2canvas oklch/oklab/color-mix parsing errors and main-thread freezing
 // by isolating the report container and applying a self-contained pure-HEX stylesheet.
+
+const HTML2PDF_CDN_URL = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+const HTML2PDF_CDN_SRI = 'sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==';
 
 export interface PdfExportOptions {
   filename?: string;
@@ -323,6 +328,11 @@ export function printHtmlElementA4(
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
+    const safeBodyHtml = DOMPurify.sanitize(cloned.innerHTML, {
+      USE_PROFILES: { html: true, svg: true },
+      ADD_ATTR: ['dir', 'colspan', 'rowspan', 'style', 'class'],
+    });
+
     iframeDoc.open();
     iframeDoc.write(`
       <!DOCTYPE html>
@@ -347,7 +357,7 @@ export function printHtmlElementA4(
       </head>
       <body class="${fontClass}">
         <div class="print-container">
-          ${cloned.innerHTML}
+          ${safeBodyHtml}
         </div>
       </body>
       </html>
@@ -417,7 +427,9 @@ export async function exportElementToPdf(
         if (!win.__html2pdfLoadPromise) {
           win.__html2pdfLoadPromise = new Promise((resolve) => {
             const script = document.createElement('script');
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+            script.src = HTML2PDF_CDN_URL;
+            script.integrity = HTML2PDF_CDN_SRI;
+            script.crossOrigin = 'anonymous';
             script.async = true;
             script.onload = () => resolve(win.html2pdf ?? null);
             script.onerror = () => {
@@ -447,7 +459,10 @@ export async function exportElementToPdf(
     (n as HTMLElement).classList.remove('hidden');
     (n as HTMLElement).style.display = 'block';
   });
-  isolatedWrapper.innerHTML = clonedContent.innerHTML;
+  isolatedWrapper.innerHTML = DOMPurify.sanitize(clonedContent.innerHTML, {
+    USE_PROFILES: { html: true, svg: true },
+    ADD_ATTR: ['dir', 'colspan', 'rowspan', 'style', 'class'],
+  });
 
   const opt = {
     margin: marginArr,

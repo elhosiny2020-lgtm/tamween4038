@@ -593,7 +593,6 @@ function getDiagnosticPingApiUrl(): string {
   return '/api/supabase/diagnostic-ping';
 }
 
-export const API_SECURITY_SHIELD_TOKEN = 'TAMWEEN-GOV-SHIELD-2026-V5';
 export const AUTH_TOKEN_STORAGE_KEY = 'TAMWEEN_AUTH_TOKEN';
 
 let inMemoryAuthToken = '';
@@ -610,6 +609,15 @@ export function setAuthSessionToken(token: string | null): void {
       }
     }
   } catch {}
+  if (typeof window !== 'undefined') {
+    if (clean) {
+      if (wsListeners.size > 0) {
+        ensureSharedWebSocket();
+      }
+    } else {
+      disconnectSharedWebSocket();
+    }
+  }
 }
 
 export function getAuthSessionToken(): string {
@@ -628,7 +636,6 @@ export function getAuthSessionToken(): string {
 
 export function getSecurityShieldHeaders(includeJsonContentType = true): Record<string, string> {
   const headers: Record<string, string> = {
-    'X-Tamween-Security-Token': API_SECURITY_SHIELD_TOKEN,
     'X-Tamween-Client-Id': SESSION_CLIENT_ID,
   };
   const authToken = getAuthSessionToken();
@@ -781,6 +788,7 @@ export function saveSupabaseConfig(url: string, anonKey: string): SupabaseConfig
 
       fetch(targetUrl, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: getSecurityShieldHeaders(true),
         body: JSON.stringify({
           url: isValidHttpUrl(cleanUrl) ? cleanUrl : '',
@@ -814,7 +822,9 @@ export async function syncSupabaseConfigFromRemote(force = false): Promise<Supab
     return localCfg;
   }
 
-  if (typeof window === 'undefined' || isBrowserOffline()) return localCfg;
+  if (typeof window === 'undefined' || isBrowserOffline() || !getAuthSessionToken()) {
+    return localCfg;
+  }
 
   const now = Date.now();
   if (!force && now - lastRemoteConfigCheckAt < 120000) {
@@ -828,6 +838,7 @@ export async function syncSupabaseConfigFromRemote(force = false): Promise<Supab
       : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/config';
 
     const resp = await fetch(targetUrl, {
+      credentials: 'same-origin',
       headers: getSecurityShieldHeaders(false),
     });
     if (resp.ok) {
@@ -3369,7 +3380,7 @@ function disconnectSharedWebSocket() {
 }
 
 function scheduleWsReconnect() {
-  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline()) return;
+  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline() || !getAuthSessionToken()) return;
   if (wsReconnectTimer) return;
   const delay = Math.min(6000, 800 * Math.pow(2, Math.min(wsReconnectAttempts, 3)));
   wsReconnectAttempts += 1;
@@ -3380,7 +3391,7 @@ function scheduleWsReconnect() {
 }
 
 function scheduleSseReconnect() {
-  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline()) return;
+  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline() || !getAuthSessionToken()) return;
   if (sseReconnectTimer) return;
   const delay = Math.min(6000, 1000 * Math.pow(2, Math.min(sseReconnectAttempts, 3)));
   sseReconnectAttempts += 1;
@@ -3568,7 +3579,7 @@ function handleIncomingRealtimeRelayMessage(
 
 function ensureSharedEventSource(): void {
   if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
-  if (wsListeners.size === 0) return;
+  if (wsListeners.size === 0 || !getAuthSessionToken()) return;
   const cfg = getSupabaseConfig();
   if (!cfg.isConfigured || isBrowserOffline()) return;
   if (
@@ -3646,7 +3657,7 @@ function ensureSharedEventSource(): void {
 function ensureSharedWebSocket(): void {
   installRealtimeConsoleInterceptor();
   if (typeof window === 'undefined') return;
-  if (wsListeners.size === 0) return;
+  if (wsListeners.size === 0 || !getAuthSessionToken()) return;
   const cfg = getSupabaseConfig();
   if (!cfg.isConfigured || isBrowserOffline()) return;
 
@@ -4194,37 +4205,40 @@ export async function fetchDatabaseFromSupabase(): Promise<{
       });
     }
 
-    const liveDbUrl = `${getLiveDbApiUrl()}?branchId=${encodeURIComponent(activeBranchId)}&_t=${Date.now()}`;
-    const serverSnap = await fetch(liveDbUrl, {
-      cache: 'no-store',
-      headers: getSecurityShieldHeaders(false),
-    })
-      .then(async (r) => {
-        if (r.ok) {
-          serverReachable = true;
-          return await r.json();
-        }
-        return null;
+    if (getAuthSessionToken()) {
+      const liveDbUrl = `${getLiveDbApiUrl()}?branchId=${encodeURIComponent(activeBranchId)}&_t=${Date.now()}`;
+      const serverSnap = await fetch(liveDbUrl, {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: getSecurityShieldHeaders(false),
       })
-      .catch(() => null);
+        .then(async (r) => {
+          if (r.ok) {
+            serverReachable = true;
+            return await r.json();
+          }
+          return null;
+        })
+        .catch(() => null);
 
-    const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
-    const serverTimestamp =
-      serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
-    if (
-      serverSnap &&
-      serverSnap.success &&
-      serverData &&
-      (Array.isArray(serverData.bakeries) ||
-        Array.isArray(serverData.debts) ||
-        Array.isArray(serverData.branches) ||
-        (serverData as any).branchPartitions)
-    ) {
-      candidates.push({
-        data: serverData as AppState,
-        timestamp: serverTimestamp,
-        source: 'خادم المزامنة اللحظية (Supabase WebSocket)',
-      });
+      const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
+      const serverTimestamp =
+        serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
+      if (
+        serverSnap &&
+        serverSnap.success &&
+        serverData &&
+        (Array.isArray(serverData.bakeries) ||
+          Array.isArray(serverData.debts) ||
+          Array.isArray(serverData.branches) ||
+          (serverData as any).branchPartitions)
+      ) {
+        candidates.push({
+          data: serverData as AppState,
+          timestamp: serverTimestamp,
+          source: 'خادم المزامنة اللحظية (Supabase WebSocket)',
+        });
+      }
     }
   }
 
@@ -4834,9 +4848,10 @@ export async function fetchHighDebtAlertsFromSupabase(): Promise<{
     }
   }
 
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && getAuthSessionToken()) {
     try {
       const resp = await fetch(getAlertsApiUrl(), {
+        credentials: 'same-origin',
         headers: getSecurityShieldHeaders(false),
       });
       if (resp.ok) {
@@ -4876,9 +4891,10 @@ export async function syncHighDebtAlertsToSupabase(
   const trimmed = (alerts || []).slice(0, 150);
   let serverOk = false;
 
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && getAuthSessionToken()) {
     serverOk = await fetch(getAlertsApiUrl(), {
       method: 'POST',
+      credentials: 'same-origin',
       headers: getSecurityShieldHeaders(true),
       body: JSON.stringify({
         alerts: trimmed,
@@ -4940,10 +4956,10 @@ export async function clearHighDebtAlertsInSupabase(
   const nowIso = new Date().toISOString();
 
   let serverOk = false;
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && getAuthSessionToken()) {
     serverOk = await fetch(
       `${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&threshold=${effectiveThreshold}`,
-      { method: 'DELETE', headers: getSecurityShieldHeaders(false) }
+      { method: 'DELETE', credentials: 'same-origin', headers: getSecurityShieldHeaders(false) }
     )
       .then((r) => r.ok)
       .catch(() => false);
@@ -5665,11 +5681,15 @@ export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; m
     // 2. Purge server-side live-db and alerts snapshots + broadcast state_cleared to all connected peers
     if (typeof window !== 'undefined' && !isBrowserOffline()) {
       await Promise.all([
-        fetch(`${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
-          method: 'DELETE',
-          credentials: 'same-origin',
-          headers: getSecurityShieldHeaders(false),
-        }).catch(() => null),
+        fetch(
+          `${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&confirmPurge=true`,
+          {
+            method: 'DELETE',
+            credentials: 'same-origin',
+            headers: getSecurityShieldHeaders(true),
+            body: JSON.stringify({ confirmPurge: true }),
+          }
+        ).catch(() => null),
         fetch(`${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
           method: 'DELETE',
           credentials: 'same-origin',
