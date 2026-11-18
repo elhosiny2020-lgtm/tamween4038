@@ -955,14 +955,18 @@ export function fallbackAuthenticateUser(
   if (!matched) {
     return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
   }
-  if (!verifyPasswordScrypt(password, matched.password)) {
+  const seedUser = INITIAL_USERS.find(
+    (u) => (u.username || '').toLowerCase() === target || (u.fullName || '').toLowerCase() === target
+  );
+  const effectiveStoredPassword = matched.password || (seedUser ? seedUser.password : '');
+  if (!verifyPasswordScrypt(password, effectiveStoredPassword)) {
     return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
   }
   if (matched.isActive === false) {
     return { ok: false, status: 403, error: 'هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.' };
   }
-  // Auto-upgrade legacy un-hashed password to scrypt upon successful verification
-  if (matched.password && !isScryptHash(matched.password)) {
+  // Auto-upgrade legacy un-hashed or missing password to scrypt upon successful verification
+  if (!matched.password || !isScryptHash(matched.password)) {
     matched.password = hashPasswordScrypt(password);
     persistStore(store);
   }

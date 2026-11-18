@@ -485,6 +485,174 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
     return aggregateVillageFuelBreakdown(state.petroleumVillageCirculation);
   }, [state.petroleumVillageCirculation]);
 
+  // Grouped LPG Circulation Rows by Local Unit
+  const groupedLpgRows = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: lpgCalculatedRows,
+      getLocalUnit: (item) => item.record.localUnit || item.record.village,
+      numericFields: [
+        { key: 'population', getValue: (item) => item.record.population },
+        { key: 'familiesCount', getValue: (item) => item.record.familiesCount },
+        { key: 'depotsCount', getValue: (item) => item.record.depotsCount },
+        { key: 'distributorsCount', getValue: (item) => item.record.distributorsCount },
+        { key: 'prescribedMonthlyQuota', getValue: (item) => item.record.prescribedMonthlyQuota },
+        { key: 'actualInboundQty', getValue: (item) => item.record.actualInboundQty },
+        { key: 'actualDisbursedQty', getValue: (item) => item.record.actualDisbursedQty },
+        { key: 'remainingQty', getValue: (item) => item.metrics.remainingQty },
+        { key: 'quotaVariance', getValue: (item) => item.metrics.quotaVariance },
+      ],
+      deriveMetrics: (sums) => {
+        const pop = sums.population || 0;
+        const fam = sums.familiesCount || 0;
+        const disbursed = sums.actualDisbursedQty || 0;
+        const quota = sums.prescribedMonthlyQuota || 0;
+        const quotaExecutionPct = quota > 0 ? Math.round((disbursed / quota) * 100) : 0;
+        const dailyPerCapita = pop > 0 ? Number((disbursed / (pop * 30)).toFixed(4)) : 0;
+        const monthlyPerCapita = pop > 0 ? Number((disbursed / pop).toFixed(4)) : 0;
+        const familyMonthlyShare = fam > 0 ? Number((disbursed / fam).toFixed(2)) : 0;
+        const annualPerCapita = pop > 0 ? Number(((disbursed * 12) / pop).toFixed(4)) : 0;
+        let status = 'مستقرة';
+        if (quotaExecutionPct < 85 || (fam > 0 && familyMonthlyShare < 1.2)) {
+          status = 'تعاني من عجز';
+        } else if (quotaExecutionPct > 105) {
+          status = 'فائض';
+        }
+        return {
+          quotaExecutionPct,
+          dailyPerCapita,
+          monthlyPerCapita,
+          familyMonthlyShare,
+          annualPerCapita,
+          status,
+        };
+      },
+      sortUnitsAlphabetically: true,
+    });
+  }, [lpgCalculatedRows]);
+
+  // Grouped Petroleum Circulation Rows by Local Unit
+  const groupedPetroRows = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: petroleumCalculatedRows,
+      getLocalUnit: (item) => item.record.localUnit || item.record.village,
+      numericFields: [
+        { key: 'population', getValue: (item) => item.record.population },
+        { key: 'openingBalanceLiters', getValue: (item) => item.record.openingBalanceLiters },
+        { key: 'inboundLiters', getValue: (item) => item.record.inboundLiters },
+        { key: 'disbursedLiters', getValue: (item) => item.record.disbursedLiters },
+        { key: 'closingBalanceLiters', getValue: (item) => item.metrics.closingBalanceLiters },
+      ],
+      deriveMetrics: (sums) => {
+        const pop = sums.population || 0;
+        const opening = sums.openingBalanceLiters || 0;
+        const inbound = sums.inboundLiters || 0;
+        const disbursed = sums.disbursedLiters || 0;
+        const totalAvailable = opening + inbound;
+        const availabilityRatioPct = totalAvailable > 0 ? Math.round((disbursed / totalAvailable) * 100) : 0;
+        const dailyPerCapitaLiters = pop > 0 ? Number((disbursed / (pop * 30)).toFixed(4)) : 0;
+        const monthlyPerCapitaLiters = pop > 0 ? Number((disbursed / pop).toFixed(3)) : 0;
+        const annualPerCapitaLiters = pop > 0 ? Number(((disbursed * 12) / pop).toFixed(2)) : 0;
+        return {
+          availabilityRatioPct,
+          dailyPerCapitaLiters,
+          monthlyPerCapitaLiters,
+          annualPerCapitaLiters,
+        };
+      },
+      sortUnitsAlphabetically: true,
+    });
+  }, [petroleumCalculatedRows]);
+
+  // Grouped Fuel Breakdowns Matrix
+  const groupedFuelBreakdowns = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: villageFuelBreakdowns,
+      getLocalUnit: (vb) => vb.localUnit || vb.village,
+      numericFields: [
+        { key: 'population', getValue: (vb) => vb.population },
+        { key: 'gasoline80Liters', getValue: (vb) => vb.gasoline80Liters },
+        { key: 'gasoline92Liters', getValue: (vb) => vb.gasoline92Liters },
+        { key: 'gasoline95Liters', getValue: (vb) => vb.gasoline95Liters },
+        { key: 'dieselLiters', getValue: (vb) => vb.dieselLiters },
+        { key: 'keroseneLiters', getValue: (vb) => vb.keroseneLiters },
+        { key: 'totalAllFuelsLiters', getValue: (vb) => vb.totalAllFuelsLiters },
+      ],
+      deriveMetrics: (sums) => {
+        const pop = sums.population || 0;
+        return {
+          gasoline80PerCapita: pop > 0 ? Number((sums.gasoline80Liters / pop).toFixed(3)) : 0,
+          gasoline92PerCapita: pop > 0 ? Number((sums.gasoline92Liters / pop).toFixed(3)) : 0,
+          gasoline95PerCapita: pop > 0 ? Number((sums.gasoline95Liters / pop).toFixed(3)) : 0,
+          dieselPerCapita: pop > 0 ? Number((sums.dieselLiters / pop).toFixed(3)) : 0,
+          kerosenePerCapita: pop > 0 ? Number((sums.keroseneLiters / pop).toFixed(3)) : 0,
+        };
+      },
+      sortUnitsAlphabetically: true,
+    });
+  }, [villageFuelBreakdowns]);
+
+  // Grouped Fuel Stations
+  const groupedFuelStations = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: state.fuelStations,
+      getLocalUnit: (st) => st.localUnit || st.village,
+      numericFields: [
+        { key: 'tanksCount', getValue: (st) => st.tanksCount },
+        { key: 'tankCapacityLiters', getValue: (st) => st.tankCapacityLiters },
+        { key: 'openingBalanceLiters', getValue: (st) => st.openingBalanceLiters },
+        { key: 'inboundLiters', getValue: (st) => st.inboundLiters },
+        { key: 'soldDisbursedLiters', getValue: (st) => st.soldDisbursedLiters },
+        { key: 'actualStockLiters', getValue: (st) => st.actualStockLiters },
+      ],
+      deriveMetrics: (sums) => {
+        const bookBalance =
+          (sums.openingBalanceLiters || 0) + (sums.inboundLiters || 0) - (sums.soldDisbursedLiters || 0);
+        const inventoryDiff = (sums.actualStockLiters || 0) - bookBalance;
+        return { bookBalance, inventoryDiff };
+      },
+      sortUnitsAlphabetically: true,
+    });
+  }, [state.fuelStations]);
+
+  // Grouped LPG Depots
+  const groupedLpgDepots = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: state.lpgDepots,
+      getLocalUnit: (d) => d.localUnit || d.village,
+      numericFields: [
+        { key: 'prescribedQuota', getValue: (d) => d.prescribedQuota },
+        { key: 'inboundCylinders', getValue: (d) => d.inboundCylinders },
+        { key: 'disbursedCylinders', getValue: (d) => d.disbursedCylinders },
+        { key: 'fullCylindersCount', getValue: (d) => d.fullCylindersCount },
+        { key: 'emptyCylindersCount', getValue: (d) => d.emptyCylindersCount },
+        { key: 'damagedCylindersCount', getValue: (d) => d.damagedCylindersCount },
+      ],
+      deriveMetrics: (sums) => {
+        const remaining = Math.max(0, (sums.inboundCylinders || 0) - (sums.disbursedCylinders || 0));
+        return { remaining };
+      },
+      sortUnitsAlphabetically: true,
+    });
+  }, [state.lpgDepots]);
+
+  // Grouped LPG Distributors
+  const groupedDistributors = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: state.lpgDistributors,
+      getLocalUnit: (dist) => dist.localUnit || dist.distributionScopeVillage || dist.affiliatedDepotName,
+      numericFields: [
+        { key: 'prescribedQuota', getValue: (d) => d.prescribedQuota },
+        { key: 'receivedQty', getValue: (d) => d.receivedQty },
+        { key: 'distributedQty', getValue: (d) => d.distributedQty },
+      ],
+      deriveMetrics: (sums) => {
+        const remaining = Math.max(0, (sums.receivedQty || 0) - (sums.distributedQty || 0));
+        return { remaining };
+      },
+      sortUnitsAlphabetically: true,
+    });
+  }, [state.lpgDistributors]);
+
   // Smart Alerts (6 Categories + Fuel/LPG Variance Alerts)
   const smartAlerts = useMemo(() => {
     const todayMs = Date.now();
@@ -3097,61 +3265,153 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     <th className="py-3 px-2.5">المتبقي ∑</th>
                     <th className="py-3 px-2.5">العجز / الفائض ∑</th>
                     <th className="py-3 px-2.5">نسبة التنفيذ ∑</th>
-                    <th className="py-3 px-2.5">تعديل</th>
+                    <th className="py-3 px-2.5 text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {lpgCalculatedRows.map(({ record: r, metrics: m }) => (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className="py-2 px-2.5 font-mono font-bold">{r.serialNo}</td>
-                      <td className="py-2 px-2.5 font-mono font-black">{r.villageCode}</td>
-                      <td className="py-2 px-2.5 font-bold">
-                        <div className="font-black text-[#0A1931]">{r.village}</div>
-                        <div className="text-[11px] text-slate-500">{r.localUnit}</div>
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-bold">{r.population.toLocaleString()}</td>
-                      <td className="py-2 px-2.5 font-mono font-bold">{r.familiesCount.toLocaleString()}</td>
-                      <td className="py-2 px-2.5 font-mono text-[11px]">
-                        {r.depotsCount} مستودع / {r.distributorsCount} موزع
-                      </td>
-                      <td className="py-2 px-2.5 font-bold">
-                        <div>{r.cylinderType}</div>
-                        <div className="text-[11px] font-mono text-slate-500">{r.cylinderWeightKg} كجم</div>
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-bold">
-                        {r.prescribedMonthlyQuota.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-bold text-blue-800">
-                        {r.actualInboundQty.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-black text-[#0A1931]">
-                        {r.actualDisbursedQty.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-bold">{m.remainingQty.toLocaleString()}</td>
-                      <td
-                        className={`py-2 px-2.5 font-mono font-black ${
-                          m.quotaVariance < 0 ? 'text-rose-700' : 'text-emerald-700'
-                        }`}
-                      >
-                        {m.quotaVariance.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-black">{m.quotaExecutionPct}%</td>
-                      <td className="py-2 px-2.5">
-                        {permissions.canEdit && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingLpgRecord(r);
-                              setIsLpgQuotaModalOpen(true);
-                            }}
-                            className="p-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                  {groupedLpgRows.groups.map((grp) => (
+                    <React.Fragment key={grp.localUnit}>
+                      {grp.items.map(({ record: r, metrics: m }) => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="py-2 px-2.5 font-mono font-bold">{r.serialNo}</td>
+                          <td className="py-2 px-2.5 font-mono font-black">{r.villageCode}</td>
+                          <td className="py-2 px-2.5 font-bold">
+                            <div className="font-black text-[#0A1931]">{r.village}</div>
+                            <div className="text-[11px] text-slate-500">{r.localUnit}</div>
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-bold">{r.population.toLocaleString()}</td>
+                          <td className="py-2 px-2.5 font-mono font-bold">{r.familiesCount.toLocaleString()}</td>
+                          <td className="py-2 px-2.5 font-mono text-[11px]">
+                            {r.depotsCount} مستودع / {r.distributorsCount} موزع
+                          </td>
+                          <td className="py-2 px-2.5 font-bold">
+                            <div>{r.cylinderType}</div>
+                            <div className="text-[11px] font-mono text-slate-500">{r.cylinderWeightKg} كجم</div>
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-bold">
+                            {r.prescribedMonthlyQuota.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-bold text-blue-800">
+                            {r.actualInboundQty.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-black text-[#0A1931]">
+                            {r.actualDisbursedQty.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-bold">{m.remainingQty.toLocaleString()}</td>
+                          <td
+                            className={`py-2 px-2.5 font-mono font-black ${
+                              m.quotaVariance < 0 ? 'text-rose-700' : 'text-emerald-700'
+                            }`}
                           >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
+                            {m.quotaVariance.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-black">{m.quotaExecutionPct}%</td>
+                          <td className="py-2 px-2.5 text-center">
+                            <ModuleRowActions
+                              entityLabel={`حصة قرية ${r.village}`}
+                              permissions={permissions}
+                              testIdPrefix={`it-lpg-${r.id}`}
+                              onView={() =>
+                                setProfileModal({
+                                  title: `تداول بوتاجاز قرية: ${r.village}`,
+                                  subtitle: `${r.localUnit} — كود: ${r.villageCode}`,
+                                  badgeText: m.villageStatus,
+                                  sections: [
+                                    {
+                                      title: 'البيانات الديموغرافية والشبكة',
+                                      fields: [
+                                        { label: 'عدد السكان', value: r.population.toLocaleString(), mono: true },
+                                        { label: 'عدد الأسر', value: r.familiesCount.toLocaleString(), mono: true },
+                                        { label: 'المستودعات والموزعون', value: `${r.depotsCount} مستودع / ${r.distributorsCount} موزع` },
+                                        { label: 'نوع الأسطوانة والوزن', value: `${r.cylinderType} (${r.cylinderWeightKg} كجم)` },
+                                      ],
+                                    },
+                                    {
+                                      title: 'الحصص والكميات ومؤشرات الأداء',
+                                      fields: [
+                                        { label: 'الحصة الشهرية المقررة', value: `${r.prescribedMonthlyQuota.toLocaleString()} أسطوانة`, mono: true },
+                                        { label: 'الوارد الفعلي', value: `${r.actualInboundQty.toLocaleString()} أسطوانة`, mono: true },
+                                        { label: 'المنصرف الفعلي', value: `${r.actualDisbursedQty.toLocaleString()} أسطوانة`, mono: true, highlight: true },
+                                        { label: 'الرصيد المتبقي', value: `${m.remainingQty.toLocaleString()} أسطوانة`, mono: true },
+                                        { label: 'العجز / الفائض', value: `${m.quotaVariance.toLocaleString()} أسطوانة`, mono: true },
+                                        { label: 'نسبة التنفيذ', value: `${m.quotaExecutionPct}%`, mono: true },
+                                        { label: 'نصيب الفرد الشهري', value: `${m.monthlyPerCapitaCylinders} أسطوانة`, mono: true },
+                                        { label: 'نصيب الأسرة الشهري', value: `${m.familyMonthlyShareCylinders} أسطوانة`, mono: true },
+                                      ],
+                                    },
+                                  ],
+                                })
+                              }
+                              onEdit={() => {
+                                setEditingLpgRecord(r);
+                                setIsLpgQuotaModalOpen(true);
+                              }}
+                              onDelete={() =>
+                                setDeleteTarget({
+                                  title: `حصة قرية ${r.village}`,
+                                  summary: [
+                                    { label: 'القرية', value: r.village },
+                                    { label: 'الوحدة المحلية', value: r.localUnit },
+                                    { label: 'الحصة الشهرية', value: r.prescribedMonthlyQuota },
+                                  ],
+                                  onConfirm: () =>
+                                    commitInternalTradeState(
+                                      {
+                                        lpgVillageCirculation: state.lpgVillageCirculation.filter(
+                                          (x) => x.id !== r.id
+                                        ),
+                                      },
+                                      `تم حذف سجل حصة قرية ${r.village}`,
+                                      {
+                                        actionType: 'حذف',
+                                        entityName: 'حصة قرية بوتاجاز',
+                                        entityId: r.villageCode,
+                                        beforeSummary: r.village,
+                                      }
+                                    ),
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={grp.localUnit}
+                        recordCount={grp.count}
+                        labelColSpan={3}
+                        metricCells={[
+                          { content: grp.subtotals.population.toLocaleString(), mono: true },
+                          { content: grp.subtotals.familiesCount.toLocaleString(), mono: true },
+                          { content: `${grp.subtotals.depotsCount}م / ${grp.subtotals.distributorsCount}ز`, mono: true },
+                          { content: '—' },
+                          { content: grp.subtotals.prescribedMonthlyQuota.toLocaleString(), mono: true },
+                          { content: grp.subtotals.actualInboundQty.toLocaleString(), mono: true },
+                          { content: grp.subtotals.actualDisbursedQty.toLocaleString(), mono: true },
+                          { content: grp.subtotals.remainingQty.toLocaleString(), mono: true },
+                          { content: grp.subtotals.quotaVariance.toLocaleString(), mono: true },
+                          { content: `${grp.derivedMetrics.quotaExecutionPct}%`, mono: true },
+                          { content: '—' },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  <VillageGrandTotalRow
+                    totalCount={groupedLpgRows.grandTotalCount}
+                    labelColSpan={3}
+                    metricCells={[
+                      { content: groupedLpgRows.grandTotals.population.toLocaleString(), mono: true },
+                      { content: groupedLpgRows.grandTotals.familiesCount.toLocaleString(), mono: true },
+                      { content: `${groupedLpgRows.grandTotals.depotsCount}م / ${groupedLpgRows.grandTotals.distributorsCount}ز`, mono: true },
+                      { content: '—' },
+                      { content: groupedLpgRows.grandTotals.prescribedMonthlyQuota.toLocaleString(), mono: true },
+                      { content: groupedLpgRows.grandTotals.actualInboundQty.toLocaleString(), mono: true },
+                      { content: groupedLpgRows.grandTotals.actualDisbursedQty.toLocaleString(), mono: true },
+                      { content: groupedLpgRows.grandTotals.remainingQty.toLocaleString(), mono: true },
+                      { content: groupedLpgRows.grandTotals.quotaVariance.toLocaleString(), mono: true },
+                      { content: `${groupedLpgRows.derivedGrandMetrics.quotaExecutionPct}%`, mono: true },
+                      { content: '—' },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -3176,45 +3436,113 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     <th className="py-3 px-3">متوسط نصيب الأسرة الشهري (أسطوانة) ∑</th>
                     <th className="py-3 px-3">متوسط نصيب الفرد السنوي (أسطوانة) ∑</th>
                     <th className="py-3 px-3">تقييم حالة القرية ∑</th>
+                    <th className="py-3 px-3 text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {lpgCalculatedRows.map(({ record: r, metrics: m }) => (
-                    <tr key={`percap-${r.id}`} className="hover:bg-slate-50">
-                      <td className="py-2.5 px-3 font-black text-[#0A1931]">{r.village}</td>
-                      <td className="py-2.5 px-3 font-bold text-slate-600">{r.localUnit}</td>
-                      <td className="py-2.5 px-3 font-mono">{r.population.toLocaleString()}</td>
-                      <td className="py-2.5 px-3 font-mono">{r.familiesCount.toLocaleString()}</td>
-                      <td className="py-2.5 px-3 font-mono font-black">
-                        {r.actualDisbursedQty.toLocaleString()} أسطوانة
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black text-blue-900 bg-blue-50/40">
-                        {m.dailyPerCapitaCylinders}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black text-orange-800 bg-orange-50/40">
-                        {m.monthlyPerCapitaCylinders}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black text-emerald-800 bg-emerald-50/40">
-                        {m.familyMonthlyShareCylinders}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black text-indigo-900 bg-indigo-50/40">
-                        {m.annualPerCapitaCylinders}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span
-                          className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-black ${
-                            m.villageStatus === 'مكتفية'
-                              ? 'bg-emerald-100 text-emerald-900'
-                              : m.villageStatus === 'تحتاج دعم'
-                              ? 'bg-amber-100 text-amber-900'
-                              : 'bg-rose-100 text-rose-900'
-                          }`}
-                        >
-                          {m.villageStatus}
-                        </span>
-                      </td>
-                    </tr>
+                  {groupedLpgRows.groups.map((grp) => (
+                    <React.Fragment key={`percap-grp-${grp.localUnit}`}>
+                      {grp.items.map(({ record: r, metrics: m }) => (
+                        <tr key={`percap-${r.id}`} className="hover:bg-slate-50">
+                          <td className="py-2.5 px-3 font-black text-[#0A1931]">{r.village}</td>
+                          <td className="py-2.5 px-3 font-bold text-slate-600">{r.localUnit}</td>
+                          <td className="py-2.5 px-3 font-mono">{r.population.toLocaleString()}</td>
+                          <td className="py-2.5 px-3 font-mono">{r.familiesCount.toLocaleString()}</td>
+                          <td className="py-2.5 px-3 font-mono font-black">
+                            {r.actualDisbursedQty.toLocaleString()} أسطوانة
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-blue-900 bg-blue-50/40">
+                            {m.dailyPerCapitaCylinders}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-orange-800 bg-orange-50/40">
+                            {m.monthlyPerCapitaCylinders}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-emerald-800 bg-emerald-50/40">
+                            {m.familyMonthlyShareCylinders}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-indigo-900 bg-indigo-50/40">
+                            {m.annualPerCapitaCylinders}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-black ${
+                                m.villageStatus === 'مكتفية'
+                                  ? 'bg-emerald-100 text-emerald-900'
+                                  : m.villageStatus === 'تحتاج دعم'
+                                  ? 'bg-amber-100 text-amber-900'
+                                  : 'bg-rose-100 text-rose-900'
+                              }`}
+                            >
+                              {m.villageStatus}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <ModuleRowActions
+                              entityLabel={`مؤشر نصيب الفرد لقرية ${r.village}`}
+                              permissions={permissions}
+                              testIdPrefix={`it-lpg-pc-${r.id}`}
+                              onView={() =>
+                                setProfileModal({
+                                  title: `متوسط نصيب الفرد: قرية ${r.village}`,
+                                  subtitle: `${r.localUnit}`,
+                                  badgeText: m.villageStatus,
+                                  sections: [
+                                    {
+                                      title: 'معدلات نصيب الفرد والأسرة من الأسطوانات',
+                                      fields: [
+                                        { label: 'السكان', value: r.population.toLocaleString(), mono: true },
+                                        { label: 'الأسر', value: r.familiesCount.toLocaleString(), mono: true },
+                                        { label: 'المنصرف الفعلي', value: `${r.actualDisbursedQty.toLocaleString()} أسطوانة`, mono: true },
+                                        { label: 'نصيب الفرد اليومي', value: `${m.dailyPerCapitaCylinders} أسطوانة`, mono: true },
+                                        { label: 'نصيب الفرد الشهري', value: `${m.monthlyPerCapitaCylinders} أسطوانة`, mono: true, highlight: true },
+                                        { label: 'نصيب الأسرة الشهري', value: `${m.familyMonthlyShareCylinders} أسطوانة`, mono: true, highlight: true },
+                                        { label: 'نصيب الفرد السنوي', value: `${m.annualPerCapitaCylinders} أسطوانة`, mono: true },
+                                      ],
+                                    },
+                                  ],
+                                })
+                              }
+                              onEdit={() => {
+                                setEditingLpgRecord(r);
+                                setIsLpgQuotaModalOpen(true);
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={grp.localUnit}
+                        recordCount={grp.count}
+                        labelColSpan={2}
+                        metricCells={[
+                          { content: grp.subtotals.population.toLocaleString(), mono: true },
+                          { content: grp.subtotals.familiesCount.toLocaleString(), mono: true },
+                          { content: `${grp.subtotals.actualDisbursedQty.toLocaleString()} أسطوانة`, mono: true },
+                          { content: grp.derivedMetrics.dailyPerCapita, mono: true },
+                          { content: grp.derivedMetrics.monthlyPerCapita, mono: true },
+                          { content: grp.derivedMetrics.familyMonthlyShare, mono: true },
+                          { content: grp.derivedMetrics.annualPerCapita, mono: true },
+                          { content: grp.derivedMetrics.status },
+                          { content: '—' },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  <VillageGrandTotalRow
+                    totalCount={groupedLpgRows.grandTotalCount}
+                    labelColSpan={2}
+                    metricCells={[
+                      { content: groupedLpgRows.grandTotals.population.toLocaleString(), mono: true },
+                      { content: groupedLpgRows.grandTotals.familiesCount.toLocaleString(), mono: true },
+                      { content: `${groupedLpgRows.grandTotals.actualDisbursedQty.toLocaleString()} أسطوانة`, mono: true },
+                      { content: groupedLpgRows.derivedGrandMetrics.dailyPerCapita, mono: true },
+                      { content: groupedLpgRows.derivedGrandMetrics.monthlyPerCapita, mono: true },
+                      { content: groupedLpgRows.derivedGrandMetrics.familyMonthlyShare, mono: true },
+                      { content: groupedLpgRows.derivedGrandMetrics.annualPerCapita, mono: true },
+                      { content: groupedLpgRows.derivedGrandMetrics.status },
+                      { content: '—' },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -3268,46 +3596,146 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     <th className="py-3 px-2.5">نصيب الفرد اليومي (لتر) ∑</th>
                     <th className="py-3 px-2.5">نصيب الفرد الشهري (لتر) ∑</th>
                     <th className="py-3 px-2.5">نصيب الفرد السنوي (لتر) ∑</th>
+                    <th className="py-3 px-2.5 text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {petroleumCalculatedRows.map(({ record: r, metrics: m }) => (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className="py-2 px-2.5 font-mono">{r.serialNo}</td>
-                      <td className="py-2 px-2.5 font-bold">
-                        <div className="font-black text-[#0A1931]">{r.village}</div>
-                        <div className="text-[11px] text-slate-500">{r.localUnit}</div>
-                      </td>
-                      <td className="py-2 px-2.5 font-mono">{r.population.toLocaleString()}</td>
-                      <td className="py-2 px-2.5">
-                        <span className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-950 font-black">
-                          {r.fuelType}
-                        </span>
-                      </td>
-                      <td className="py-2 px-2.5 font-mono">{r.openingBalanceLiters.toLocaleString()}</td>
-                      <td className="py-2 px-2.5 font-mono font-bold text-blue-800">
-                        {r.inboundLiters.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-black text-[#0A1931]">
-                        {r.disbursedLiters.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-bold">
-                        {m.closingBalanceLiters.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-black text-emerald-700">
-                        {m.availabilityRatioPct}%
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-black bg-slate-50">
-                        {m.dailyPerCapitaLiters}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-black text-blue-900 bg-blue-50/40">
-                        {m.monthlyPerCapitaLiters}
-                      </td>
-                      <td className="py-2 px-2.5 font-mono font-black text-indigo-900 bg-indigo-50/40">
-                        {m.annualPerCapitaLiters}
-                      </td>
-                    </tr>
+                  {groupedPetroRows.groups.map((grp) => (
+                    <React.Fragment key={grp.localUnit}>
+                      {grp.items.map(({ record: r, metrics: m }) => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="py-2 px-2.5 font-mono">{r.serialNo}</td>
+                          <td className="py-2 px-2.5 font-bold">
+                            <div className="font-black text-[#0A1931]">{r.village}</div>
+                            <div className="text-[11px] text-slate-500">{r.localUnit}</div>
+                          </td>
+                          <td className="py-2 px-2.5 font-mono">{r.population.toLocaleString()}</td>
+                          <td className="py-2 px-2.5">
+                            <span className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-950 font-black">
+                              {r.fuelType}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2.5 font-mono">{r.openingBalanceLiters.toLocaleString()}</td>
+                          <td className="py-2 px-2.5 font-mono font-bold text-blue-800">
+                            {r.inboundLiters.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-black text-[#0A1931]">
+                            {r.disbursedLiters.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-bold">
+                            {m.closingBalanceLiters.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-black text-emerald-700">
+                            {m.availabilityRatioPct}%
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-black bg-slate-50">
+                            {m.dailyPerCapitaLiters}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-black text-blue-900 bg-blue-50/40">
+                            {m.monthlyPerCapitaLiters}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono font-black text-indigo-900 bg-indigo-50/40">
+                            {m.annualPerCapitaLiters}
+                          </td>
+                          <td className="py-2 px-2.5 text-center">
+                            <ModuleRowActions
+                              entityLabel={`مادة بترولية ${r.fuelType} بـ${r.village}`}
+                              permissions={permissions}
+                              testIdPrefix={`it-petro-${r.id}`}
+                              onView={() =>
+                                setProfileModal({
+                                  title: `تداول ${r.fuelType}: قرية ${r.village}`,
+                                  subtitle: `${r.localUnit}`,
+                                  badgeText: `${m.availabilityRatioPct}% نسبة توافر`,
+                                  sections: [
+                                    {
+                                      title: 'بيانات التداول ومؤشرات الاستهلاك باللتر',
+                                      fields: [
+                                        { label: 'عدد السكان', value: r.population.toLocaleString(), mono: true },
+                                        { label: 'نوع الوقود', value: r.fuelType },
+                                        { label: 'رصيد أول المدة', value: `${r.openingBalanceLiters.toLocaleString()} لتر`, mono: true },
+                                        { label: 'الوارد', value: `${r.inboundLiters.toLocaleString()} لتر`, mono: true },
+                                        { label: 'المنصرف الفعلي', value: `${r.disbursedLiters.toLocaleString()} لتر`, mono: true, highlight: true },
+                                        { label: 'الرصيد المتبقي', value: `${m.closingBalanceLiters.toLocaleString()} لتر`, mono: true },
+                                        { label: 'نسبة توافر الوقود', value: `${m.availabilityRatioPct}%`, mono: true },
+                                        { label: 'نصيب الفرد اليومي', value: `${m.dailyPerCapitaLiters} لتر`, mono: true },
+                                        { label: 'نصيب الفرد الشهري', value: `${m.monthlyPerCapitaLiters} لتر`, mono: true, highlight: true },
+                                        { label: 'نصيب الفرد السنوي', value: `${m.annualPerCapitaLiters} لتر`, mono: true },
+                                      ],
+                                    },
+                                  ],
+                                })
+                              }
+                              onEdit={() => {
+                                setEditingPetroRecord(r);
+                                setIsPetroQuotaModalOpen(true);
+                              }}
+                              onDelete={() =>
+                                setDeleteTarget({
+                                  title: `سجل ${r.fuelType} بقرية ${r.village}`,
+                                  summary: [
+                                    { label: 'القرية', value: r.village },
+                                    { label: 'نوع الوقود', value: r.fuelType },
+                                    { label: 'المنصرف الفعلي', value: `${r.disbursedLiters.toLocaleString()} لتر` },
+                                  ],
+                                  onConfirm: () =>
+                                    commitInternalTradeState(
+                                      {
+                                        petroleumVillageCirculation: state.petroleumVillageCirculation.filter(
+                                          (x) => x.id !== r.id
+                                        ),
+                                      },
+                                      `تم حذف سجل تداول ${r.fuelType} لقرية ${r.village}`,
+                                      {
+                                        actionType: 'حذف',
+                                        entityName: 'تداول مواد بترولية',
+                                        entityId: `${r.village}-${r.fuelType}`,
+                                        beforeSummary: `${r.village} - ${r.fuelType}`,
+                                      }
+                                    ),
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={grp.localUnit}
+                        recordCount={grp.count}
+                        labelColSpan={2}
+                        metricCells={[
+                          { content: grp.subtotals.population.toLocaleString(), mono: true },
+                          { content: '—' },
+                          { content: grp.subtotals.openingBalanceLiters.toLocaleString(), mono: true },
+                          { content: grp.subtotals.inboundLiters.toLocaleString(), mono: true },
+                          { content: grp.subtotals.disbursedLiters.toLocaleString(), mono: true },
+                          { content: grp.subtotals.closingBalanceLiters.toLocaleString(), mono: true },
+                          { content: `${grp.derivedMetrics.availabilityRatioPct}%`, mono: true },
+                          { content: grp.derivedMetrics.dailyPerCapitaLiters, mono: true },
+                          { content: grp.derivedMetrics.monthlyPerCapitaLiters, mono: true },
+                          { content: grp.derivedMetrics.annualPerCapitaLiters, mono: true },
+                          { content: '—' },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  <VillageGrandTotalRow
+                    totalCount={groupedPetroRows.grandTotalCount}
+                    labelColSpan={2}
+                    metricCells={[
+                      { content: groupedPetroRows.grandTotals.population.toLocaleString(), mono: true },
+                      { content: '—' },
+                      { content: groupedPetroRows.grandTotals.openingBalanceLiters.toLocaleString(), mono: true },
+                      { content: groupedPetroRows.grandTotals.inboundLiters.toLocaleString(), mono: true },
+                      { content: groupedPetroRows.grandTotals.disbursedLiters.toLocaleString(), mono: true },
+                      { content: groupedPetroRows.grandTotals.closingBalanceLiters.toLocaleString(), mono: true },
+                      { content: `${groupedPetroRows.derivedGrandMetrics.availabilityRatioPct}%`, mono: true },
+                      { content: groupedPetroRows.derivedGrandMetrics.dailyPerCapitaLiters, mono: true },
+                      { content: groupedPetroRows.derivedGrandMetrics.monthlyPerCapitaLiters, mono: true },
+                      { content: groupedPetroRows.derivedGrandMetrics.annualPerCapitaLiters, mono: true },
+                      { content: '—' },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -3334,31 +3762,62 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {villageFuelBreakdowns.map((vb) => (
-                    <tr key={vb.village} className="hover:bg-slate-50">
-                      <td className="py-2.5 px-3 font-black text-[#0A1931]">{vb.village}</td>
-                      <td className="py-2.5 px-3 font-bold text-slate-600">{vb.localUnit}</td>
-                      <td className="py-2.5 px-3 font-mono">{vb.population.toLocaleString()}</td>
-                      <td className="py-2.5 px-3 font-mono font-black text-blue-900">
-                        {vb.gasoline80PerCapitaLiters} لتر
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black text-emerald-800">
-                        {vb.gasoline92PerCapitaLiters} لتر
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black text-purple-900">
-                        {vb.gasoline95PerCapitaLiters} لتر
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black text-amber-900 bg-amber-50/40">
-                        {vb.dieselPerCapitaLiters} لتر
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black text-slate-700">
-                        {vb.kerosenePerCapitaLiters} لتر
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-black bg-slate-100">
-                        {vb.totalAllFuelsLiters.toLocaleString()} لتر
-                      </td>
-                    </tr>
+                  {groupedFuelBreakdowns.groups.map((grp) => (
+                    <React.Fragment key={`fb-grp-${grp.localUnit}`}>
+                      {grp.items.map((vb) => (
+                        <tr key={vb.village} className="hover:bg-slate-50">
+                          <td className="py-2.5 px-3 font-black text-[#0A1931]">{vb.village}</td>
+                          <td className="py-2.5 px-3 font-bold text-slate-600">{vb.localUnit}</td>
+                          <td className="py-2.5 px-3 font-mono">{vb.population.toLocaleString()}</td>
+                          <td className="py-2.5 px-3 font-mono font-black text-blue-900">
+                            {vb.gasoline80PerCapitaLiters} لتر
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-emerald-800">
+                            {vb.gasoline92PerCapitaLiters} لتر
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-purple-900">
+                            {vb.gasoline95PerCapitaLiters} لتر
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-amber-900 bg-amber-50/40">
+                            {vb.dieselPerCapitaLiters} لتر
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-slate-700">
+                            {vb.kerosenePerCapitaLiters} لتر
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black bg-slate-100">
+                            {vb.totalAllFuelsLiters.toLocaleString()} لتر
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={grp.localUnit}
+                        recordCount={grp.count}
+                        labelColSpan={2}
+                        metricCells={[
+                          { content: grp.subtotals.population.toLocaleString(), mono: true },
+                          { content: `${grp.derivedMetrics.gasoline80PerCapita} لتر`, mono: true },
+                          { content: `${grp.derivedMetrics.gasoline92PerCapita} لتر`, mono: true },
+                          { content: `${grp.derivedMetrics.gasoline95PerCapita} لتر`, mono: true },
+                          { content: `${grp.derivedMetrics.dieselPerCapita} لتر`, mono: true },
+                          { content: `${grp.derivedMetrics.kerosenePerCapita} لتر`, mono: true },
+                          { content: `${grp.subtotals.totalAllFuelsLiters.toLocaleString()} لتر`, mono: true },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  <VillageGrandTotalRow
+                    totalCount={groupedFuelBreakdowns.grandTotalCount}
+                    labelColSpan={2}
+                    metricCells={[
+                      { content: groupedFuelBreakdowns.grandTotals.population.toLocaleString(), mono: true },
+                      { content: `${groupedFuelBreakdowns.derivedGrandMetrics.gasoline80PerCapita} لتر`, mono: true },
+                      { content: `${groupedFuelBreakdowns.derivedGrandMetrics.gasoline92PerCapita} لتر`, mono: true },
+                      { content: `${groupedFuelBreakdowns.derivedGrandMetrics.gasoline95PerCapita} لتر`, mono: true },
+                      { content: `${groupedFuelBreakdowns.derivedGrandMetrics.dieselPerCapita} لتر`, mono: true },
+                      { content: `${groupedFuelBreakdowns.derivedGrandMetrics.kerosenePerCapita} لتر`, mono: true },
+                      { content: `${groupedFuelBreakdowns.grandTotals.totalAllFuelsLiters.toLocaleString()} لتر`, mono: true },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -3381,15 +3840,29 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   الرصيد الدفتري = الرصيد الافتتاحي + الوارد − المنصرف | فرق الجرد = الرصيد الفعلي − الرصيد الدفتري
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsMovementModalOpen(true)}
-                disabled={!permissions.canAdd}
-                className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                <Plus className="w-4 h-4 text-[#D4AF37]" />
-                <span>تسجيل حركة وقود يومية (وارد / منصرف / جرد)</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingFuelStation(null);
+                    setIsFuelStationModalOpen(true);
+                  }}
+                  disabled={!permissions.canAdd}
+                  className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Plus className="w-4 h-4 text-[#D4AF37]" />
+                  <span>إضافة محطة وقود</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsMovementModalOpen(true)}
+                  disabled={!permissions.canAdd}
+                  className="px-3.5 py-2 bg-white hover:bg-[#0A1931] text-[#0A1931] hover:text-white border-2 border-[#0A1931] rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>تسجيل حركة يومية</span>
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto border border-slate-200 rounded-2xl">
@@ -3406,57 +3879,159 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     <th className="py-3 px-3">الرصيد الفعلي بالجرد</th>
                     <th className="py-3 px-3">فرق الجرد ∑</th>
                     <th className="py-3 px-3">الحالة والإجراء</th>
+                    <th className="py-3 px-3 text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {state.fuelStations.map((st) => {
-                    const bookBalance =
-                      st.openingBalanceLiters + st.inboundLiters - st.soldDisbursedLiters;
-                    const diff = st.actualStockLiters - bookBalance;
-                    return (
-                      <tr key={st.id} className="hover:bg-slate-50">
-                        <td className="py-2.5 px-3 font-mono font-black">{st.stationCode}</td>
-                        <td className="py-2.5 px-3 font-bold">
-                          <div className="font-black text-[#0A1931]">{st.stationName}</div>
-                          <div className="text-[11px] text-slate-500">
-                            شركة: {st.distributionCompany} | المدير: {st.managerName}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 font-bold">
-                          <div>{st.village}</div>
-                          <div className="text-[11px] text-slate-500">{st.address}</div>
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-[11px]">
-                          <div>{st.tanksCount} خزانات</div>
-                          <div>سعة {st.tankCapacityLiters.toLocaleString()} لتر</div>
-                        </td>
-                        <td className="py-2.5 px-3 font-black text-blue-900">{st.primaryFuelType}</td>
-                        <td className="py-2.5 px-3 font-mono text-[11px]">
-                          {st.openingBalanceLiters.toLocaleString()} + {st.inboundLiters.toLocaleString()} −{' '}
-                          {st.soldDisbursedLiters.toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-3 font-mono font-black bg-slate-50">
-                          {bookBalance.toLocaleString()} لتر
-                        </td>
-                        <td className="py-2.5 px-3 font-mono font-black">
-                          {st.actualStockLiters.toLocaleString()} لتر
-                        </td>
-                        <td
-                          className={`py-2.5 px-3 font-mono font-black ${
-                            Math.abs(diff) > 150
-                              ? 'bg-rose-50 text-rose-700'
-                              : 'bg-emerald-50 text-emerald-700'
-                          }`}
-                        >
-                          {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()} لتر
-                        </td>
-                        <td className="py-2.5 px-3 text-[11px] font-bold">
-                          <div>{st.stationStatus}</div>
-                          <div className="text-slate-500">{st.inspectionActionTaken}</div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {groupedFuelStations.groups.map((grp) => (
+                    <React.Fragment key={grp.localUnit}>
+                      {grp.items.map((st) => {
+                        const bookBalance =
+                          st.openingBalanceLiters + st.inboundLiters - st.soldDisbursedLiters;
+                        const diff = st.actualStockLiters - bookBalance;
+                        return (
+                          <tr key={st.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 font-mono font-black">{st.stationCode}</td>
+                            <td className="py-2.5 px-3 font-bold">
+                              <div className="font-black text-[#0A1931]">{st.stationName}</div>
+                              <div className="text-[11px] text-slate-500">
+                                شركة: {st.distributionCompany} | المدير: {st.managerName}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 font-bold">
+                              <div>{st.village}</div>
+                              <div className="text-[11px] text-slate-500">{st.address}</div>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-[11px]">
+                              <div>{st.tanksCount} خزانات</div>
+                              <div>سعة {st.tankCapacityLiters.toLocaleString()} لتر</div>
+                            </td>
+                            <td className="py-2.5 px-3 font-black text-blue-900">{st.primaryFuelType}</td>
+                            <td className="py-2.5 px-3 font-mono text-[11px]">
+                              {st.openingBalanceLiters.toLocaleString()} + {st.inboundLiters.toLocaleString()} −{' '}
+                              {st.soldDisbursedLiters.toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-black bg-slate-50">
+                              {bookBalance.toLocaleString()} لتر
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-black">
+                              {st.actualStockLiters.toLocaleString()} لتر
+                            </td>
+                            <td
+                              className={`py-2.5 px-3 font-mono font-black ${
+                                Math.abs(diff) > 150
+                                  ? 'bg-rose-50 text-rose-700'
+                                  : 'bg-emerald-50 text-emerald-700'
+                              }`}
+                            >
+                              {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()} لتر
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] font-bold">
+                              <div>{st.stationStatus}</div>
+                              <div className="text-slate-500">{st.inspectionActionTaken}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <ModuleRowActions
+                                entityLabel={`محطة وقود ${st.stationName}`}
+                                permissions={permissions}
+                                testIdPrefix={`it-st-${st.id}`}
+                                onView={() =>
+                                  setProfileModal({
+                                    title: `محطة وقود: ${st.stationName}`,
+                                    subtitle: `${st.distributionCompany} — كود: ${st.stationCode}`,
+                                    badgeText: st.stationStatus,
+                                    sections: [
+                                      {
+                                        title: 'البيانات الأساسية والموقع',
+                                        fields: [
+                                          { label: 'كود المحطة', value: st.stationCode, mono: true },
+                                          { label: 'اسم المحطة', value: st.stationName },
+                                          { label: 'شركة التوزيع', value: st.distributionCompany },
+                                          { label: 'المدير المسؤول', value: st.managerName },
+                                          { label: 'القرية والوحدة', value: `${st.village} — ${st.localUnit}` },
+                                          { label: 'العنوان التفصيلي', value: st.address },
+                                        ],
+                                      },
+                                      {
+                                        title: 'الخزانات والأرصدة وفروق الجرد',
+                                        fields: [
+                                          { label: 'الخزانات والسعة', value: `${st.tanksCount} خزانات (${st.tankCapacityLiters.toLocaleString()} لتر)` },
+                                          { label: 'نوع الوقود الرئيسي', value: st.primaryFuelType },
+                                          { label: 'الرصيد الافتتاحي', value: `${st.openingBalanceLiters.toLocaleString()} لتر`, mono: true },
+                                          { label: 'الوارد', value: `${st.inboundLiters.toLocaleString()} لتر`, mono: true },
+                                          { label: 'المنصرف والمبيعات', value: `${st.soldDisbursedLiters.toLocaleString()} لتر`, mono: true },
+                                          { label: 'الرصيد الدفتري', value: `${bookBalance.toLocaleString()} لتر`, mono: true },
+                                          { label: 'الرصيد الفعلي بالجرد', value: `${st.actualStockLiters.toLocaleString()} لتر`, mono: true, highlight: true },
+                                          { label: 'فرق الجرد', value: `${diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()} لتر`, mono: true },
+                                          { label: 'الإجراء الرقابي المتخذ', value: st.inspectionActionTaken || 'لا يوجد' },
+                                        ],
+                                      },
+                                    ],
+                                  })
+                                }
+                                onEdit={() => {
+                                  setEditingFuelStation(st);
+                                  setIsFuelStationModalOpen(true);
+                                }}
+                                onDelete={() =>
+                                  setDeleteTarget({
+                                    title: `محطة ${st.stationName}`,
+                                    summary: [
+                                      { label: 'المحطة', value: st.stationName },
+                                      { label: 'القرية', value: st.village },
+                                      { label: 'الشركة', value: st.distributionCompany },
+                                    ],
+                                    onConfirm: () =>
+                                      commitInternalTradeState(
+                                        {
+                                          fuelStations: state.fuelStations.filter((x) => x.id !== st.id),
+                                        },
+                                        `تم حذف بيانات محطة الوقود ${st.stationName}`,
+                                        {
+                                          actionType: 'حذف',
+                                          entityName: 'محطة وقود',
+                                          entityId: st.stationCode,
+                                          beforeSummary: st.stationName,
+                                        }
+                                      ),
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <LocalUnitSubtotalRow
+                        unitName={grp.localUnit}
+                        recordCount={grp.count}
+                        labelColSpan={3}
+                        metricCells={[
+                          { content: `${grp.subtotals.tanksCount}خ (${grp.subtotals.tankCapacityLiters.toLocaleString()} لتر)`, mono: true },
+                          { content: '—' },
+                          { content: `${grp.subtotals.openingBalanceLiters.toLocaleString()} + ${grp.subtotals.inboundLiters.toLocaleString()} − ${grp.subtotals.soldDisbursedLiters.toLocaleString()}`, mono: true },
+                          { content: `${grp.derivedMetrics.bookBalance.toLocaleString()} لتر`, mono: true },
+                          { content: `${grp.subtotals.actualStockLiters.toLocaleString()} لتر`, mono: true },
+                          { content: `${Number(grp.derivedMetrics.inventoryDiff) > 0 ? `+${Number(grp.derivedMetrics.inventoryDiff).toLocaleString()}` : Number(grp.derivedMetrics.inventoryDiff || 0).toLocaleString()} لتر`, mono: true },
+                          { content: '—' },
+                          { content: '—' },
+                        ]}
+                      />
+                    </React.Fragment>
+                  ))}
+                  <VillageGrandTotalRow
+                    totalCount={groupedFuelStations.grandTotalCount}
+                    labelColSpan={3}
+                    metricCells={[
+                      { content: `${groupedFuelStations.grandTotals.tanksCount}خ (${groupedFuelStations.grandTotals.tankCapacityLiters.toLocaleString()} لتر)`, mono: true },
+                      { content: '—' },
+                      { content: `${groupedFuelStations.grandTotals.openingBalanceLiters.toLocaleString()} + ${groupedFuelStations.grandTotals.inboundLiters.toLocaleString()} − ${groupedFuelStations.grandTotals.soldDisbursedLiters.toLocaleString()}`, mono: true },
+                      { content: `${groupedFuelStations.derivedGrandMetrics.bookBalance.toLocaleString()} لتر`, mono: true },
+                      { content: `${groupedFuelStations.grandTotals.actualStockLiters.toLocaleString()} لتر`, mono: true },
+                      { content: `${Number(groupedFuelStations.derivedGrandMetrics.inventoryDiff) > 0 ? `+${Number(groupedFuelStations.derivedGrandMetrics.inventoryDiff).toLocaleString()}` : Number(groupedFuelStations.derivedGrandMetrics.inventoryDiff || 0).toLocaleString()} لتر`, mono: true },
+                      { content: '—' },
+                      { content: '—' },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -3479,6 +4054,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     <th className="py-2.5 px-3">رقم المستند / الفاتورة</th>
                     <th className="py-2.5 px-3">المسؤول / المفتش</th>
                     <th className="py-2.5 px-3">ملاحظات</th>
+                    <th className="py-2.5 px-3 text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -3492,6 +4068,56 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                       <td className="py-2 px-3 font-mono">{m.invoiceOrDocNumber}</td>
                       <td className="py-2 px-3 font-bold">{m.inspectorOrOperator}</td>
                       <td className="py-2 px-3 text-slate-600">{m.notes}</td>
+                      <td className="py-2 px-3 text-center">
+                        <ModuleRowActions
+                          entityLabel={`حركة ${m.movementType} بمحطة ${m.stationName}`}
+                          permissions={permissions}
+                          testIdPrefix={`it-fmov-${m.id}`}
+                          onView={() =>
+                            setProfileModal({
+                              title: `حركة وقود: ${m.stationName}`,
+                              subtitle: `${m.movementDate} — ${m.movementType}`,
+                              sections: [
+                                {
+                                  title: 'تفاصيل حركة الوقود والمستند',
+                                  fields: [
+                                    { label: 'المحطة', value: m.stationName },
+                                    { label: 'نوع الوقود', value: m.fuelType },
+                                    { label: 'نوع الحركة', value: m.movementType },
+                                    { label: 'الكمية باللتر', value: `${m.quantityLiters.toLocaleString()} لتر`, mono: true },
+                                    { label: 'رقم الفاتورة / المستند', value: m.invoiceOrDocNumber, mono: true },
+                                    { label: 'المسؤول / المفتش', value: m.inspectorOrOperator },
+                                    { label: 'ملاحظات', value: m.notes || 'لا يوجد' },
+                                  ],
+                                },
+                              ],
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteTarget({
+                              title: `حركة وقود بمحطة ${m.stationName}`,
+                              summary: [
+                                { label: 'المحطة', value: m.stationName },
+                                { label: 'التاريخ', value: m.movementDate },
+                                { label: 'الكمية', value: `${m.quantityLiters.toLocaleString()} لتر` },
+                              ],
+                              onConfirm: () =>
+                                commitInternalTradeState(
+                                  {
+                                    fuelStationMovements: state.fuelStationMovements.filter((x) => x.id !== m.id),
+                                  },
+                                  `تم حذف حركة الوقود بمحطة ${m.stationName}`,
+                                  {
+                                    actionType: 'حذف',
+                                    entityName: 'حركة وقود يومية',
+                                    entityId: m.invoiceOrDocNumber,
+                                    beforeSummary: `${m.stationName} - ${m.quantityLiters} لتر`,
+                                  }
+                                ),
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -3507,10 +4133,30 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
       {subView === 'lpg-depots' && (
         <div className="space-y-5">
           {/* Depots Table */}
-          <div className="bg-white border-2 border-[#0A1931] rounded-2xl p-5 space-y-3">
-            <h2 className="text-lg font-black text-[#0A1931]">
-              وحدة الرقابة على مستودعات البوتاجاز الرئيسية ({state.lpgDepots.length} مستودعات)
-            </h2>
+          <div className="bg-white border-2 border-[#0A1931] rounded-2xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-black text-[#0A1931]">
+                  وحدة الرقابة على مستودعات البوتاجاز الرئيسية ({state.lpgDepots.length} مستودعات)
+                </h2>
+                <p className="text-xs font-bold text-slate-500">
+                  متابعة الأرصدة، الحصص، الأسطوانات الممتلئة والفارغة والتالفة، والتراخيص
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingLpgDepot(null);
+                  setIsLpgDepotModalOpen(true);
+                }}
+                disabled={!permissions.canAdd}
+                className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4 text-[#D4AF37]" />
+                <span>إضافة مستودع بوتاجاز</span>
+              </button>
+            </div>
+
             <div className="overflow-x-auto border border-slate-200 rounded-2xl">
               <table className="w-full text-right text-xs">
                 <thead className="bg-[#0A1931] text-white font-black">
@@ -3524,57 +4170,177 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     <th className="py-3 px-3">المتبقي ∑</th>
                     <th className="py-3 px-3">ممتلئة / فارغة / تالفة</th>
                     <th className="py-3 px-3">نتيجة الجرد والمخالفات</th>
+                    <th className="py-3 px-3 text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {state.lpgDepots.map((d) => {
-                    const rem = Math.max(0, d.inboundCylinders - d.disbursedCylinders);
-                    return (
-                      <tr key={d.id} className="hover:bg-slate-50">
-                        <td className="py-2.5 px-3 font-mono font-black">{d.depotCode}</td>
-                        <td className="py-2.5 px-3 font-bold">
-                          <div className="font-black text-[#0A1931]">{d.depotName}</div>
-                          <div className="text-[11px] text-slate-500">المالك: {d.ownerName}</div>
-                        </td>
-                        <td className="py-2.5 px-3 font-bold">
-                          <div>{d.village}</div>
-                          <div className="text-[11px] text-slate-500">{d.localUnit}</div>
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-[11px]">
-                          <div>{d.licenseNumber}</div>
-                          <div className="text-slate-500">ينتهي: {d.licenseExpiryDate}</div>
-                        </td>
-                        <td className="py-2.5 px-3 font-mono font-bold">
-                          {d.prescribedQuota.toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-3 font-mono font-bold">
-                          وارد: {d.inboundCylinders.toLocaleString()} | منصرف:{' '}
-                          {d.disbursedCylinders.toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-3 font-mono font-black text-blue-900 bg-blue-50/40">
-                          {rem.toLocaleString()} أسطوانة
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-[11px]">
-                          ممتلئة: {d.fullCylindersCount} | فارغة: {d.emptyCylindersCount} | تالفة:{' '}
-                          {d.damagedCylindersCount}
-                        </td>
-                        <td className="py-2.5 px-3 text-[11px] font-bold">
-                          <div>{d.inventoryResult}</div>
-                          <div className="text-rose-700">{d.violationsSummary}</div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {groupedLpgDepots.groups.map((grp) => (
+                    <React.Fragment key={grp.localUnit}>
+                      {grp.items.map((d) => {
+                        const rem = Math.max(0, d.inboundCylinders - d.disbursedCylinders);
+                        return (
+                          <tr key={d.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 font-mono font-black">{d.depotCode}</td>
+                            <td className="py-2.5 px-3 font-bold">
+                              <div className="font-black text-[#0A1931]">{d.depotName}</div>
+                              <div className="text-[11px] text-slate-500">المالك: {d.ownerName}</div>
+                            </td>
+                            <td className="py-2.5 px-3 font-bold">
+                              <div>{d.village}</div>
+                              <div className="text-[11px] text-slate-500">{d.localUnit}</div>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-[11px]">
+                              <div>{d.licenseNumber}</div>
+                              <div className="text-slate-500">ينتهي: {d.licenseExpiryDate}</div>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-bold">
+                              {d.prescribedQuota.toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-bold">
+                              وارد: {d.inboundCylinders.toLocaleString()} | منصرف:{' '}
+                              {d.disbursedCylinders.toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-black text-blue-900 bg-blue-50/40">
+                              {rem.toLocaleString()} أسطوانة
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-[11px]">
+                              ممتلئة: {d.fullCylindersCount} | فارغة: {d.emptyCylindersCount} | تالفة:{' '}
+                              {d.damagedCylindersCount}
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] font-bold">
+                              <div>{d.inventoryResult}</div>
+                              <div className="text-rose-700">{d.violationsSummary}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <ModuleRowActions
+                                entityLabel={`مستودع ${d.depotName}`}
+                                permissions={permissions}
+                                testIdPrefix={`it-depot-${d.id}`}
+                                onView={() =>
+                                  setProfileModal({
+                                    title: `مستودع بوتاجاز: ${d.depotName}`,
+                                    subtitle: `${d.village} (${d.localUnit}) — كود: ${d.depotCode}`,
+                                    badgeText: `${rem.toLocaleString()} أسطوانة رصيد`,
+                                    sections: [
+                                      {
+                                        title: 'البيانات الأساسية والتراخيص',
+                                        fields: [
+                                          { label: 'كود المستودع', value: d.depotCode, mono: true },
+                                          { label: 'اسم المستودع', value: d.depotName },
+                                          { label: 'المالك والمدير', value: `${d.ownerName} / ${d.managerName || '—'}` },
+                                          { label: 'الموقع والعنوان', value: `${d.village} — ${d.address}` },
+                                          { label: 'رقم الترخيص وانتهاؤه', value: `${d.licenseNumber} (حتى ${d.licenseExpiryDate})` },
+                                        ],
+                                      },
+                                      {
+                                        title: 'الحصص والرصيد ومخزون الأسطوانات',
+                                        fields: [
+                                          { label: 'الحصة الشهرية', value: `${d.prescribedQuota.toLocaleString()} أسطوانة`, mono: true },
+                                          { label: 'الوارد الفعلي', value: `${d.inboundCylinders.toLocaleString()} أسطوانة`, mono: true },
+                                          { label: 'المنصرف الفعلي', value: `${d.disbursedCylinders.toLocaleString()} أسطوانة`, mono: true, highlight: true },
+                                          { label: 'المتبقي', value: `${rem.toLocaleString()} أسطوانة`, mono: true },
+                                          { label: 'الأسطوانات الممتلئة', value: d.fullCylindersCount.toLocaleString(), mono: true },
+                                          { label: 'الأسطوانات الفارغة', value: d.emptyCylindersCount.toLocaleString(), mono: true },
+                                          { label: 'الأسطوانات التالفة', value: d.damagedCylindersCount.toLocaleString(), mono: true },
+                                          { label: 'الموزعون التابعون', value: `${d.affiliatedDistributorsCount} موزعين` },
+                                          { label: 'نتيجة الجرد', value: d.inventoryResult },
+                                          { label: 'ملخص المخالفات', value: d.violationsSummary || 'لا توجد مخالفات' },
+                                        ],
+                                      },
+                                    ],
+                                  })
+                                }
+                                onEdit={() => {
+                                  setEditingLpgDepot(d);
+                                  setIsLpgDepotModalOpen(true);
+                                }}
+                                onDelete={() =>
+                                  setDeleteTarget({
+                                    title: `مستودع ${d.depotName}`,
+                                    summary: [
+                                      { label: 'المستودع', value: d.depotName },
+                                      { label: 'القرية', value: d.village },
+                                      { label: 'الحصة', value: d.prescribedQuota },
+                                    ],
+                                    onConfirm: () =>
+                                      commitInternalTradeState(
+                                        {
+                                          lpgDepots: state.lpgDepots.filter((x) => x.id !== d.id),
+                                        },
+                                        `تم حذف بيانات مستودع البوتاجاز ${d.depotName}`,
+                                        {
+                                          actionType: 'حذف',
+                                          entityName: 'مستودع بوتاجاز',
+                                          entityId: d.depotCode,
+                                          beforeSummary: d.depotName,
+                                        }
+                                      ),
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <LocalUnitSubtotalRow
+                        unitName={grp.localUnit}
+                        recordCount={grp.count}
+                        labelColSpan={3}
+                        metricCells={[
+                          { content: '—' },
+                          { content: grp.subtotals.prescribedQuota.toLocaleString(), mono: true },
+                          { content: `وارد: ${grp.subtotals.inboundCylinders.toLocaleString()} | منصرف: ${grp.subtotals.disbursedCylinders.toLocaleString()}`, mono: true },
+                          { content: `${grp.derivedMetrics.remaining.toLocaleString()} أسطوانة`, mono: true },
+                          { content: `م:${grp.subtotals.fullCylindersCount} | ف:${grp.subtotals.emptyCylindersCount} | ت:${grp.subtotals.damagedCylindersCount}`, mono: true },
+                          { content: '—' },
+                          { content: '—' },
+                        ]}
+                      />
+                    </React.Fragment>
+                  ))}
+                  <VillageGrandTotalRow
+                    totalCount={groupedLpgDepots.grandTotalCount}
+                    labelColSpan={3}
+                    metricCells={[
+                      { content: '—' },
+                      { content: groupedLpgDepots.grandTotals.prescribedQuota.toLocaleString(), mono: true },
+                      { content: `وارد: ${groupedLpgDepots.grandTotals.inboundCylinders.toLocaleString()} | منصرف: ${groupedLpgDepots.grandTotals.disbursedCylinders.toLocaleString()}`, mono: true },
+                      { content: `${groupedLpgDepots.derivedGrandMetrics.remaining.toLocaleString()} أسطوانة`, mono: true },
+                      { content: `م:${groupedLpgDepots.grandTotals.fullCylindersCount} | ف:${groupedLpgDepots.grandTotals.emptyCylindersCount} | ت:${groupedLpgDepots.grandTotals.damagedCylindersCount}`, mono: true },
+                      { content: '—' },
+                      { content: '—' },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
           </div>
 
           {/* Distributors Table */}
-          <div className="bg-white border-2 border-[#0A1931] rounded-2xl p-5 space-y-3">
-            <h3 className="text-base font-black text-[#0A1931]">
-              سجل موزعي أسطوانات البوتاجاز المعتمدين ({state.lpgDistributors.length} موزعين)
-            </h3>
+          <div className="bg-white border-2 border-[#0A1931] rounded-2xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-black text-[#0A1931]">
+                  سجل موزعي أسطوانات البوتاجاز المعتمدين ({state.lpgDistributors.length} موزعين)
+                </h3>
+                <p className="text-xs font-bold text-slate-500">
+                  متابعة خطوط سير وسيارات التوزيع والحصص المستلمة والموزعة
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingLpgDist(null);
+                  setIsLpgDistModalOpen(true);
+                }}
+                disabled={!permissions.canAdd}
+                className="px-4 py-2 bg-[#0A1931] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4 text-[#D4AF37]" />
+                <span>إضافة موزع أسطوانات</span>
+              </button>
+            </div>
+
             <div className="overflow-x-auto border border-slate-200 rounded-2xl">
               <table className="w-full text-right text-xs">
                 <thead className="bg-[#0A1931] text-white font-black">
@@ -3587,37 +4353,132 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     <th className="py-3 px-3">الحصة / المستلم / الموزع / المتبقي ∑</th>
                     <th className="py-3 px-3">وسيلة النقل والترخيص</th>
                     <th className="py-3 px-3">الحالة</th>
+                    <th className="py-3 px-3 text-center">الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {state.lpgDistributors.map((dist) => {
-                    const rem = Math.max(0, dist.receivedQty - dist.distributedQty);
-                    return (
-                      <tr key={dist.id} className="hover:bg-slate-50">
-                        <td className="py-2.5 px-3 font-mono font-black">{dist.distributorCode}</td>
-                        <td className="py-2.5 px-3 font-bold">
-                          <div className="font-black">{dist.distributorName}</div>
-                          <div className="text-[11px] font-mono text-slate-500">{dist.nationalId}</div>
-                        </td>
-                        <td className="py-2.5 px-3 font-mono">{dist.phone}</td>
-                        <td className="py-2.5 px-3 font-bold">{dist.distributionScopeVillage}</td>
-                        <td className="py-2.5 px-3 font-bold">{dist.affiliatedDepotName}</td>
-                        <td className="py-2.5 px-3 font-mono text-[11px] font-bold">
-                          حصة: {dist.prescribedQuota} | استلم: {dist.receivedQty} | وزع:{' '}
-                          {dist.distributedQty} | متبقي: {rem}
-                        </td>
-                        <td className="py-2.5 px-3 text-[11px] font-bold">
-                          <div>{dist.vehicleDetails}</div>
-                          <div className="text-slate-500">{dist.licenseNumber}</div>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 font-black text-[11px]">
-                            {dist.status}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {groupedDistributors.groups.map((grp) => (
+                    <React.Fragment key={grp.localUnit}>
+                      {grp.items.map((dist) => {
+                        const rem = Math.max(0, dist.receivedQty - dist.distributedQty);
+                        return (
+                          <tr key={dist.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 font-mono font-black">{dist.distributorCode}</td>
+                            <td className="py-2.5 px-3 font-bold">
+                              <div className="font-black">{dist.distributorName}</div>
+                              <div className="text-[11px] font-mono text-slate-500">{dist.nationalId}</div>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono">{dist.phone}</td>
+                            <td className="py-2.5 px-3 font-bold">{dist.distributionScopeVillage}</td>
+                            <td className="py-2.5 px-3 font-bold">{dist.affiliatedDepotName}</td>
+                            <td className="py-2.5 px-3 font-mono text-[11px] font-bold">
+                              حصة: {dist.prescribedQuota} | استلم: {dist.receivedQty} | وزع:{' '}
+                              {dist.distributedQty} | متبقي: {rem}
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] font-bold">
+                              <div>{dist.vehicleDetails}</div>
+                              <div className="text-slate-500">{dist.licenseNumber}</div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 font-black text-[11px]">
+                                {dist.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <ModuleRowActions
+                                entityLabel={`موزع ${dist.distributorName}`}
+                                permissions={permissions}
+                                testIdPrefix={`it-dist-${dist.id}`}
+                                onView={() =>
+                                  setProfileModal({
+                                    title: `موزع بوتاجاز معتمد: ${dist.distributorName}`,
+                                    subtitle: `نطاق التوزيع: ${dist.distributionScopeVillage} — كود: ${dist.distributorCode}`,
+                                    badgeText: dist.status,
+                                    sections: [
+                                      {
+                                        title: 'بيانات الموزع والترخيص ووسيلة النقل',
+                                        fields: [
+                                          { label: 'كود الموزع', value: dist.distributorCode, mono: true },
+                                          { label: 'اسم الموزع', value: dist.distributorName },
+                                          { label: 'الرقم القومي', value: dist.nationalId, mono: true },
+                                          { label: 'الهاتف', value: dist.phone, mono: true },
+                                          { label: 'نطاق التوزيع', value: dist.distributionScopeVillage },
+                                          { label: 'المستودع التابع له', value: dist.affiliatedDepotName },
+                                          { label: 'وسيلة النقل', value: dist.vehicleDetails },
+                                          { label: 'رقم ترخيص السيارة', value: dist.licenseNumber, mono: true },
+                                        ],
+                                      },
+                                      {
+                                        title: 'الحصص وكميات الاستلام والتوزيع',
+                                        fields: [
+                                          { label: 'الحصة المقررة', value: `${dist.prescribedQuota} أسطوانة`, mono: true },
+                                          { label: 'المستلم الفعلي', value: `${dist.receivedQty} أسطوانة`, mono: true },
+                                          { label: 'الموزع الفعلي', value: `${dist.distributedQty} أسطوانة`, mono: true, highlight: true },
+                                          { label: 'المتبقي لديه', value: `${rem} أسطوانة`, mono: true },
+                                          { label: 'المخالفات السابقة', value: dist.previousViolations || 'لا توجد' },
+                                          { label: 'ملخص السجل اليومي', value: dist.dailyMonthlyLogSummary || 'منتظم' },
+                                        ],
+                                      },
+                                    ],
+                                  })
+                                }
+                                onEdit={() => {
+                                  setEditingLpgDist(dist);
+                                  setIsLpgDistModalOpen(true);
+                                }}
+                                onDelete={() =>
+                                  setDeleteTarget({
+                                    title: `موزع ${dist.distributorName}`,
+                                    summary: [
+                                      { label: 'الموزع', value: dist.distributorName },
+                                      { label: 'القرية', value: dist.distributionScopeVillage },
+                                      { label: 'المستودع', value: dist.affiliatedDepotName },
+                                    ],
+                                    onConfirm: () =>
+                                      commitInternalTradeState(
+                                        {
+                                          lpgDistributors: state.lpgDistributors.filter((x) => x.id !== dist.id),
+                                        },
+                                        `تم حذف بيانات الموزع ${dist.distributorName}`,
+                                        {
+                                          actionType: 'حذف',
+                                          entityName: 'موزع بوتاجاز',
+                                          entityId: dist.distributorCode,
+                                          beforeSummary: dist.distributorName,
+                                        }
+                                      ),
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <LocalUnitSubtotalRow
+                        unitName={grp.localUnit}
+                        recordCount={grp.count}
+                        labelColSpan={4}
+                        metricCells={[
+                          { content: '—' },
+                          { content: `حصة:${grp.subtotals.prescribedQuota} | استلم:${grp.subtotals.receivedQty} | وزع:${grp.subtotals.distributedQty} | متبقي:${grp.derivedMetrics.remaining}`, mono: true },
+                          { content: '—' },
+                          { content: '—' },
+                          { content: '—' },
+                        ]}
+                      />
+                    </React.Fragment>
+                  ))}
+                  <VillageGrandTotalRow
+                    totalCount={groupedDistributors.grandTotalCount}
+                    labelColSpan={4}
+                    metricCells={[
+                      { content: '—' },
+                      { content: `حصة:${groupedDistributors.grandTotals.prescribedQuota} | استلم:${groupedDistributors.grandTotals.receivedQty} | وزع:${groupedDistributors.grandTotals.distributedQty} | متبقي:${groupedDistributors.derivedGrandMetrics.remaining}`, mono: true },
+                      { content: '—' },
+                      { content: '—' },
+                      { content: '—' },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -3786,45 +4647,39 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
       )}
 
       {/* =====================================================================
-          VIEW 15: SMART ALERTS CENTER (نظام التنبيهات الذكية - 6 فئات رقابية)
+          VIEW 15: SMART ALERTS CENTER (نظام التنبيهات الذكية)
          ===================================================================== */}
       {subView === 'alerts' && (
         <div className="bg-white border-2 border-[#0A1931] rounded-2xl p-5 space-y-4">
-          <div>
-            <h2 className="text-lg font-black text-[#0A1931]">
-              نظام التنبيهات الرقابية الذكية لقسم التجارة الداخلية والبوتاجاز والوقود ({smartAlerts.length} تنبيه نشط)
-            </h2>
-            <p className="text-xs font-bold text-slate-500">
-              يشمل التراخيص والسجلات التجارية القاربة على الانتهاء، المنشآت غير المستوفاة للمستندات، الشكاوى غير المفحوصة، المحاضر قيد الاستكمال، والحملات وعجز الحصص
-            </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-black text-[#0A1931]">
+                مركز التنبيهات الرقابية الذكية — قسم التجارة الداخلية والبوتاجاز والمواد البترولية
+              </h2>
+              <p className="text-xs font-bold text-slate-500">
+                تنبيهات استباقية للتراخيص، السجلات، الشكاوى المعلقة، المحاضر، وفروق جرد الوقود وعجز الحصص
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-xl bg-[#0A1931] text-white text-xs font-black font-mono">
+                {departmentAlerts.length} تنبيه
+              </span>
+            </div>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {smartAlerts.map((al) => (
-              <div
-                key={al.id}
-                className={`p-4 rounded-2xl border-2 flex items-start justify-between gap-3 ${
-                  al.severity === 'critical'
-                    ? 'bg-rose-50/70 border-rose-300 text-rose-950'
-                    : 'bg-amber-50/70 border-amber-300 text-amber-950'
-                }`}
-              >
-                <div className="space-y-1">
-                  <span className="inline-block px-2.5 py-0.5 rounded-md bg-white border border-slate-300 text-[10px] font-black">
-                    {al.category}
-                  </span>
-                  <div className="text-sm font-black">{al.title}</div>
-                  <div className="text-xs font-semibold opacity-90">{al.detail}</div>
-                </div>
-                <div className="text-left shrink-0">
-                  <div className="px-2.5 py-1 rounded-lg bg-[#0A1931] text-white text-[11px] font-mono font-black">
-                    {al.targetCode}
-                  </div>
-                  <div className="text-[11px] font-black mt-1 text-center">{al.village}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <DepartmentAlertsPanel
+            title="لوحة التنبيهات والرقابة التموينية"
+            departmentLabel="التجارة الداخلية"
+            alerts={departmentAlerts}
+            readAlertIds={state.readAlertIds || []}
+            canDeleteAlerts={isAdmin}
+            onMarkRead={(alertId: string) => {
+              const nextRead = Array.from(new Set([...(state.readAlertIds || []), alertId]));
+              commitInternalTradeState({ readAlertIds: nextRead }, 'تم تحديد التنبيه كمقروء');
+            }}
+            onMarkAllRead={(allIds: string[]) => {
+              commitInternalTradeState({ readAlertIds: allIds }, 'تم تحديد جميع التنبيهات كمقروءة');
+            }}
+          />
         </div>
       )}
 
@@ -4006,6 +4861,96 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 </tbody>
               </table>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          VIEW 17: AUDIT LOG & SECURITY (سجل التدقيق والأمان)
+         ===================================================================== */}
+      {subView === 'audit' && (
+        <div className="bg-white border-2 border-[#0A1931] rounded-2xl p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black text-[#0A1931]">
+                سجل التدقيق والأمان والعمليات الرقابية لقسم التجارة الداخلية
+              </h2>
+              <p className="text-xs font-bold text-slate-500">
+                سجل أمني يوثق جميع عمليات الإضافة والتعديل والحذف وتاريخها وهوية المستخدم المنفذ
+              </p>
+            </div>
+          </div>
+
+          <AuditLogAdminToolbar
+            sliceKey="internalTrade"
+            branchId={branchId}
+            scopeLabel="التجارة الداخلية والرقابة"
+            isSuperAdmin={Boolean(currentUser?.role === 'superadmin' || isAdmin)}
+            totalLogsCount={(state.auditLogs || []).length}
+            onAuditLogsCleared={() => {
+              commitInternalTradeState(
+                { auditLogs: [] },
+                'تم إفراغ سجل التدقيق بواسطة المشرف العام بعد التحقق الأمني المزدوج'
+              );
+            }}
+          />
+
+          <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-[#0A1931] text-white font-black">
+                <tr>
+                  <th className="py-3 px-3">التوقيت والتاريخ</th>
+                  <th className="py-3 px-3">المستخدم</th>
+                  <th className="py-3 px-3">نوع العملية</th>
+                  <th className="py-3 px-3">السجل / المنشأة</th>
+                  <th className="py-3 px-3">كود السجل</th>
+                  <th className="py-3 px-3">البيان السابق</th>
+                  <th className="py-3 px-3">البيان اللاحق</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {(state.auditLogs || []).length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-slate-400 font-bold">
+                      لا توجد سجلات تدقيق مسجلة حتى الآن
+                    </td>
+                  </tr>
+                ) : (
+                  (state.auditLogs || []).map((log) => (
+                    <tr key={log.id} className="hover:bg-slate-50">
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-600">
+                        {new Date(log.timestamp).toLocaleString('ar-EG')}
+                      </td>
+                      <td className="py-2.5 px-3 font-bold">
+                        <div>{log.userFullName}</div>
+                        <div className="text-[10px] font-mono text-slate-400">@{log.username}</div>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span
+                          className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-black ${
+                            log.actionType === 'حذف'
+                              ? 'bg-rose-100 text-rose-900'
+                              : log.actionType === 'تعديل'
+                              ? 'bg-amber-100 text-amber-900'
+                              : log.actionType === 'إضافة'
+                              ? 'bg-emerald-100 text-emerald-900'
+                              : 'bg-blue-100 text-blue-900'
+                          }`}
+                        >
+                          {log.actionType}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 font-black text-[#0A1931]">{log.entityName}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold">{log.entityId}</td>
+                      <td className="py-2.5 px-3 text-slate-500 max-w-xs truncate">{log.beforeSummary || '—'}</td>
+                      <td className="py-2.5 px-3 text-[#0A1931] font-bold max-w-xs truncate">
+                        {log.afterSummary || '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -5214,7 +6159,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
       )}
 
       {/* =====================================================================
-          MODAL: ADD PETROLEUM VILLAGE CIRCULATION RECORD
+          MODAL: ADD / EDIT PETROLEUM VILLAGE CIRCULATION RECORD
          ===================================================================== */}
       {isPetroQuotaModalOpen && (
         <div
@@ -5223,12 +6168,13 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
           className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
         >
           <form
+            key={editingPetroRecord?.id || 'new-petro'}
             onSubmit={(e) => {
               e.preventDefault();
               const fd = new FormData(e.currentTarget);
               const rec: PetroleumVillageCirculationRecord = {
                 id: editingPetroRecord?.id || `petro-${Date.now()}`,
-                serialNo: state.petroleumVillageCirculation.length + 1,
+                serialNo: editingPetroRecord?.serialNo || state.petroleumVillageCirculation.length + 1,
                 village: String(fd.get('village') || 'بلقينا'),
                 localUnit: String(fd.get('localUnit') || 'الوحدة المحلية ببلقينا'),
                 population: Number(fd.get('population') || 35000),
@@ -5242,24 +6188,38 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 monthKey: '2026-05',
                 notes: '',
               };
-              onChangeState(
+              const nextList = editingPetroRecord
+                ? state.petroleumVillageCirculation.map((x) => (x.id === editingPetroRecord.id ? rec : x))
+                : [rec, ...state.petroleumVillageCirculation];
+              commitInternalTradeState(
+                { petroleumVillageCirculation: nextList },
+                `تم تسجيل بيانات تداول "${rec.fuelType}" لقرية ${rec.village} وحساب نصيب الفرد باللتر تلقائياً`,
                 {
-                  ...state,
-                  petroleumVillageCirculation: [...state.petroleumVillageCirculation, rec],
-                },
-                `تم تسجيل بيانات تداول "${rec.fuelType}" لقرية ${rec.village} وحساب نصيب الفرد باللتر تلقائياً`
+                  actionType: editingPetroRecord ? 'تعديل' : 'إضافة',
+                  entityName: 'تداول مواد بترولية',
+                  entityId: `${rec.village}-${rec.fuelType}`,
+                  beforeSummary: editingPetroRecord?.fuelType,
+                  afterSummary: `${rec.disbursedLiters} لتر`,
+                }
               );
               setIsPetroQuotaModalOpen(false);
+              setEditingPetroRecord(null);
             }}
             className="bg-white border-2 border-[#0A1931] rounded-3xl max-w-lg w-full p-6 space-y-4"
           >
             <h3 className="text-lg font-black text-[#0A1931]">
-              إضافة سجل تداول مادة بترولية باللتر (مستقل لكل نوع وقود)
+              {editingPetroRecord
+                ? `تعديل سجل ${editingPetroRecord.fuelType} لقرية ${editingPetroRecord.village}`
+                : 'إضافة سجل تداول مادة بترولية باللتر (مستقل لكل نوع وقود)'}
             </h3>
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
                 <label className="font-black block mb-1">القرية *</label>
-                <select name="village" className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold">
+                <select
+                  name="village"
+                  defaultValue={editingPetroRecord?.village || uniqueVillages[0] || 'بلقينا'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                >
                   {uniqueVillages.map((v) => (
                     <option key={v} value={v}>
                       {v}
@@ -5269,7 +6229,11 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
               </div>
               <div>
                 <label className="font-black block mb-1">نوع المادة البترولية *</label>
-                <select name="fuelType" className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold">
+                <select
+                  name="fuelType"
+                  defaultValue={editingPetroRecord?.fuelType || 'السولار'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                >
                   {FUEL_TYPES.map((ft) => (
                     <option key={ft} value={ft}>
                       {ft}
@@ -5283,7 +6247,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   name="population"
                   type="number"
                   min={1}
-                  defaultValue={38000}
+                  defaultValue={editingPetroRecord?.population || 38000}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
@@ -5293,7 +6257,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   name="openingBalanceLiters"
                   type="number"
                   min={0}
-                  defaultValue={12000}
+                  defaultValue={editingPetroRecord?.openingBalanceLiters ?? 12000}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
@@ -5303,7 +6267,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   name="inboundLiters"
                   type="number"
                   min={0}
-                  defaultValue={95000}
+                  defaultValue={editingPetroRecord?.inboundLiters ?? 95000}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
@@ -5313,7 +6277,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   name="disbursedLiters"
                   type="number"
                   min={0}
-                  defaultValue={92000}
+                  defaultValue={editingPetroRecord?.disbursedLiters ?? 92000}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
@@ -5321,7 +6285,10 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
               <button
                 type="button"
-                onClick={() => setIsPetroQuotaModalOpen(false)}
+                onClick={() => {
+                  setIsPetroQuotaModalOpen(false);
+                  setEditingPetroRecord(null);
+                }}
                 className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer"
               >
                 إلغاء
@@ -5331,6 +6298,555 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 className="px-5 py-2 rounded-xl bg-[#0A1931] text-white text-xs font-black cursor-pointer"
               >
                 حفظ وحساب نصيب الفرد باللتر
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL: ADD / EDIT FUEL STATION
+         ===================================================================== */}
+      {isFuelStationModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <form
+            key={editingFuelStation?.id || 'new-station'}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const rec: FuelStationControlRecord = {
+                id: editingFuelStation?.id || `st-${Date.now()}`,
+                stationCode:
+                  editingFuelStation?.stationCode ||
+                  String(fd.get('stationCode') || `ST-MHL-0${state.fuelStations.length + 1}`),
+                stationName: String(fd.get('stationName') || 'محطة وقود جديدة'),
+                ownerName: String(fd.get('ownerName') || 'صاحب المحطة'),
+                managerName: String(fd.get('managerName') || 'مدير المحطة'),
+                village: String(fd.get('village') || 'بلقينا'),
+                localUnit: String(fd.get('localUnit') || 'الوحدة المحلية ببلقينا'),
+                address: String(fd.get('address') || 'طريق المحلة'),
+                distributionCompany: String(fd.get('distributionCompany') || 'مصر للبترول'),
+                availableFuelTypes: ['بنزين 80', 'بنزين 92', 'السولار'],
+                tanksCount: Number(fd.get('tanksCount') || 4),
+                tankCapacityLiters: Number(fd.get('tankCapacityLiters') || 90000),
+                pumpMetersReadingSummary: 'عدادات سرية إلكترونية سليمة',
+                primaryFuelType: String(fd.get('primaryFuelType') || 'السولار'),
+                openingBalanceLiters: Number(fd.get('openingBalanceLiters') || 25000),
+                inboundLiters: Number(fd.get('inboundLiters') || 120000),
+                soldDisbursedLiters: Number(fd.get('soldDisbursedLiters') || 115000),
+                actualStockLiters: Number(fd.get('actualStockLiters') || 30000),
+                lastInventoryDate: new Date().toISOString().slice(0, 10),
+                licenseStatus: 'ساري',
+                stationStatus: (fd.get('stationStatus') as FuelStationControlRecord['stationStatus']) || 'تعمل بانتظام',
+                inspectionActionTaken: String(fd.get('inspectionActionTaken') || 'مطابق للسجلات'),
+                notes: '',
+              };
+              const nextList = editingFuelStation
+                ? state.fuelStations.map((x) => (x.id === editingFuelStation.id ? rec : x))
+                : [rec, ...state.fuelStations];
+              commitInternalTradeState(
+                { fuelStations: nextList },
+                `تم حفظ بيانات محطة الوقود "${rec.stationName}" ومطابقة الرصيد الدفتري بالفعلي`,
+                {
+                  actionType: editingFuelStation ? 'تعديل' : 'إضافة',
+                  entityName: 'محطة وقود',
+                  entityId: rec.stationCode,
+                  beforeSummary: editingFuelStation?.stationName,
+                  afterSummary: rec.stationName,
+                }
+              );
+              setIsFuelStationModalOpen(false);
+              setEditingFuelStation(null);
+            }}
+            className="bg-white border-2 border-[#0A1931] rounded-3xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+          >
+            <h3 className="text-lg font-black text-[#0A1931]">
+              {editingFuelStation ? `تعديل بيانات محطة ${editingFuelStation.stationName}` : 'إضافة محطة وقود جديدة'}
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="font-black block mb-1">اسم المحطة *</label>
+                <input
+                  name="stationName"
+                  required
+                  defaultValue={editingFuelStation?.stationName || ''}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">شركة التوزيع *</label>
+                <input
+                  name="distributionCompany"
+                  required
+                  defaultValue={editingFuelStation?.distributionCompany || 'مصر للبترول'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">اسم المدير المسؤول *</label>
+                <input
+                  name="managerName"
+                  required
+                  defaultValue={editingFuelStation?.managerName || ''}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">الوقود الرئيسي *</label>
+                <select
+                  name="primaryFuelType"
+                  defaultValue={editingFuelStation?.primaryFuelType || 'السولار'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                >
+                  {FUEL_TYPES.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="font-black block mb-1">القرية *</label>
+                <select
+                  name="village"
+                  defaultValue={editingFuelStation?.village || uniqueVillages[0] || 'بلقينا'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                >
+                  {uniqueVillages.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="font-black block mb-1">الوحدة المحلية *</label>
+                <input
+                  name="localUnit"
+                  defaultValue={editingFuelStation?.localUnit || 'الوحدة المحلية ببلقينا'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">عدد الخزانات *</label>
+                <input
+                  name="tanksCount"
+                  type="number"
+                  min={1}
+                  defaultValue={editingFuelStation?.tanksCount ?? 4}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">إجمالي سعة الخزانات (لتر) *</label>
+                <input
+                  name="tankCapacityLiters"
+                  type="number"
+                  min={1000}
+                  defaultValue={editingFuelStation?.tankCapacityLiters ?? 90000}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">رصيد أول المدة (لتر) *</label>
+                <input
+                  name="openingBalanceLiters"
+                  type="number"
+                  min={0}
+                  defaultValue={editingFuelStation?.openingBalanceLiters ?? 20000}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">الوارد الفعلي (لتر) *</label>
+                <input
+                  name="inboundLiters"
+                  type="number"
+                  min={0}
+                  defaultValue={editingFuelStation?.inboundLiters ?? 110000}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">المنصرف والمبيعات (لتر) *</label>
+                <input
+                  name="soldDisbursedLiters"
+                  type="number"
+                  min={0}
+                  defaultValue={editingFuelStation?.soldDisbursedLiters ?? 105000}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">الرصيد الفعلي بالجرد (لتر) *</label>
+                <input
+                  name="actualStockLiters"
+                  type="number"
+                  min={0}
+                  defaultValue={editingFuelStation?.actualStockLiters ?? 25000}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFuelStationModalOpen(false);
+                  setEditingFuelStation(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl bg-[#0A1931] text-white text-xs font-black cursor-pointer"
+              >
+                حفظ المحطة
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL: ADD / EDIT LPG DEPOT
+         ===================================================================== */}
+      {isLpgDepotModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <form
+            key={editingLpgDepot?.id || 'new-depot'}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const rec: LpgDepotControlRecord = {
+                id: editingLpgDepot?.id || `depot-${Date.now()}`,
+                depotCode:
+                  editingLpgDepot?.depotCode ||
+                  String(fd.get('depotCode') || `DPT-MHL-0${state.lpgDepots.length + 1}`),
+                depotName: String(fd.get('depotName') || 'مستودع بوتاجاز'),
+                ownerName: String(fd.get('ownerName') || 'صاحب المستودع'),
+                managerName: String(fd.get('managerName') || 'مدير المستودع'),
+                address: String(fd.get('address') || 'مركز المحلة'),
+                village: String(fd.get('village') || 'بلقينا'),
+                localUnit: String(fd.get('localUnit') || 'الوحدة المحلية ببلقينا'),
+                licenseNumber: String(fd.get('licenseNumber') || 'ترخيص-بوتاجاز-99'),
+                licenseExpiryDate: String(fd.get('licenseExpiryDate') || '2027-12-31'),
+                prescribedQuota: Number(fd.get('prescribedQuota') || 15000),
+                inboundCylinders: Number(fd.get('inboundCylinders') || 14800),
+                disbursedCylinders: Number(fd.get('disbursedCylinders') || 14500),
+                fullCylindersCount: Number(fd.get('fullCylindersCount') || 300),
+                emptyCylindersCount: Number(fd.get('emptyCylindersCount') || 280),
+                damagedCylindersCount: Number(fd.get('damagedCylindersCount') || 15),
+                inventoryResult: 'مطابق للجرد الفعلي',
+                campaignsSummary: 'تم التفتيش الدوري عليه',
+                violationsSummary: '',
+                affiliatedDistributorsCount: Number(fd.get('affiliatedDistributorsCount') || 4),
+                notes: '',
+              };
+              const nextList = editingLpgDepot
+                ? state.lpgDepots.map((x) => (x.id === editingLpgDepot.id ? rec : x))
+                : [rec, ...state.lpgDepots];
+              commitInternalTradeState(
+                { lpgDepots: nextList },
+                `تم حفظ بيانات مستودع البوتاجاز "${rec.depotName}"`,
+                {
+                  actionType: editingLpgDepot ? 'تعديل' : 'إضافة',
+                  entityName: 'مستودع بوتاجاز',
+                  entityId: rec.depotCode,
+                  beforeSummary: editingLpgDepot?.depotName,
+                  afterSummary: rec.depotName,
+                }
+              );
+              setIsLpgDepotModalOpen(false);
+              setEditingLpgDepot(null);
+            }}
+            className="bg-white border-2 border-[#0A1931] rounded-3xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+          >
+            <h3 className="text-lg font-black text-[#0A1931]">
+              {editingLpgDepot ? `تعديل مستودع ${editingLpgDepot.depotName}` : 'إضافة مستودع بوتاجاز جديد'}
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="font-black block mb-1">اسم المستودع *</label>
+                <input
+                  name="depotName"
+                  required
+                  defaultValue={editingLpgDepot?.depotName || ''}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">اسم صاحب المستودع *</label>
+                <input
+                  name="ownerName"
+                  required
+                  defaultValue={editingLpgDepot?.ownerName || ''}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">القرية *</label>
+                <select
+                  name="village"
+                  defaultValue={editingLpgDepot?.village || uniqueVillages[0] || 'بلقينا'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                >
+                  {uniqueVillages.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="font-black block mb-1">الوحدة المحلية *</label>
+                <input
+                  name="localUnit"
+                  defaultValue={editingLpgDepot?.localUnit || 'الوحدة المحلية'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">رقم الترخيص</label>
+                <input
+                  name="licenseNumber"
+                  defaultValue={editingLpgDepot?.licenseNumber || 'ترخيص-بوتاجاز-2026'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">تاريخ انتهاء الترخيص</label>
+                <input
+                  name="licenseExpiryDate"
+                  type="date"
+                  defaultValue={editingLpgDepot?.licenseExpiryDate || '2028-12-31'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">الحصة المقررة (أسطوانة) *</label>
+                <input
+                  name="prescribedQuota"
+                  type="number"
+                  min={100}
+                  defaultValue={editingLpgDepot?.prescribedQuota ?? 15000}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">الوارد الفعلي (أسطوانة) *</label>
+                <input
+                  name="inboundCylinders"
+                  type="number"
+                  min={0}
+                  defaultValue={editingLpgDepot?.inboundCylinders ?? 14800}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">المنصرف الفعلي (أسطوانة) *</label>
+                <input
+                  name="disbursedCylinders"
+                  type="number"
+                  min={0}
+                  defaultValue={editingLpgDepot?.disbursedCylinders ?? 14500}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">عدد الموزعين المعتمدين</label>
+                <input
+                  name="affiliatedDistributorsCount"
+                  type="number"
+                  min={0}
+                  defaultValue={editingLpgDepot?.affiliatedDistributorsCount ?? 4}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLpgDepotModalOpen(false);
+                  setEditingLpgDepot(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl bg-[#0A1931] text-white text-xs font-black cursor-pointer"
+              >
+                حفظ المستودع
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL: ADD / EDIT LPG DISTRIBUTOR
+         ===================================================================== */}
+      {isLpgDistModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <form
+            key={editingLpgDist?.id || 'new-dist'}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const rec: LpgDistributorRecord = {
+                id: editingLpgDist?.id || `dist-${Date.now()}`,
+                distributorCode:
+                  editingLpgDist?.distributorCode ||
+                  String(fd.get('distributorCode') || `DST-MHL-0${state.lpgDistributors.length + 1}`),
+                distributorName: String(fd.get('distributorName') || 'موزع أسطوانات'),
+                nationalId: String(fd.get('nationalId') || '28501011600000'),
+                phone: String(fd.get('phone') || '01000000000'),
+                address: String(fd.get('address') || 'مركز المحلة'),
+                distributionScopeVillage: String(fd.get('distributionScopeVillage') || 'بلقينا'),
+                localUnit: String(fd.get('localUnit') || 'الوحدة المحلية ببلقينا'),
+                affiliatedDepotName: String(fd.get('affiliatedDepotName') || 'مستودع بلقينا الرئيسي'),
+                prescribedQuota: Number(fd.get('prescribedQuota') || 2500),
+                receivedQty: Number(fd.get('receivedQty') || 2500),
+                distributedQty: Number(fd.get('distributedQty') || 2450),
+                vehicleDetails: String(fd.get('vehicleDetails') || 'سيارة نصف نقل - نقل أسطوانات'),
+                licenseNumber: String(fd.get('licenseNumber') || 'ط د ر 8812'),
+                status: (fd.get('status') as LpgDistributorRecord['status']) || 'نشط',
+                previousViolations: '',
+                dailyMonthlyLogSummary: 'توزيع منتظم',
+              };
+              const nextList = editingLpgDist
+                ? state.lpgDistributors.map((x) => (x.id === editingLpgDist.id ? rec : x))
+                : [rec, ...state.lpgDistributors];
+              commitInternalTradeState(
+                { lpgDistributors: nextList },
+                `تم حفظ بيانات الموزع "${rec.distributorName}"`,
+                {
+                  actionType: editingLpgDist ? 'تعديل' : 'إضافة',
+                  entityName: 'موزع بوتاجاز',
+                  entityId: rec.distributorCode,
+                  beforeSummary: editingLpgDist?.distributorName,
+                  afterSummary: rec.distributorName,
+                }
+              );
+              setIsLpgDistModalOpen(false);
+              setEditingLpgDist(null);
+            }}
+            className="bg-white border-2 border-[#0A1931] rounded-3xl max-w-xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+          >
+            <h3 className="text-lg font-black text-[#0A1931]">
+              {editingLpgDist ? `تعديل بيانات الموزع ${editingLpgDist.distributorName}` : 'إضافة موزع أسطوانات معتمد'}
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="font-black block mb-1">اسم الموزع *</label>
+                <input
+                  name="distributorName"
+                  required
+                  defaultValue={editingLpgDist?.distributorName || ''}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">الرقم القومي (14 رقم) *</label>
+                <input
+                  name="nationalId"
+                  required
+                  defaultValue={editingLpgDist?.nationalId || '28501011600000'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">رقم الهاتف *</label>
+                <input
+                  name="phone"
+                  required
+                  defaultValue={editingLpgDist?.phone || '01012345678'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">نطاق التوزيع (القرية) *</label>
+                <select
+                  name="distributionScopeVillage"
+                  defaultValue={editingLpgDist?.distributionScopeVillage || uniqueVillages[0] || 'بلقينا'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                >
+                  {uniqueVillages.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="font-black block mb-1">المستودع التابع له *</label>
+                <input
+                  name="affiliatedDepotName"
+                  required
+                  defaultValue={editingLpgDist?.affiliatedDepotName || state.lpgDepots[0]?.depotName || 'مستودع بلقينا'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">الحصة المقررة (أسطوانة) *</label>
+                <input
+                  name="prescribedQuota"
+                  type="number"
+                  min={1}
+                  defaultValue={editingLpgDist?.prescribedQuota ?? 2500}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">بيانات وسيلة النقل</label>
+                <input
+                  name="vehicleDetails"
+                  defaultValue={editingLpgDist?.vehicleDetails || 'سيارة ربع نقل صندوق حديدي'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+              <div>
+                <label className="font-black block mb-1">رقم ترخيص السيارة</label>
+                <input
+                  name="licenseNumber"
+                  defaultValue={editingLpgDist?.licenseNumber || 'ط د ر 8812'}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLpgDistModalOpen(false);
+                  setEditingLpgDist(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl bg-[#0A1931] text-white text-xs font-black cursor-pointer"
+              >
+                حفظ الموزع
               </button>
             </div>
           </form>
@@ -5365,12 +6881,17 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 inspectorOrOperator: currentUser?.fullName || 'مفتش الرقابة على المواد البترولية',
                 notes: String(fd.get('notes') || 'مطابق لسجل 21 بترول'),
               };
-              onChangeState(
+              commitInternalTradeState(
                 {
-                  ...state,
                   fuelStationMovements: [newMov, ...state.fuelStationMovements],
                 },
-                `تم تسجيل حركة ${newMov.movementType} (${newMov.quantityLiters.toLocaleString()} لتر ${newMov.fuelType}) بمحطة ${newMov.stationName}`
+                `تم تسجيل حركة ${newMov.movementType} (${newMov.quantityLiters.toLocaleString()} لتر ${newMov.fuelType}) بمحطة ${newMov.stationName}`,
+                {
+                  actionType: 'إضافة',
+                  entityName: 'حركة وقود يومية',
+                  entityId: newMov.invoiceOrDocNumber,
+                  afterSummary: `${newMov.stationName} - ${newMov.quantityLiters} لتر`,
+                }
               );
               setIsMovementModalOpen(false);
             }}
@@ -5442,6 +6963,35 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             </div>
           </form>
         </div>
+      )}
+
+      {/* =====================================================================
+          GLOBAL MAGIC EYE PROFILE MODAL & DELETE CONFIRMATION MODAL
+         ===================================================================== */}
+      {profileModal && (
+        <ModuleRecordProfileModal
+          isOpen={true}
+          title={profileModal.title}
+          subtitle={profileModal.subtitle}
+          badgeText={profileModal.badgeText}
+          sections={profileModal.sections}
+          updatedAt={profileModal.updatedAt}
+          onClose={() => setProfileModal(null)}
+        />
+      )}
+
+      {deleteTarget && (
+        <ModuleDeleteConfirmModal
+          isOpen={true}
+          canDelete={permissions.canDelete}
+          entityTitle={deleteTarget.title}
+          recordSummary={deleteTarget.summary}
+          onConfirmDelete={() => {
+            deleteTarget.onConfirm();
+            setDeleteTarget(null);
+          }}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   );

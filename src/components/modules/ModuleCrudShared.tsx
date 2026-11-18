@@ -106,27 +106,34 @@ export const ModuleTableToolbar: React.FC<ModuleTableToolbarProps> = ({
   );
 };
 
-interface ModuleRowActionsProps {
-  entityLabel: string;
+export interface ModuleRowActionsProps {
+  entityLabel?: string;
   updatedAt?: string;
-  permissions: ModulePermissions;
+  permissions?: ModulePermissions;
+  isSuperAdmin?: boolean;
   onView?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onPrint?: () => void;
   extraAction?: React.ReactNode;
   testIdPrefix?: string;
 }
 
 export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
-  entityLabel,
+  entityLabel = 'السجل',
   updatedAt,
   permissions,
+  isSuperAdmin,
   onView,
   onEdit,
   onDelete,
+  onPrint,
   extraAction,
   testIdPrefix = 'row',
 }) => {
+  const canDeleteFinal = isSuperAdmin !== undefined ? isSuperAdmin : (permissions?.canDelete ?? false);
+  const canEditFinal = permissions ? permissions.canEdit : true;
+
   return (
     <div className="flex flex-col items-center justify-center gap-1">
       <div className="inline-flex items-center justify-center gap-1.5 flex-wrap">
@@ -144,7 +151,19 @@ export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
             <span>عرض</span>
           </button>
         )}
-        {permissions.canEdit && onEdit && (
+        {onPrint && (
+          <button
+            type="button"
+            onClick={onPrint}
+            aria-label={`طباعة ${entityLabel}`}
+            title={`طباعة تقرير ${entityLabel}`}
+            className="px-2.5 py-1 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer shadow-xs"
+          >
+            <Printer className="w-3.5 h-3.5 text-white" />
+            <span>طباعة</span>
+          </button>
+        )}
+        {canEditFinal && onEdit && (
           <button
             type="button"
             onClick={onEdit}
@@ -157,7 +176,7 @@ export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
             <span>تعديل</span>
           </button>
         )}
-        {permissions.canDelete && onDelete && (
+        {canDeleteFinal && onDelete && (
           <button
             type="button"
             onClick={onDelete}
@@ -170,7 +189,7 @@ export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
             <span>حذف</span>
           </button>
         )}
-        {!onView && !permissions.canEdit && !permissions.canDelete && (
+        {!onView && !canEditFinal && !canDeleteFinal && (
           <span className="text-[10px] text-slate-400 font-bold">للعرض فقط</span>
         )}
       </div>
@@ -440,26 +459,34 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
   );
 };
 
-interface ModuleDeleteConfirmModalProps {
+export interface ModuleDeleteConfirmModalProps {
   isOpen: boolean;
   entityTitle: string;
   recordSummary: { label: string; value: string | number }[];
-  canDelete: boolean;
+  canDelete?: boolean;
+  isSuperAdmin?: boolean;
+  entityTypeLabel?: string;
   blockReason?: string;
   onClose: () => void;
-  onConfirmDelete: () => void;
+  onConfirmDelete?: () => void;
+  onConfirm?: () => void;
 }
 
 export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> = ({
   isOpen,
   entityTitle,
   recordSummary,
-  canDelete,
+  canDelete = true,
+  isSuperAdmin,
+  entityTypeLabel,
   blockReason,
   onClose,
   onConfirmDelete,
+  onConfirm,
 }) => {
   const [isDeleting, setIsDeleting] = useState(false);
+  const canDeleteAllowed = isSuperAdmin !== undefined ? isSuperAdmin : canDelete;
+  const handleConfirm = onConfirmDelete || onConfirm || (() => {});
 
   useEffect(() => {
     if (isOpen) setIsDeleting(false);
@@ -483,7 +510,9 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
               <Trash2 className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-black">تأكيد حذف السجل من قاعدة البيانات</h3>
+              <h3 className="text-sm font-black">
+                تأكيد حذف {entityTypeLabel ? `«${entityTypeLabel}»` : 'السجل'} من قاعدة البيانات
+              </h3>
               <p className="text-[11px] text-rose-300 font-bold">{entityTitle}</p>
             </div>
           </div>
@@ -508,13 +537,13 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
             ))}
           </div>
 
-          {!canDelete ? (
+          {!canDeleteAllowed ? (
             <div
               className="p-3 bg-amber-50 border border-amber-400 text-amber-950 rounded-xl font-black flex items-start gap-2"
               data-testid="module-delete-blocked-reason"
             >
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <span>{blockReason}</span>
+              <span>{blockReason || 'الحذف مقتصر على المشرف العام (Super Admin) فقط.'}</span>
             </div>
           ) : (
             <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl font-bold">
@@ -530,7 +559,7 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
             >
               إلغاء
             </button>
-            {canDelete && (
+            {canDeleteAllowed && (
               <button
                 type="button"
                 disabled={isDeleting}
@@ -538,7 +567,7 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
                 onClick={() => {
                   if (isDeleting) return;
                   setIsDeleting(true);
-                  onConfirmDelete();
+                  handleConfirm();
                   onClose();
                 }}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl font-black inline-flex items-center gap-1.5 cursor-pointer shadow-sm"
@@ -563,12 +592,26 @@ export interface RecordProfileSection {
   fields: { label: string; value: string | number | boolean | null | undefined; mono?: boolean; highlight?: boolean }[];
 }
 
-interface ModuleRecordProfileModalProps {
+export interface RecordProfileFieldItem {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+  highlight?: boolean;
+  badge?: boolean;
+  badgeColor?: string;
+  colSpan?: number;
+}
+
+export interface ModuleRecordProfileModalProps {
   isOpen: boolean;
   title: string;
   subtitle?: string;
   badgeText?: string;
-  sections: RecordProfileSection[];
+  entityType?: string;
+  printTitle?: string;
+  preparedBy?: string;
+  sections?: RecordProfileSection[];
+  fields?: RecordProfileFieldItem[];
   updatedAt?: string;
   onClose: () => void;
 }
@@ -578,10 +621,32 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
   title,
   subtitle,
   badgeText,
+  entityType,
+  printTitle,
+  preparedBy,
   sections,
+  fields,
   updatedAt,
   onClose,
 }) => {
+  const normalizedSections: RecordProfileSection[] = useMemo(() => {
+    if (sections && sections.length > 0) return sections;
+    if (fields && fields.length > 0) {
+      return [
+        {
+          title: entityType || 'البيانات التفصيلية للسجل',
+          fields: fields.map((f) => ({
+            label: f.label,
+            value: f.value as any,
+            mono: f.mono,
+            highlight: f.badge || f.highlight,
+          })),
+        },
+      ];
+    }
+    return [];
+  }, [sections, fields, entityType]);
+
   if (!isOpen) return null;
 
   return (
@@ -644,7 +709,7 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
             )}
           </div>
 
-          {sections.map((sec, idx) => (
+          {normalizedSections.map((sec, idx) => (
             <div key={idx} className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
               <div className="bg-slate-100 px-4 py-2 border-b border-slate-200 text-xs font-black text-[#0A1628]">
                 {sec.title}
@@ -782,23 +847,36 @@ export interface AuditDeletionSecurityEntry {
   createdAt: string;
 }
 
-interface AuditLogAdminToolbarProps {
+export interface AuditLogAdminToolbarProps {
   branchId: string;
   sliceKey: 'ration' | 'grainMaintenance' | 'hr' | 'internalTrade';
-  scopeLabel: string;
-  totalLogsCount: number;
-  isSuperAdmin: boolean;
-  onAuditLogsCleared: (deletedIds?: string[]) => void;
+  scopeLabel?: string;
+  totalLogsCount?: number;
+  logCount?: number;
+  isSuperAdmin?: boolean;
+  currentUser?: any;
+  onAuditLogsCleared?: (deletedIds?: string[]) => void;
+  onLogsCleared?: () => void;
 }
 
 export const AuditLogAdminToolbar: React.FC<AuditLogAdminToolbarProps> = ({
   branchId,
   sliceKey,
-  scopeLabel,
+  scopeLabel = 'سجل العمليات والرقابة',
   totalLogsCount,
+  logCount,
   isSuperAdmin,
+  currentUser,
   onAuditLogsCleared,
+  onLogsCleared,
 }) => {
+  const adminAllowed = isSuperAdmin !== undefined ? isSuperAdmin : (currentUser?.role === 'superadmin');
+  const count = totalLogsCount !== undefined ? totalLogsCount : (logCount || 0);
+  const handleCleared = (ids?: string[]) => {
+    if (onAuditLogsCleared) onAuditLogsCleared(ids);
+    if (onLogsCleared) onLogsCleared();
+  };
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [confirmWord, setConfirmWord] = useState('');
   const [confirmChecked, setConfirmChecked] = useState(false);
@@ -812,7 +890,7 @@ export const AuditLogAdminToolbar: React.FC<AuditLogAdminToolbarProps> = ({
   const [loadingSecurity, setLoadingSecurity] = useState(false);
 
   const loadSecurityLog = async () => {
-    if (!isSuperAdmin) return;
+    if (!adminAllowed) return;
     setLoadingSecurity(true);
     try {
       const resp = await fetch(
@@ -830,7 +908,7 @@ export const AuditLogAdminToolbar: React.FC<AuditLogAdminToolbarProps> = ({
     }
   };
 
-  if (!isSuperAdmin) {
+  if (!adminAllowed) {
     return (
       <div
         className="px-4 py-2.5 rounded-xl bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold flex items-center gap-2"
@@ -881,13 +959,13 @@ export const AuditLogAdminToolbar: React.FC<AuditLogAdminToolbarProps> = ({
         setIsDeleting(false);
         return;
       }
-      onAuditLogsCleared();
+      handleCleared();
       setShowDeleteModal(false);
       setConfirmWord('');
       setConfirmChecked(false);
       setReason('');
       setStatusBanner(
-        `تم حذف (${json.deletedCount ?? totalLogsCount}) سجل تدقيق من ${scopeLabel} وتسجيل العملية في سجل الأمان غير القابل للحذف. البيانات التشغيلية لم تمس.`
+        `تم حذف (${json.deletedCount ?? count}) سجل تدقيق من ${scopeLabel} وتسجيل العملية في سجل الأمان غير القابل للحذف. البيانات التشغيلية لم تمس.`
       );
       if (showSecurityLog) {
         void loadSecurityLog();
@@ -927,7 +1005,7 @@ export const AuditLogAdminToolbar: React.FC<AuditLogAdminToolbarProps> = ({
           </button>
           <button
             type="button"
-            disabled={totalLogsCount === 0}
+            disabled={count === 0}
             onClick={() => {
               setErrorMsg(null);
               setConfirmWord('');

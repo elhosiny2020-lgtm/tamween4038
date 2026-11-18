@@ -60,8 +60,16 @@ import {
   ModuleRowActions,
   ModuleFormModal,
   ModuleDeleteConfirmModal,
+  AuditLogAdminToolbar,
+  ModuleRecordProfileModal,
   type CrudFieldDefinition,
 } from './ModuleCrudShared';
+import {
+  validateHrEmployeeInput,
+  classifyContractCountdown,
+  partitionAndGroupSpecialEmployees,
+} from '../../utils/hrValidationHelpers';
+
 
 export type HrSubView =
   | 'dashboard'
@@ -255,6 +263,14 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
       type: 'text',
       required: true,
       helperText: 'يتم التحقق من صحة الرقم القومي واستخراج تاريخ الميلاد والنوع آلياً',
+    },
+    {
+      key: 'phone',
+      label: 'رقم الهاتف المحمول (مصر)',
+      type: 'text',
+      required: true,
+      placeholder: '010xxxxxxxx',
+      helperText: 'رقم محمول مصري مكون من 11 رقماً يبدأ بـ 010 أو 011 أو 012 أو 015',
     },
     {
       key: 'departmentName',
@@ -463,37 +479,37 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
       const fullName = String(values.fullName || '').trim();
       const nationalId = String(values.nationalId || '').trim();
       const employeeCode = String(values.employeeCode || '').trim();
-      if (!fullName || !nationalId || !employeeCode) return 'يرجى استكمال الاسم، الرقم القومي، والكود الوظيفي.';
+      const rawPhone = String(values.phone || '').trim();
 
-      const parsedNid = parseEgyptianNationalId(nationalId);
-      if (!parsedNid.valid) return parsedNid.error || 'الرقم القومي غير صحيح.';
+      const validation = validateHrEmployeeInput({
+        fullName,
+        nationalId,
+        phone: rawPhone,
+        employeeCode,
+        existingEmployees: state.employees,
+        editingEmployeeId: mode === 'edit' ? String(targetId) : undefined,
+      });
 
-      const duplicateNid = state.employees.some(
-        (e) => e.nationalId === nationalId && (mode === 'add' || e.id !== targetId)
-      );
-      if (duplicateNid) return 'الرقم القومي مسجل بالفعل لموظف آخر.';
-
-      const duplicateCode = state.employees.some(
-        (e) => e.employeeCode === employeeCode && (mode === 'add' || e.id !== targetId)
-      );
-      if (duplicateCode) return `الكود الوظيفي (${employeeCode}) مسجل مسبقاً.`;
+      if (!validation.valid) {
+        return validation.error || 'يرجى التحقق من صحة البيانات المدخلة.';
+      }
 
       const existing = state.employees.find((e) => e.id === targetId);
       const empObj: HrEmployee = {
         id: mode === 'add' ? `${branchId}-emp-${Date.now()}` : String(targetId),
         branchId,
         employeeCode,
-        nationalId,
+        nationalId: validation.normalizedNationalId,
         fullName,
-        birthDate: parsedNid.birthDate || existing?.birthDate || '1990-01-01',
-        gender: parsedNid.gender || existing?.gender || 'ذكر',
+        birthDate: validation.birthDate || existing?.birthDate || '1990-01-01',
+        gender: validation.gender || existing?.gender || 'ذكر',
         maritalStatus: existing?.maritalStatus || 'متزوج',
         childrenCount: existing?.childrenCount || 0,
         address: existing?.address || branchName,
         governorate: 'الغربية',
         district: branchName,
         village: existing?.village || 'المدينة',
-        phone: existing?.phone || '',
+        phone: validation.normalizedPhone,
         jobTitle: String(values.jobTitle || 'مفتش تموين').trim(),
         qualitativeGroup: existing?.qualitativeGroup || 'التنمية الإدارية',
         jobGrade: String(values.jobGrade || 'الثالثة').trim(),
@@ -501,14 +517,18 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
         departmentName: String(values.departmentName || state.departments[0]?.name || 'الإدارة'),
         unitSection: String(values.departmentName || 'الإدارة'),
         workEntity: branchName,
-        workSite: branchName,
+        workSite: String(values.workSite || existing?.workSite || branchName),
         hireDate: String(values.hireDate || nowIso.split('T')[0]),
         startWorkDate: String(values.hireDate || nowIso.split('T')[0]),
-        appointmentType: existing?.appointmentType || 'تعيين دائم',
+        appointmentType: existing?.appointmentType || (values.employeeType === 'خدمة عامة' || values.employeeType === 'استعانة' ? values.employeeType : 'تعيين دائم'),
         appointmentDecisionNo: existing?.appointmentDecisionNo || 'قرار إداري',
         status: values.status as HrEmployee['status'],
         directManager: existing?.directManager || 'مدير الإدارة',
         fileNumber: existing?.fileNumber || `FILE-${employeeCode}`,
+        employeeType: values.employeeType || existing?.employeeType,
+        qualification: values.qualification || existing?.qualification,
+        contractEndDate: values.contractEndDate || existing?.contractEndDate,
+        contractDurationText: values.contractDurationText || existing?.contractDurationText,
         functionalWage: Math.max(0, Number(values.functionalWage) || 0),
         complementaryWage: Math.max(0, Number(values.complementaryWage) || 0),
         periodicAllowances: Math.max(0, Number(values.periodicAllowances) || 0),
@@ -1194,11 +1214,19 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
     notify('ok', 'تم حفظ نسخة جديدة من لائحة الضرائب والتأمينات دون التأثير على المسيرات المعتمدة سابقاً.');
   };
 
+  const [contractCategoryTab, setContractCategoryTab] = useState<'all' | 'public_service' | 'assistance'>('all');
+  const [contractWorkSiteFilter, setContractWorkSiteFilter] = useState<string>('all');
+  const [profileModalState, setProfileModalState] = useState<{
+    isOpen: boolean;
+    title: string;
+    entityType: string;
+    subtitle?: string;
+    fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
+  } | null>(null);
+
   const getContractDaysRemaining = (endDateStr?: string) => {
-    if (!endDateStr) return 999;
-    const end = new Date(endDateStr).getTime();
-    const now = new Date().getTime();
-    return Math.ceil((end - now) / (1000 * 60 * 60 * 24));
+    const info = classifyContractCountdown(endDateStr);
+    return info.daysRemaining !== null ? info.daysRemaining : 999;
   };
 
   const contractEmployees = useMemo(() => {
@@ -1207,13 +1235,16 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
 
   const expiringContracts = useMemo(() => {
     return contractEmployees.filter((e) => {
-      const days = getContractDaysRemaining(e.contractEndDate);
-      return days >= 0 && days <= 15;
+      const info = classifyContractCountdown(e.contractEndDate);
+      return info.isExpiringSoon;
     });
   }, [contractEmployees]);
 
   const expiredContractsCount = useMemo(() => {
-    return contractEmployees.filter((e) => getContractDaysRemaining(e.contractEndDate) < 0).length;
+    return contractEmployees.filter((e) => {
+      const info = classifyContractCountdown(e.contractEndDate);
+      return info.isExpired;
+    }).length;
   }, [contractEmployees]);
 
   const publicServiceCount = useMemo(() => {
@@ -1225,7 +1256,19 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
   }, [contractEmployees]);
 
   const activeContractCount = useMemo(() => {
-    return contractEmployees.filter((e) => getContractDaysRemaining(e.contractEndDate) > 15).length;
+    return contractEmployees.filter((e) => {
+      const info = classifyContractCountdown(e.contractEndDate);
+      return !info.isExpired && !info.isExpiringSoon;
+    }).length;
+  }, [contractEmployees]);
+
+  const contractWorkSites = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of contractEmployees) {
+      const site = e.workSite || e.departmentName || '';
+      if (site) set.add(site);
+    }
+    return Array.from(set).sort();
   }, [contractEmployees]);
 
   const handleRenewContract = (employeeId: string) => {
@@ -1470,17 +1513,31 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
               <div className="p-2 rounded-xl bg-amber-500 text-white shrink-0 mt-0.5">
                 <AlertTriangle className="w-5 h-5" />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1 flex-1">
                 <h4 className="text-sm font-black text-amber-900">
-                  تنبيه هام: توجد ({expiringContracts.length}) عقود خدمة عامة أو استعانة اقترب موعد انتهائها خلال 15 يوماً القادمة!
+                  تنبيه استباقي: توجد ({expiringContracts.length}) عقود خدمة عامة أو استعانة اقترب موعد انتهائها خلال 30 يوماً القادمة!
                 </h4>
                 <div className="flex flex-wrap gap-2 mt-2">
                   {expiringContracts.map((ec) => {
                     const days = getContractDaysRemaining(ec.contractEndDate);
                     return (
-                      <span key={ec.id} className="px-2.5 py-1 bg-white border border-amber-300 rounded-xl text-xs font-black text-amber-900">
-                        {ec.fullName} ({ec.employeeType}) — متبقي {days} يوم (ينتهي في {ec.contractEndDate})
-                      </span>
+                      <div
+                        key={ec.id}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-white border border-amber-300 rounded-xl text-xs font-black text-amber-900 shadow-sm"
+                      >
+                        <span>
+                          {ec.fullName} ({ec.employeeType}) — متبقي {days} يوم (ينتهي في {ec.contractEndDate})
+                        </span>
+                        {permissions.canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => handleRenewContract(ec.id)}
+                            className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-black cursor-pointer"
+                          >
+                            تجديد التعاقد سنة إضافية
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -1503,12 +1560,67 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
               <div className="text-2xl font-black text-emerald-700 font-mono mt-1">{activeContractCount}</div>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">اقترب موعد انتهاء التعاقد (≤15 يوم)</div>
+              <div className="text-xs font-bold text-slate-500">اقترب موعد انتهاء التعاقد (≤30 يوم)</div>
               <div className="text-2xl font-black text-amber-600 font-mono mt-1">{expiringContracts.length}</div>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
               <div className="text-xs font-bold text-slate-500">العقود المنتهية</div>
               <div className="text-2xl font-black text-rose-700 font-mono mt-1">{expiredContractsCount}</div>
+            </div>
+          </div>
+
+          {/* Tab Switcher & Work Site Filters */}
+          <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setContractCategoryTab('all')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all ${
+                  contractCategoryTab === 'all'
+                    ? 'bg-[#0A1628] text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                جميع المتعاقدين ({contractEmployees.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setContractCategoryTab('public_service')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all ${
+                  contractCategoryTab === 'public_service'
+                    ? 'bg-[#0D9488] text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                أ. موظفو الخدمة العامة ({publicServiceCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setContractCategoryTab('assistance')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all ${
+                  contractCategoryTab === 'assistance'
+                    ? 'bg-[#1E40AF] text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                ب. موظفو الاستعانة ({assistanceCount})
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-slate-600">موقع العمل:</label>
+              <select
+                value={contractWorkSiteFilter}
+                onChange={(e) => setContractWorkSiteFilter(e.target.value)}
+                className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800"
+              >
+                <option value="all">جميع مواقع العمل والوحدات ({contractEmployees.length})</option>
+                {contractWorkSites.map((site) => (
+                  <option key={site} value={site}>
+                    {site}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -1519,7 +1631,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                 <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="بحث باسم الموظف، الرقم القومي، أو الوظيفة..."
+                  placeholder="بحث باسم الموظف، الرقم القومي، الهاتف، أو الوظيفة..."
                   value={empSearch}
                   onChange={(e) => setEmpSearch(e.target.value)}
                   className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-[#0D9488]"
@@ -1542,10 +1654,11 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                         { key: 'employeeCode', label: 'الكود الوظيفي / المسلسل', type: 'text', required: true, placeholder: 'EMP-PS-303' },
                         { key: 'fullName', label: 'الاسم رباعي بالكامل', type: 'text', required: true },
                         { key: 'nationalId', label: 'الرقم القومي (14 رقم)', type: 'text', required: true },
-                        { key: 'phone', label: 'رقم الهاتف', type: 'text', required: true },
+                        { key: 'phone', label: 'رقم الهاتف المحمول', type: 'text', required: true, placeholder: '010xxxxxxxx' },
                         { key: 'qualification', label: 'المؤهل الدراسي', type: 'text', required: true, placeholder: 'بكالوريوس / ليسانس / دبلوم' },
                         { key: 'jobTitle', label: 'الوظيفة أو طبيعة العمل', type: 'text', required: true },
                         { key: 'departmentName', label: 'جهة العمل أو الإدارة التابع لها', type: 'select', required: true, options: state.departments.map(d => ({ value: d.name, label: d.name })) },
+                        { key: 'workSite', label: 'موقع العمل أو الوحدة المحلية', type: 'text', placeholder: 'المحلة الكبرى / الوحدة المحلية' },
                         { key: 'hireDate', label: 'تاريخ التعاقد / بداية العمل', type: 'date', required: true },
                         { key: 'contractEndDate', label: 'تاريخ انتهاء التعاقد', type: 'date', required: true },
                         { key: 'contractDurationText', label: 'مدة التعاقد', type: 'text', required: true, placeholder: 'سنة واحدة / 6 أشهر' },
@@ -1554,7 +1667,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                         { key: 'documentsNotes', label: 'ملاحظات', type: 'textarea', colSpan: 2 },
                       ],
                       initialValues: {
-                        employeeType: 'خدمة عامة',
+                        employeeType: contractCategoryTab === 'assistance' ? 'استعانة' : 'خدمة عامة',
                         employeeCode: `EMP-PS-${100 + contractEmployees.length + 1}`,
                         hireDate: new Date().toISOString().split('T')[0],
                         contractEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -1577,12 +1690,13 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                   onClick={() =>
                     exportRowsToArabicCsv(
                       `موظفو_الخدمة_العامة_والاستعانة_${branchName}`,
-                      ['المسلسل', 'الكود', 'الاسم', 'الرقم القومي', 'المؤهل', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'نهاية التعاقد', 'المدة', 'الأيام المتبقية', 'الحالة'],
+                      ['المسلسل', 'الكود', 'الاسم', 'الرقم القومي', 'الهاتف', 'المؤهل', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'نهاية التعاقد', 'المدة', 'الأيام المتبقية', 'الحالة'],
                       contractEmployees.map((e, idx) => [
                         idx + 1,
                         e.employeeCode,
                         e.fullName,
                         e.nationalId,
+                        e.phone || '',
                         e.qualification || 'غير محدد',
                         e.jobTitle,
                         e.departmentName,
@@ -1610,12 +1724,13 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                       title: 'تقرير موظفي الخدمة العامة وموظفي الاستعانة',
                       subtitle: `سجل التعاقدات ومتابعة تواريخ انتهاء المدد — ${branchName}`,
                       branchName,
-                      headers: ['م', 'الكود', 'اسم الموظف', 'الرقم القومي', 'المؤهل الدراسي', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'انتهاء التعاقد', 'المتبقي', 'الحالة'],
+                      headers: ['م', 'الكود', 'اسم الموظف', 'الرقم القومي', 'الهاتف', 'المؤهل الدراسي', 'الوظيفة', 'الإدارة', 'النوع', 'بداية التعاقد', 'انتهاء التعاقد', 'المتبقي', 'الحالة'],
                       rows: contractEmployees.map((e, idx) => [
                         idx + 1,
                         e.employeeCode,
                         e.fullName,
                         e.nationalId,
+                        e.phone || '—',
                         e.qualification || '—',
                         e.jobTitle,
                         e.departmentName,
@@ -1651,6 +1766,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                   <th className="py-2.5 px-2 border border-slate-700">الكود</th>
                   <th className="py-2.5 px-2 border border-slate-700 text-right">اسم الموظف بالكامل</th>
                   <th className="py-2.5 px-2 border border-slate-700 font-mono">الرقم القومي</th>
+                  <th className="py-2.5 px-2 border border-slate-700 font-mono">الهاتف</th>
                   <th className="py-2.5 px-2 border border-slate-700">المؤهل الدراسي</th>
                   <th className="py-2.5 px-2 border border-slate-700">الوظيفة / طبيعة العمل</th>
                   <th className="py-2.5 px-2 border border-slate-700">جهة العمل / الإدارة</th>
@@ -1665,22 +1781,26 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
               <tbody className="divide-y divide-slate-200 font-bold">
                 {contractEmployees
                   .filter((e) => {
+                    if (contractCategoryTab === 'public_service' && e.employeeType !== 'خدمة عامة') return false;
+                    if (contractCategoryTab === 'assistance' && e.employeeType !== 'استعانة') return false;
+                    if (contractWorkSiteFilter !== 'all' && (e.workSite || e.departmentName) !== contractWorkSiteFilter) return false;
                     if (!empSearch.trim()) return true;
                     const q = empSearch.trim().toLowerCase();
-                    return `${e.fullName} ${e.employeeCode} ${e.nationalId} ${e.jobTitle} ${e.departmentName}`
+                    return `${e.fullName} ${e.employeeCode} ${e.nationalId} ${e.phone || ''} ${e.jobTitle} ${e.departmentName}`
                       .toLowerCase()
                       .includes(q);
                   })
                   .map((e, idx) => {
                     const days = getContractDaysRemaining(e.contractEndDate);
                     const isExpired = days < 0;
-                    const isExpiring = days >= 0 && days <= 15;
+                    const isExpiring = days >= 0 && days <= 30;
                     return (
                       <tr key={e.id} className={isExpired ? 'bg-rose-50/60' : isExpiring ? 'bg-amber-50/60' : 'hover:bg-slate-50'}>
                         <td className="py-2.5 px-2 font-mono">{idx + 1}</td>
                         <td className="py-2.5 px-2 font-mono text-[#1E40AF]">{e.employeeCode}</td>
                         <td className="py-2.5 px-2 text-right font-black text-[#0A1628]">{e.fullName}</td>
                         <td className="py-2.5 px-2 font-mono text-[11px]">{e.nationalId}</td>
+                        <td className="py-2.5 px-2 font-mono text-[11px] text-teal-800">{e.phone || '—'}</td>
                         <td className="py-2.5 px-2">{e.qualification || '—'}</td>
                         <td className="py-2.5 px-2 text-[#0D9488]">{e.jobTitle}</td>
                         <td className="py-2.5 px-2">{e.departmentName}</td>
@@ -1703,6 +1823,37 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                         </td>
                         <td className="py-2.5 px-2">
                           <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setProfileModalState({
+                                  isOpen: true,
+                                  title: `ملف الموظف المتعاقد - ${e.fullName}`,
+                                  entityType: `موظف ${e.employeeType || 'خدمة عامة'}`,
+                                  subtitle: `${e.employeeCode} | ${e.jobTitle} - ${e.departmentName}`,
+                                  fields: [
+                                    { label: 'الكود الوظيفي', value: e.employeeCode, mono: true },
+                                    { label: 'الاسم بالكامل', value: e.fullName },
+                                    { label: 'الرقم القومي المصري', value: e.nationalId, mono: true },
+                                    { label: 'رقم الهاتف المحمول', value: e.phone || 'غير مسجل', mono: true },
+                                    { label: 'نوع الموظف', value: e.employeeType || 'خدمة عامة', badge: true, badgeColor: 'bg-indigo-100 text-indigo-800' },
+                                    { label: 'المؤهل الدراسي', value: e.qualification || '—' },
+                                    { label: 'الوظيفة / طبيعة العمل', value: e.jobTitle },
+                                    { label: 'جهة العمل / الإدارة', value: e.departmentName },
+                                    { label: 'موقع العمل', value: e.workSite || branchName },
+                                    { label: 'تاريخ بداية التعاقد', value: e.hireDate },
+                                    { label: 'تاريخ انتهاء التعاقد', value: e.contractEndDate || '—' },
+                                    { label: 'مدة التعاقد', value: e.contractDurationText || 'سنة واحدة' },
+                                    { label: 'المكافأة / الأجر الشهري', value: `${(e.functionalWage || 0).toLocaleString()} ج.م` },
+                                    { label: 'الحالة', value: e.status, badge: true, badgeColor: isExpired ? 'bg-rose-100 text-rose-800' : isExpiring ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800' },
+                                  ],
+                                })
+                              }
+                              title="عرض ملف الموظف"
+                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-black cursor-pointer"
+                            >
+                              عرض
+                            </button>
                             {permissions.canEdit && (
                               <>
                                 <button
@@ -1730,6 +1881,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                                         { key: 'qualification', label: 'المؤهل الدراسي', type: 'text', required: true },
                                         { key: 'jobTitle', label: 'الوظيفة أو طبيعة العمل', type: 'text', required: true },
                                         { key: 'departmentName', label: 'جهة العمل أو الإدارة', type: 'select', required: true, options: state.departments.map(d => ({ value: d.name, label: d.name })) },
+                                        { key: 'workSite', label: 'موقع العمل', type: 'text' },
                                         { key: 'hireDate', label: 'تاريخ التعاقد', type: 'date', required: true },
                                         { key: 'contractEndDate', label: 'تاريخ انتهاء التعاقد', type: 'date', required: true },
                                         { key: 'contractDurationText', label: 'مدة التعاقد', type: 'text', required: true },
@@ -1745,6 +1897,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                                         qualification: e.qualification || '',
                                         jobTitle: e.jobTitle,
                                         departmentName: e.departmentName,
+                                        workSite: e.workSite || '',
                                         hireDate: e.hireDate,
                                         contractEndDate: e.contractEndDate || '',
                                         contractDurationText: e.contractDurationText || 'سنة واحدة',
@@ -1880,6 +2033,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                       <th className="py-2 px-2 border border-slate-700">الكود</th>
                       <th className="py-2 px-2 border border-slate-700 text-right">الاسم بالكامل</th>
                       <th className="py-2 px-2 border border-slate-700">الرقم القومي</th>
+                      <th className="py-2 px-2 border border-slate-700 font-mono">الهاتف</th>
                       <th className="py-2 px-2 border border-slate-700">الميلاد / النوع</th>
                       <th className="py-2 px-2 border border-slate-700">القسم والمسمى</th>
                       <th className="py-2 px-2 border border-slate-700">الوظيفي + المكمل</th>
@@ -1893,6 +2047,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                         <td className="py-2 px-2 font-mono">{emp.employeeCode}</td>
                         <td className="py-2 px-2 text-right font-black text-[#0A1628]">{emp.fullName}</td>
                         <td className="py-2 px-2 font-mono">{emp.nationalId}</td>
+                        <td className="py-2 px-2 font-mono text-[11px] text-teal-800">{emp.phone || '—'}</td>
                         <td className="py-2 px-2 font-mono">{emp.birthDate} ({emp.gender})</td>
                         <td className="py-2 px-2">{emp.departmentName} — {emp.jobTitle}</td>
                         <td className="py-2 px-2 font-mono text-[#0D9488]">{(emp.functionalWage + emp.complementaryWage).toLocaleString()} ج.م</td>
@@ -1903,6 +2058,31 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                             updatedAt={emp.updatedAt}
                             permissions={permissions}
                             testIdPrefix={`hr-emp-${emp.id}`}
+                            onView={() =>
+                              setProfileModalState({
+                                isOpen: true,
+                                title: `ملف الموظف - ${emp.fullName}`,
+                                entityType: 'موظف بالإدارة التموينية',
+                                subtitle: `${emp.employeeCode} | ${emp.jobTitle} - ${emp.departmentName}`,
+                                fields: [
+                                  { label: 'الكود الوظيفي', value: emp.employeeCode, mono: true },
+                                  { label: 'الاسم بالكامل', value: emp.fullName },
+                                  { label: 'الرقم القومي المصري (14 رقم)', value: emp.nationalId, mono: true },
+                                  { label: 'رقم الهاتف المحمول', value: emp.phone || 'غير مسجل', mono: true },
+                                  { label: 'تاريخ الميلاد والنوع', value: `${emp.birthDate} (${emp.gender})` },
+                                  { label: 'القسم الإداري', value: emp.departmentName },
+                                  { label: 'المسمى الوظيفي', value: emp.jobTitle },
+                                  { label: 'الدرجة المالية', value: emp.jobGrade },
+                                  { label: 'الحالة الوظيفية', value: emp.status, badge: true, badgeColor: emp.status === 'على رأس العمل' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800' },
+                                  { label: 'تاريخ التعيين', value: emp.hireDate },
+                                  { label: 'الأجر الوظيفي', value: `${emp.functionalWage.toLocaleString()} ج.م` },
+                                  { label: 'الأجر المكمل', value: `${emp.complementaryWage.toLocaleString()} ج.م` },
+                                  { label: 'إجمالي الأجر الأساسي', value: `${(emp.functionalWage + emp.complementaryWage).toLocaleString()} ج.م` },
+                                  { label: 'الحوافز الشهرية', value: `${emp.monthlyIncentives.toLocaleString()} ج.م` },
+                                  { label: 'الأجر التأميني', value: `${emp.insurableWage.toLocaleString()} ج.م` },
+                                ],
+                              })
+                            }
                             onEdit={() =>
                               setFormModalState({
                                 isOpen: true,
@@ -2792,29 +2972,52 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
       )}
 
       {subView === 'audit' && (
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table className="w-full text-xs text-center border-collapse">
-            <thead className="bg-[#0A1628] text-white font-black">
-              <tr>
-                <th className="py-2 px-2 border border-slate-700">الوقت</th>
-                <th className="py-2 px-2 border border-slate-700">المستخدم</th>
-                <th className="py-2 px-2 border border-slate-700">الإجراء</th>
-                <th className="py-2 px-2 border border-slate-700">الجدول</th>
-                <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 font-bold">
-              {state.auditLogs.map((a) => (
-                <tr key={a.id}>
-                  <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
-                  <td className="py-2 px-2">{a.userFullName}</td>
-                  <td className="py-2 px-2 text-[#0D9488]">{a.actionType}</td>
-                  <td className="py-2 px-2">{a.entityName}</td>
-                  <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+        <div className="space-y-4">
+          <AuditLogAdminToolbar
+            sliceKey="hr"
+            branchId={branchId}
+            currentUser={currentUser}
+            logCount={(state.auditLogs || []).length}
+            onLogsCleared={() => {
+              onChangeState(
+                {
+                  ...state,
+                  auditLogs: [],
+                },
+                'مسح سجل العمليات والرقابة لموديول الموارد البشرية'
+              );
+              setFeedback({
+                type: 'ok',
+                text: 'تم مسح سجل العمليات الرقابية لموديول الموارد البشرية بنجاح.',
+              });
+            }}
+          />
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+            <table className="w-full text-xs text-center border-collapse">
+              <thead className="bg-[#0A1628] text-white font-black">
+                <tr>
+                  <th className="py-2 px-2 border border-slate-700">الوقت</th>
+                  <th className="py-2 px-2 border border-slate-700">المستخدم</th>
+                  <th className="py-2 px-2 border border-slate-700">الإجراء</th>
+                  <th className="py-2 px-2 border border-slate-700">الجدول</th>
+                  <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-200 font-bold">
+                {state.auditLogs.map((a) => (
+                  <tr key={a.id}>
+                    <td className="py-2 px-2 font-mono">
+                      {new Date(a.timestamp).toLocaleString('ar-EG')}
+                    </td>
+                    <td className="py-2 px-2">{a.userFullName}</td>
+                    <td className="py-2 px-2 text-[#0D9488]">{a.actionType}</td>
+                    <td className="py-2 px-2">{a.entityName}</td>
+                    <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -2841,6 +3044,20 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
           blockReason={activeDeleteCheck.reason}
           onClose={() => setDeleteModalState(null)}
           onConfirmDelete={handleConfirmDelete}
+        />
+      )}
+
+      {/* Profile Detail Modal */}
+      {profileModalState && (
+        <ModuleRecordProfileModal
+          isOpen={profileModalState.isOpen}
+          onClose={() => setProfileModalState(null)}
+          title={profileModalState.title}
+          entityType={profileModalState.entityType}
+          subtitle={profileModalState.subtitle}
+          fields={profileModalState.fields}
+          printTitle="مديرية التموين والتجارة الداخلية بالغربية - إدارة تموين مركز المحلة الكبرى"
+          preparedBy={currentUser?.fullName}
         />
       )}
     </div>

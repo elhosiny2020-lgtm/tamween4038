@@ -58,6 +58,7 @@ import {
   ModuleRowActions,
   ModuleFormModal,
   ModuleDeleteConfirmModal,
+  AuditLogAdminToolbar,
   type CrudFieldDefinition,
 } from './ModuleCrudShared';
 import { ShunasAndWheatReceiptsView } from './grain/ShunasAndWheatReceiptsView';
@@ -1150,6 +1151,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canEdit={permissions.canEdit}
@@ -1167,6 +1170,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canEdit={permissions.canEdit}
@@ -1184,6 +1189,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canPrint={permissions.canPrint}
@@ -1199,6 +1206,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canPrint={permissions.canPrint}
@@ -1214,6 +1223,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canPrint={permissions.canPrint}
@@ -1989,29 +2000,44 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       )}
 
       {subView === 'audit' && (
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table className="w-full text-xs text-center border-collapse">
-            <thead className="bg-[#0A1628] text-white font-black">
-              <tr>
-                <th className="py-2 px-2 border border-slate-700">الوقت</th>
-                <th className="py-2 px-2 border border-slate-700">المستخدم</th>
-                <th className="py-2 px-2 border border-slate-700">الإجراء</th>
-                <th className="py-2 px-2 border border-slate-700">الجدول</th>
-                <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 font-bold">
-              {state.auditLogs.map((a) => (
-                <tr key={a.id}>
-                  <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
-                  <td className="py-2 px-2">{a.userFullName}</td>
-                  <td className="py-2 px-2 text-[#0D9488]">{a.actionType}</td>
-                  <td className="py-2 px-2">{a.entityName}</td>
-                  <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+        <div className="space-y-4">
+          <AuditLogAdminToolbar
+            sliceKey="grainMaintenance"
+            branchId={branchId}
+            currentUser={currentUser}
+            logCount={(state.auditLogs || []).length}
+            onLogsCleared={() => {
+              onChangeState(
+                { ...state, auditLogs: [] },
+                'تم إفراغ سجل التدقيق لقسم صيانة الحبوب بواسطة المشرف العام بعد التحقق الأمني المزدوج'
+              );
+            }}
+          />
+
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+            <table className="w-full text-xs text-center border-collapse">
+              <thead className="bg-[#0A1628] text-white font-black">
+                <tr>
+                  <th className="py-2 px-2 border border-slate-700">الوقت</th>
+                  <th className="py-2 px-2 border border-slate-700">المستخدم</th>
+                  <th className="py-2 px-2 border border-slate-700">الإجراء</th>
+                  <th className="py-2 px-2 border border-slate-700">الجدول</th>
+                  <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-200 font-bold">
+                {state.auditLogs.map((a) => (
+                  <tr key={a.id}>
+                    <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
+                    <td className="py-2 px-2">{a.userFullName}</td>
+                    <td className="py-2 px-2 text-[#0D9488]">{a.actionType}</td>
+                    <td className="py-2 px-2">{a.entityName}</td>
+                    <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

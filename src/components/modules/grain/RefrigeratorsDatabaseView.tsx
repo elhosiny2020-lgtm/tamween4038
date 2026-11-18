@@ -19,7 +19,17 @@ import type {
   RefrigeratorRecord,
   RefrigeratorTempLogRecord,
 } from '../../../types/modules';
-import type { VillageHierarchy } from '../../../types';
+import type { AppUser, VillageHierarchy } from '../../../types';
+import type { ModulePermissions } from '../../../utils/moduleCrudHelpers';
+import { resolveModuleCrudPermissions } from '../../../utils/moduleCrudHelpers';
+import { groupRecordsByLocalUnit } from '../../../utils/tableGroupingHelpers';
+import {
+  ModuleRowActions,
+  LocalUnitSubtotalRow,
+  VillageGrandTotalRow,
+  ModuleRecordProfileModal,
+  ModuleDeleteConfirmModal,
+} from '../ModuleCrudShared';
 import {
   computeRefrigeratorAssetValuation,
   computeRefrigeratorFinancialSummary,
@@ -31,6 +41,8 @@ interface RefrigeratorsDatabaseViewProps {
   state: GrainMaintenanceState;
   branchName: string;
   currentUserFullName: string;
+  currentUser?: AppUser | null;
+  permissions?: ModulePermissions;
   isViewer: boolean;
   canAdd?: boolean;
   canPrint?: boolean;
@@ -44,6 +56,8 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
   state,
   branchName,
   currentUserFullName,
+  currentUser,
+  permissions,
   isViewer,
   canAdd = !isViewer,
   canPrint = !isViewer,
@@ -52,6 +66,10 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
   onUpdateState,
   onNotify,
 }) => {
+  const effectivePermissions: ModulePermissions = useMemo(() => {
+    if (permissions) return permissions;
+    return resolveModuleCrudPermissions(currentUser || null, isViewer, 'grain_maintenance');
+  }, [permissions, currentUser, isViewer]);
   const [subTab, setSubTab] = useState<
     | 'registry'
     | 'rooms'
@@ -161,6 +179,61 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
       }),
     }));
   }, [rooms]);
+
+  const [profileModal, setProfileModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    entityType: string;
+    subtitle?: string;
+    fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
+  } | null>(null);
+
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    entityType: 'ref' | 'receipt';
+    entityId: string;
+    entityTitle: string;
+    recordSummary: { label: string; value: string | number }[];
+  } | null>(null);
+
+  const handleConfirmDelete = () => {
+    if (!deleteModal) return;
+    const { entityType, entityId, entityTitle } = deleteModal;
+    if (entityType === 'ref') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          refrigerators: (prev.refrigerators || []).filter((r) => r.id !== entityId && r.refrigeratorCode !== entityId),
+        }),
+        `حذف ثلاجة: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف الثلاجة «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'receipt') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          refrigeratorReceipts: (prev.refrigeratorReceipts || []).filter((r) => r.id !== entityId && r.receiptOrderNumber !== entityId),
+        }),
+        `حذف إذن استلام وارد للثلاجة: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف إذن الاستلام «${entityTitle}» بنجاح.`);
+    }
+    setDeleteModal(null);
+  };
+
+  const refGrouping = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: refrigerators,
+      getLocalUnit: (r) => r.village,
+      numericFields: [
+        { key: 'coolingRoomsCount', getValue: (r) => r.coolingRoomsCount },
+        { key: 'freezingRoomsCount', getValue: (r) => r.freezingRoomsCount },
+        { key: 'totalAreaSqm', getValue: (r) => r.totalAreaSqm },
+        { key: 'designCapacityTons', getValue: (r) => r.designCapacityTons },
+        { key: 'operationalCapacityTons', getValue: (r) => r.operationalCapacityTons },
+      ],
+    });
+  }, [refrigerators]);
 
   const handleCreateRefrigerator = (e: React.FormEvent) => {
     e.preventDefault();
@@ -556,63 +629,132 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                     <th className="p-3 text-center">الطاقة (تصميمي / فعلي)</th>
                     <th className="p-3">نظام التبريد</th>
                     <th className="p-3 text-center">الحالة والصيانة</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {refrigerators.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-sky-800">{r.refrigeratorCode}</td>
-                      <td className="p-3">
-                        <div className="font-black text-slate-900">{r.refrigeratorName}</div>
-                        <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-sky-100 text-sky-800 text-[10px] font-black">
-                          ملكية: {r.ownershipType}
-                        </span>
-                      </td>
-                      <td className="p-3">
-                        <div>{r.ownerName}</div>
-                        <div className="text-[10px] text-slate-500">{r.operatingCompany}</div>
-                      </td>
-                      <td className="p-3">
-                        <div>{r.village}</div>
-                        <div className="text-[10px] text-slate-500">{r.detailedAddress}</div>
-                      </td>
-                      <td className="p-3">
-                        <div>{r.managerName}</div>
-                        <div className="text-[10px] text-slate-500">
-                          تشغيل: {r.operationsOfficer} | {r.phone}
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div>
-                          {r.coolingRoomsCount} تبريد + {r.freezingRoomsCount} تجميد
-                        </div>
-                        <div className="text-[10px] text-slate-500">{r.totalAreaSqm} م²</div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div className="font-black text-slate-900">{r.designCapacityTons} طن</div>
-                        <div className="text-[10px] text-emerald-700">
-                          فعلي: {r.operationalCapacityTons} طن
-                        </div>
-                      </td>
-                      <td className="p-3 text-slate-700">{r.coolingSystemType}</td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`inline-block px-2.5 py-0.5 rounded-lg text-[11px] font-black ${
-                            r.operationalStatus === 'تعمل'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : r.operationalStatus === 'تحت الصيانة'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-rose-100 text-rose-800'
-                          }`}
-                        >
-                          {r.operationalStatus}
-                        </span>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          صيانة قادمة: {r.nextMaintenanceDate}
-                        </div>
-                      </td>
-                    </tr>
+                  {refGrouping.groups.map((group) => (
+                    <React.Fragment key={group.localUnit}>
+                      {group.rows.map((r) => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-mono font-black text-sky-800">{r.refrigeratorCode}</td>
+                          <td className="p-3">
+                            <div className="font-black text-slate-900">{r.refrigeratorName}</div>
+                            <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-sky-100 text-sky-800 text-[10px] font-black">
+                              ملكية: {r.ownershipType}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div>{r.ownerName}</div>
+                            <div className="text-[10px] text-slate-500">{r.operatingCompany}</div>
+                          </td>
+                          <td className="p-3">
+                            <div>{r.village}</div>
+                            <div className="text-[10px] text-slate-500">{r.detailedAddress}</div>
+                          </td>
+                          <td className="p-3">
+                            <div>{r.managerName}</div>
+                            <div className="text-[10px] text-slate-500">
+                              تشغيل: {r.operationsOfficer} | {r.phone}
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div>
+                              {r.coolingRoomsCount} تبريد + {r.freezingRoomsCount} تجميد
+                            </div>
+                            <div className="text-[10px] text-slate-500">{r.totalAreaSqm} م²</div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="font-black text-slate-900">{r.designCapacityTons} طن</div>
+                            <div className="text-[10px] text-emerald-700">
+                              فعلي: {r.operationalCapacityTons} طن
+                            </div>
+                          </td>
+                          <td className="p-3 text-slate-700">{r.coolingSystemType}</td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`inline-block px-2.5 py-0.5 rounded-lg text-[11px] font-black ${
+                                r.operationalStatus === 'تعمل'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : r.operationalStatus === 'تحت الصيانة'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {r.operationalStatus}
+                            </span>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              صيانة قادمة: {r.nextMaintenanceDate}
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <ModuleRowActions
+                              entityLabel={r.refrigeratorName}
+                              permissions={effectivePermissions}
+                              testIdPrefix={`ref-row-${r.id}`}
+                              onView={() =>
+                                setProfileModal({
+                                  isOpen: true,
+                                  title: `بطاقة الثلاجة: ${r.refrigeratorName}`,
+                                  subtitle: `كود ${r.refrigeratorCode} — ملكية ${r.ownershipType}`,
+                                  entityType: 'بيانات تفصيلية لثلاجة ومخزن تبريد/تجميد',
+                                  fields: [
+                                    { label: 'كود الثلاجة', value: r.refrigeratorCode, mono: true },
+                                    { label: 'اسم الثلاجة', value: r.refrigeratorName },
+                                    { label: 'المالك / الشركة المشغلة', value: `${r.ownerName} (${r.operatingCompany})` },
+                                    { label: 'الموقع والعنوان', value: `${r.village} — ${r.detailedAddress}` },
+                                    { label: 'المدير ومسؤول التشغيل', value: `${r.managerName} | ${r.operationsOfficer} (${r.phone})` },
+                                    { label: 'عدد الغرف والمساحة', value: `${r.coolingRoomsCount} تبريد + ${r.freezingRoomsCount} تجميد (${r.totalAreaSqm} م²)` },
+                                    { label: 'الطاقة التصميمية', value: `${r.designCapacityTons} طن` },
+                                    { label: 'الطاقة التشغيلية الفعلية', value: `${r.operationalCapacityTons} طن`, mono: true },
+                                    { label: 'نظام التبريد', value: r.coolingSystemType },
+                                    { label: 'الحالة التشغيلية', value: r.operationalStatus, badge: true, badgeColor: 'teal' },
+                                    { label: 'تاريخ الصيانة القادمة', value: r.nextMaintenanceDate },
+                                    { label: 'ملاحظات', value: r.notes || 'لا توجد' },
+                                  ],
+                                })
+                              }
+                              onDelete={() =>
+                                setDeleteModal({
+                                  isOpen: true,
+                                  entityType: 'ref',
+                                  entityId: r.id,
+                                  entityTitle: r.refrigeratorName,
+                                  recordSummary: [
+                                    { label: 'كود الثلاجة', value: r.refrigeratorCode },
+                                    { label: 'اسم الثلاجة', value: r.refrigeratorName },
+                                    { label: 'المالك', value: r.ownerName },
+                                    { label: 'الطاقة التشغيلية', value: `${r.operationalCapacityTons} طن` },
+                                  ],
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={group.localUnit}
+                        recordCount={group.count}
+                        labelColSpan={5}
+                        metricCells={[
+                          { content: `${group.subtotals.coolingRoomsCount} تبريد + ${group.subtotals.freezingRoomsCount} تجميد (${group.subtotals.totalAreaSqm?.toLocaleString('ar-EG')} م²)`, align: 'center' },
+                          { content: `${group.subtotals.designCapacityTons?.toLocaleString('ar-EG')} / ${group.subtotals.operationalCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
+                          { content: '—', align: 'center', colSpan: 3 },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  {refGrouping.groups.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={refGrouping.grandTotalCount}
+                      labelColSpan={5}
+                      metricCells={[
+                        { content: `${refGrouping.grandTotals.coolingRoomsCount} تبريد + ${refGrouping.grandTotals.freezingRoomsCount} تجميد (${refGrouping.grandTotals.totalAreaSqm?.toLocaleString('ar-EG')} م²)`, align: 'center' },
+                        { content: `${refGrouping.grandTotals.designCapacityTons?.toLocaleString('ar-EG')} / ${refGrouping.grandTotals.operationalCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
+                        { content: '—', align: 'center', colSpan: 3 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1516,6 +1658,31 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
             </form>
           </div>
         </div>
+      )}
+
+      {/* نافذة بطاقة السجل للقراءة فقط */}
+      {profileModal && (
+        <ModuleRecordProfileModal
+          isOpen={profileModal.isOpen}
+          title={profileModal.title}
+          subtitle={profileModal.subtitle}
+          entityType={profileModal.entityType}
+          fields={profileModal.fields}
+          onClose={() => setProfileModal(null)}
+        />
+      )}
+
+      {/* نافذة تأكيد الحذف */}
+      {deleteModal && (
+        <ModuleDeleteConfirmModal
+          isOpen={deleteModal.isOpen}
+          entityTitle={deleteModal.entityTitle}
+          recordSummary={deleteModal.recordSummary}
+          canDelete={effectivePermissions.canDelete}
+          blockReason={effectivePermissions.canDelete ? undefined : 'الحذف مقتصر على المشرف العام (Super Admin) فقط.'}
+          onClose={() => setDeleteModal(null)}
+          onConfirmDelete={handleConfirmDelete}
+        />
       )}
     </div>
   );

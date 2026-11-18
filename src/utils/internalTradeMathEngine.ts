@@ -211,14 +211,19 @@ export interface VillageFuelBreakdownRow {
   village: string;
   localUnit: string;
   population: number;
+  gasoline80Liters: number;
   perCapitaBenzine80: number;
   gasoline80PerCapitaLiters: number;
+  gasoline92Liters: number;
   perCapitaBenzine92: number;
   gasoline92PerCapitaLiters: number;
+  gasoline95Liters: number;
   perCapitaBenzine95: number;
   gasoline95PerCapitaLiters: number;
+  dieselLiters: number;
   perCapitaSolar: number;
   dieselPerCapitaLiters: number;
+  keroseneLiters: number;
   perCapitaKerosene: number;
   kerosenePerCapitaLiters: number;
   totalPrescribedLitersAllProducts: number;
@@ -248,14 +253,19 @@ export function aggregateVillageFuelBreakdown(
         village: r.village,
         localUnit: r.localUnit,
         population: r.population,
+        gasoline80Liters: 0,
         perCapitaBenzine80: 0,
         gasoline80PerCapitaLiters: 0,
+        gasoline92Liters: 0,
         perCapitaBenzine92: 0,
         gasoline92PerCapitaLiters: 0,
+        gasoline95Liters: 0,
         perCapitaBenzine95: 0,
         gasoline95PerCapitaLiters: 0,
+        dieselLiters: 0,
         perCapitaSolar: 0,
         dieselPerCapitaLiters: 0,
+        keroseneLiters: 0,
         perCapitaKerosene: 0,
         kerosenePerCapitaLiters: 0,
         totalPrescribedLitersAllProducts: 0,
@@ -267,19 +277,25 @@ export function aggregateVillageFuelBreakdown(
       map.set(key, row);
     }
     const perCapita = r.population > 0 ? round4(r.disbursedLiters / r.population) : 0;
+    const disbursedAmount = Number(r.disbursedLiters) || 0;
     if (r.fuelType.includes('80')) {
+      row.gasoline80Liters = round2(row.gasoline80Liters + disbursedAmount);
       row.perCapitaBenzine80 = round4(row.perCapitaBenzine80 + perCapita);
       row.gasoline80PerCapitaLiters = row.perCapitaBenzine80;
     } else if (r.fuelType.includes('92')) {
+      row.gasoline92Liters = round2(row.gasoline92Liters + disbursedAmount);
       row.perCapitaBenzine92 = round4(row.perCapitaBenzine92 + perCapita);
       row.gasoline92PerCapitaLiters = row.perCapitaBenzine92;
     } else if (r.fuelType.includes('95')) {
+      row.gasoline95Liters = round2(row.gasoline95Liters + disbursedAmount);
       row.perCapitaBenzine95 = round4(row.perCapitaBenzine95 + perCapita);
       row.gasoline95PerCapitaLiters = row.perCapitaBenzine95;
     } else if (r.fuelType.includes('سولار') || r.fuelType.includes('السولار')) {
+      row.dieselLiters = round2(row.dieselLiters + disbursedAmount);
       row.perCapitaSolar = round4(row.perCapitaSolar + perCapita);
       row.dieselPerCapitaLiters = row.perCapitaSolar;
     } else if (r.fuelType.includes('كيروسين') || r.fuelType.includes('الكيروسين')) {
+      row.keroseneLiters = round2(row.keroseneLiters + disbursedAmount);
       row.perCapitaKerosene = round4(row.perCapitaKerosene + perCapita);
       row.kerosenePerCapitaLiters = row.perCapitaKerosene;
     }

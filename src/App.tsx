@@ -5362,7 +5362,7 @@ export default function App() {
             modulesBundle ? (
               <Suspense fallback={<LazyViewLoadingFallback />}>
                 <RationCommoditiesSuite
-                  key={`${activeTab}-${modulesBundle.branchId}-${rationSubView}`}
+                  key={`commodities-${modulesBundle.branchId}`}
                   state={modulesBundle.ration}
                   branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                   branchName={appState.systemConfig.administrationTitle}
@@ -5392,7 +5392,7 @@ export default function App() {
             modulesBundle ? (
               <Suspense fallback={<LazyViewLoadingFallback />}>
                 <InternalTradeSuite
-                  key={`internal-trade-${modulesBundle.branchId}-${internalTradeSubView}`}
+                  key={`internal-trade-${modulesBundle.branchId}`}
                   state={modulesBundle.internalTrade}
                   branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                   branchName={appState.systemConfig.administrationTitle}
@@ -5417,7 +5417,7 @@ export default function App() {
             modulesBundle ? (
               <Suspense fallback={<LazyViewLoadingFallback />}>
                 <GrainMaintenanceSuite
-                  key={`grain-${modulesBundle.branchId}-${grainSubView}`}
+                  key={`grain-${modulesBundle.branchId}`}
                   state={modulesBundle.grainMaintenance}
                   branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                   branchName={appState.systemConfig.administrationTitle}
@@ -5442,7 +5442,7 @@ export default function App() {
             modulesBundle ? (
               <Suspense fallback={<LazyViewLoadingFallback />}>
                 <HrPersonnelSuite
-                  key={`hr-${modulesBundle.branchId}-${hrSubView}`}
+                  key={`hr-${modulesBundle.branchId}`}
                   state={modulesBundle.hr}
                   branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                   branchName={appState.systemConfig.administrationTitle}

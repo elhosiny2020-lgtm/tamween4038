@@ -20,7 +20,17 @@ import type {
   GrainMaintenanceState,
   MillBakeryMappingRecord,
 } from '../../../types/modules';
-import type { Bakery } from '../../../types';
+import type { AppUser, Bakery } from '../../../types';
+import type { ModulePermissions } from '../../../utils/moduleCrudHelpers';
+import { resolveModuleCrudPermissions } from '../../../utils/moduleCrudHelpers';
+import { groupRecordsByLocalUnit } from '../../../utils/tableGroupingHelpers';
+import {
+  ModuleRowActions,
+  LocalUnitSubtotalRow,
+  VillageGrandTotalRow,
+  ModuleRecordProfileModal,
+  ModuleDeleteConfirmModal,
+} from '../ModuleCrudShared';
 import {
   computeFlourQuotaMetrics,
   computeMillFlourStockBalanceSummary,
@@ -31,6 +41,8 @@ interface FlourQuotasDatabaseViewProps {
   state: GrainMaintenanceState;
   branchName: string;
   currentUserFullName: string;
+  currentUser?: AppUser | null;
+  permissions?: ModulePermissions;
   isViewer: boolean;
   canAdd?: boolean;
   canPrint?: boolean;
@@ -44,6 +56,8 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
   state,
   branchName,
   currentUserFullName,
+  currentUser,
+  permissions,
   isViewer,
   canAdd = !isViewer,
   canPrint = !isViewer,
@@ -52,6 +66,10 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
   onUpdateState,
   onNotify,
 }) => {
+  const effectivePermissions: ModulePermissions = useMemo(() => {
+    if (permissions) return permissions;
+    return resolveModuleCrudPermissions(currentUser || null, isViewer, 'grain_maintenance');
+  }, [permissions, currentUser, isViewer]);
   const [subTab, setSubTab] = useState<
     | 'master'
     | 'daily'
@@ -123,6 +141,50 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
     () => bakeries.find((b) => b.id === selectedBakeryId) || null,
     [bakeries, selectedBakeryId]
   );
+
+  const [profileModal, setProfileModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    entityType: string;
+    subtitle?: string;
+    fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
+  } | null>(null);
+
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    entityType: 'quota';
+    entityId: string;
+    entityTitle: string;
+    recordSummary: { label: string; value: string | number }[];
+  } | null>(null);
+
+  const handleConfirmDelete = () => {
+    if (!deleteModal) return;
+    const { entityId, entityTitle } = deleteModal;
+    onUpdateState(
+      (prev) => ({
+        ...prev,
+        flourQuotaMaster: (prev.flourQuotaMaster || []).filter((q) => q.id !== entityId && q.quotaCode !== entityId),
+      }),
+      `حذف ربط حصة دقيق: ${entityTitle}`
+    );
+    onNotify('ok', `تم حذف ربط حصة الدقيق «${entityTitle}» بنجاح.`);
+    setDeleteModal(null);
+  };
+
+  const quotaGrouping = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: quotaMaster,
+      getLocalUnit: (q) => q.localUnit || q.village,
+      numericFields: [
+        { key: 'dailyQuotaTons', getValue: (q) => q.dailyQuotaTons },
+        { key: 'dailyQuotaSacks', getValue: (q) => q.dailyQuotaSacks },
+        { key: 'weeklyQuotaTons', getValue: (q) => q.weeklyQuotaTons },
+        { key: 'monthlyQuotaTons', getValue: (q) => q.monthlyQuotaTons },
+        { key: 'annualQuotaTons', getValue: (q) => q.annualQuotaTons },
+      ],
+    });
+  }, [quotaMaster]);
 
   const handleSelectBakeryForQuota = (bId: string) => {
     setSelectedBakeryId(bId);
@@ -586,65 +648,191 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                     <th className="p-3 text-center">الشهرية (طن)</th>
                     <th className="p-3 text-center">السنوية (طن)</th>
                     <th className="p-3 text-center">حالة الحصة</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {quotaMaster.map((q) => (
-                    <tr key={q.id} className="hover:bg-slate-50">
-                      <td className="p-3">
-                        <div className="font-mono font-black text-amber-800">{q.quotaCode}</div>
-                        <div className="text-[10px] text-slate-500">
-                          {q.allocationDecisionNumber} ({q.decisionDate})
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <div className="font-black text-indigo-900">{q.millName}</div>
-                        <div className="text-[10px] font-mono text-slate-500">{q.millCode}</div>
-                      </td>
-                      <td className="p-3">
-                        <div className="font-black text-slate-900">{q.bakeryName}</div>
-                        <div className="text-[10px] text-slate-500">
-                          كود: {q.bakeryCode} | المالك: {q.ownerName}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <div>{q.village}</div>
-                        <div className="text-[10px] text-slate-500">وحدة: {q.localUnit}</div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div>{q.flourType}</div>
-                        <span className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-black">
-                          استخراج {q.extractionGrade}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center bg-amber-50">
-                        <div className="font-black text-amber-900 text-sm">
-                          {q.dailyQuotaTons} طن
-                        </div>
-                        <div className="text-[11px] text-emerald-800 font-black">
-                          ({q.dailyQuotaSacks} شيكارة × 50 كجم)
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">{q.weeklyQuotaTons} طن</td>
-                      <td className="p-3 text-center font-black text-slate-900">
-                        {q.monthlyQuotaTons} طن
-                      </td>
-                      <td className="p-3 text-center">{q.annualQuotaTons} طن</td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${
-                            q.quotaStatus === 'سارية'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : q.quotaStatus === 'معدلة'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-rose-100 text-rose-800'
-                          }`}
-                        >
-                          {q.quotaStatus}
-                        </span>
-                      </td>
-                    </tr>
+                  {quotaGrouping.groups.map((group) => (
+                    <React.Fragment key={group.localUnit}>
+                      {group.rows.map((q) => (
+                        <tr key={q.id} className="hover:bg-slate-50">
+                          <td className="p-3">
+                            <div className="font-mono font-black text-amber-800">{q.quotaCode}</div>
+                            <div className="text-[10px] text-slate-500">
+                              {q.allocationDecisionNumber} ({q.decisionDate})
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-black text-indigo-900">{q.millName}</div>
+                            <div className="text-[10px] font-mono text-slate-500">{q.millCode}</div>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-black text-slate-900">{q.bakeryName}</div>
+                            <div className="text-[10px] text-slate-500">
+                              كود: {q.bakeryCode} | المالك: {q.ownerName}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div>{q.village}</div>
+                            <div className="text-[10px] text-slate-500">وحدة: {q.localUnit}</div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div>{q.flourType}</div>
+                            <span className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-black">
+                              استخراج {q.extractionGrade}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center bg-amber-50">
+                            <div className="font-black text-amber-900 text-sm">
+                              {q.dailyQuotaTons} طن
+                            </div>
+                            <div className="text-[11px] text-emerald-800 font-black">
+                              ({q.dailyQuotaSacks} شيكارة × 50 كجم)
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">{q.weeklyQuotaTons} طن</td>
+                          <td className="p-3 text-center font-black text-slate-900">
+                            {q.monthlyQuotaTons} طن
+                          </td>
+                          <td className="p-3 text-center">{q.annualQuotaTons} طن</td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${
+                                q.quotaStatus === 'سارية'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : q.quotaStatus === 'معدلة'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {q.quotaStatus}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <ModuleRowActions
+                              entityLabel={q.bakeryName}
+                              onView={() =>
+                                setProfileModal({
+                                  isOpen: true,
+                                  title: `ملف حصة الدقيق - ${q.bakeryName}`,
+                                  entityType: 'حصة دقيق تمويني',
+                                  subtitle: `${q.quotaCode} | ${q.millName}`,
+                                  fields: [
+                                    { label: 'كود الحصة', value: q.quotaCode, mono: true },
+                                    { label: 'رقم القرار التمويني', value: q.allocationDecisionNumber },
+                                    { label: 'المخبز المستفيد', value: q.bakeryName },
+                                    { label: 'كود المخبز', value: q.bakeryCode, mono: true },
+                                    { label: 'صاحب المخبز', value: q.ownerName },
+                                    { label: 'المطحن المربوط عليه', value: q.millName },
+                                    { label: 'كود المطحن', value: q.millCode, mono: true },
+                                    { label: 'القرية', value: q.village },
+                                    { label: 'الوحدة المحلية', value: q.localUnit },
+                                    { label: 'نوع الدقيق', value: q.flourType },
+                                    {
+                                      label: 'نسبة الاستخراج',
+                                      value: `استخراج ${q.extractionGrade}`,
+                                      badge: true,
+                                      badgeColor: 'bg-indigo-100 text-indigo-800',
+                                    },
+                                    { label: 'الحصة اليومية بالطن', value: `${q.dailyQuotaTons} طن` },
+                                    {
+                                      label: 'الحصة اليومية بالشيكارة (50 كجم)',
+                                      value: `${q.dailyQuotaSacks} شيكارة`,
+                                    },
+                                    { label: 'الحصة الأسبوعية بالطن', value: `${q.weeklyQuotaTons} طن` },
+                                    { label: 'الحصة الشهرية بالطن', value: `${q.monthlyQuotaTons} طن` },
+                                    { label: 'الحصة السنوية بالطن', value: `${q.annualQuotaTons} طن` },
+                                    {
+                                      label: 'حالة الحصة',
+                                      value: q.quotaStatus,
+                                      badge: true,
+                                      badgeColor:
+                                        q.quotaStatus === 'سارية'
+                                          ? 'bg-emerald-100 text-emerald-800'
+                                          : 'bg-amber-100 text-amber-800',
+                                    },
+                                    { label: 'تاريخ بدء السريان', value: q.effectiveStartDate },
+                                    { label: 'تاريخ انتهاء السريان', value: q.effectiveEndDate },
+                                    {
+                                      label: 'سبب التخصيص أو التعديل',
+                                      value: q.allocationOrAmendmentReason,
+                                      colSpan: 2,
+                                    },
+                                    { label: 'ملاحظات', value: q.notes || 'لا توجد ملاحظات', colSpan: 2 },
+                                  ],
+                                })
+                              }
+                              onDelete={() =>
+                                setDeleteModal({
+                                  isOpen: true,
+                                  entityType: 'quota',
+                                  entityId: q.id,
+                                  entityTitle: `${q.bakeryName} (${q.quotaCode})`,
+                                  recordSummary: [
+                                    { label: 'المخبز', value: q.bakeryName },
+                                    { label: 'كود الحصة', value: q.quotaCode },
+                                    { label: 'المطحن', value: q.millName },
+                                    {
+                                      label: 'الحصة اليومية',
+                                      value: `${q.dailyQuotaTons} طن (${q.dailyQuotaSacks} شيكارة)`,
+                                    },
+                                  ],
+                                })
+                              }
+                              isSuperAdmin={
+                                currentUser?.role === 'superadmin' || permissions?.canDelete
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={group.localUnit}
+                        recordCount={group.count}
+                        labelColSpan={5}
+                        metricCells={[
+                          {
+                            content: (
+                              <div className="font-black text-amber-900">
+                                {Number(group.subtotals.dailyQuotaTons || 0).toFixed(2)} طن{' '}
+                                <span className="text-emerald-800 text-[10px]">
+                                  ({group.subtotals.dailyQuotaSacks || 0} شيكارة)
+                                </span>
+                              </div>
+                            ),
+                            align: 'center',
+                          },
+                          { content: `${Number(group.subtotals.weeklyQuotaTons || 0).toFixed(2)} طن`, align: 'center' },
+                          { content: `${Number(group.subtotals.monthlyQuotaTons || 0).toFixed(2)} طن`, align: 'center' },
+                          { content: `${Number(group.subtotals.annualQuotaTons || 0).toFixed(2)} طن`, align: 'center' },
+                          { content: '—', align: 'center' },
+                          { content: '—', align: 'center' },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  <VillageGrandTotalRow
+                    totalCount={quotaGrouping.grandTotalCount}
+                    labelColSpan={5}
+                    metricCells={[
+                      {
+                        content: (
+                          <div className="font-black text-amber-900">
+                            {Number(quotaGrouping.grandTotals.dailyQuotaTons || 0).toFixed(2)} طن{' '}
+                            <span className="text-emerald-800 text-[10px]">
+                              ({quotaGrouping.grandTotals.dailyQuotaSacks || 0} شيكارة)
+                            </span>
+                          </div>
+                        ),
+                        align: 'center',
+                      },
+                      { content: `${Number(quotaGrouping.grandTotals.weeklyQuotaTons || 0).toFixed(2)} طن`, align: 'center' },
+                      { content: `${Number(quotaGrouping.grandTotals.monthlyQuotaTons || 0).toFixed(2)} طن`, align: 'center' },
+                      { content: `${Number(quotaGrouping.grandTotals.annualQuotaTons || 0).toFixed(2)} طن`, align: 'center' },
+                      { content: '—', align: 'center' },
+                      { content: '—', align: 'center' },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -1365,6 +1553,34 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
           </div>
         </div>
       )}
+
+      {/* نافذة الملف التفصيلي للحصة */}
+      {profileModal && (
+        <ModuleRecordProfileModal
+          isOpen={profileModal.isOpen}
+          onClose={() => setProfileModal(null)}
+          title={profileModal.title}
+          entityType={profileModal.entityType}
+          subtitle={profileModal.subtitle}
+          fields={profileModal.fields}
+          printTitle="مديرية التموين والتجارة الداخلية بالغربية - إدارة تموين مركز المحلة الكبرى"
+          preparedBy={currentUserFullName}
+        />
+      )}
+
+      {/* نافذة تأكيد الحذف الخاصة بالسوبر أدمن */}
+      {deleteModal && (
+        <ModuleDeleteConfirmModal
+          isOpen={deleteModal.isOpen}
+          onClose={() => setDeleteModal(null)}
+          onConfirm={handleConfirmDelete}
+          entityTitle={deleteModal.entityTitle}
+          entityTypeLabel="حصة دقيق تمويني"
+          recordSummary={deleteModal.recordSummary}
+          isSuperAdmin={currentUser?.role === 'superadmin' || permissions?.canDelete}
+        />
+      )}
     </div>
   );
 };
+

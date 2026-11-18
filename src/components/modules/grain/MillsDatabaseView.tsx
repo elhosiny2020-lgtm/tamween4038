@@ -21,7 +21,17 @@ import type {
   MillRecord,
   MillWheatReceiptRecord,
 } from '../../../types/modules';
-import type { VillageHierarchy } from '../../../types';
+import type { AppUser, VillageHierarchy } from '../../../types';
+import type { ModulePermissions } from '../../../utils/moduleCrudHelpers';
+import { resolveModuleCrudPermissions } from '../../../utils/moduleCrudHelpers';
+import { groupRecordsByLocalUnit } from '../../../utils/tableGroupingHelpers';
+import {
+  ModuleRowActions,
+  LocalUnitSubtotalRow,
+  VillageGrandTotalRow,
+  ModuleRecordProfileModal,
+  ModuleDeleteConfirmModal,
+} from '../ModuleCrudShared';
 import {
   computeMillAssetValuation,
   computeMillExtractionAndLoss,
@@ -32,6 +42,8 @@ interface MillsDatabaseViewProps {
   state: GrainMaintenanceState;
   branchName: string;
   currentUserFullName: string;
+  currentUser?: AppUser | null;
+  permissions?: ModulePermissions;
   isViewer: boolean;
   canAdd?: boolean;
   canPrint?: boolean;
@@ -45,6 +57,8 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
   state,
   branchName,
   currentUserFullName,
+  currentUser,
+  permissions,
   isViewer,
   canAdd = !isViewer,
   canPrint = !isViewer,
@@ -53,6 +67,10 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
   onUpdateState,
   onNotify,
 }) => {
+  const effectivePermissions: ModulePermissions = useMemo(() => {
+    if (permissions) return permissions;
+    return resolveModuleCrudPermissions(currentUser || null, isViewer, 'grain_maintenance');
+  }, [permissions, currentUser, isViewer]);
   const [subTab, setSubTab] = useState<
     | 'registry'
     | 'licenses'
@@ -167,6 +185,49 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
       }),
     [newOp, state.settings?.maxAllowedExtractionVariancePct]
   );
+
+  const [profileModal, setProfileModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    entityType: string;
+    subtitle?: string;
+    fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
+  } | null>(null);
+
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    entityType: 'mill';
+    entityId: string;
+    entityTitle: string;
+    recordSummary: { label: string; value: string | number }[];
+  } | null>(null);
+
+  const handleConfirmDelete = () => {
+    if (!deleteModal) return;
+    const { entityId, entityTitle } = deleteModal;
+    onUpdateState(
+      (prev) => ({
+        ...prev,
+        mills: (prev.mills || []).filter((m) => m.id !== entityId && m.millCode !== entityId),
+      }),
+      `حذف مطحن: ${entityTitle}`
+    );
+    onNotify('ok', `تم حذف المطحن «${entityTitle}» بنجاح.`);
+    setDeleteModal(null);
+  };
+
+  const millGrouping = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: mills,
+      getLocalUnit: (m) => m.villageOrArea,
+      numericFields: [
+        { key: 'dailyMillingCapacityTons', getValue: (m) => m.dailyMillingCapacityTons },
+        { key: 'monthlyMillingCapacityTons', getValue: (m) => m.monthlyMillingCapacityTons },
+        { key: 'millingLinesCount', getValue: (m) => m.millingLinesCount },
+        { key: 'shiftsCount', getValue: (m) => m.shiftsCount },
+      ],
+    });
+  }, [mills]);
 
   const handleCreateMill = (e: React.FormEvent) => {
     e.preventDefault();
@@ -550,63 +611,132 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                     <th className="p-3 text-center">الخطوط والورديات</th>
                     <th className="p-3">نوع الدقيق المنتج</th>
                     <th className="p-3 text-center">الحالة وآخر تفتيش</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {mills.map((m) => (
-                    <tr key={m.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-indigo-800">{m.millCode}</td>
-                      <td className="p-3">
-                        <div className="font-black text-slate-900">{m.millName}</div>
-                        <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-black">
-                          {m.millSectorType}
-                        </span>
-                      </td>
-                      <td className="p-3">
-                        <div>{m.ownerCompany}</div>
-                        <div className="text-[10px] text-slate-500">{m.operatingEntity}</div>
-                      </td>
-                      <td className="p-3">
-                        <div>{m.villageOrArea}</div>
-                        <div className="text-[10px] text-slate-500">{m.detailedAddress}</div>
-                      </td>
-                      <td className="p-3">
-                        <div>مدير: {m.managerName}</div>
-                        <div className="text-[10px] text-slate-500">
-                          فني: {m.technicalOfficer} | {m.phone}
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div className="font-black text-emerald-800">
-                          {m.dailyMillingCapacityTons} طن/يوم
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                          {m.monthlyMillingCapacityTons.toLocaleString('ar-EG')} طن/شهر
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div>{m.millingLinesCount} خطوط طحن</div>
-                        <div className="text-[10px] text-slate-500">
-                          {m.shiftsCount} وردية ({m.dailyOperatingHours} س)
-                        </div>
-                      </td>
-                      <td className="p-3 text-indigo-900 font-black">{m.producedFlourType}</td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`inline-block px-2.5 py-0.5 rounded-lg text-[11px] font-black ${
-                            m.operationalStatus === 'يعمل'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {m.operationalStatus}
-                        </span>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          تفتيش: {m.lastInspectionDate}
-                        </div>
-                      </td>
-                    </tr>
+                  {millGrouping.groups.map((group) => (
+                    <React.Fragment key={group.localUnit}>
+                      {group.rows.map((m) => (
+                        <tr key={m.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-mono font-black text-indigo-800">{m.millCode}</td>
+                          <td className="p-3">
+                            <div className="font-black text-slate-900">{m.millName}</div>
+                            <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-black">
+                              {m.millSectorType}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div>{m.ownerCompany}</div>
+                            <div className="text-[10px] text-slate-500">{m.operatingEntity}</div>
+                          </td>
+                          <td className="p-3">
+                            <div>{m.villageOrArea}</div>
+                            <div className="text-[10px] text-slate-500">{m.detailedAddress}</div>
+                          </td>
+                          <td className="p-3">
+                            <div>مدير: {m.managerName}</div>
+                            <div className="text-[10px] text-slate-500">
+                              فني: {m.technicalOfficer} | {m.phone}
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="font-black text-emerald-800">
+                              {m.dailyMillingCapacityTons} طن/يوم
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              {m.monthlyMillingCapacityTons.toLocaleString('ar-EG')} طن/شهر
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div>{m.millingLinesCount} خطوط طحن</div>
+                            <div className="text-[10px] text-slate-500">
+                              {m.shiftsCount} وردية ({m.dailyOperatingHours} س)
+                            </div>
+                          </td>
+                          <td className="p-3 text-indigo-900 font-black">{m.producedFlourType}</td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`inline-block px-2.5 py-0.5 rounded-lg text-[11px] font-black ${
+                                m.operationalStatus === 'يعمل'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {m.operationalStatus}
+                            </span>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              تفتيش: {m.lastInspectionDate}
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <ModuleRowActions
+                              entityLabel={m.millName}
+                              permissions={effectivePermissions}
+                              testIdPrefix={`mill-row-${m.id}`}
+                              onView={() =>
+                                setProfileModal({
+                                  isOpen: true,
+                                  title: `بطاقة المطحن: ${m.millName}`,
+                                  subtitle: `كود ${m.millCode} — ${m.millSectorType}`,
+                                  entityType: 'بيانات تفصيلية لمطحن تمويني',
+                                  fields: [
+                                    { label: 'كود المطحن', value: m.millCode, mono: true },
+                                    { label: 'اسم المطحن', value: m.millName },
+                                    { label: 'القطاع والمالك', value: `${m.millSectorType} — ${m.ownerCompany}` },
+                                    { label: 'الجهة المشغلة', value: m.operatingEntity },
+                                    { label: 'الموقع والعنوان', value: `${m.villageOrArea} — ${m.detailedAddress}` },
+                                    { label: 'المدير والمسؤول الفني', value: `${m.managerName} | ${m.technicalOfficer} (${m.phone})` },
+                                    { label: 'القدرة الطحنية اليومية', value: `${m.dailyMillingCapacityTons} طن/يوم`, mono: true },
+                                    { label: 'القدرة الطحنية الشهرية', value: `${m.monthlyMillingCapacityTons.toLocaleString()} طن/شهر`, mono: true },
+                                    { label: 'خطوط الطحن والورديات', value: `${m.millingLinesCount} خط طحن — ${m.shiftsCount} وردية (${m.dailyOperatingHours} س)` },
+                                    { label: 'نوع القمح المستخدم', value: m.wheatTypeUsed },
+                                    { label: 'نوع الدقيق المنتج', value: m.producedFlourType },
+                                    { label: 'الحالة التشغيلية', value: m.operationalStatus, badge: true, badgeColor: 'teal' },
+                                    { label: 'تاريخ آخر تفتيش ومعاينة', value: m.lastInspectionDate },
+                                  ],
+                                })
+                              }
+                              onDelete={() =>
+                                setDeleteModal({
+                                  isOpen: true,
+                                  entityType: 'mill',
+                                  entityId: m.id,
+                                  entityTitle: m.millName,
+                                  recordSummary: [
+                                    { label: 'كود المطحن', value: m.millCode },
+                                    { label: 'اسم المطحن', value: m.millName },
+                                    { label: 'القدرة اليومية', value: `${m.dailyMillingCapacityTons} طن/يوم` },
+                                  ],
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={group.localUnit}
+                        recordCount={group.count}
+                        labelColSpan={5}
+                        metricCells={[
+                          { content: `${group.subtotals.dailyMillingCapacityTons?.toLocaleString('ar-EG')} / ${group.subtotals.monthlyMillingCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
+                          { content: `${group.subtotals.millingLinesCount} خطوط / ${group.subtotals.shiftsCount} وردية`, align: 'center' },
+                          { content: '—', align: 'center', colSpan: 3 },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  {millGrouping.groups.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={millGrouping.grandTotalCount}
+                      labelColSpan={5}
+                      metricCells={[
+                        { content: `${millGrouping.grandTotals.dailyMillingCapacityTons?.toLocaleString('ar-EG')} / ${millGrouping.grandTotals.monthlyMillingCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
+                        { content: `${millGrouping.grandTotals.millingLinesCount} خطوط / ${millGrouping.grandTotals.shiftsCount} وردية`, align: 'center' },
+                        { content: '—', align: 'center', colSpan: 3 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1514,6 +1644,31 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* نافذة بطاقة السجل للقراءة فقط */}
+      {profileModal && (
+        <ModuleRecordProfileModal
+          isOpen={profileModal.isOpen}
+          title={profileModal.title}
+          subtitle={profileModal.subtitle}
+          entityType={profileModal.entityType}
+          fields={profileModal.fields}
+          onClose={() => setProfileModal(null)}
+        />
+      )}
+
+      {/* نافذة تأكيد الحذف */}
+      {deleteModal && (
+        <ModuleDeleteConfirmModal
+          isOpen={deleteModal.isOpen}
+          entityTitle={deleteModal.entityTitle}
+          recordSummary={deleteModal.recordSummary}
+          canDelete={effectivePermissions.canDelete}
+          blockReason={effectivePermissions.canDelete ? undefined : 'الحذف مقتصر على المشرف العام (Super Admin) فقط.'}
+          onClose={() => setDeleteModal(null)}
+          onConfirmDelete={handleConfirmDelete}
+        />
       )}
     </div>
   );

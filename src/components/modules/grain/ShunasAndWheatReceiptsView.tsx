@@ -24,7 +24,17 @@ import type {
   ShunaWheatIssueRecord,
   WheatLedgerMovementRecord,
 } from '../../../types/modules';
-import type { VillageHierarchy } from '../../../types';
+import type { AppUser, VillageHierarchy } from '../../../types';
+import type { ModulePermissions } from '../../../utils/moduleCrudHelpers';
+import { resolveModuleCrudPermissions } from '../../../utils/moduleCrudHelpers';
+import { groupRecordsByLocalUnit } from '../../../utils/tableGroupingHelpers';
+import {
+  ModuleRowActions,
+  LocalUnitSubtotalRow,
+  VillageGrandTotalRow,
+  ModuleRecordProfileModal,
+  ModuleDeleteConfirmModal,
+} from '../ModuleCrudShared';
 import {
   computeShunaBookBalanceAndValuation,
   computeShunaReconciliationVariance,
@@ -36,6 +46,8 @@ interface ShunasAndWheatReceiptsViewProps {
   state: GrainMaintenanceState;
   branchName: string;
   currentUserFullName: string;
+  currentUser?: AppUser | null;
+  permissions?: ModulePermissions;
   isViewer: boolean;
   canAdd?: boolean;
   canEdit?: boolean;
@@ -51,6 +63,8 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
   state,
   branchName,
   currentUserFullName,
+  currentUser,
+  permissions,
   isViewer,
   canAdd = !isViewer,
   canEdit = !isViewer,
@@ -61,6 +75,11 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
   onUpdateState,
   onNotify,
 }) => {
+  const effectivePermissions: ModulePermissions = useMemo(() => {
+    if (permissions) return permissions;
+    return resolveModuleCrudPermissions(currentUser || null, isViewer, 'grain_maintenance');
+  }, [permissions, currentUser, isViewer]);
+
   const [activeTab, setActiveTab] = useState<
     'shunas' | 'receipts_book' | 'issues_book' | 'ledger' | 'reconciliation'
   >(initialTab);
@@ -181,6 +200,82 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
       }),
     }));
   }, [shunas, wheatReceipts, wheatIssues, today]);
+
+  const [profileModal, setProfileModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    entityType: string;
+    subtitle?: string;
+    fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
+  } | null>(null);
+
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    entityType: 'shuna' | 'receipt';
+    entityId: string;
+    entityTitle: string;
+    recordSummary: { label: string; value: string | number }[];
+  } | null>(null);
+
+  const [editingShuna, setEditingShuna] = useState<ShunaRecord | null>(null);
+
+  const handleConfirmDelete = () => {
+    if (!deleteModal) return;
+    const { entityType, entityId, entityTitle } = deleteModal;
+    if (entityType === 'shuna') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          shunas: (prev.shunas || []).filter((s) => s.id !== entityId && s.shunaCode !== entityId),
+        }),
+        `حذف شونة: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف الشونة «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'receipt') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatReceipts: (prev.wheatReceipts || []).filter((r) => r.id !== entityId && r.receiptOrderNumber !== entityId),
+        }),
+        `حذف إذن استلام قمح: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف إذن الاستلام «${entityTitle}» بنجاح.`);
+    }
+    setDeleteModal(null);
+  };
+
+  const handleSaveEditShuna = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingShuna) return;
+    onUpdateState(
+      (prev) => ({
+        ...prev,
+        shunas: (prev.shunas || []).map((s) => (s.id === editingShuna.id ? { ...editingShuna, updatedAt: new Date().toISOString() } : s)),
+      }),
+      `تعديل بيانات الشونة: ${editingShuna.shunaName}`
+    );
+    setEditingShuna(null);
+    onNotify('ok', `تم تعديل بيانات الشونة «${editingShuna.shunaName}» وحفظها بنجاح.`);
+  };
+
+  const shunaGroupsResult = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: shunasWithMetrics,
+      getLocalUnit: (x) => x.shuna.localUnit || x.shuna.village,
+      numericFields: [
+        { key: 'totalAreaSqm', getValue: (x) => x.shuna.totalAreaSqm },
+        { key: 'remainingAreaSqm', getValue: (x) => x.metrics.remainingAreaSqm },
+        { key: 'storageCapacityTons', getValue: (x) => x.shuna.storageCapacityTons },
+        { key: 'openingBalanceTons', getValue: (x) => x.metrics.openingBalanceTons },
+        { key: 'approvedInboundTons', getValue: (x) => x.metrics.approvedInboundTons },
+        { key: 'approvedOutboundTons', getValue: (x) => x.metrics.approvedOutboundTons },
+        { key: 'currentBookBalanceTons', getValue: (x) => x.metrics.currentBookBalanceTons },
+        { key: 'stockValuationAmount', getValue: (x) => x.metrics.stockValuationAmount },
+        { key: 'fixedAssetsValuationAmount', getValue: (x) => x.metrics.fixedAssetsValuationAmount },
+        { key: 'totalEstimatedShunaValue', getValue: (x) => x.metrics.totalEstimatedShunaValue },
+      ],
+    });
+  }, [shunasWithMetrics]);
 
   const liveReceiptCalc = useMemo(
     () =>
@@ -859,83 +954,174 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                     <th className="p-3 text-center">قيمة الأصول والمعدات والميزان</th>
                     <th className="p-3 text-center">إجمالي القيمة التقديرية</th>
                     <th className="p-3 text-center">حالة الميزان والتشغيل</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {shunasWithMetrics.map(({ shuna, metrics }) => (
-                    <tr key={shuna.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-amber-800">{shuna.shunaCode}</td>
-                      <td className="p-3">
-                        <div className="font-black text-slate-900">{shuna.shunaName}</div>
-                        <div className="text-[11px] text-slate-500">
-                          {shuna.village} - وحدة {shuna.localUnit}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <div className="text-slate-800">{shuna.affiliatedEntity}</div>
-                        <div className="text-[11px] text-slate-500">
-                          {shuna.managerName} ({shuna.phone})
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div>{shuna.totalAreaSqm.toLocaleString('ar-EG')} م²</div>
-                        <div className="text-[11px] text-emerald-700">
-                          متبقي: {metrics.remainingAreaSqm.toLocaleString('ar-EG')} م²
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div>{shuna.storageCapacityTons.toLocaleString('ar-EG')} طن</div>
-                        <div className="text-[10px] text-slate-500">
-                          إشغال {metrics.occupancyPct}%
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">{metrics.openingBalanceTons.toLocaleString('ar-EG')}</td>
-                      <td className="p-3 text-center font-black text-emerald-700 bg-emerald-50/60">
-                        +{metrics.approvedInboundTons.toLocaleString('ar-EG')} طن
-                        <div className="text-[10px] text-slate-500">
-                          ({metrics.approvedReceiptsCount} إذن معتمد)
-                        </div>
-                      </td>
-                      <td className="p-3 text-center font-black text-amber-800 bg-amber-50/60">
-                        -{metrics.approvedOutboundTons.toLocaleString('ar-EG')} طن
-                      </td>
-                      <td className="p-3 text-center bg-sky-50/80">
-                        <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-900 text-white font-black text-xs">
-                          <Lock className="w-3 h-3 text-sky-300" />
-                          <span>{metrics.currentBookBalanceTons.toLocaleString('ar-EG')} طن</span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          متاح للتخزين: {metrics.availableCapacityTons.toLocaleString('ar-EG')} طن
-                        </div>
-                      </td>
-                      <td className="p-3 text-center font-black text-emerald-800">
-                        {metrics.stockValuationAmount.toLocaleString('ar-EG')} ج.م
-                      </td>
-                      <td className="p-3 text-center text-slate-700">
-                        <div>{metrics.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م</div>
-                        <div className="text-[10px] text-slate-500">
-                          ميزان: {shuna.scaleValue.toLocaleString('ar-EG')} ج.م
-                        </div>
-                      </td>
-                      <td className="p-3 text-center font-black text-indigo-900">
-                        {metrics.totalEstimatedShunaValue.toLocaleString('ar-EG')} ج.م
-                      </td>
-                      <td className="p-3 text-center space-y-1">
-                        <span
-                          className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-black ${
-                            shuna.operationalStatus === 'تعمل'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : shuna.operationalStatus === 'تحت الصيانة'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-rose-100 text-rose-800'
-                          }`}
-                        >
-                          {shuna.operationalStatus}
-                        </span>
-                        <div className="text-[10px] text-slate-600">{shuna.scaleStatus}</div>
-                      </td>
-                    </tr>
+                  {shunaGroupsResult.groups.map((group) => (
+                    <React.Fragment key={group.localUnit}>
+                      {group.rows.map(({ shuna, metrics }) => (
+                        <tr key={shuna.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-mono font-black text-amber-800">{shuna.shunaCode}</td>
+                          <td className="p-3">
+                            <div className="font-black text-slate-900">{shuna.shunaName}</div>
+                            <div className="text-[11px] text-slate-500">
+                              {shuna.village} - وحدة {shuna.localUnit}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="text-slate-800">{shuna.affiliatedEntity}</div>
+                            <div className="text-[11px] text-slate-500">
+                              {shuna.managerName} ({shuna.phone})
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div>{shuna.totalAreaSqm.toLocaleString('ar-EG')} م²</div>
+                            <div className="text-[11px] text-emerald-700">
+                              متبقي: {metrics.remainingAreaSqm.toLocaleString('ar-EG')} م²
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div>{shuna.storageCapacityTons.toLocaleString('ar-EG')} طن</div>
+                            <div className="text-[10px] text-slate-500">
+                              إشغال {metrics.occupancyPct}%
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">{metrics.openingBalanceTons.toLocaleString('ar-EG')}</td>
+                          <td className="p-3 text-center font-black text-emerald-700 bg-emerald-50/60">
+                            +{metrics.approvedInboundTons.toLocaleString('ar-EG')} طن
+                            <div className="text-[10px] text-slate-500">
+                              ({metrics.approvedReceiptsCount} إذن معتمد)
+                            </div>
+                          </td>
+                          <td className="p-3 text-center font-black text-amber-800 bg-amber-50/60">
+                            -{metrics.approvedOutboundTons.toLocaleString('ar-EG')} طن
+                          </td>
+                          <td className="p-3 text-center bg-sky-50/80">
+                            <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-900 text-white font-black text-xs">
+                              <Lock className="w-3 h-3 text-sky-300" />
+                              <span>{metrics.currentBookBalanceTons.toLocaleString('ar-EG')} طن</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              متاح للتخزين: {metrics.availableCapacityTons.toLocaleString('ar-EG')} طن
+                            </div>
+                          </td>
+                          <td className="p-3 text-center font-black text-emerald-800">
+                            {metrics.stockValuationAmount.toLocaleString('ar-EG')} ج.م
+                          </td>
+                          <td className="p-3 text-center text-slate-700">
+                            <div>{metrics.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م</div>
+                            <div className="text-[10px] text-slate-500">
+                              ميزان: {shuna.scaleValue.toLocaleString('ar-EG')} ج.م
+                            </div>
+                          </td>
+                          <td className="p-3 text-center font-black text-indigo-900">
+                            {metrics.totalEstimatedShunaValue.toLocaleString('ar-EG')} ج.م
+                          </td>
+                          <td className="p-3 text-center space-y-1">
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-black ${
+                                shuna.operationalStatus === 'تعمل'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : shuna.operationalStatus === 'تحت الصيانة'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {shuna.operationalStatus}
+                            </span>
+                            <div className="text-[10px] text-slate-600">{shuna.scaleStatus}</div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <ModuleRowActions
+                              entityLabel={shuna.shunaName}
+                              updatedAt={shuna.updatedAt}
+                              permissions={effectivePermissions}
+                              testIdPrefix={`shuna-row-${shuna.id}`}
+                              onView={() =>
+                                setProfileModal({
+                                  isOpen: true,
+                                  title: `بطاقة الشونة: ${shuna.shunaName}`,
+                                  subtitle: `كود ${shuna.shunaCode} — ${shuna.affiliatedEntity}`,
+                                  entityType: 'بيانات تفصيلية لشونة معتمدة',
+                                  fields: [
+                                    { label: 'كود الشونة', value: shuna.shunaCode, mono: true },
+                                    { label: 'اسم الشونة', value: shuna.shunaName },
+                                    { label: 'القرية / المركز', value: `${shuna.village} — وحدة ${shuna.localUnit}` },
+                                    { label: 'الجهة التابعة', value: shuna.affiliatedEntity },
+                                    { label: 'أمين / مدير الشونة', value: `${shuna.managerName} (${shuna.phone || 'بدون هاتف'})` },
+                                    { label: 'المساحة الكلية', value: `${shuna.totalAreaSqm.toLocaleString()} م²` },
+                                    { label: 'المساحة المتبقية', value: `${metrics.remainingAreaSqm.toLocaleString()} م²` },
+                                    { label: 'السعة التخزينية القصوى', value: `${shuna.storageCapacityTons.toLocaleString()} طن` },
+                                    { label: 'الرصيد الافتتاحي المعتمد', value: `${metrics.openingBalanceTons.toLocaleString()} طن` },
+                                    { label: 'إجمالي الوارد المعتمد', value: `+${metrics.approvedInboundTons.toLocaleString()} طن` },
+                                    { label: 'إجمالي المنصرف المعتمد للمطاحن', value: `-${metrics.approvedOutboundTons.toLocaleString()} طن` },
+                                    { label: 'الرصيد الدفتري الحالي', value: `${metrics.currentBookBalanceTons.toLocaleString()} طن`, mono: true },
+                                    { label: 'قيمة المخزون السلعي (القمح)', value: `${metrics.stockValuationAmount.toLocaleString()} ج.م` },
+                                    { label: 'قيمة الأصول الثابتة والمعدات', value: `${metrics.fixedAssetsValuationAmount.toLocaleString()} ج.م` },
+                                    { label: 'إجمالي القيمة التقديرية للشونة', value: `${metrics.totalEstimatedShunaValue.toLocaleString()} ج.م` },
+                                    { label: 'حالة الميزان', value: shuna.scaleStatus, badge: true, badgeColor: 'teal' },
+                                    { label: 'الحالة التشغيلية', value: shuna.operationalStatus, badge: true, badgeColor: 'green' },
+                                    { label: 'تاريخ آخر تقييم فني', value: shuna.valuationDate || '2026-05-01' },
+                                  ],
+                                })
+                              }
+                              onEdit={() => setEditingShuna(shuna)}
+                              onDelete={() =>
+                                setDeleteModal({
+                                  isOpen: true,
+                                  entityType: 'shuna',
+                                  entityId: shuna.id,
+                                  entityTitle: shuna.shunaName,
+                                  recordSummary: [
+                                    { label: 'كود الشونة', value: shuna.shunaCode },
+                                    { label: 'اسم الشونة', value: shuna.shunaName },
+                                    { label: 'السعة التخزينية', value: `${shuna.storageCapacityTons} طن` },
+                                    { label: 'الرصيد الحالي', value: `${metrics.currentBookBalanceTons} طن` },
+                                  ],
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={group.localUnit}
+                        recordCount={group.count}
+                        labelColSpan={3}
+                        metricCells={[
+                          { content: `${group.subtotals.totalAreaSqm?.toLocaleString('ar-EG')} م² (متبقي ${group.subtotals.remainingAreaSqm?.toLocaleString('ar-EG')})`, align: 'center' },
+                          { content: `${group.subtotals.storageCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                          { content: `${group.subtotals.openingBalanceTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                          { content: `+${group.subtotals.approvedInboundTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                          { content: `-${group.subtotals.approvedOutboundTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                          { content: `${group.subtotals.currentBookBalanceTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
+                          { content: `${group.subtotals.stockValuationAmount?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                          { content: `${group.subtotals.fixedAssetsValuationAmount?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                          { content: `${group.subtotals.totalEstimatedShunaValue?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                          { content: '—', align: 'center', colSpan: 2 },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  {shunaGroupsResult.groups.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={shunaGroupsResult.grandTotalCount}
+                      labelColSpan={3}
+                      metricCells={[
+                        { content: `${shunaGroupsResult.grandTotals.totalAreaSqm?.toLocaleString('ar-EG')} م² (متبقي ${shunaGroupsResult.grandTotals.remainingAreaSqm?.toLocaleString('ar-EG')})`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.storageCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.openingBalanceTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                        { content: `+${shunaGroupsResult.grandTotals.approvedInboundTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                        { content: `-${shunaGroupsResult.grandTotals.approvedOutboundTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.currentBookBalanceTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
+                        { content: `${shunaGroupsResult.grandTotals.stockValuationAmount?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.fixedAssetsValuationAmount?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.totalEstimatedShunaValue?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                        { content: '—', align: 'center', colSpan: 2 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1260,22 +1446,65 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                       </td>
                       <td className="p-2.5 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          {canPrint && (
-                            <button
-                              type="button"
-                              onClick={() => handlePrintOfficialReceiptVoucher(r)}
-                              title="طباعة إذن استلام قمح رسمي A4"
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <ModuleRowActions
+                            entityLabel={r.receiptOrderNumber}
+                            updatedAt={r.updatedAt}
+                            permissions={effectivePermissions}
+                            testIdPrefix={`receipt-row-${r.id}`}
+                            onView={() =>
+                              setProfileModal({
+                                isOpen: true,
+                                title: `إذن استلام قمح رقم: ${r.receiptOrderNumber}`,
+                                subtitle: `${r.shunaName} (${r.shunaCode}) — حالة الاعتماد: ${r.approvalStatus}`,
+                                entityType: 'بيانات تفصيلية لإذن استلام القمح',
+                                fields: [
+                                  { label: 'رقم إذن الاستلام', value: r.receiptOrderNumber, mono: true },
+                                  { label: 'تاريخ ووقت الاستلام', value: `${r.receiptDate} ${r.receiptTime}` },
+                                  { label: 'الشونة المستلمة', value: `${r.shunaName} (${r.shunaCode})` },
+                                  { label: 'المورد / المزارع', value: r.supplierName },
+                                  { label: 'الرقم القومي / الكود', value: r.supplierNationalIdOrCode, mono: true },
+                                  { label: 'نوع القمح والموسم', value: `${r.wheatType} — ${r.agriculturalSeason}` },
+                                  { label: 'بيانات النقل', value: `سيارة ${r.vehicleNumber} (سائق: ${r.driverName})` },
+                                  { label: 'الميزان المستخدم', value: r.scaleNumber },
+                                  { label: 'الوزن القائم / الفارغ', value: `${r.grossWeightKg.toLocaleString()} كجم / ${r.tareWeightKg.toLocaleString()} كجم` },
+                                  { label: 'صافي الوزن القائم', value: `${r.netWeightKg.toLocaleString()} كجم (${r.netWeightTons} طن)` },
+                                  { label: 'الرطوبة / الشوائب', value: `رطوبة ${r.moisturePct}% | شوائب ${r.impuritiesPct}%` },
+                                  { label: 'رتبة النظافة والجودة', value: `${r.cleanlinessGrade} — ${r.qualityGrade}` },
+                                  { label: 'الوزن المستبعد المعتمد', value: `${r.excludedWeightTons} طن` },
+                                  { label: 'الوزن الصافي المقبول المعتمد', value: `${r.acceptedNetWeightTons} طن`, mono: true },
+                                  { label: 'سعر الطن المعتمد', value: `${r.tonPrice.toLocaleString()} ج.م` },
+                                  { label: 'إجمالي قيمة التوريد', value: `${r.totalSupplyValue.toLocaleString()} ج.م`, mono: true },
+                                  { label: 'محضر الفحص والفرز', value: r.inspectionReportNumber },
+                                  { label: 'أمين الشونة وعضو اللجنة', value: `${r.shunaKeeperName} | ${r.committeeMemberName}` },
+                                  { label: 'حالة الاعتماد', value: r.approvalStatus, badge: true, badgeColor: r.approvalStatus === 'معتمد' ? 'green' : 'amber' },
+                                ],
+                              })
+                            }
+                            onPrint={() => handlePrintOfficialReceiptVoucher(r)}
+                            onDelete={
+                              r.approvalStatus !== 'معتمد'
+                                ? () =>
+                                    setDeleteModal({
+                                      isOpen: true,
+                                      entityType: 'receipt',
+                                      entityId: r.id,
+                                      entityTitle: r.receiptOrderNumber,
+                                      recordSummary: [
+                                        { label: 'رقم الإذن', value: r.receiptOrderNumber },
+                                        { label: 'الشونة', value: r.shunaName },
+                                        { label: 'المورد', value: r.supplierName },
+                                        { label: 'الكمية', value: `${r.acceptedNetWeightTons} طن` },
+                                      ],
+                                    })
+                                : undefined
+                            }
+                          />
                           {canEdit && r.approvalStatus !== 'معتمد' && (
                             <button
                               type="button"
                               onClick={() => handleApproveOrReverseReceipt(r, 'معتمد')}
                               title="اعتماد الإذن وترحيله لرصيد الشونة"
-                              className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black flex items-center gap-1"
+                              className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black flex items-center gap-1 cursor-pointer"
                             >
                               <CheckCircle2 className="w-3 h-3" />
                               <span>اعتماد</span>
@@ -1286,7 +1515,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                               type="button"
                               onClick={() => handleApproveOrReverseReceipt(r, 'ملغي')}
                               title="إلغاء بعكس قيد محاسبي (يمنع الحذف المباشر للأذون المعتمدة)"
-                              className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-black flex items-center gap-1"
+                              className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-black flex items-center gap-1 cursor-pointer"
                             >
                               <XCircle className="w-3 h-3" />
                               <span>عكس قيد</span>
@@ -2299,6 +2528,133 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
             </form>
           </div>
         </div>
+      )}
+
+      {/* نافذة تعديل بيانات الشونة */}
+      {editingShuna && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
+            <h3 className="text-lg font-black text-slate-900 mb-3">
+              تعديل بيانات الشونة: {editingShuna.shunaName}
+            </h3>
+            <form onSubmit={handleSaveEditShuna} className="space-y-4 text-xs font-bold">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block mb-1 text-slate-700">اسم الشونة</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingShuna.shunaName}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, shunaName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الجهة التابعة</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingShuna.affiliatedEntity}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, affiliatedEntity: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">أمين / مدير الشونة</label>
+                  <input
+                    type="text"
+                    value={editingShuna.managerName}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, managerName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">رقم الهاتف</label>
+                  <input
+                    type="text"
+                    value={editingShuna.phone}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, phone: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">السعة التخزينية (طن)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editingShuna.storageCapacityTons}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, storageCapacityTons: Number(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">حالة الميزان</label>
+                  <select
+                    value={editingShuna.scaleStatus}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, scaleStatus: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  >
+                    <option value="يعمل ومعاير">يعمل ومعاير</option>
+                    <option value="يحتاج معايرة">يحتاج معايرة</option>
+                    <option value="معطل">معطل</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الحالة التشغيلية</label>
+                  <select
+                    value={editingShuna.operationalStatus}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, operationalStatus: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  >
+                    <option value="تعمل">تعمل</option>
+                    <option value="تحت الصيانة">تحت الصيانة</option>
+                    <option value="متوقفة">متوقفة</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditingShuna(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-600 text-white font-black"
+                >
+                  حفظ التعديلات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة بطاقة السجل للقراءة فقط */}
+      {profileModal && (
+        <ModuleRecordProfileModal
+          isOpen={profileModal.isOpen}
+          title={profileModal.title}
+          subtitle={profileModal.subtitle}
+          entityType={profileModal.entityType}
+          fields={profileModal.fields}
+          onClose={() => setProfileModal(null)}
+        />
+      )}
+
+      {/* نافذة تأكيد الحذف */}
+      {deleteModal && (
+        <ModuleDeleteConfirmModal
+          isOpen={deleteModal.isOpen}
+          entityTitle={deleteModal.entityTitle}
+          recordSummary={deleteModal.recordSummary}
+          canDelete={effectivePermissions.canDelete}
+          blockReason={effectivePermissions.canDelete ? undefined : 'الحذف مقتصر على المشرف العام (Super Admin) فقط.'}
+          onClose={() => setDeleteModal(null)}
+          onConfirmDelete={handleConfirmDelete}
+        />
       )}
     </div>
   );

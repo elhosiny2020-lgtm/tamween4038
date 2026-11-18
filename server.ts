@@ -54,6 +54,7 @@ import {
   INITIAL_DAILY_TASKS,
   INITIAL_INBOX_MESSAGES,
 } from './src/defaultData.ts';
+import { applySecurityMiddlewares } from './src/services/securityConfig.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -224,25 +225,8 @@ async function startServer() {
     });
   };
 
-  // 1. Sovereign Security Headers & CORS Middleware
-  app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.header(
-      'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Tamween-Security-Token, X-Tamween-Client-Id, X-Simulated-Attack'
-    );
-    res.header('X-Content-Type-Options', 'nosniff');
-    res.header('X-XSS-Protection', '1; mode=block');
-    res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.header('X-Permitted-Cross-Domain-Policies', 'none');
-    res.header('X-Tamween-Database-Shield', 'ACTIVE-SHA256-0600');
-    if (req.method === 'OPTIONS') {
-      res.sendStatus(204);
-      return;
-    }
-    next();
-  });
+  // 1. Sovereign Security & CORS Middlewares via securityConfig.ts
+  applySecurityMiddlewares(app);
 
   // 2. Direct Database File & Sensitive Config Access Blocker (Anti-Leakage Shield)
   app.use((req, res, next) => {
@@ -1376,8 +1360,22 @@ async function startServer() {
     }
   });
 
-  app.post('/api/supabase/config', (req, res) => {
+  app.post('/api/supabase/config', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'system',
+          'SUPABASE_CONFIG_UPDATE',
+          'تعديل إعدادات الاتصال بقاعدة البيانات مقتصر حصرياً على مدير النظام (Super Admin) فقط.'
+        );
+        return;
+      }
+
       const { url, anonKey } = req.body || {};
       const cleanUrl = String(url || '').trim();
       const cleanKey = String(anonKey || '').trim();

@@ -6,14 +6,19 @@
 export interface LocalUnitGroup<T> {
   localUnit: string;
   rows: T[];
+  items: T[];
+  records: T[];
   count: number;
-  subtotals: Record<string, number>;
+  subtotals: Record<string, any>;
+  derivedMetrics: Record<string, any>;
 }
 
 export interface LocalUnitGroupingResult<T> {
   groups: LocalUnitGroup<T>[];
   grandTotalCount: number;
-  grandTotals: Record<string, number>;
+  grandTotals: Record<string, any>;
+  derivedGrandMetrics: Record<string, any>;
+  grandTotal: { count: number; totals: Record<string, any> };
 }
 
 const DEFAULT_UNASSIGNED_UNIT = 'غير محدد / عام';
@@ -41,7 +46,7 @@ export function groupRecordsByLocalUnit<T>(params: {
   rows: T[];
   getLocalUnit: (row: T) => string | undefined | null;
   numericFields?: { key: string; getValue: (row: T) => number | undefined | null }[];
-  deriveMetrics?: (totals: Record<string, number>, rowCount: number) => Record<string, number>;
+  deriveMetrics?: (totals: Record<string, number>, rowCount: number) => Record<string, any>;
   sortUnitsAlphabetically?: boolean;
 }): LocalUnitGroupingResult<T> {
   const {
@@ -89,11 +94,14 @@ export function groupRecordsByLocalUnit<T>(params: {
     return {
       localUnit,
       rows: groupRows,
+      items: groupRows,
+      records: groupRows,
       count: groupRows.length,
       subtotals: {
         ...rawSums,
         ...derived,
       },
+      derivedMetrics: derived,
     };
   });
 
@@ -112,6 +120,14 @@ export function groupRecordsByLocalUnit<T>(params: {
     grandTotals: {
       ...baseGrandSums,
       ...derivedGrand,
+    },
+    derivedGrandMetrics: derivedGrand,
+    grandTotal: {
+      count: grandTotalCount,
+      totals: {
+        ...baseGrandSums,
+        ...derivedGrand,
+      },
     },
   };
 }
