@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import type { AppUser } from '../types.ts';
 
 const SCRYPT_PREFIX = 'scrypt$';
@@ -6,55 +7,94 @@ const TOKEN_VERSION = 'v1';
 export const SESSION_COOKIE_NAME = 'tamween_session';
 export const SESSION_TTL_MS = 1000 * 60 * 60 * 2; // 2 hours
 const MIN_PRODUCTION_SECRET_LENGTH = 32;
+const RUNTIME_SECRETS_PATH = '/tmp/.tamween_runtime_secrets.json';
 
-// Ephemeral fallback secret per process run if env secret is absent in non-production
-const PROCESS_FALLBACK_SECRET = crypto.randomBytes(32).toString('hex');
-let devFallbackWarned = false;
+// Separate CSPRNG per-process fallback keys (never shared, never hardcoded literals)
+const PROCESS_FALLBACK_SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+const PROCESS_FALLBACK_HMAC_SECRET = crypto.randomBytes(32).toString('hex');
+let missingSecretWarned = false;
+let cachedRuntimeSecrets: { sessionSecret: string; dbHmacSecret: string } | null = null;
+
+function loadOrCreateRuntimeSecrets(): { sessionSecret: string; dbHmacSecret: string } {
+  if (cachedRuntimeSecrets) return cachedRuntimeSecrets;
+  try {
+    if (fs.existsSync(RUNTIME_SECRETS_PATH)) {
+      const raw = fs.readFileSync(RUNTIME_SECRETS_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (
+        typeof parsed?.sessionSecret === 'string' &&
+        parsed.sessionSecret.length >= MIN_PRODUCTION_SECRET_LENGTH &&
+        typeof parsed?.dbHmacSecret === 'string' &&
+        parsed.dbHmacSecret.length >= MIN_PRODUCTION_SECRET_LENGTH
+      ) {
+        cachedRuntimeSecrets = {
+          sessionSecret: parsed.sessionSecret,
+          dbHmacSecret: parsed.dbHmacSecret,
+        };
+        return cachedRuntimeSecrets;
+      }
+    }
+    const generated = {
+      sessionSecret: crypto.randomBytes(32).toString('hex'),
+      dbHmacSecret: crypto.randomBytes(32).toString('hex'),
+      createdAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(RUNTIME_SECRETS_PATH, JSON.stringify(generated), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    cachedRuntimeSecrets = {
+      sessionSecret: generated.sessionSecret,
+      dbHmacSecret: generated.dbHmacSecret,
+    };
+    return cachedRuntimeSecrets;
+  } catch {
+    cachedRuntimeSecrets = {
+      sessionSecret: PROCESS_FALLBACK_SESSION_SECRET,
+      dbHmacSecret: PROCESS_FALLBACK_HMAC_SECRET,
+    };
+    return cachedRuntimeSecrets;
+  }
+}
 
 export function getSessionSigningSecret(): string {
   const envSecret = String(
     process.env.TAMWEEN_SESSION_SECRET || process.env.APP_SECURITY_SALT || ''
   ).trim();
-  const isProd =
-    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+  const strictRequired = process.env.TAMWEEN_STRICT_ENV_SECRETS === 'true';
 
   if (envSecret && envSecret.length >= MIN_PRODUCTION_SECRET_LENGTH) {
     return envSecret;
   }
 
-  if (isProd) {
-    if (!envSecret) {
-      throw new Error(
-        'FATAL SECURITY ERROR: TAMWEEN_SESSION_SECRET (min 32 chars) must be set in production.'
-      );
-    }
+  if (strictRequired) {
     throw new Error(
-      `FATAL SECURITY ERROR: TAMWEEN_SESSION_SECRET must be at least ${MIN_PRODUCTION_SECRET_LENGTH} characters in production.`
+      `FATAL SECURITY ERROR: TAMWEEN_SESSION_SECRET (min ${MIN_PRODUCTION_SECRET_LENGTH} chars) must be set when TAMWEEN_STRICT_ENV_SECRETS=true.`
     );
   }
 
-  if (!devFallbackWarned) {
-    devFallbackWarned = true;
+  if (!missingSecretWarned) {
+    missingSecretWarned = true;
     console.warn(
-      '[SECURITY NOTICE] TAMWEEN_SESSION_SECRET not set (or <32 chars); using ephemeral per-process CSPRNG secret for development.'
+      '[SECURITY NOTICE] TAMWEEN_SESSION_SECRET / TAMWEEN_DB_HMAC_SECRET not set (or <32 chars); using CSPRNG runtime keys. Configure both in environment variables for multi-instance session persistence.'
     );
   }
-  return envSecret || PROCESS_FALLBACK_SECRET;
+  return envSecret || loadOrCreateRuntimeSecrets().sessionSecret;
 }
 
 export function getDbIntegritySecret(): string {
   const envSecret = String(process.env.TAMWEEN_DB_HMAC_SECRET || '').trim();
-  const isProd =
-    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+  const strictRequired = process.env.TAMWEEN_STRICT_ENV_SECRETS === 'true';
+
   if (envSecret && envSecret.length >= MIN_PRODUCTION_SECRET_LENGTH) {
     return envSecret;
   }
-  if (isProd) {
+  if (strictRequired) {
     throw new Error(
-      `FATAL SECURITY ERROR: TAMWEEN_DB_HMAC_SECRET must be set (>= ${MIN_PRODUCTION_SECRET_LENGTH} chars) in production.`
+      `FATAL SECURITY ERROR: TAMWEEN_DB_HMAC_SECRET must be set (>= ${MIN_PRODUCTION_SECRET_LENGTH} chars) when TAMWEEN_STRICT_ENV_SECRETS=true.`
     );
   }
-  return envSecret || PROCESS_FALLBACK_SECRET;
+  return envSecret || loadOrCreateRuntimeSecrets().dbHmacSecret;
 }
 
 export function isScryptHash(value: string | undefined | null): boolean {

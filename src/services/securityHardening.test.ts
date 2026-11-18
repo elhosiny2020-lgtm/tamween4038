@@ -14,7 +14,11 @@ import {
   sanitizeUsersForClient,
   parseCookieHeader,
 } from '../utils/serverAuth';
-import { isAllowedOrigin } from './securityConfig';
+import {
+  isAllowedOrigin,
+  sanitizeFrameAncestorToken,
+  getFrameAncestors,
+} from './securityConfig';
 import { buildSafeExportPayload, serializeSafeEmbeddedJson } from '../utils/htmlExporter';
 import {
   fallbackVerifyVaultCredentials,
@@ -274,6 +278,33 @@ test('Fallback store verifies & rotates scrypt vault credentials without exposin
       fs.writeFileSync(FALLBACK_STORE_PATH, prevRaw, { encoding: 'utf8', mode: 0o600 });
     } else if (!prevExisted && fs.existsSync(FALLBACK_STORE_PATH)) {
       fs.unlinkSync(FALLBACK_STORE_PATH);
+    }
+  }
+});
+
+test('CSP frame-ancestors sanitizer normalizes unquoted keywords and malformed delimiters safely', () => {
+  assert.strictEqual(sanitizeFrameAncestorToken('self'), "'self'");
+  assert.strictEqual(sanitizeFrameAncestorToken('none;'), "'none'");
+  assert.strictEqual(sanitizeFrameAncestorToken("'self'"), "'self'");
+  assert.strictEqual(
+    sanitizeFrameAncestorToken('https://aistudio.google.com;'),
+    'https://aistudio.google.com'
+  );
+  assert.strictEqual(sanitizeFrameAncestorToken('   '), null);
+
+  const prev = process.env.ALLOWED_FRAME_ANCESTORS;
+  try {
+    process.env.ALLOWED_FRAME_ANCESTORS = 'self, https://preview.example.com; none';
+    const ancestors = getFrameAncestors();
+    assert.ok(ancestors.includes("'self'"));
+    assert.ok(ancestors.includes("'none'"));
+    assert.ok(ancestors.includes('https://preview.example.com'));
+    assert.strictEqual(ancestors.includes('self'), false);
+  } finally {
+    if (prev === undefined) {
+      delete process.env.ALLOWED_FRAME_ANCESTORS;
+    } else {
+      process.env.ALLOWED_FRAME_ANCESTORS = prev;
     }
   }
 });

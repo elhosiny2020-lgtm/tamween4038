@@ -235,7 +235,12 @@ async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
   const httpServer = http.createServer(app);
-  const PORT = Number(process.env.PORT) || 3000;
+  const nginxOwnsEnvPort =
+    Boolean(process.env.NGINX_PORT) &&
+    String(process.env.PORT || '') === String(process.env.NGINX_PORT);
+  const PORT = nginxOwnsEnvPort
+    ? Number(process.env.DEFAULT_APP_PORT) || 3000
+    : Number(process.env.PORT) || Number(process.env.DEFAULT_APP_PORT) || 3000;
 
   // WebSocket Server attached to port 3000 for genuine sub-50ms cross-device real-time sync
   const wss = new WebSocketServer({ server: httpServer, path: '/ws/supabase-realtime' });
@@ -4328,5 +4333,8 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Fatal server startup error:', err);
+  process.exit(1);
+});
 

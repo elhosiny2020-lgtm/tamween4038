@@ -80,12 +80,37 @@ export function buildCorsOptionsForRequest(requestHost?: string): CorsOptions {
 
 export const corsOptions: CorsOptions = buildCorsOptionsForRequest();
 
-function getFrameAncestors(): string[] {
-  const custom = (process.env.ALLOWED_FRAME_ANCESTORS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return ["'self'", 'https://aistudio.google.com', 'https://*.googleusercontent.com', ...custom];
+const CSP_QUOTED_KEYWORDS = new Set([
+  'self',
+  'none',
+  'unsafe-inline',
+  'unsafe-eval',
+  'strict-dynamic',
+  'unsafe-hashes',
+  'report-sample',
+  'unsafe-allow-redirects',
+  'wasm-unsafe-eval',
+]);
+
+export function sanitizeFrameAncestorToken(raw: string): string | null {
+  const cleaned = String(raw || '').trim().replace(/;+$/g, '').trim();
+  if (!cleaned) return null;
+  const unquoted = cleaned.replace(/^['"]+|['"]+$/g, '');
+  if (!unquoted || /[;\r\n\s]/.test(unquoted)) return null;
+  if (CSP_QUOTED_KEYWORDS.has(unquoted.toLowerCase())) {
+    return `'${unquoted.toLowerCase()}'`;
+  }
+  return cleaned.startsWith("'") && cleaned.endsWith("'") ? cleaned : unquoted;
+}
+
+export function getFrameAncestors(): string[] {
+  const rawTokens = (process.env.ALLOWED_FRAME_ANCESTORS || '')
+    .split(/[\s,]+/)
+    .map(sanitizeFrameAncestorToken)
+    .filter((token): token is string => Boolean(token));
+  return Array.from(
+    new Set(["'self'", 'https://aistudio.google.com', 'https://*.googleusercontent.com', ...rawTokens])
+  );
 }
 
 export const securityHelmetMiddleware = helmet({
@@ -115,7 +140,7 @@ export const securityHelmetMiddleware = helmet({
       frameSrc: ["'self'", 'https://accounts.google.com', 'https://*.firebaseapp.com'],
       frameAncestors: getFrameAncestors(),
       upgradeInsecureRequests:
-        process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start' ? [] : null,
+        process.env.FORCE_CSP_UPGRADE_INSECURE === 'true' ? [] : null,
     },
   },
   crossOriginEmbedderPolicy: false,
