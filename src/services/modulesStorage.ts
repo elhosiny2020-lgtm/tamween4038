@@ -1898,7 +1898,16 @@ export function printModuleReportA4(options: {
   rows: (string | number)[][];
   summaryItems?: { label: string; value: string }[];
   preparedBy?: string;
+  totalsRow?: Array<string | number>;
 }): void {
+  const esc = (val: unknown): string =>
+    String(val ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
   iframe.style.right = '0';
@@ -1918,8 +1927,8 @@ export function printModuleReportA4(options: {
     .map(
       (s) =>
         `<div style="border:1px solid #cbd5e1;border-radius:8px;padding:6px 10px;background:#f8fafc;">
-           <div style="font-size:10px;color:#475569;font-weight:700;">${s.label}</div>
-           <div style="font-size:13px;color:#0f172a;font-weight:900;">${s.value}</div>
+           <div style="font-size:10px;color:#475569;font-weight:700;">${esc(s.label)}</div>
+           <div style="font-size:13px;color:#0f172a;font-weight:900;font-variant-numeric:tabular-nums;">${esc(s.value)}</div>
          </div>`
     )
     .join('');
@@ -1930,7 +1939,7 @@ export function printModuleReportA4(options: {
         `<tr>${r
           .map(
             (c) =>
-              `<td style="border:1px solid #cbd5e1;padding:6px 8px;font-size:11px;text-align:center;">${String(
+              `<td style="border:1px solid #cbd5e1;padding:6px 8px;font-size:11px;text-align:center;font-variant-numeric:tabular-nums;">${esc(
                 c ?? ''
               )}</td>`
           )
@@ -1938,13 +1947,25 @@ export function printModuleReportA4(options: {
     )
     .join('');
 
+  const totalsHtml =
+    options.totalsRow && options.totalsRow.length > 0
+      ? `<tfoot><tr style="background:#0f2342;color:#ffffff;font-weight:900;">${options.totalsRow
+          .map(
+            (c) =>
+              `<td style="border:1px solid #1e3a8a;padding:7px 8px;font-size:11px;text-align:center;font-weight:900;font-variant-numeric:tabular-nums;">${esc(
+                c ?? ''
+              )}</td>`
+          )
+          .join('')}</tr></tfoot>`
+      : '';
+
   doc.open();
   doc.write(`
     <!DOCTYPE html>
     <html lang="ar" dir="rtl">
     <head>
       <meta charset="utf-8" />
-      <title>${options.title}</title>
+      <title>${esc(options.title)}</title>
       <style>
         @page { size: A4 landscape; margin: 12mm; }
         body { font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; margin: 0; }
@@ -1956,25 +1977,26 @@ export function printModuleReportA4(options: {
     <body>
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0f2342;padding-bottom:10px;margin-bottom:10px;">
         <div>
-          <div style="font-size:12px;font-weight:900;">${options.governorateTitle || 'محافظة الغربية'}</div>
-          <div style="font-size:13px;font-weight:900;color:#0f2342;">${options.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'}</div>
-          <div style="font-size:12px;font-weight:800;color:#0d9488;">${options.branchName}</div>
+          <div style="font-size:12px;font-weight:900;">${esc(options.governorateTitle || 'محافظة الغربية')}</div>
+          <div style="font-size:13px;font-weight:900;color:#0f2342;">${esc(options.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية')}</div>
+          <div style="font-size:12px;font-weight:800;color:#0d9488;">${esc(options.branchName)}</div>
         </div>
         <div style="text-align:center;">
-          <h1 style="margin:0;font-size:16px;font-weight:900;color:#0f2342;">${options.title}</h1>
-          <div style="font-size:11px;font-weight:700;color:#475569;">${options.subtitle}</div>
+          <h1 style="margin:0;font-size:16px;font-weight:900;color:#0f2342;">${esc(options.title)}</h1>
+          <div style="font-size:11px;font-weight:700;color:#475569;">${esc(options.subtitle)}</div>
         </div>
         <div style="text-align:left;font-size:10px;font-weight:700;">
-          <div>تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG')}</div>
-          <div>أعده: ${options.preparedBy || 'إدارة المنظومة'}</div>
+          <div>تاريخ الطباعة: ${esc(new Date().toLocaleDateString('ar-EG'))}</div>
+          <div>أعده: ${esc(options.preparedBy || 'إدارة المنظومة')}</div>
         </div>
       </div>
       ${summaryHtml ? `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;">${summaryHtml}</div>` : ''}
       <table>
         <thead>
-          <tr>${options.headers.map((h) => `<th>${h}</th>`).join('')}</tr>
+          <tr>${options.headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
+        ${totalsHtml}
       </table>
       <div style="margin-top:18px;display:flex;justify-content:space-between;font-size:11px;font-weight:800;border-top:1px dashed #94a3b8;padding-top:10px;">
         <span>توقيع المختص: ........................</span>

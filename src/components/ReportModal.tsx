@@ -906,7 +906,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   return (
     <div
-      className="report-modal-overlay fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/90 overflow-y-auto cursor-pointer"
+      className="report-modal-overlay fixed inset-0 z-[75] flex items-center justify-center p-2 sm:p-4 bg-black/90 overflow-y-auto cursor-pointer"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           e.preventDefault();

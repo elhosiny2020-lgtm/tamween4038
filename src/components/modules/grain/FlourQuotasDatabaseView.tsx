@@ -148,27 +148,67 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
     entityType: string;
     subtitle?: string;
     fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
+    onEdit?: () => void;
+  } | null>(null);
+
+  const [editingRecord, setEditingRecord] = useState<{
+    sliceKey:
+      | 'flourQuotaMaster'
+      | 'flourDailyDistributions'
+      | 'flourMonthlyQuotas'
+      | 'flourIssues'
+      | 'flourQuotaAmendments'
+      | 'millBakeryMappings'
+      | 'millFlourStockBalances';
+    title: string;
+    record: Record<string, any>;
   } | null>(null);
 
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
-    entityType: 'quota';
+    sliceKey:
+      | 'flourQuotaMaster'
+      | 'flourDailyDistributions'
+      | 'flourMonthlyQuotas'
+      | 'flourIssues'
+      | 'flourQuotaAmendments'
+      | 'millBakeryMappings'
+      | 'millFlourStockBalances';
     entityId: string;
     entityTitle: string;
     recordSummary: { label: string; value: string | number }[];
   } | null>(null);
 
-  const handleConfirmDelete = () => {
-    if (!deleteModal) return;
-    const { entityId, entityTitle } = deleteModal;
+  const handleSaveUniversalEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRecord) return;
+    const { sliceKey, title, record } = editingRecord;
     onUpdateState(
       (prev) => ({
         ...prev,
-        flourQuotaMaster: (prev.flourQuotaMaster || []).filter((q) => q.id !== entityId && q.quotaCode !== entityId),
+        [sliceKey]: ((prev[sliceKey] as any[]) || []).map((item) =>
+          item.id === record.id ? { ...item, ...record } : item
+        ),
       }),
-      `حذف ربط حصة دقيق: ${entityTitle}`
+      `تعديل سجل حصص دقيق: ${title}`
     );
-    onNotify('ok', `تم حذف ربط حصة الدقيق «${entityTitle}» بنجاح.`);
+    onNotify('ok', `تم حفظ التعديلات على «${title}» بنجاح.`);
+    setEditingRecord(null);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deleteModal) return;
+    const { sliceKey, entityId, entityTitle } = deleteModal;
+    onUpdateState(
+      (prev) => ({
+        ...prev,
+        [sliceKey]: ((prev[sliceKey] as any[]) || []).filter(
+          (q) => q.id !== entityId && q.quotaCode !== entityId
+        ),
+      }),
+      `حذف سجل حصص دقيق: ${entityTitle}`
+    );
+    onNotify('ok', `تم حذف السجل «${entityTitle}» بنجاح.`);
     setDeleteModal(null);
   };
 
@@ -635,7 +675,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full compact-erp-table text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">كود الحصة والقرار</th>
@@ -711,12 +751,19 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                           <td className="p-3 text-center">
                             <ModuleRowActions
                               entityLabel={q.bakeryName}
+                              permissions={effectivePermissions}
                               onView={() =>
                                 setProfileModal({
                                   isOpen: true,
                                   title: `ملف حصة الدقيق - ${q.bakeryName}`,
                                   entityType: 'حصة دقيق تمويني',
                                   subtitle: `${q.quotaCode} | ${q.millName}`,
+                                  onEdit: () =>
+                                    setEditingRecord({
+                                      sliceKey: 'flourQuotaMaster',
+                                      title: q.bakeryName,
+                                      record: { ...q },
+                                    }),
                                   fields: [
                                     { label: 'كود الحصة', value: q.quotaCode, mono: true },
                                     { label: 'رقم القرار التمويني', value: q.allocationDecisionNumber },
@@ -762,10 +809,17 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                                   ],
                                 })
                               }
+                              onEdit={() =>
+                                setEditingRecord({
+                                  sliceKey: 'flourQuotaMaster',
+                                  title: q.bakeryName,
+                                  record: { ...q },
+                                })
+                              }
                               onDelete={() =>
                                 setDeleteModal({
                                   isOpen: true,
-                                  entityType: 'quota',
+                                  sliceKey: 'flourQuotaMaster',
                                   entityId: q.id,
                                   entityTitle: `${q.bakeryName} (${q.quotaCode})`,
                                   recordSummary: [
@@ -852,7 +906,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">التاريخ</th>
@@ -865,6 +919,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                   <th className="p-3 text-center">رقم إذن الصرف</th>
                   <th className="p-3 text-center">حالة الصرف اليومي</th>
                   <th className="p-3">سبب عدم الصرف / النقص</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -903,8 +958,80 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                     <td className="p-3 text-slate-600">
                       {d.nonDisbursementOrShortageReason || 'منتظم'}
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={`${d.bakeryName} (${d.date})`}
+                        permissions={effectivePermissions}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `توزيع يومي: ${d.bakeryName}`,
+                            subtitle: `${d.date} — ${d.millName}`,
+                            entityType: 'توزيع يومي لحصة الدقيق',
+                            onEdit: () =>
+                              setEditingRecord({
+                                sliceKey: 'flourDailyDistributions',
+                                title: `${d.bakeryName} (${d.date})`,
+                                record: { ...d },
+                              }),
+                            fields: [
+                              { label: 'التاريخ', value: d.date, mono: true },
+                              { label: 'المخبز', value: `${d.bakeryName} (${d.village})` },
+                              { label: 'المطحن', value: d.millName },
+                              { label: 'الحصة المقررة', value: `${d.prescribedDailyQuotaTons} طن`, mono: true },
+                              { label: 'المنصرف الفعلي', value: `${d.actualApprovedDisbursedTons} طن`, mono: true },
+                              { label: 'المتبقي اليومي', value: `${d.remainingDailyTons} طن`, mono: true },
+                              { label: 'حالة الصرف', value: d.disbursementStatus, badge: true, badgeColor: 'teal' },
+                            ],
+                          })
+                        }
+                        onEdit={() =>
+                          setEditingRecord({
+                            sliceKey: 'flourDailyDistributions',
+                            title: `${d.bakeryName} (${d.date})`,
+                            record: { ...d },
+                          })
+                        }
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            sliceKey: 'flourDailyDistributions',
+                            entityId: d.id,
+                            entityTitle: `${d.bakeryName} (${d.date})`,
+                            recordSummary: [
+                              { label: 'المخبز', value: d.bakeryName },
+                              { label: 'المنصرف', value: `${d.actualApprovedDisbursedTons} طن` },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                {dailyDistributions.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={dailyDistributions.length}
+                    labelColSpan={3}
+                    metricCells={[
+                      {
+                        content: `${dailyDistributions.reduce((s, d) => s + (Number(d.prescribedDailyQuotaTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${dailyDistributions.reduce((s, d) => s + (Number(d.actualApprovedDisbursedTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${dailyDistributions.reduce((s, d) => s + (Number(d.remainingDailyTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center', colSpan: 5 },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -923,7 +1050,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">الشهر والسنة</th>
@@ -934,6 +1061,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                   <th className="p-3 text-center">المنصرف الشهري / المتبقي</th>
                   <th className="p-3 text-center">نسبة التنفيذ الشهرية</th>
                   <th className="p-3 text-center">الحصة السنوية / المنصرف السنوي</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -960,8 +1088,73 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                     <td className="p-3 text-center">
                       {mq.prescribedAnnualQuotaTons} / {mq.actualAnnualDisbursedTons} طن
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={`${mq.bakeryName} (${mq.month}/${mq.year})`}
+                        permissions={effectivePermissions}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `حصة شهرية: ${mq.bakeryName}`,
+                            subtitle: `${mq.month}/${mq.year}`,
+                            entityType: 'متابعة حصة شهرية',
+                            onEdit: () =>
+                              setEditingRecord({
+                                sliceKey: 'flourMonthlyQuotas',
+                                title: `${mq.bakeryName} (${mq.month}/${mq.year})`,
+                                record: { ...mq },
+                              }),
+                            fields: [
+                              { label: 'الشهر والسنة', value: `${mq.month}/${mq.year}`, mono: true },
+                              { label: 'المخبز', value: mq.bakeryName },
+                              { label: 'المطحن', value: mq.millName },
+                              { label: 'الحصة الشهرية المقررة', value: `${mq.prescribedMonthlyQuotaTons} طن`, mono: true },
+                              { label: 'المنصرف الشهري', value: `${mq.actualMonthlyDisbursedTons} طن`, mono: true },
+                            ],
+                          })
+                        }
+                        onEdit={() =>
+                          setEditingRecord({
+                            sliceKey: 'flourMonthlyQuotas',
+                            title: `${mq.bakeryName} (${mq.month}/${mq.year})`,
+                            record: { ...mq },
+                          })
+                        }
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            sliceKey: 'flourMonthlyQuotas',
+                            entityId: mq.id,
+                            entityTitle: `${mq.bakeryName} (${mq.month}/${mq.year})`,
+                            recordSummary: [
+                              { label: 'المخبز', value: mq.bakeryName },
+                              { label: 'الحصة الشهرية', value: `${mq.prescribedMonthlyQuotaTons} طن` },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                {monthlyQuotas.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={monthlyQuotas.length}
+                    labelColSpan={4}
+                    metricCells={[
+                      {
+                        content: `${monthlyQuotas.reduce((s, mq) => s + (Number(mq.prescribedMonthlyQuotaTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${monthlyQuotas.reduce((s, mq) => s + (Number(mq.actualMonthlyDisbursedTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center', colSpan: 3 },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -994,7 +1187,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full compact-erp-table text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم إذن الصرف والتاريخ</th>
@@ -1005,6 +1198,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                     <th className="p-3 text-center">رصيد المطحن (قبل / بعد)</th>
                     <th className="p-3 text-center">إجمالي القيمة</th>
                     <th className="p-3">السيارة والسائق والمستلم</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
@@ -1047,8 +1241,74 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                         </div>
                         <div className="text-[10px] text-slate-500">المستلم: {iss.receiverName}</div>
                       </td>
+                      <td className="p-3 text-center">
+                        <ModuleRowActions
+                          entityLabel={iss.issueOrderNumber}
+                          permissions={effectivePermissions}
+                          onView={() =>
+                            setProfileModal({
+                              isOpen: true,
+                              title: `إذن صرف دقيق: ${iss.issueOrderNumber}`,
+                              subtitle: `${iss.bakeryName} — ${iss.issueDate}`,
+                              entityType: 'إذن صرف دقيق للمخابز',
+                              onEdit: () =>
+                                setEditingRecord({
+                                  sliceKey: 'flourIssues',
+                                  title: iss.issueOrderNumber,
+                                  record: { ...iss },
+                                }),
+                              fields: [
+                                { label: 'رقم الإذن', value: iss.issueOrderNumber, mono: true },
+                                { label: 'المخبز', value: iss.bakeryName },
+                                { label: 'المطحن', value: iss.millName },
+                                { label: 'المنصرف الفعلي', value: `${iss.issuedQuantityTons} طن (${iss.sacksCount} شيكارة)`, mono: true },
+                                { label: 'إجمالي القيمة', value: `${iss.totalValue.toLocaleString('ar-EG')} ج.م`, mono: true },
+                              ],
+                            })
+                          }
+                          onEdit={() =>
+                            setEditingRecord({
+                              sliceKey: 'flourIssues',
+                              title: iss.issueOrderNumber,
+                              record: { ...iss },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModal({
+                              isOpen: true,
+                              sliceKey: 'flourIssues',
+                              entityId: iss.id,
+                              entityTitle: iss.issueOrderNumber,
+                              recordSummary: [
+                                { label: 'رقم الإذن', value: iss.issueOrderNumber },
+                                { label: 'المنصرف', value: `${iss.issuedQuantityTons} طن` },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   ))}
+                  {flourIssues.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={flourIssues.length}
+                      labelColSpan={4}
+                      metricCells={[
+                        {
+                          content: `${flourIssues.reduce((s, iss) => s + (Number(iss.issuedQuantityTons) || 0), 0).toFixed(2)} طن (${flourIssues.reduce((s, iss) => s + (Number(iss.sacksCount) || 0), 0)} ش)`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        { content: '—', align: 'center' },
+                        {
+                          content: `${flourIssues.reduce((s, iss) => s + (Number(iss.totalValue) || 0), 0).toLocaleString('ar-EG')} ج.م`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        { content: '—', align: 'center', colSpan: 2 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1081,7 +1341,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full compact-erp-table text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم القرار وتاريخه</th>
@@ -1092,6 +1352,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                     <th className="p-3 text-center">مقدار التغيير (طن)</th>
                     <th className="p-3">سبب التعديل والجهة المصدرة</th>
                     <th className="p-3 text-center">سريان القرار</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
@@ -1128,8 +1389,77 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                       <td className="p-3 text-center text-[11px]">
                         من {am.effectiveStartDate} إلى {am.effectiveEndDate}
                       </td>
+                      <td className="p-3 text-center">
+                        <ModuleRowActions
+                          entityLabel={am.decisionNumber}
+                          permissions={effectivePermissions}
+                          onView={() =>
+                            setProfileModal({
+                              isOpen: true,
+                              title: `قرار تعديل حصة: ${am.decisionNumber}`,
+                              subtitle: `${am.bakeryName} — ${am.decisionDate}`,
+                              entityType: 'قرار تعديل حصة دقيق',
+                              onEdit: () =>
+                                setEditingRecord({
+                                  sliceKey: 'flourQuotaAmendments',
+                                  title: am.decisionNumber,
+                                  record: { ...am },
+                                }),
+                              fields: [
+                                { label: 'رقم القرار', value: am.decisionNumber },
+                                { label: 'المخبز', value: am.bakeryName },
+                                { label: 'نوع التعديل', value: am.amendmentType, badge: true, badgeColor: 'amber' },
+                                { label: 'الحصة السابقة ← الجديدة', value: `${am.previousDailyQuotaTons} ← ${am.newDailyQuotaTons} طن`, mono: true },
+                              ],
+                            })
+                          }
+                          onEdit={() =>
+                            setEditingRecord({
+                              sliceKey: 'flourQuotaAmendments',
+                              title: am.decisionNumber,
+                              record: { ...am },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModal({
+                              isOpen: true,
+                              sliceKey: 'flourQuotaAmendments',
+                              entityId: am.id,
+                              entityTitle: am.decisionNumber,
+                              recordSummary: [
+                                { label: 'رقم القرار', value: am.decisionNumber },
+                                { label: 'المخبز', value: am.bakeryName },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   ))}
+                  {amendments.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={amendments.length}
+                      labelColSpan={3}
+                      metricCells={[
+                        {
+                          content: `${amendments.reduce((s, am) => s + (Number(am.previousDailyQuotaTons) || 0), 0).toFixed(2)} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        {
+                          content: `${amendments.reduce((s, am) => s + (Number(am.newDailyQuotaTons) || 0), 0).toFixed(2)} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        {
+                          content: `${amendments.reduce((s, am) => s + (Number(am.changeDeltaTons) || 0), 0).toFixed(2)} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        { content: '—', align: 'center', colSpan: 3 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1146,7 +1476,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
             </h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">كود الارتباط</th>
@@ -1157,6 +1487,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                   <th className="p-3 text-center">الحصة الشهرية (طن)</th>
                   <th className="p-3 text-center">فترة الارتباط</th>
                   <th className="p-3 text-center">حالة الارتباط</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1185,8 +1516,72 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                         {mp.linkStatus}
                       </span>
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={mp.mappingCode}
+                        permissions={effectivePermissions}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `ارتباط مطحن بمخبز: ${mp.mappingCode}`,
+                            subtitle: `${mp.millName} ← ${mp.bakeryName}`,
+                            entityType: 'خريطة ارتباط مطاحن ومخابز',
+                            onEdit: () =>
+                              setEditingRecord({
+                                sliceKey: 'millBakeryMappings',
+                                title: mp.mappingCode,
+                                record: { ...mp },
+                              }),
+                            fields: [
+                              { label: 'كود الارتباط', value: mp.mappingCode, mono: true },
+                              { label: 'المطحن', value: mp.millName },
+                              { label: 'المخبز', value: `${mp.bakeryName} (${mp.village})` },
+                              { label: 'الحصة اليومية / الشهرية', value: `${mp.dailyQuotaTons} / ${mp.monthlyQuotaTons} طن`, mono: true },
+                            ],
+                          })
+                        }
+                        onEdit={() =>
+                          setEditingRecord({
+                            sliceKey: 'millBakeryMappings',
+                            title: mp.mappingCode,
+                            record: { ...mp },
+                          })
+                        }
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            sliceKey: 'millBakeryMappings',
+                            entityId: mp.id,
+                            entityTitle: mp.mappingCode,
+                            recordSummary: [
+                              { label: 'كود الارتباط', value: mp.mappingCode },
+                              { label: 'المخبز', value: mp.bakeryName },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                {mappings.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={mappings.length}
+                    labelColSpan={4}
+                    metricCells={[
+                      {
+                        content: `${mappings.reduce((s, mp) => s + (Number(mp.dailyQuotaTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${mappings.reduce((s, mp) => s + (Number(mp.monthlyQuotaTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center', colSpan: 3 },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -1205,7 +1600,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">المطحن ونوع الدقيق</th>
@@ -1215,6 +1610,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                   <th className="p-3 text-center bg-amber-950/70">المخصص كحصص للمخابز</th>
                   <th className="p-3 text-center bg-emerald-950/70">المنصرف الفعلي للمخابز</th>
                   <th className="p-3 text-center bg-sky-950/80">الرصيد الحالي الفعلي بالمطحن</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1240,9 +1636,94 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                       <td className="p-3 text-center font-black text-sky-900 bg-sky-50 text-sm">
                         {calc.currentStockBalanceTons} طن
                       </td>
+                      <td className="p-3 text-center">
+                        <ModuleRowActions
+                          entityLabel={b.millName}
+                          permissions={effectivePermissions}
+                          onView={() =>
+                            setProfileModal({
+                              isOpen: true,
+                              title: `رصيد دقيق المطحن: ${b.millName}`,
+                              subtitle: b.flourType,
+                              entityType: 'أرصدة وحركة الدقيق بالمطاحن',
+                              onEdit: () =>
+                                setEditingRecord({
+                                  sliceKey: 'millFlourStockBalances',
+                                  title: b.millName,
+                                  record: { ...b },
+                                }),
+                              fields: [
+                                { label: 'المطحن', value: b.millName },
+                                { label: 'الرصيد الافتتاحي', value: `${b.openingBalanceTons} طن`, mono: true },
+                                { label: 'الإنتاج المعتمد', value: `${b.approvedProducedTons} طن`, mono: true },
+                                { label: 'المنصرف للمخابز', value: `${b.actualDisbursedToBakeriesTons} طن`, mono: true },
+                                { label: 'الرصيد الحالي الفعلي', value: `${calc.currentStockBalanceTons} طن`, mono: true },
+                              ],
+                            })
+                          }
+                          onEdit={() =>
+                            setEditingRecord({
+                              sliceKey: 'millFlourStockBalances',
+                              title: b.millName,
+                              record: { ...b },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModal({
+                              isOpen: true,
+                              sliceKey: 'millFlourStockBalances',
+                              entityId: b.id,
+                              entityTitle: b.millName,
+                              recordSummary: [
+                                { label: 'المطحن', value: b.millName },
+                                { label: 'الرصيد الحالي', value: `${calc.currentStockBalanceTons} طن` },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   );
                 })}
+                {millStockBalances.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={millStockBalances.length}
+                    labelColSpan={1}
+                    metricCells={[
+                      {
+                        content: `${millStockBalances.reduce((s, b) => s + (Number(b.openingBalanceTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `+${millStockBalances.reduce((s, b) => s + (Number(b.approvedProducedTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${millStockBalances.reduce((s, b) => s + computeMillFlourStockBalanceSummary(b).totalAvailableTons, 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${millStockBalances.reduce((s, b) => s + (Number(b.allocatedQuotaTotalTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `-${millStockBalances.reduce((s, b) => s + (Number(b.actualDisbursedToBakeriesTons) || 0), 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${millStockBalances.reduce((s, b) => s + computeMillFlourStockBalanceSummary(b).currentStockBalanceTons, 0).toFixed(2)} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center' },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -1251,7 +1732,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
 
       {/* نافذة ربط وتخصيص حصة دقيق لمخبز */}
       {showAddQuotaModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               ربط وتخصيص حصة دقيق لمخبز من قاعدة بيانات المخابز الرئيسية
@@ -1355,7 +1836,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
 
       {/* نافذة تسجيل إذن صرف دقيق لمخبز */}
       {showAddIssueModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل إذن صرف دقيق لمخبز تمويني
@@ -1459,7 +1940,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
 
       {/* نافذة قرار تعديل حصة دقيق */}
       {showAddAmendModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل قرار تعديل حصة دقيق مع حفظ السجل التاريخي
@@ -1554,7 +2035,60 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
         </div>
       )}
 
-      {/* نافذة الملف التفصيلي للحصة */}
+      {/* نافذة التعديل السريع للسجل */}
+      {editingRecord && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6 max-h-[88vh] overflow-y-auto">
+            <h3 className="text-lg font-black text-slate-900 mb-3">
+              تعديل بيانات السجل: {editingRecord.title}
+            </h3>
+            <form onSubmit={handleSaveUniversalEdit} className="space-y-4 text-xs font-bold">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Object.entries(editingRecord.record)
+                  .filter(([k, v]) => k !== 'id' && k !== 'serialNo' && (typeof v === 'string' || typeof v === 'number'))
+                  .slice(0, 12)
+                  .map(([key, val]) => (
+                    <div key={key}>
+                      <label className="block mb-1 text-slate-700 font-mono text-[11px]">{key}</label>
+                      <input
+                        type={typeof val === 'number' ? 'number' : 'text'}
+                        step="any"
+                        value={val as any}
+                        onChange={(e) =>
+                          setEditingRecord({
+                            ...editingRecord,
+                            record: {
+                              ...editingRecord.record,
+                              [key]: typeof val === 'number' ? Number(e.target.value) : e.target.value,
+                            },
+                          })
+                        }
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                      />
+                    </div>
+                  ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditingRecord(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-600 text-white font-black"
+                >
+                  حفظ التعديلات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة الملف التفصيلي للحصة مع الانتقال للتعديل */}
       {profileModal && (
         <ModuleRecordProfileModal
           isOpen={profileModal.isOpen}
@@ -1563,6 +2097,8 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
           entityType={profileModal.entityType}
           subtitle={profileModal.subtitle}
           fields={profileModal.fields}
+          canEdit={effectivePermissions.canEdit}
+          onEdit={profileModal.onEdit}
           printTitle="مديرية التموين والتجارة الداخلية بالغربية - إدارة تموين مركز المحلة الكبرى"
           preparedBy={currentUserFullName}
         />

@@ -3925,6 +3925,18 @@ export default function App() {
           setActiveTab('hr-personnel');
         }
         break;
+      case 'hr-public-service':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('public_service');
+          setActiveTab('hr-personnel');
+        }
+        break;
+      case 'hr-external-assistance':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('external_assistance');
+          setActiveTab('hr-personnel');
+        }
+        break;
       case 'hr-attendance':
         if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
           setHrSubView('attendance');
@@ -3946,6 +3958,12 @@ export default function App() {
       case 'hr-loans-promotions':
         if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
           setHrSubView('loans_promotions');
+          setActiveTab('hr-personnel');
+        }
+        break;
+      case 'hr-alerts':
+        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
+          setHrSubView('alerts');
           setActiveTab('hr-personnel');
         }
         break;
@@ -4422,8 +4440,20 @@ export default function App() {
         </div>
       </header>
 
-      {/* 2. Calm Semantic Alert Banners (if any urgent expirations, large debts, or pending supervisor debt email) */}
-      {(alertsList.length > 0 || largeDebtsList.length > 0 || pendingDailyDebtEmailBanner) && (
+      {/* 2. Calm Semantic Alert Banners (if any urgent expirations, large debts, HR 30-day contract expiry, or pending supervisor debt email) */}
+      {(alertsList.length > 0 ||
+        largeDebtsList.length > 0 ||
+        pendingDailyDebtEmailBanner ||
+        (modulesBundle?.hr?.employees || []).some(
+          (e) =>
+            (e.employeeType === 'خدمة عامة' || e.employeeType === 'استعانة') &&
+            e.contractEndDate &&
+            Math.round(
+              (new Date(`${e.contractEndDate.slice(0, 10)}T00:00:00Z`).getTime() -
+                new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime()) /
+                (1000 * 60 * 60 * 24)
+            ) <= 30
+        )) && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-900 no-print">
           <div className="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-3 flex-wrap">
@@ -4456,6 +4486,41 @@ export default function App() {
                   </button>
                 </span>
               )}
+              {(isSuperAdmin(appState.currentUser) || canUserAccessTab(appState.currentUser, 'hr-personnel')) &&
+                (() => {
+                  const hrContractAlertsCount = (modulesBundle?.hr?.employees || []).filter(
+                    (e) =>
+                      (e.employeeType === 'خدمة عامة' || e.employeeType === 'استعانة') &&
+                      e.contractEndDate &&
+                      Math.round(
+                        (new Date(`${e.contractEndDate.slice(0, 10)}T00:00:00Z`).getTime() -
+                          new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime()) /
+                          (1000 * 60 * 60 * 24)
+                      ) <= 30
+                  ).length;
+                  if (hrContractAlertsCount === 0) return null;
+                  return (
+                    <span
+                      data-testid="superadmin-hr-contract-alert-banner"
+                      className="flex items-center gap-1.5 font-bold text-teal-950 bg-teal-100/80 border border-teal-400 px-2.5 py-0.5 rounded-lg"
+                    >
+                      <Bell className="w-3.5 h-3.5 text-teal-800 shrink-0" />
+                      <span>
+                        تنبيه الموارد البشرية للسوبر أدمن: يوجد ({hrContractAlertsCount}) عقد خدمة عامة / استعانة ينتهي خلال ≤ 30 يوماً
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHrSubView('alerts');
+                          setActiveTab('hr-personnel');
+                        }}
+                        className="text-teal-900 font-black underline hover:text-teal-950 cursor-pointer mr-1"
+                      >
+                        مراجعة وتجديد العقود
+                      </button>
+                    </span>
+                  );
+                })()}
               {pendingDailyDebtEmailBanner && (
                 <span
                   data-testid="pending-daily-debt-email-banner"

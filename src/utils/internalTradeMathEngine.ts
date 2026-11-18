@@ -462,3 +462,257 @@ export function compareMerchantArchiveSnapshots(
   };
 }
 
+// ============================================================================
+// 5. حركات البوتاجاز والمواد البترولية (الرصيد التراكمي التلقائي + منع التكرار)
+// ============================================================================
+
+export interface LedgerMovementInput {
+  id: string;
+  entityCode: string;
+  date: string;
+  movementType: 'وارد' | 'استلام وارد' | 'منصرف' | 'صرف ومبيعات' | 'توزيع' | 'جرد فعلي' | string;
+  quantity: number;
+  invoiceOrDocNumber?: string;
+}
+
+export interface ComputedLedgerMovementRow<T extends LedgerMovementInput> {
+  movement: T;
+  balanceBefore: number;
+  balanceAfter: number;
+  signedDelta: number;
+}
+
+export function computeMovementLedgerBalances<T extends LedgerMovementInput>(
+  openingBalance: number,
+  movements: readonly T[]
+): {
+  rows: ComputedLedgerMovementRow<T>[];
+  closingBalance: number;
+  totalInbound: number;
+  totalOutbound: number;
+} {
+  let running = round2(Math.max(0, Number(openingBalance) || 0));
+  let totalInbound = 0;
+  let totalOutbound = 0;
+
+  // Chronological order (oldest -> newest) for true running ledger math
+  const chronological = [...movements].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const rows: ComputedLedgerMovementRow<T>[] = [];
+
+  for (const m of chronological) {
+    const qty = Math.max(0, Number(m.quantity) || 0);
+    const type = String(m.movementType || '');
+    const before = running;
+    let delta = 0;
+    if (type.includes('وارد') || type.includes('استلام')) {
+      delta = qty;
+      totalInbound = round2(totalInbound + qty);
+      running = round2(before + qty);
+    } else if (type.includes('منصرف') || type.includes('صرف') || type.includes('توزيع') || type.includes('مبيعات')) {
+      delta = -qty;
+      totalOutbound = round2(totalOutbound + qty);
+      running = round2(before - qty);
+    } else if (type.includes('جرد')) {
+      delta = round2(qty - before);
+      running = round2(qty);
+    }
+    rows.push({
+      movement: m,
+      balanceBefore: before,
+      balanceAfter: running,
+      signedDelta: delta,
+    });
+  }
+
+  return {
+    rows: rows.reverse(), // newest first for UI display
+    closingBalance: running,
+    totalInbound,
+    totalOutbound,
+  };
+}
+
+export function detectDuplicateMovement(
+  existingMovements: readonly LedgerMovementInput[],
+  candidate: LedgerMovementInput
+): { isDuplicate: boolean; reason?: string } {
+  const normDoc = String(candidate.invoiceOrDocNumber || '').trim().toLowerCase();
+  const normCode = String(candidate.entityCode || '').trim().toLowerCase();
+  const normDate = String(candidate.date || '').trim();
+  const normType = String(candidate.movementType || '').trim();
+  const qty = Number(candidate.quantity) || 0;
+
+  for (const ex of existingMovements) {
+    if (ex.id && candidate.id && ex.id === candidate.id) continue;
+    const exCode = String(ex.entityCode || '').trim().toLowerCase();
+    const exDoc = String(ex.invoiceOrDocNumber || '').trim().toLowerCase();
+    const exDate = String(ex.date || '').trim();
+    const exType = String(ex.movementType || '').trim();
+    const exQty = Number(ex.quantity) || 0;
+
+    if (normDoc && exDoc === normDoc && exCode === normCode && exType === normType) {
+      return {
+        isDuplicate: true,
+        reason: `يوجد حركة مسجلة مسبقاً بنفس رقم المستند/الفاتورة (${candidate.invoiceOrDocNumber}) لنفس الجهة ونفس نوع الحركة.`,
+      };
+    }
+    if (exCode === normCode && exDate === normDate && exType === normType && exQty === qty && qty > 0) {
+      return {
+        isDuplicate: true,
+        reason: `حركة مطابقة مسجلة لنفس الجهة بتاريخ ${normDate} وبنفس الكمية (${qty}). منعاً للتكرار، يرجى مراجعة الرقم المرجعي.`,
+      };
+    }
+  }
+  return { isDuplicate: false };
+}
+
+// ============================================================================
+// 6. مؤشرات لوحة التحكم والرسوم البيانية الموحدة لقسم التجارة الداخلية (14 مؤشر)
+// ============================================================================
+
+export interface InternalTradeExecutiveDashboardStats {
+  totalEstablishments: number;
+  inspectedEstablishments: number;
+  completedCampaigns: number;
+  activeCampaigns: number;
+  totalViolations: number;
+  followUpViolations: number;
+  reconciledViolations: number;
+  totalComplaints: number;
+  openComplaints: number;
+  resolvedComplaints: number;
+  lpgViolationsCount: number;
+  petroleumViolationsCount: number;
+  violatingEstablishmentsCount: number;
+  repeatOffenderEstablishmentsCount: number;
+  topRepeatOffenders: { establishmentCode: string; establishmentName: string; village: string; count: number }[];
+  activeEstablishments: number;
+  closedOrStopped: number;
+  totalSeizures: number;
+  totalSeizuresValue: number;
+  totalCollectedFines: number;
+  totalDisbursedCylinders: number;
+  overallMonthlyPerCapitaCyl: number;
+  overallFamilyShareCyl: number;
+}
+
+export function computeInternalTradeExecutiveDashboardStats(params: {
+  establishments: readonly { establishmentCode: string; establishmentName: string; establishmentType: string; village: string; activityStatus: string }[];
+  campaigns: readonly { id: string; finalReportSubmitted?: boolean; inspectedCount?: number; visitedEstablishmentCodes?: string[] }[];
+  violations: readonly { establishmentCode: string; establishmentName: string; village: string; violationType: string; status: string; reconciliationAmount?: number }[];
+  seizures: readonly { totalValue?: number }[];
+  complaints: readonly { status: string }[];
+  lpgVillageCirculation: readonly { population: number; familiesCount: number; actualDisbursedQty: number }[];
+}): InternalTradeExecutiveDashboardStats {
+  const { establishments, campaigns, violations, seizures, complaints, lpgVillageCirculation } = params;
+
+  const totalEstablishments = establishments.length;
+  const activeEstablishments = establishments.filter((e) => e.activityStatus === 'نشط').length;
+  const closedOrStopped = establishments.filter((e) => e.activityStatus === 'مغلق' || e.activityStatus === 'متوقف').length;
+
+  const visitedSet = new Set<string>();
+  campaigns.forEach((c) => {
+    (c.visitedEstablishmentCodes || []).forEach((code) => {
+      if (code) visitedSet.add(code);
+    });
+  });
+  violations.forEach((v) => {
+    if (v.establishmentCode) visitedSet.add(v.establishmentCode);
+  });
+  const campaignInspectedSum = campaigns.reduce((s, c) => s + (Number(c.inspectedCount) || 0), 0);
+  const inspectedEstablishments = Math.max(visitedSet.size, Math.min(totalEstablishments, campaignInspectedSum));
+
+  const completedCampaigns = campaigns.filter((c) => Boolean(c.finalReportSubmitted)).length;
+  const activeCampaigns = campaigns.length - completedCampaigns;
+
+  const totalViolations = violations.length;
+  const reconciledViolations = violations.filter(
+    (v) => v.status === 'تم التصالح' || v.status === 'مغلق' || v.status === 'محفوظ'
+  ).length;
+  const followUpViolations = totalViolations - reconciledViolations;
+
+  const totalComplaints = complaints.length;
+  const resolvedComplaints = complaints.filter(
+    (c) => c.status === 'تم الفحص والحل' || c.status === 'مغلقة'
+  ).length;
+  const openComplaints = totalComplaints - resolvedComplaints;
+
+  const estTypeByCode = new Map<string, string>();
+  establishments.forEach((e) => estTypeByCode.set(e.establishmentCode, e.establishmentType || ''));
+
+  const isLpgViolation = (v: { establishmentCode: string; violationType: string }) => {
+    const estType = estTypeByCode.get(v.establishmentCode) || '';
+    const text = `${v.violationType} ${estType}`;
+    return text.includes('بوتاجاز') || text.includes('أسطوان');
+  };
+
+  const isPetroViolation = (v: { establishmentCode: string; violationType: string }) => {
+    const estType = estTypeByCode.get(v.establishmentCode) || '';
+    const text = `${v.violationType} ${estType}`;
+    return text.includes('بترول') || text.includes('وقود') || text.includes('بنزين') || text.includes('سولار') || text.includes('محطة');
+  };
+
+  const lpgViolationsCount = violations.filter(isLpgViolation).length;
+  const petroleumViolationsCount = violations.filter(isPetroViolation).length;
+
+  const violatorsMap = new Map<string, { establishmentCode: string; establishmentName: string; village: string; count: number }>();
+  for (const v of violations) {
+    const key = v.establishmentCode || v.establishmentName;
+    if (!key) continue;
+    const prev = violatorsMap.get(key);
+    if (prev) {
+      prev.count += 1;
+    } else {
+      violatorsMap.set(key, {
+        establishmentCode: v.establishmentCode || key,
+        establishmentName: v.establishmentName || key,
+        village: v.village || '',
+        count: 1,
+      });
+    }
+  }
+  const allViolators = Array.from(violatorsMap.values()).sort((a, b) => b.count - a.count);
+  const violatingEstablishmentsCount = allViolators.length;
+  const topRepeatOffenders = allViolators.filter((x) => x.count >= 2);
+  const repeatOffenderEstablishmentsCount = topRepeatOffenders.length;
+
+  const totalSeizures = seizures.length;
+  const totalSeizuresValue = seizures.reduce((sum, s) => sum + (Number(s.totalValue) || 0), 0);
+  const totalCollectedFines = violations.reduce((sum, v) => sum + (Number(v.reconciliationAmount) || 0), 0);
+
+  const totalPopulationLpg = lpgVillageCirculation.reduce((s, r) => s + (Number(r.population) || 0), 0);
+  const totalFamiliesLpg = lpgVillageCirculation.reduce((s, r) => s + (Number(r.familiesCount) || 0), 0);
+  const totalDisbursedCylinders = lpgVillageCirculation.reduce((s, r) => s + (Number(r.actualDisbursedQty) || 0), 0);
+  const overallMonthlyPerCapitaCyl =
+    totalPopulationLpg > 0 ? round4(totalDisbursedCylinders / totalPopulationLpg) : 0;
+  const overallFamilyShareCyl =
+    totalFamiliesLpg > 0 ? round2(totalDisbursedCylinders / totalFamiliesLpg) : 0;
+
+  return {
+    totalEstablishments,
+    inspectedEstablishments,
+    completedCampaigns,
+    activeCampaigns,
+    totalViolations,
+    followUpViolations,
+    reconciledViolations,
+    totalComplaints,
+    openComplaints,
+    resolvedComplaints,
+    lpgViolationsCount,
+    petroleumViolationsCount,
+    violatingEstablishmentsCount,
+    repeatOffenderEstablishmentsCount,
+    topRepeatOffenders: topRepeatOffenders.length > 0 ? topRepeatOffenders : allViolators.slice(0, 5),
+    activeEstablishments,
+    closedOrStopped,
+    totalSeizures,
+    totalSeizuresValue,
+    totalCollectedFines,
+    totalDisbursedCylinders,
+    overallMonthlyPerCapitaCyl,
+    overallFamilyShareCyl,
+  };
+}
+
+

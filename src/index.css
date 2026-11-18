@@ -273,7 +273,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Table Sticky Header & Row Styling */
+/* Table Sticky Header & Unified Compact ERP Table System */
 table th {
   position: sticky;
   top: 0;
@@ -282,16 +282,58 @@ table th {
 
 @layer base {
   tbody tr {
-    transition: background-color 0.15s ease, transform 0.15s ease;
+    transition: background-color 0.14s ease;
   }
 
   tbody tr:nth-child(even) {
-    background-color: #F1F5F9;
+    background-color: #F8FAFC;
   }
 
   tbody tr:hover {
     background-color: rgba(13, 148, 136, 0.08);
   }
+}
+
+/* Unified Compact ERP Table Class for All 4 Departments (خط أصغر بدرجة واحدة فقط، صفوف متناسقة ومريحة للعين) */
+.compact-erp-table table,
+.enlarged-bold-table table {
+  border-collapse: collapse;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.compact-erp-table table thead th,
+.compact-erp-table table th,
+.enlarged-bold-table table thead th,
+.enlarged-bold-table table th {
+  font-size: 0.72rem !important; /* ~13.7px on 19px root - crisp 1 step smaller & ultra clean */
+  font-weight: 900 !important;
+  padding: 0.44rem 0.5rem !important;
+  line-height: 1.25 !important;
+  border-color: rgba(30, 58, 95, 0.45) !important;
+  white-space: nowrap;
+}
+
+.compact-erp-table table tbody td,
+.compact-erp-table table td,
+.enlarged-bold-table table tbody td,
+.enlarged-bold-table table td {
+  font-size: 0.70rem !important; /* ~13.3px - compact 1 step reduction keeping Arabic bold & sharp */
+  font-weight: 700 !important;
+  padding: 0.36rem 0.46rem !important;
+  line-height: 1.3 !important;
+  vertical-align: middle !important;
+  border-bottom: 1px solid #E2E8F0;
+}
+
+.compact-erp-table table td .font-black,
+.enlarged-bold-table table td .font-black {
+  font-weight: 800 !important;
+}
+
+.compact-erp-table table tbody tr:hover,
+.enlarged-bold-table table tbody tr:hover {
+  background-color: rgba(13, 148, 136, 0.09) !important;
 }
 
 /* Summary / Totals Row Styling */
@@ -309,6 +351,7 @@ tfoot tr td {
   color: #ffffff !important;
   border-color: rgba(212, 175, 55, 0.35) !important;
   font-weight: 900 !important;
+  padding: 0.46rem 0.5rem !important;
 }
 
 /* Local Unit Subtotal Row Styling (إجمالي الوحدة المحلية) */
@@ -323,24 +366,7 @@ tr.unit-subtotal-row td {
   color: #0A1628 !important;
   font-weight: 900 !important;
   border-color: rgba(13, 148, 136, 0.35) !important;
-}
-
-/* Enlarged +2 steps & bold font classes for Ration Commodities & Internal Trade tables */
-.enlarged-bold-table table th {
-  font-size: 0.95rem !important;
-  font-weight: 900 !important;
-  padding: 0.72rem 0.65rem !important;
-}
-
-.enlarged-bold-table table td {
-  font-size: 0.92rem !important;
-  font-weight: 800 !important;
-  padding: 0.68rem 0.65rem !important;
-}
-
-.enlarged-bold-table table td *,
-.enlarged-bold-table table th * {
-  font-weight: 800 !important;
+  padding: 0.42rem 0.5rem !important;
 }
 
 /* Official Print Styles */
@@ -360,6 +386,8 @@ tr.unit-subtotal-row td {
     background: #ffffff !important;
     color: #000000 !important;
     font-size: 9pt !important;
+    overflow: visible !important;
+    height: auto !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
@@ -370,6 +398,14 @@ tr.unit-subtotal-row td {
 
   .print-only {
     display: block !important;
+  }
+
+  .overflow-x-auto,
+  .overflow-y-auto,
+  .overflow-hidden {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
   }
 
   table {

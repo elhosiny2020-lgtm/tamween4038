@@ -284,7 +284,6 @@ export function printHtmlElementA4(
   }
 ) {
   if (!element) {
-    window.print();
     return;
   }
 
@@ -312,7 +311,6 @@ export function printHtmlElementA4(
 
     const iframeDoc = iframe.contentWindow?.document;
     if (!iframeDoc) {
-      window.print();
       return;
     }
 
@@ -370,13 +368,13 @@ export function printHtmlElementA4(
         try {
           iframe?.contentWindow?.focus();
           iframe?.contentWindow?.print();
-        } catch {
-          window.print();
+        } catch (err) {
+          console.warn('Print iframe warning:', err);
         }
       }, 150);
     });
-  } catch {
-    window.print();
+  } catch (err) {
+    console.warn('Print setup error:', err);
   }
 }
 

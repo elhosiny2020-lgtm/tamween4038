@@ -136,10 +136,13 @@ export type SidebarNavId =
   | 'grain-alerts'
   | 'hr-dashboard'
   | 'hr-employees'
+  | 'hr-public-service'
+  | 'hr-external-assistance'
   | 'hr-attendance'
   | 'hr-leaves'
   | 'hr-payroll'
   | 'hr-loans-promotions'
+  | 'hr-alerts'
   | 'hr-settings'
   // 7. قسم التجارة الداخلية والرقابة التموينية الموحدة والبوتاجاز والوقود
   | 'internal-trade-dashboard'
@@ -598,11 +601,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       icon: <Briefcase className="w-4 h-4" />,
       items: [
         { id: 'hr-dashboard', label: 'لوحة تحكم الموارد البشرية', icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
-        { id: 'hr-employees', label: 'ملف العاملين والرقم القومي', icon: <Users className="w-3.5 h-3.5" /> },
+        { id: 'hr-employees', label: 'ملف العاملين والرقم القومي والهاتف', icon: <Users className="w-3.5 h-3.5" /> },
+        { id: 'hr-public-service', label: 'قسم موظفو الخدمة العامة', icon: <Award className="w-3.5 h-3.5" />, badge: 'مستقل', badgeVariant: 'teal' },
+        { id: 'hr-external-assistance', label: 'قسم موظفو الاستعانة', icon: <Award className="w-3.5 h-3.5" />, badge: 'مستقل', badgeVariant: 'gold' },
         { id: 'hr-attendance', label: 'سجلات الحضور والتأخيرات', icon: <Clock className="w-3.5 h-3.5" /> },
         { id: 'hr-leaves', label: 'الإجازات والأرصدة المستقلة', icon: <Calendar className="w-3.5 h-3.5" /> },
         { id: 'hr-payroll', label: 'مسيرات المرتبات والضرائب والتأمينات', icon: <Scale className="w-3.5 h-3.5" /> },
         { id: 'hr-loans-promotions', label: 'السلف والترقيات ونهاية الخدمة', icon: <Award className="w-3.5 h-3.5" /> },
+        { id: 'hr-alerts', label: 'تنبيهات عقود الخدمة العامة والاستعانة (30 يوم)', icon: <Bell className="w-3.5 h-3.5" />, badgeVariant: 'warning' },
         { id: 'hr-settings', label: 'شرائح الضرائب واللائحة المالية', icon: <Settings className="w-3.5 h-3.5" /> },
       ],
     },

@@ -29,11 +29,9 @@ import {
   RotateCcw,
   CheckCircle2,
   AlertTriangle,
-  Search,
   Users,
-  Flame,
-  Fuel,
   Bell,
+  Trash2,
 } from 'lucide-react';
 import type {
   AppUser,
@@ -53,9 +51,6 @@ import type {
   MerchantFinancialEntry,
   RationInspectionCampaign,
   RationComplaintRecord,
-  GasCylinderRecord,
-  PetroleumProductRecord,
-  RationOfficeAccountingRecord,
   ModuleAuditLog,
   OutletType,
   MerchantActivityStatus,
@@ -65,7 +60,6 @@ import type {
 import {
   computeCardEntitlementSummary,
   computeWarehouseStockStatus,
-  computeRequisitionTotals,
   computeMerchantFinancialStatement,
   validateAndComputeDisbursement,
   countEligibleBeneficiaries,
@@ -73,7 +67,6 @@ import {
   computeCommodityStockValue,
   computeRemainingMonthlyQuota,
   computeMonthlyQuotaExecutionPct,
-  computeDisbursedQuantityValue,
   generateSmartRationAlerts,
   evaluateSingleDateStatus,
   round2,
@@ -85,6 +78,7 @@ import {
 } from '../../utils/moduleCrudHelpers';
 import { isSuperAdmin } from '../../utils/departmentRbac';
 import { groupRecordsByLocalUnit } from '../../utils/tableGroupingHelpers';
+import { matchesSmartSearch, paginateRecords } from '../../utils/tableSmartHelpers';
 import {
   buildCommoditiesDepartmentAlerts,
   canDeleteDepartmentAlert,
@@ -101,6 +95,8 @@ import {
   VillageGrandTotalRow,
   AuditLogAdminToolbar,
   DepartmentAlertsPanel,
+  SmartTableSearchBar,
+  TablePaginationBar,
   type CrudFieldDefinition,
   type RecordProfileSection,
 } from './ModuleCrudShared';
@@ -171,6 +167,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     subtitle?: string;
     badgeText?: string;
     updatedAt?: string;
+    canEdit?: boolean;
+    onEdit?: () => void;
     sections: RecordProfileSection[];
   } | null>(null);
 
@@ -189,6 +187,40 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
   const [reportToDate, setReportToDate] = useState<string>('');
   const [hiddenReportCols, setHiddenReportCols] = useState<number[]>([]);
   const [commoditySearch, setCommoditySearch] = useState<string>('');
+  const [commodityPage, setCommodityPage] = useState<number>(1);
+  const [commodityPageSize, setCommodityPageSize] = useState<number>(25);
+
+  const [cardSearch, setCardSearch] = useState<string>('');
+  const [cardPage, setCardPage] = useState<number>(1);
+  const [cardPageSize, setCardPageSize] = useState<number>(25);
+
+  const [disbSearch, setDisbSearch] = useState<string>('');
+  const [disbPage, setDisbPage] = useState<number>(1);
+  const [disbPageSize, setDisbPageSize] = useState<number>(25);
+
+  const [warehouseSearch, setWarehouseSearch] = useState<string>('');
+  const [warehousePage, setWarehousePage] = useState<number>(1);
+  const [warehousePageSize, setWarehousePageSize] = useState<number>(25);
+
+  const [movementSearch, setMovementSearch] = useState<string>('');
+  const [movementPage, setMovementPage] = useState<number>(1);
+  const [movementPageSize, setMovementPageSize] = useState<number>(25);
+
+  const [reqSearch, setReqSearch] = useState<string>('');
+  const [reqPage, setReqPage] = useState<number>(1);
+  const [reqPageSize, setReqPageSize] = useState<number>(25);
+
+  const [insSearch, setInsSearch] = useState<string>('');
+  const [insPage, setInsPage] = useState<number>(1);
+  const [insPageSize, setInsPageSize] = useState<number>(25);
+
+  const [cmpSearch, setCmpSearch] = useState<string>('');
+  const [cmpPage, setCmpPage] = useState<number>(1);
+  const [cmpPageSize, setCmpPageSize] = useState<number>(25);
+
+  const [auditSearch, setAuditSearch] = useState<string>('');
+  const [auditPage, setAuditPage] = useState<number>(1);
+  const [auditPageSize, setAuditPageSize] = useState<number>(25);
 
   const permissions = useMemo(
     () =>
@@ -453,30 +485,6 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     return Array.from(counts.entries()).map(([name, value]) => ({ name, value }));
   }, [state.merchants]);
 
-  const filteredMerchants = useMemo(() => {
-    return state.merchants.filter((m) => {
-      if (villageFilter !== 'ALL' && m.village !== villageFilter) return false;
-      if (outletTypeFilter !== 'ALL' && m.outletType !== outletTypeFilter) return false;
-      if (statusFilter !== 'ALL' && m.activityStatus !== statusFilter) return false;
-      if (merchantSearch.trim()) {
-        const q = merchantSearch.trim().toLowerCase();
-        const hay = `${m.merchantName} ${m.ownerName} ${m.posMachineNumber} ${m.licenseNumber} ${m.nationalId} ${m.commercialRegNumber} ${m.village}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [state.merchants, villageFilter, outletTypeFilter, statusFilter, merchantSearch]);
-
-  const filteredCommodities = useMemo(() => {
-    if (!commoditySearch.trim()) return state.commodities;
-    const q = commoditySearch.trim().toLowerCase();
-    return state.commodities.filter((c) =>
-      `${c.code} ${c.name} ${c.category} ${c.supplierCompany} ${c.batchNumber || ''}`
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [state.commodities, commoditySearch]);
-
   const merchantById = useMemo(
     () => new Map(state.merchants.map((m) => [m.id, m])),
     [state.merchants]
@@ -487,14 +495,48 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     [state.commodities]
   );
 
-  const paginatedFilteredMerchants = useMemo(
-    () =>
-      filteredMerchants.slice(
-        (merchantRegistryPage - 1) * merchantRegistryPageSize,
-        merchantRegistryPage * merchantRegistryPageSize
-      ),
+  const filteredMerchants = useMemo(() => {
+    return state.merchants.filter((m) => {
+      if (villageFilter !== 'ALL' && m.village !== villageFilter) return false;
+      if (outletTypeFilter !== 'ALL' && m.outletType !== outletTypeFilter) return false;
+      if (statusFilter !== 'ALL' && m.activityStatus !== statusFilter) return false;
+      return matchesSmartSearch(
+        [
+          m.merchantName,
+          m.ownerName,
+          m.posMachineNumber,
+          m.traderCode,
+          m.activityCardNumber,
+          m.licenseNumber,
+          m.taxCardNumber,
+          m.nationalId,
+          m.commercialRegNumber,
+          m.village,
+          m.localUnit,
+          m.phone,
+          m.detailedAddress,
+        ],
+        merchantSearch
+      );
+    });
+  }, [state.merchants, villageFilter, outletTypeFilter, statusFilter, merchantSearch]);
+
+  const filteredCommodities = useMemo(() => {
+    return state.commodities.filter((c) =>
+      matchesSmartSearch([c.code, c.name, c.category, c.supplierCompany, c.batchNumber, c.unit], commoditySearch)
+    );
+  }, [state.commodities, commoditySearch]);
+
+  const commoditiesPagination = useMemo(
+    () => paginateRecords(filteredCommodities, commodityPage, commodityPageSize),
+    [filteredCommodities, commodityPage, commodityPageSize]
+  );
+
+  const merchantsPagination = useMemo(
+    () => paginateRecords(filteredMerchants, merchantRegistryPage, merchantRegistryPageSize),
     [filteredMerchants, merchantRegistryPage, merchantRegistryPageSize]
   );
+  const paginatedFilteredMerchants = merchantsPagination.items;
 
   const merchantsGrouped = useMemo(
     () =>
@@ -514,23 +556,58 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     [paginatedFilteredMerchants, state.settings.supportPerBeneficiary]
   );
 
+  const filteredCards = useMemo(
+    () =>
+      state.cards.filter((c) => {
+        const m = merchantById.get(c.merchantId);
+        return matchesSmartSearch(
+          [c.cardNumber, c.headOfFamilyName, c.headNationalId, c.village, c.localUnit, c.status, m?.merchantName],
+          cardSearch
+        );
+      }),
+    [state.cards, cardSearch, merchantById]
+  );
+
+  const cardsPagination = useMemo(
+    () => paginateRecords(filteredCards, cardPage, cardPageSize),
+    [filteredCards, cardPage, cardPageSize]
+  );
+
   const cardsGrouped = useMemo(
     () =>
       groupRecordsByLocalUnit({
-        rows: state.cards,
+        rows: cardsPagination.items,
         getLocalUnit: (c) => c.localUnit || merchantById.get(c.merchantId)?.localUnit || c.village,
         numericFields: [
           { key: 'eligibleCount', getValue: (c) => countEligibleBeneficiaries(c.members) },
           { key: 'totalMembers', getValue: (c) => c.members.length },
         ],
       }),
-    [state.cards, merchantById]
+    [cardsPagination.items, merchantById]
+  );
+
+  const filteredDisbursements = useMemo(
+    () =>
+      state.disbursements.filter((d) => {
+        const comm = commodityById.get(d.commodityId);
+        const merch = merchantById.get(d.merchantId);
+        return matchesSmartSearch(
+          [d.operationNumber, d.date, comm?.name, merch?.merchantName, merch?.localUnit, merch?.village, d.employeeName, d.collectionMethod],
+          disbSearch
+        );
+      }),
+    [state.disbursements, disbSearch, commodityById, merchantById]
+  );
+
+  const disbursementsPagination = useMemo(
+    () => paginateRecords(filteredDisbursements, disbPage, disbPageSize),
+    [filteredDisbursements, disbPage, disbPageSize]
   );
 
   const disbursementsGrouped = useMemo(
     () =>
       groupRecordsByLocalUnit({
-        rows: state.disbursements,
+        rows: disbursementsPagination.items,
         getLocalUnit: (d) => {
           const m = merchantById.get(d.merchantId);
           return m?.localUnit || m?.village;
@@ -543,13 +620,66 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           { key: 'commissionEarned', getValue: (d) => Number(d.commissionEarned) || 0 },
         ],
       }),
-    [state.disbursements, merchantById]
+    [disbursementsPagination.items, merchantById]
+  );
+
+  const filteredWarehouses = useMemo(
+    () =>
+      state.warehouses.filter((w) => {
+        const comm = commodityById.get(w.commodityId);
+        const merch = merchantById.get(w.merchantId);
+        return matchesSmartSearch(
+          [w.warehouseName, comm?.name, comm?.code, merch?.merchantName, merch?.village, merch?.localUnit],
+          warehouseSearch
+        );
+      }),
+    [state.warehouses, warehouseSearch, commodityById, merchantById]
+  );
+
+  const warehousesPagination = useMemo(
+    () => paginateRecords(filteredWarehouses, warehousePage, warehousePageSize),
+    [filteredWarehouses, warehousePage, warehousePageSize]
+  );
+
+  const filteredMovements = useMemo(
+    () =>
+      state.movements.filter((mv) => {
+        const comm = commodityById.get(mv.commodityId);
+        const merch = merchantById.get(mv.merchantId);
+        return matchesSmartSearch(
+          [mv.documentNumber, mv.movementDate, mv.movementType, mv.warehouseName, mv.supplierName, mv.invoiceNumber, comm?.name, mv.approvedBy, merch?.merchantName],
+          movementSearch
+        );
+      }),
+    [state.movements, movementSearch, commodityById, merchantById]
+  );
+
+  const movementsPagination = useMemo(
+    () => paginateRecords(filteredMovements, movementPage, movementPageSize),
+    [filteredMovements, movementPage, movementPageSize]
+  );
+
+  const filteredRequisitions = useMemo(
+    () =>
+      state.requisitions.filter((r) => {
+        const m = merchantById.get(r.merchantId);
+        return matchesSmartSearch(
+          [r.requestNumber, r.invoiceNumber, r.monthKey, m?.merchantName, m?.village, m?.localUnit, r.traderCode, r.posMachineNumber, r.lines[0]?.commodityName, r.status],
+          reqSearch
+        );
+      }),
+    [state.requisitions, reqSearch, merchantById]
+  );
+
+  const requisitionsPagination = useMemo(
+    () => paginateRecords(filteredRequisitions, reqPage, reqPageSize),
+    [filteredRequisitions, reqPage, reqPageSize]
   );
 
   const requisitionsGrouped = useMemo(
     () =>
       groupRecordsByLocalUnit({
-        rows: state.requisitions,
+        rows: requisitionsPagination.items,
         getLocalUnit: (r) => {
           const m = merchantById.get(r.merchantId);
           return m?.localUnit || m?.village;
@@ -572,7 +702,50 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           execPct: computeMonthlyQuotaExecutionPct(totals.deliveredQty || 0, totals.requestedQty || 0),
         }),
       }),
-    [state.requisitions, merchantById]
+    [requisitionsPagination.items, merchantById]
+  );
+
+  const filteredInspections = useMemo(
+    () =>
+      state.inspections.filter((ins) => {
+        const m = merchantById.get(ins.merchantId);
+        return matchesSmartSearch(
+          [ins.reportNumber, ins.inspectionDateTime, ins.inspectorName, ins.violationType, ins.village, ins.dispositionStatus, ins.inspectionResult, m?.merchantName],
+          insSearch
+        );
+      }),
+    [state.inspections, insSearch, merchantById]
+  );
+
+  const inspectionsPagination = useMemo(
+    () => paginateRecords(filteredInspections, insPage, insPageSize),
+    [filteredInspections, insPage, insPageSize]
+  );
+
+  const filteredComplaints = useMemo(
+    () =>
+      state.complaints.filter((c) =>
+        matchesSmartSearch([c.ticketNumber, c.date, c.citizenName, c.phone, c.village, c.category, c.status, c.details, c.resolution], cmpSearch)
+      ),
+    [state.complaints, cmpSearch]
+  );
+
+  const complaintsPagination = useMemo(
+    () => paginateRecords(filteredComplaints, cmpPage, cmpPageSize),
+    [filteredComplaints, cmpPage, cmpPageSize]
+  );
+
+  const filteredAuditLogs = useMemo(
+    () =>
+      state.auditLogs.filter((a) =>
+        matchesSmartSearch([a.timestamp, a.userFullName, a.username, a.actionType, a.entityName, a.afterSummary, a.beforeSummary], auditSearch)
+      ),
+    [state.auditLogs, auditSearch]
+  );
+
+  const auditPagination = useMemo(
+    () => paginateRecords(filteredAuditLogs, auditPage, auditPageSize),
+    [filteredAuditLogs, auditPage, auditPageSize]
   );
 
   const selectedCard = useMemo(
@@ -2615,7 +2788,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             });
             const officialVal = computeCommodityStockValue(curBal, c?.officialPrice || 0);
             const costVal = computeCommodityStockValue(curBal, c?.supplyCostPrice || 0);
-            const disbursedVal = computeDisbursedQuantityValue(w.totalOut, c?.officialPrice || 0);
+            const disbursedVal = computeCommodityStockValue(w.totalOut, c?.officialPrice || 0);
             return [
               idx + 1,
               w.warehouseName,
@@ -2747,7 +2920,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
   ];
 
   return (
-    <div className="space-y-4 enlarged-bold-table" dir="rtl" data-testid="ration-commodities-suite">
+    <div className="space-y-4" dir="rtl" data-testid="ration-commodities-suite">
       {/* Header Banner */}
       <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0D9488] text-white rounded-2xl p-5 shadow-lg border border-[#D4AF37]/40 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -2880,67 +3053,67 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             </div>
           </div>
 
-          {/* 10 Requested KPI Cards */}
+          {/* 10 Requested KPI Cards (Interactive Drill-down) */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('commodities')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-[#0D9488] shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">1. إجمالي السلع المسجلة</div>
-              <div className="text-xl font-black text-[#0A1628] font-mono mt-1">{kpis.totalCommodities} صنف</div>
+              <div className="text-xl font-black text-[#0A1628] font-mono tabular-nums mt-1">{kpis.totalCommodities} صنف</div>
               <div className="text-[11px] font-bold text-[#0D9488]">متاح للصرف التمويني</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('warehouses')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-[#1E40AF] shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">2. إجمالي قيمة المخزون الحالي</div>
-              <div className="text-xl font-black text-[#1E40AF] font-mono mt-1">{kpis.stockValuation.toLocaleString()} ج.م</div>
+              <div className="text-xl font-black text-[#1E40AF] font-mono tabular-nums mt-1">{kpis.stockValuation.toLocaleString()} ج.م</div>
               <div className="text-[11px] font-bold text-slate-500">الرصيد × السعر المعتمد</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('merchants')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-emerald-600 shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">3. عدد التجار ومنافذ التموين</div>
-              <div className="text-xl font-black text-[#0A1628] font-mono mt-1">{kpis.activeMerchants} / {kpis.totalMerchants}</div>
+              <div className="text-xl font-black text-[#0A1628] font-mono tabular-nums mt-1">{kpis.activeMerchants} / {kpis.totalMerchants}</div>
               <div className="text-[11px] font-bold text-emerald-700">{kpis.totalCards} بطاقة مربوطة</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('requisitions')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-[#0D9488] shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">4. إجمالي الحصص الشهرية</div>
-              <div className="text-xl font-black text-[#0D9488] font-mono mt-1">{kpis.totalPrescribedMonthlyQuota.toLocaleString()}</div>
+              <div className="text-xl font-black text-[#0D9488] font-mono tabular-nums mt-1">{kpis.totalPrescribedMonthlyQuota.toLocaleString()}</div>
               <div className="text-[11px] font-bold text-slate-500">وحدة مقررة للشهر النشط</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('warehouses')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-emerald-600 shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">5. إجمالي الكميات الواردة</div>
-              <div className="text-xl font-black text-emerald-700 font-mono mt-1">{kpis.totalInboundQty.toLocaleString()}</div>
+              <div className="text-xl font-black text-emerald-700 font-mono tabular-nums mt-1">{kpis.totalInboundQty.toLocaleString()}</div>
               <div className="text-[11px] font-bold text-slate-500">إذن إضافة واستلام مخزني</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('disbursements')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-blue-600 shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">6. إجمالي الكميات المنصرفة</div>
-              <div className="text-xl font-black text-blue-700 font-mono mt-1">{kpis.totalOutboundQty.toLocaleString()}</div>
+              <div className="text-xl font-black text-blue-700 font-mono tabular-nums mt-1">{kpis.totalOutboundQty.toLocaleString()}</div>
               <div className="text-[11px] font-bold text-slate-500">بقيمة {kpis.totalSalesValue.toLocaleString()} ج.م</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('warehouses')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-[#0D9488] shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">7. الكميات المتبقية بالمخازن</div>
-              <div className="text-xl font-black text-[#0A1628] font-mono mt-1">{kpis.totalRemainingStockQty.toLocaleString()}</div>
+              <div className="text-xl font-black text-[#0A1628] font-mono tabular-nums mt-1">{kpis.totalRemainingStockQty.toLocaleString()}</div>
               <div className="text-[11px] font-bold text-[#0D9488]">رصيد فعلي متاح</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('inspections')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-rose-500 shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">8. الأصناف منخفضة المخزون</div>
-              <div className="text-xl font-black text-rose-700 font-mono mt-1">{kpis.lowStockCount}</div>
+              <div className="text-xl font-black text-rose-700 font-mono tabular-nums mt-1">{kpis.lowStockCount}</div>
               <div className="text-[11px] font-bold text-rose-600">تحت الحد الأدنى للطلب</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('inspections')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-amber-500 shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">9. قريبة انتهاء الصلاحية</div>
-              <div className="text-xl font-black text-amber-700 font-mono mt-1">{kpis.nearExpiryCount}</div>
+              <div className="text-xl font-black text-amber-700 font-mono tabular-nums mt-1">{kpis.nearExpiryCount}</div>
               <div className="text-[11px] font-bold text-amber-700">خلال 60 يوماً</div>
-            </div>
+            </button>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <button type="button" onClick={() => setSubView('requisitions')} className="bg-white p-3.5 rounded-2xl border border-slate-200 hover:border-[#0D9488] shadow-sm text-right cursor-pointer transition">
               <div className="text-[11px] font-bold text-slate-500">10. نسبة تنفيذ الحصص الشهرية</div>
-              <div className="text-xl font-black text-[#0D9488] font-mono mt-1">{kpis.monthlyQuotaExecutionPct}%</div>
+              <div className="text-xl font-black text-[#0D9488] font-mono tabular-nums mt-1">{kpis.monthlyQuotaExecutionPct}%</div>
               <div className="text-[11px] font-bold text-slate-500">(الموزعة ÷ المقررة) × 100</div>
-            </div>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -3055,83 +3228,79 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           />
 
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs">
-              <div className="relative flex-1 min-w-[220px]">
-                <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={merchantSearch}
-                  onChange={(e) => {
-                    setMerchantSearch(e.target.value);
-                    setMerchantRegistryPage(1);
-                  }}
-                  placeholder="بحث باسم التاجر، المنفذ، الرقم القومي، كود التاجر، السجل التجاري، أو رقم الماكينة..."
-                  className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold"
-                />
-              </div>
-              <select
-                value={villageFilter}
-                onChange={(e) => {
-                  setVillageFilter(e.target.value);
-                  setMerchantRegistryPage(1);
-                }}
-                className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold"
-              >
-                <option value="ALL">كافة القرى والمناطق</option>
-                {villages.map((v) => (
-                  <option key={v.village} value={v.village}>{v.village}</option>
-                ))}
-              </select>
-              <select
-                value={outletTypeFilter}
-                onChange={(e) => {
-                  setOutletTypeFilter(e.target.value as 'ALL' | OutletType);
-                  setMerchantRegistryPage(1);
-                }}
-                className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold"
-              >
-                <option value="ALL">كل أنواع المنافذ</option>
-                <option value="تاجر تمويني">تاجر تمويني</option>
-                <option value="منفذ جمعيتي">منفذ جمعيتي</option>
-                <option value="مجمع استهلاكي">مجمع استهلاكي</option>
-              </select>
-              <select
-                value={statusFilter}
-                onChange={(e) => {
-                  setStatusFilter(e.target.value as 'ALL' | MerchantActivityStatus);
-                  setMerchantRegistryPage(1);
-                }}
-                className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold"
-              >
-                <option value="ALL">كل الحالات</option>
-                <option value="نشط">نشط</option>
-                <option value="متوقف">متوقف</option>
-                <option value="إجازة">إجازة</option>
-                <option value="موقوف">موقوف</option>
-                <option value="ملغي">ملغي</option>
-              </select>
-              <div className="flex items-center gap-1 bg-slate-100 px-2.5 py-1.5 rounded-xl font-bold">
-                <span>عرض:</span>
-                {[25, 50, 200].map((sz) => (
-                  <button
-                    key={sz}
-                    type="button"
-                    onClick={() => {
-                      setMerchantRegistryPageSize(sz);
+            <SmartTableSearchBar
+              searchQuery={merchantSearch}
+              onSearchChange={(q) => {
+                setMerchantSearch(q);
+                setMerchantRegistryPage(1);
+              }}
+              placeholder="بحث باسم التاجر، المنفذ، الرقم القومي، كود التاجر، السجل التجاري، القرية، الوحدة المحلية، أو رقم الماكينة..."
+              filteredCount={filteredMerchants.length}
+              totalCount={state.merchants.length}
+              tableId="ration-merchants-detailed"
+              testId="ration-merchants-search"
+              columns={[
+                { key: 'seq', label: 'م', required: true },
+                { key: 'name', label: 'اسم التاجر / المنفذ', required: true },
+                { key: 'nationalId', label: 'الرقم القومي' },
+                { key: 'codes', label: 'كود التاجر / الماكينة' },
+                { key: 'docs', label: 'السجل التجاري / الترخيص' },
+                { key: 'expiry', label: 'تواريخ الانتهاء' },
+                { key: 'address', label: 'العنوان بالتفصيل' },
+                { key: 'insurance', label: 'مبلغ التأمين' },
+                { key: 'quota', label: 'الحصة الشهرية' },
+                { key: 'status', label: 'الحالة' },
+                { key: 'actions', label: 'إجراءات', required: true },
+              ]}
+              extraControls={
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <select
+                    value={villageFilter}
+                    onChange={(e) => {
+                      setVillageFilter(e.target.value);
                       setMerchantRegistryPage(1);
                     }}
-                    className={`px-2 py-0.5 rounded text-[11px] font-black cursor-pointer ${
-                      merchantRegistryPageSize === sz ? 'bg-[#0A1628] text-white' : 'text-slate-700'
-                    }`}
+                    className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-bold text-xs"
                   >
-                    {sz === 200 ? 'الكل' : sz}
-                  </button>
-                ))}
-              </div>
-            </div>
+                    <option value="ALL">كافة القرى والمناطق</option>
+                    {villages.map((v) => (
+                      <option key={v.village} value={v.village}>{v.village}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={outletTypeFilter}
+                    onChange={(e) => {
+                      setOutletTypeFilter(e.target.value as 'ALL' | OutletType);
+                      setMerchantRegistryPage(1);
+                    }}
+                    className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-bold text-xs"
+                  >
+                    <option value="ALL">كل أنواع المنافذ</option>
+                    <option value="تاجر تمويني">تاجر تمويني</option>
+                    <option value="منفذ جمعيتي">منفذ جمعيتي</option>
+                    <option value="مجمع استهلاكي">مجمع استهلاكي</option>
+                  </select>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => {
+                      setStatusFilter(e.target.value as 'ALL' | MerchantActivityStatus);
+                      setMerchantRegistryPage(1);
+                    }}
+                    className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-bold text-xs"
+                  >
+                    <option value="ALL">كل الحالات</option>
+                    <option value="نشط">نشط</option>
+                    <option value="متوقف">متوقف</option>
+                    <option value="إجازة">إجازة</option>
+                    <option value="موقوف">موقوف</option>
+                    <option value="ملغي">ملغي</option>
+                  </select>
+                </div>
+              }
+            />
 
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
+              <table data-erp-table="ration-merchants-detailed" className="compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2.5 px-2 border border-slate-700">م</th>
@@ -3209,6 +3378,23 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                                     subtitle: `${m.outletType} — ${m.village} / ${m.localUnit}`,
                                     badgeText: m.activityStatus,
                                     updatedAt: m.updatedAt,
+                                    canEdit: permissions.canEdit,
+                                    onEdit: () =>
+                                      setActiveModal({
+                                        mode: 'edit',
+                                        entity: 'merchant',
+                                        targetId: m.id,
+                                        title: `تعديل بيانات التاجر والمنفذ: ${m.merchantName}`,
+                                        fields: merchantFields,
+                                        initialValues: {
+                                          ...m,
+                                          traderCode: m.traderCode || m.activityCardNumber || '',
+                                          taxCardExpiryDate: m.taxCardExpiryDate || '2027-08-15',
+                                          commercialRegExpiryDate: m.commercialRegExpiryDate || '2027-09-30',
+                                          activityStartDate: m.activityStartDate || m.licenseIssueDate,
+                                          monthlyEntitlementQuota: monthlyQuota,
+                                        },
+                                      }),
                                     sections: [
                                       {
                                         title: 'البيانات التعريفية والربط الإداري',
@@ -3317,6 +3503,17 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 </tbody>
               </table>
             </div>
+            <TablePaginationBar
+              page={merchantsPagination.page}
+              totalPages={merchantsPagination.totalPages}
+              pageSize={merchantRegistryPageSize}
+              totalCount={filteredMerchants.length}
+              startIndex={merchantsPagination.startIndex}
+              endIndex={merchantsPagination.endIndex}
+              onPageChange={setMerchantRegistryPage}
+              onPageSizeChange={setMerchantRegistryPageSize}
+              testIdPrefix="ration-merchants"
+            />
           </div>
         </div>
       )}
@@ -3353,8 +3550,31 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           />
 
           {/* Master Cards Table */}
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <SmartTableSearchBar
+              searchQuery={cardSearch}
+              onSearchChange={(q) => {
+                setCardSearch(q);
+                setCardPage(1);
+              }}
+              placeholder="بحث برقم البطاقة، اسم رب الأسرة، الرقم القومي، المنفذ، القرية، أو الوحدة المحلية..."
+              filteredCount={filteredCards.length}
+              totalCount={state.cards.length}
+              tableId="ration-cards-table"
+              testId="ration-cards-search"
+              columns={[
+                { key: 'cardNumber', label: 'رقم البطاقة', required: true },
+                { key: 'head', label: 'اسم رب الأسرة', required: true },
+                { key: 'nid', label: 'الرقم القومي' },
+                { key: 'merchant', label: 'المنفذ المربوط' },
+                { key: 'village', label: 'القرية' },
+                { key: 'members', label: 'الأفراد' },
+                { key: 'status', label: 'الحالة' },
+                { key: 'actions', label: 'إجراءات الإدارة', required: true },
+              ]}
+            />
+            <div className="overflow-x-auto">
+              <table data-erp-table="ration-cards-table" className="compact-erp-table">
               <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
                   <th className="py-2 px-2 border border-slate-700">رقم البطاقة</th>
@@ -3406,6 +3626,16 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                                   subtitle: `رب الأسرة: ${c.headOfFamilyName} — ${c.village} / ${c.localUnit}`,
                                   badgeText: c.status,
                                   updatedAt: c.updatedAt,
+                                  canEdit: permissions.canEdit,
+                                  onEdit: () =>
+                                    setActiveModal({
+                                      mode: 'edit',
+                                      entity: 'card',
+                                      targetId: c.id,
+                                      title: `تعديل البطاقة التموينية: ${c.cardNumber}`,
+                                      fields: cardFields,
+                                      initialValues: { ...c },
+                                    }),
                                   sections: [
                                     {
                                       title: 'بيانات البطاقة التموينية',
@@ -3487,6 +3717,18 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 )}
               </tbody>
             </table>
+            </div>
+            <TablePaginationBar
+              page={cardsPagination.page}
+              totalPages={cardsPagination.totalPages}
+              pageSize={cardPageSize}
+              totalCount={filteredCards.length}
+              startIndex={cardsPagination.startIndex}
+              endIndex={cardsPagination.endIndex}
+              onPageChange={setCardPage}
+              onPageSizeChange={setCardPageSize}
+              testIdPrefix="ration-cards"
+            />
           </div>
 
           {selectedCard && selectedCardSummary && (
@@ -3530,7 +3772,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-xs text-center border-collapse">
+                <table className="compact-erp-table">
                   <thead className="bg-slate-800 text-white font-black">
                     <tr>
                       <th className="py-2 px-2 border border-slate-700 text-right">اسم الفرد المستفيد</th>
@@ -3564,6 +3806,16 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                                 title: mb.fullName,
                                 subtitle: `البطاقة التموينية رقم ${selectedCard.cardNumber}`,
                                 badgeText: mb.status,
+                                canEdit: permissions.canEdit,
+                                onEdit: () =>
+                                  setActiveModal({
+                                    mode: 'edit',
+                                    entity: 'member',
+                                    targetId: mb.id,
+                                    title: `تعديل بيانات الفرد: ${mb.fullName}`,
+                                    fields: memberFields,
+                                    initialValues: { ...mb },
+                                  }),
                                 sections: [
                                   {
                                     title: 'بيانات الفرد المستفيد',
@@ -3662,7 +3914,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-xs text-center border-collapse">
+                <table className="compact-erp-table">
                   <thead className="bg-[#0A1628] text-white font-black">
                     <tr>
                       <th className="py-2 px-2 border border-slate-700 text-right">السلعة</th>
@@ -3736,21 +3988,37 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           />
 
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="relative flex-1 min-w-[240px]">
-                <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={commoditySearch}
-                  onChange={(e) => setCommoditySearch(e.target.value)}
-                  placeholder="بحث فوري بكود الصنف، اسم السلعة، التصنيف، الشركة الموردة، أو رقم التشغيلة..."
-                  className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold"
-                />
-              </div>
-            </div>
+            <SmartTableSearchBar
+              searchQuery={commoditySearch}
+              onSearchChange={(q) => {
+                setCommoditySearch(q);
+                setCommodityPage(1);
+              }}
+              placeholder="بحث فوري بكود الصنف، اسم السلعة، التصنيف، الشركة الموردة، أو رقم التشغيلة..."
+              filteredCount={filteredCommodities.length}
+              totalCount={state.commodities.length}
+              tableId="ration-commodities-table"
+              testId="ration-commodities-search"
+              columns={[
+                { key: 'code', label: 'كود الصنف', required: true },
+                { key: 'name', label: 'اسم السلعة', required: true },
+                { key: 'category', label: 'التصنيف / الوحدة' },
+                { key: 'price', label: 'السعر والتكلفة' },
+                { key: 'opening', label: 'الافتتاحي' },
+                { key: 'in', label: 'الوارد' },
+                { key: 'out', label: 'المنصرف' },
+                { key: 'balance', label: 'الرصيد الحالي' },
+                { key: 'val', label: 'قيمة المخزون' },
+                { key: 'bounds', label: 'الحد الأدنى / الأقصى' },
+                { key: 'supplier', label: 'المورد والتشغيلة' },
+                { key: 'expiry', label: 'تاريخ الصلاحية' },
+                { key: 'status', label: 'حالة الصنف' },
+                { key: 'actions', label: 'إجراءات', required: true },
+              ]}
+            />
 
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
+              <table data-erp-table="ration-commodities-table" className="compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2.5 px-2 border border-slate-700">كود الصنف</th>
@@ -3770,7 +4038,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {filteredCommodities.map((c) => {
+                  {commoditiesPagination.items.map((c) => {
                     const whs = state.warehouses.filter((w) => w.commodityId === c.id);
                     const openBal =
                       typeof c.openingBalance === 'number'
@@ -3848,6 +4116,26 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                                 subtitle: `${c.code} — ${c.category} (${c.unit})`,
                                 badgeText: avail,
                                 updatedAt: c.updatedAt,
+                                canEdit: permissions.canEdit,
+                                onEdit: () =>
+                                  setActiveModal({
+                                    mode: 'edit',
+                                    entity: 'commodity',
+                                    targetId: c.id,
+                                    title: `تعديل السلعة التموينية: ${c.name}`,
+                                    fields: commodityFields,
+                                    initialValues: {
+                                      ...c,
+                                      openingBalance: openBal,
+                                      inboundQty: inQty,
+                                      outboundQty: outQty,
+                                      reorderLevel: minLvl,
+                                      maxStockLevel: maxLvl,
+                                      batchNumber: c.batchNumber || 'BCH-2026-01',
+                                      expiryDate: c.expiryDate || '2027-06-30',
+                                      availabilityStatus: avail,
+                                    },
+                                  }),
                                 sections: [
                                   {
                                     title: 'بيانات السلعة والتسعير',
@@ -3926,9 +4214,60 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                       </tr>
                     );
                   })}
+                  {filteredCommodities.length > 0 && (() => {
+                    const tot = filteredCommodities.reduce(
+                      (acc, c) => {
+                        const whs = state.warehouses.filter((w) => w.commodityId === c.id);
+                        const openBal = typeof c.openingBalance === 'number' ? c.openingBalance : whs.reduce((s, w) => s + w.openingBalance, 0);
+                        const inQty = typeof c.inboundQty === 'number' ? c.inboundQty : whs.reduce((s, w) => s + w.totalIn, 0);
+                        const outQty = typeof c.outboundQty === 'number' ? c.outboundQty : whs.reduce((s, w) => s + w.totalOut, 0);
+                        const curBal = computeCommodityCurrentBalance({
+                          openingBalance: openBal,
+                          inboundQty: inQty,
+                          outboundQty: outQty,
+                          inboundReturns: c.inboundReturns,
+                          outboundReturns: c.outboundReturns,
+                        });
+                        const stockVal = computeCommodityStockValue(curBal, c.officialPrice);
+                        return {
+                          openBal: round2(acc.openBal + openBal),
+                          inQty: round2(acc.inQty + inQty),
+                          outQty: round2(acc.outQty + outQty),
+                          curBal: round2(acc.curBal + curBal),
+                          stockVal: round2(acc.stockVal + stockVal),
+                        };
+                      },
+                      { openBal: 0, inQty: 0, outQty: 0, curBal: 0, stockVal: 0 }
+                    );
+                    return (
+                      <VillageGrandTotalRow
+                        totalCount={filteredCommodities.length}
+                        labelColSpan={4}
+                        metricCells={[
+                          { content: tot.openBal.toLocaleString(), mono: true },
+                          { content: tot.inQty.toLocaleString(), mono: true },
+                          { content: tot.outQty.toLocaleString(), mono: true },
+                          { content: tot.curBal.toLocaleString(), mono: true },
+                          { content: `${tot.stockVal.toLocaleString()} ج.م`, mono: true },
+                          { colSpan: 5, content: '' },
+                        ]}
+                      />
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
+            <TablePaginationBar
+              page={commoditiesPagination.page}
+              totalPages={commoditiesPagination.totalPages}
+              pageSize={commodityPageSize}
+              totalCount={filteredCommodities.length}
+              startIndex={commoditiesPagination.startIndex}
+              endIndex={commoditiesPagination.endIndex}
+              onPageChange={setCommodityPage}
+              onPageSizeChange={setCommodityPageSize}
+              testIdPrefix="ration-commodities"
+            />
           </div>
         </div>
       )}
@@ -4017,8 +4356,33 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             </form>
           )}
 
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <SmartTableSearchBar
+              searchQuery={disbSearch}
+              onSearchChange={(q) => {
+                setDisbSearch(q);
+                setDisbPage(1);
+              }}
+              placeholder="بحث برقم العملية، التاريخ، السلعة، المنفذ، القرية، الوحدة المحلية، أو اسم الموظف..."
+              filteredCount={filteredDisbursements.length}
+              totalCount={state.disbursements.length}
+              tableId="ration-disbursements-table"
+              testId="ration-disbursements-search"
+              columns={[
+                { key: 'op', label: 'رقم العملية', required: true },
+                { key: 'date', label: 'التاريخ' },
+                { key: 'comm', label: 'السلعة', required: true },
+                { key: 'qty', label: 'الكمية' },
+                { key: 'price', label: 'سعر الوحدة' },
+                { key: 'sale', label: 'إجمالي البيع' },
+                { key: 'support', label: 'دعم مخصوم' },
+                { key: 'citizen', label: 'فرق المواطن' },
+                { key: 'commEarn', label: 'عمولة التاجر' },
+                { key: 'actions', label: 'إجراءات الإدارة', required: true },
+              ]}
+            />
+            <div className="overflow-x-auto">
+              <table data-erp-table="ration-disbursements-table" className="compact-erp-table">
               <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
                   <th className="py-2 px-2 border border-slate-700">رقم العملية</th>
@@ -4062,6 +4426,16 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                                   subtitle: `${comm?.name || d.commodityId} — منفذ: ${merch?.merchantName || d.merchantId}`,
                                   badgeText: d.collectionMethod,
                                   updatedAt: d.updatedAt,
+                                  canEdit: permissions.canEdit,
+                                  onEdit: () =>
+                                    setActiveModal({
+                                      mode: 'edit',
+                                      entity: 'disbursement',
+                                      targetId: d.id,
+                                      title: `تعديل عملية الصرف: ${d.operationNumber}`,
+                                      fields: disbursementFields,
+                                      initialValues: { ...d },
+                                    }),
                                   sections: [
                                     {
                                       title: 'تفاصيل عملية الصرف',
@@ -4155,6 +4529,18 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 )}
               </tbody>
             </table>
+            </div>
+            <TablePaginationBar
+              page={disbursementsPagination.page}
+              totalPages={disbursementsPagination.totalPages}
+              pageSize={disbPageSize}
+              totalCount={filteredDisbursements.length}
+              startIndex={disbursementsPagination.startIndex}
+              endIndex={disbursementsPagination.endIndex}
+              onPageChange={setDisbPage}
+              onPageSizeChange={setDisbPageSize}
+              testIdPrefix="ration-disbursements"
+            />
           </div>
         </div>
       )}
@@ -4193,8 +4579,33 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             }
           />
 
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <SmartTableSearchBar
+              searchQuery={warehouseSearch}
+              onSearchChange={(q) => {
+                setWarehouseSearch(q);
+                setWarehousePage(1);
+              }}
+              placeholder="بحث باسم المخزن، السلعة، كود الصنف، المنفذ، القرية، أو الوحدة المحلية..."
+              filteredCount={filteredWarehouses.length}
+              totalCount={state.warehouses.length}
+              tableId="ration-warehouses-table"
+              testId="ration-warehouses-search"
+              columns={[
+                { key: 'wh', label: 'المخزن والسلعة', required: true },
+                { key: 'open', label: 'الافتتاحي' },
+                { key: 'in', label: 'الوارد' },
+                { key: 'out', label: 'المنصرف' },
+                { key: 'ret', label: 'المرتجع' },
+                { key: 'bal', label: 'الرصيد الحالي' },
+                { key: 'val', label: 'قيمة المخزون' },
+                { key: 'phys', label: 'الجرد الفعلي' },
+                { key: 'alerts', label: 'التنبيهات الآلية' },
+                { key: 'actions', label: 'إجراءات', required: true },
+              ]}
+            />
+            <div className="overflow-x-auto">
+              <table data-erp-table="ration-warehouses-table" className="compact-erp-table">
               <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
                   <th className="py-2 px-2 border border-slate-700 text-right">المخزن والسلعة</th>
@@ -4210,8 +4621,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
-                {state.warehouses.map((w) => {
-                  const comm = state.commodities.find((c) => c.id === w.commodityId);
+                {warehousesPagination.items.map((w) => {
+                  const comm = commodityById.get(w.commodityId);
                   const status = computeWarehouseStockStatus(w, comm?.officialPrice || 0);
                   return (
                     <tr key={w.id}>
@@ -4250,6 +4661,19 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                               subtitle: `السلعة: ${comm?.name || w.commodityId}`,
                               badgeText: status.alerts.length === 0 ? 'مطابق وآمن' : 'تنبيه مخزني',
                               updatedAt: w.updatedAt,
+                              canEdit: permissions.canEdit,
+                              onEdit: () =>
+                                setActiveModal({
+                                  mode: 'edit',
+                                  entity: 'warehouse',
+                                  targetId: w.id,
+                                  title: `تعديل رصيد وجرد المخزن: ${w.warehouseName}`,
+                                  fields: warehouseFields,
+                                  initialValues: {
+                                    ...w,
+                                    physicalCount: w.physicalCount ?? status.bookBalance,
+                                  },
+                                }),
                               sections: [
                                 {
                                   title: 'تفاصيل رصيد المخزن والجرد الفعلي',
@@ -4311,8 +4735,51 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                     </tr>
                   );
                 })}
+                {filteredWarehouses.length > 0 && (() => {
+                  const tot = filteredWarehouses.reduce(
+                    (acc, w) => {
+                      const comm = commodityById.get(w.commodityId);
+                      const status = computeWarehouseStockStatus(w, comm?.officialPrice || 0);
+                      return {
+                        open: round2(acc.open + (Number(w.openingBalance) || 0)),
+                        inQty: round2(acc.inQty + (Number(w.totalIn) || 0)),
+                        outQty: round2(acc.outQty + (Number(w.totalOut) || 0)),
+                        bal: round2(acc.bal + status.bookBalance),
+                        val: round2(acc.val + status.stockValue),
+                      };
+                    },
+                    { open: 0, inQty: 0, outQty: 0, bal: 0, val: 0 }
+                  );
+                  return (
+                    <VillageGrandTotalRow
+                      totalCount={filteredWarehouses.length}
+                      labelColSpan={1}
+                      metricCells={[
+                        { content: tot.open.toLocaleString(), mono: true },
+                        { content: tot.inQty.toLocaleString(), mono: true },
+                        { content: tot.outQty.toLocaleString(), mono: true },
+                        { content: '—' },
+                        { content: tot.bal.toLocaleString(), mono: true },
+                        { content: `${tot.val.toLocaleString()} ج.م`, mono: true },
+                        { colSpan: 3, content: '' },
+                      ]}
+                    />
+                  );
+                })()}
               </tbody>
             </table>
+            </div>
+            <TablePaginationBar
+              page={warehousesPagination.page}
+              totalPages={warehousesPagination.totalPages}
+              pageSize={warehousePageSize}
+              totalCount={filteredWarehouses.length}
+              startIndex={warehousesPagination.startIndex}
+              endIndex={warehousesPagination.endIndex}
+              onPageChange={setWarehousePage}
+              onPageSizeChange={setWarehousePageSize}
+              testIdPrefix="ration-warehouses"
+            />
           </div>
 
           {/* Inventory Movements Sub-Table (Control #4: Approved movements cannot be deleted directly; use Reversal Entry) */}
@@ -4347,8 +4814,32 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               })
             }
           />
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <SmartTableSearchBar
+              searchQuery={movementSearch}
+              onSearchChange={(q) => {
+                setMovementSearch(q);
+                setMovementPage(1);
+              }}
+              placeholder="بحث برقم المستند، التاريخ، نوع الحركة، المخزن، المورد، الفاتورة، أو السلعة..."
+              filteredCount={filteredMovements.length}
+              totalCount={state.movements.length}
+              tableId="ration-movements-table"
+              testId="ration-movements-search"
+              columns={[
+                { key: 'doc', label: 'رقم المستند', required: true },
+                { key: 'date', label: 'التاريخ' },
+                { key: 'type', label: 'نوع الحركة' },
+                { key: 'wh', label: 'المخزن / المورد' },
+                { key: 'comm', label: 'السلعة', required: true },
+                { key: 'qty', label: 'الكمية' },
+                { key: 'val', label: 'إجمالي القيمة' },
+                { key: 'emp', label: 'الموظف المسؤول' },
+                { key: 'actions', label: 'إجراءات الرقابة', required: true },
+              ]}
+            />
+            <div className="overflow-x-auto">
+              <table data-erp-table="ration-movements-table" className="compact-erp-table">
               <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
                   <th className="py-2 px-2 border border-slate-700">رقم المستند</th>
@@ -4363,8 +4854,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
-                {state.movements.map((mv) => {
-                  const comm = state.commodities.find((c) => c.id === mv.commodityId);
+                {movementsPagination.items.map((mv) => {
+                  const comm = commodityById.get(mv.commodityId);
                   return (
                     <tr key={mv.id} className={mv.isReversed ? 'opacity-60 bg-slate-100' : ''}>
                       <td className="py-2 px-2 font-mono font-black">{mv.documentNumber}</td>
@@ -4406,6 +4897,16 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                               subtitle: `${mv.warehouseName} — ${comm?.name || mv.commodityId}`,
                               badgeText: mv.movementType,
                               updatedAt: mv.updatedAt,
+                              canEdit: permissions.canEdit,
+                              onEdit: () =>
+                                setActiveModal({
+                                  mode: 'edit',
+                                  entity: 'movement',
+                                  targetId: mv.id,
+                                  title: `تعديل بيانات الحركة المخزنية: ${mv.documentNumber}`,
+                                  fields: movementFields,
+                                  initialValues: { ...mv },
+                                }),
                               sections: [
                                 {
                                   title: 'تفاصيل المستند المخزني',
@@ -4455,8 +4956,35 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                     </tr>
                   );
                 })}
+                {filteredMovements.length > 0 && (() => {
+                  const totQty = round2(filteredMovements.reduce((s, mv) => s + (Number(mv.quantity) || 0), 0));
+                  const totVal = round2(filteredMovements.reduce((s, mv) => s + (Number(mv.totalValue) || 0), 0));
+                  return (
+                    <VillageGrandTotalRow
+                      totalCount={filteredMovements.length}
+                      labelColSpan={5}
+                      metricCells={[
+                        { content: totQty.toLocaleString(), mono: true },
+                        { content: `${totVal.toLocaleString()} ج.م`, mono: true },
+                        { colSpan: 2, content: '' },
+                      ]}
+                    />
+                  );
+                })()}
               </tbody>
             </table>
+            </div>
+            <TablePaginationBar
+              page={movementsPagination.page}
+              totalPages={movementsPagination.totalPages}
+              pageSize={movementPageSize}
+              totalCount={filteredMovements.length}
+              startIndex={movementsPagination.startIndex}
+              endIndex={movementsPagination.endIndex}
+              onPageChange={setMovementPage}
+              onPageSizeChange={setMovementPageSize}
+              testIdPrefix="ration-movements"
+            />
           </div>
         </div>
       )}
@@ -4497,8 +5025,38 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             }}
           />
 
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <SmartTableSearchBar
+              searchQuery={reqSearch}
+              onSearchChange={(q) => {
+                setReqSearch(q);
+                setReqPage(1);
+              }}
+              placeholder="بحث برقم الحصة، الفاتورة، التاجر، كود التاجر، رقم الماكينة، السلعة، القرية، أو الوحدة المحلية..."
+              filteredCount={filteredRequisitions.length}
+              totalCount={state.requisitions.length}
+              tableId="ration-requisitions-table"
+              testId="ration-requisitions-search"
+              columns={[
+                { key: 'month', label: 'الشهر والسنة', required: true },
+                { key: 'merchant', label: 'اسم التاجر / المنفذ', required: true },
+                { key: 'code', label: 'كود التاجر' },
+                { key: 'pos', label: 'رقم الماكينة' },
+                { key: 'cards', label: 'البطاقات / المستفيدين' },
+                { key: 'comm', label: 'اسم السلعة' },
+                { key: 'prescribed', label: 'الكمية المقررة' },
+                { key: 'received', label: 'المستلمة' },
+                { key: 'dist', label: 'الموزعة' },
+                { key: 'rem', label: 'المتبقية' },
+                { key: 'pct', label: 'نسبة التنفيذ' },
+                { key: 'val', label: 'قيمة الحصة' },
+                { key: 'date', label: 'تاريخ الاستلام' },
+                { key: 'status', label: 'حالة الصرف' },
+                { key: 'actions', label: 'إجراءات', required: true },
+              ]}
+            />
+            <div className="overflow-x-auto">
+              <table data-erp-table="ration-requisitions-table" className="compact-erp-table">
               <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
                   <th className="py-2 px-2 border border-slate-700">الشهر والسنة</th>
@@ -4578,6 +5136,30 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                                   subtitle: `${m?.merchantName || r.merchantId} — ${r.monthKey}`,
                                   badgeText: r.status,
                                   updatedAt: r.updatedAt,
+                                  canEdit: permissions.canEdit,
+                                  onEdit: () =>
+                                    setActiveModal({
+                                      mode: 'edit',
+                                      entity: 'requisition',
+                                      targetId: r.id,
+                                      title: `تعديل وتسوية الحصة الشهرية: ${r.requestNumber}`,
+                                      fields: requisitionFields,
+                                      initialValues: {
+                                        requestNumber: r.requestNumber,
+                                        invoiceNumber: r.invoiceNumber,
+                                        monthKey: r.monthKey,
+                                        requestDate: r.requestDate,
+                                        merchantId: r.merchantId,
+                                        traderCode: tCode,
+                                        posMachineNumber: posNo,
+                                        commodityId: line0?.commodityId || state.commodities[0]?.id || '',
+                                        requestedQty: prescribed,
+                                        approvedQty: received,
+                                        deliveredQty: distributed,
+                                        status: r.status,
+                                        notes: r.notes || '',
+                                      },
+                                    }),
                                   sections: [
                                     {
                                       title: 'بيانات المنفذ والربط',
@@ -4698,6 +5280,18 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 )}
               </tbody>
             </table>
+            </div>
+            <TablePaginationBar
+              page={requisitionsPagination.page}
+              totalPages={requisitionsPagination.totalPages}
+              pageSize={reqPageSize}
+              totalCount={filteredRequisitions.length}
+              startIndex={requisitionsPagination.startIndex}
+              endIndex={requisitionsPagination.endIndex}
+              onPageChange={setReqPage}
+              onPageSizeChange={setReqPageSize}
+              testIdPrefix="ration-requisitions"
+            />
           </div>
         </div>
       )}
@@ -4720,7 +5314,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
+              <table className="compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2 px-2 border border-slate-700">فئة التنبيه الذكي</th>
@@ -4806,7 +5400,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
+              <table className="compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2 px-2 border border-slate-700 text-right">اسم التاجر التمويني</th>
@@ -4917,8 +5511,31 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               }
             />
 
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+              <SmartTableSearchBar
+                searchQuery={insSearch}
+                onSearchChange={(q) => {
+                  setInsSearch(q);
+                  setInsPage(1);
+                }}
+                placeholder="بحث برقم المحضر، التاريخ، المنفذ، المخالفة، اسم المفتش، القرية، أو حالة التصرف..."
+                filteredCount={filteredInspections.length}
+                totalCount={state.inspections.length}
+                tableId="ration-inspections-table"
+                testId="ration-inspections-search"
+                columns={[
+                  { key: 'num', label: 'رقم المحضر', required: true },
+                  { key: 'date', label: 'التاريخ' },
+                  { key: 'merchant', label: 'المنفذ', required: true },
+                  { key: 'viol', label: 'المخالفة' },
+                  { key: 'insp', label: 'المفتش' },
+                  { key: 'val', label: 'القيمة المالية' },
+                  { key: 'disp', label: 'التصرف' },
+                  { key: 'actions', label: 'إجراءات الإدارة', required: true },
+                ]}
+              />
+              <div className="overflow-x-auto">
+                <table data-erp-table="ration-inspections-table" className="compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2 px-2 border border-slate-700">رقم المحضر</th>
@@ -4932,8 +5549,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {state.inspections.map((ins) => {
-                    const m = state.merchants.find((x) => x.id === ins.merchantId);
+                  {inspectionsPagination.items.map((ins) => {
+                    const m = merchantById.get(ins.merchantId);
                     return (
                       <tr key={ins.id}>
                         <td className="py-2 px-2 font-mono font-black">{ins.reportNumber}</td>
@@ -4955,6 +5572,16 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                                 subtitle: `${m?.merchantName || ins.village} — ${ins.inspectionResult}`,
                                 badgeText: ins.dispositionStatus,
                                 updatedAt: ins.updatedAt,
+                                canEdit: permissions.canEdit,
+                                onEdit: () =>
+                                  setActiveModal({
+                                    mode: 'edit',
+                                    entity: 'inspection',
+                                    targetId: ins.id,
+                                    title: `تعديل محضر التفتيش: ${ins.reportNumber}`,
+                                    fields: inspectionFields,
+                                    initialValues: { ...ins },
+                                  }),
                                 sections: [
                                   {
                                     title: 'بيانات المحضر والمخالفة',
@@ -5014,8 +5641,35 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                       </tr>
                     );
                   })}
+                  {filteredInspections.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={filteredInspections.length}
+                      labelColSpan={5}
+                      metricCells={[
+                        {
+                          content: `${round2(
+                            filteredInspections.reduce((s, ins) => s + (Number(ins.financialValue) || 0), 0)
+                          ).toLocaleString()} ج.م`,
+                          mono: true,
+                        },
+                        { colSpan: 2, content: '' },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
+              </div>
+              <TablePaginationBar
+                page={inspectionsPagination.page}
+                totalPages={inspectionsPagination.totalPages}
+                pageSize={insPageSize}
+                totalCount={filteredInspections.length}
+                startIndex={inspectionsPagination.startIndex}
+                endIndex={inspectionsPagination.endIndex}
+                onPageChange={setInsPage}
+                onPageSizeChange={setInsPageSize}
+                testIdPrefix="ration-inspections"
+              />
             </div>
           </div>
 
@@ -5049,8 +5703,31 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               }
             />
 
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+              <SmartTableSearchBar
+                searchQuery={cmpSearch}
+                onSearchChange={(q) => {
+                  setCmpSearch(q);
+                  setCmpPage(1);
+                }}
+                placeholder="بحث برقم الشكوى، اسم المواطن، الهاتف، القرية، التصنيف، الحالة، أو التفاصيل..."
+                filteredCount={filteredComplaints.length}
+                totalCount={state.complaints.length}
+                tableId="ration-complaints-table"
+                testId="ration-complaints-search"
+                columns={[
+                  { key: 'num', label: 'رقم الشكوى', required: true },
+                  { key: 'date', label: 'التاريخ' },
+                  { key: 'citizen', label: 'اسم المواطن', required: true },
+                  { key: 'village', label: 'القرية' },
+                  { key: 'cat', label: 'التصنيف' },
+                  { key: 'details', label: 'التفاصيل والرد' },
+                  { key: 'status', label: 'الحالة' },
+                  { key: 'actions', label: 'إجراءات الإدارة', required: true },
+                ]}
+              />
+              <div className="overflow-x-auto">
+                <table data-erp-table="ration-complaints-table" className="compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2 px-2 border border-slate-700">رقم الشكوى</th>
@@ -5064,7 +5741,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {state.complaints.map((c) => (
+                  {complaintsPagination.items.map((c) => (
                     <tr key={c.id}>
                       <td className="py-2 px-2 font-mono font-black">{c.ticketNumber}</td>
                       <td className="py-2 px-2 font-mono">{c.date}</td>
@@ -5090,6 +5767,16 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                               subtitle: `مقدم الشكوى: ${c.citizenName} (${c.village})`,
                               badgeText: c.status,
                               updatedAt: c.updatedAt,
+                              canEdit: permissions.canEdit,
+                              onEdit: () =>
+                                setActiveModal({
+                                  mode: 'edit',
+                                  entity: 'complaint',
+                                  targetId: c.id,
+                                  title: `تعديل شكوى المواطن: ${c.ticketNumber}`,
+                                  fields: complaintFields,
+                                  initialValues: { ...c },
+                                }),
                               sections: [
                                 {
                                   title: 'تفاصيل الشكوى والإجراءات',
@@ -5149,6 +5836,18 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   ))}
                 </tbody>
               </table>
+              </div>
+              <TablePaginationBar
+                page={complaintsPagination.page}
+                totalPages={complaintsPagination.totalPages}
+                pageSize={cmpPageSize}
+                totalCount={filteredComplaints.length}
+                startIndex={complaintsPagination.startIndex}
+                endIndex={complaintsPagination.endIndex}
+                onPageChange={setCmpPage}
+                onPageSizeChange={setCmpPageSize}
+                testIdPrefix="ration-complaints"
+              />
             </div>
           </div>
         </div>
@@ -5329,7 +6028,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
 
             {/* Report Table */}
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
+              <table className="compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     {activeReportData.headers.map((h, i) =>
@@ -5481,11 +6180,32 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
             }}
           />
 
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <h3 className="text-sm font-black text-[#0A1628] mb-3">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <h3 className="text-sm font-black text-[#0A1628]">
               سجل التدقيق والمراجعة لقسم السلع التموينية ({state.auditLogs.length})
             </h3>
-            <table className="w-full text-xs text-center border-collapse">
+            <SmartTableSearchBar
+              searchQuery={auditSearch}
+              onSearchChange={(q) => {
+                setAuditSearch(q);
+                setAuditPage(1);
+              }}
+              placeholder="بحث في سجل التدقيق باسم المستخدم، الإجراء، الشاشة، أو التفاصيل..."
+              filteredCount={filteredAuditLogs.length}
+              totalCount={state.auditLogs.length}
+              tableId="ration-audit-table"
+              testId="ration-audit-search"
+              columns={[
+                { key: 'time', label: 'الوقت', required: true },
+                { key: 'user', label: 'المستخدم' },
+                { key: 'action', label: 'الإجراء' },
+                { key: 'entity', label: 'الشاشة' },
+                { key: 'details', label: 'التفاصيل', required: true },
+                ...(isSuperAdmin(currentUser) ? [{ key: 'del', label: 'حذف', required: true }] : []),
+              ]}
+            />
+            <div className="overflow-x-auto">
+              <table data-erp-table="ration-audit-table" className="compact-erp-table">
               <thead className="bg-[#0A1628] text-white font-black">
                 <tr>
                   <th className="py-2 px-2 border border-slate-700">الوقت</th>
@@ -5493,26 +6213,77 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                   <th className="py-2 px-2 border border-slate-700">الإجراء</th>
                   <th className="py-2 px-2 border border-slate-700">الشاشة</th>
                   <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
+                  {isSuperAdmin(currentUser) && (
+                    <th className="py-2 px-2 border border-slate-700">إجراءات</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
-                {state.auditLogs.length === 0 ? (
+                {auditPagination.items.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-6 text-slate-400">لم تُسجل حركات تعديل بعد في هذه الجلسة</td>
+                    <td colSpan={isSuperAdmin(currentUser) ? 6 : 5} className="py-6 text-slate-400">
+                      لا توجد سجلات مطابقة في سجل التدقيق
+                    </td>
                   </tr>
                 ) : (
-                  state.auditLogs.map((a) => (
-                    <tr key={a.id}>
+                  auditPagination.items.map((a) => (
+                    <tr key={a.id} className="hover:bg-slate-50">
                       <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
                       <td className="py-2 px-2">{a.userFullName}</td>
                       <td className="py-2 px-2 font-black text-[#0D9488]">{a.actionType}</td>
                       <td className="py-2 px-2">{a.entityName}</td>
                       <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+                      {isSuperAdmin(currentUser) && (
+                        <td className="py-2 px-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDeleteTarget({
+                                entityTitle: `حذف قيد تدقيق: ${a.entityName}`,
+                                summary: [
+                                  { label: 'المستخدم', value: a.userFullName },
+                                  { label: 'الإجراء', value: a.actionType },
+                                  { label: 'التفاصيل', value: a.afterSummary || '' },
+                                ],
+                                canDelete: true,
+                                onConfirm: () => {
+                                  onChangeState(
+                                    {
+                                      ...state,
+                                      auditLogs: state.auditLogs.filter((x) => x.id !== a.id),
+                                    },
+                                    `حذف قيد من سجل تدقيق السلع التموينية (${a.entityName})`
+                                  );
+                                  notify('ok', 'تم حذف قيد التدقيق بنجاح.');
+                                },
+                              })
+                            }
+                            data-testid={`ration-audit-delete-${a.id}`}
+                            aria-label={`حذف قيد تدقيق ${a.entityName}`}
+                            className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 cursor-pointer"
+                            title="حذف القيد (مدير النظام)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+            </div>
+            <TablePaginationBar
+              page={auditPagination.page}
+              totalPages={auditPagination.totalPages}
+              pageSize={auditPageSize}
+              totalCount={filteredAuditLogs.length}
+              startIndex={auditPagination.startIndex}
+              endIndex={auditPagination.endIndex}
+              onPageChange={setAuditPage}
+              onPageSizeChange={setAuditPageSize}
+              testIdPrefix="ration-audit"
+            />
           </div>
         </div>
       )}
@@ -5541,7 +6312,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
         />
       )}
 
-      {/* Magic Eye Read-Only Profile Modal */}
+      {/* Magic Eye Profile Modal (Supports View -> Edit transition) */}
       {profileView && (
         <ModuleRecordProfileModal
           isOpen={true}
@@ -5550,6 +6321,8 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           badgeText={profileView.badgeText}
           sections={profileView.sections}
           updatedAt={profileView.updatedAt}
+          canEdit={profileView.canEdit}
+          onEdit={profileView.onEdit}
           onClose={() => setProfileView(null)}
         />
       )}

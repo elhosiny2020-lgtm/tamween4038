@@ -192,27 +192,71 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
     entityType: string;
     subtitle?: string;
     fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
+    onEdit?: () => void;
+  } | null>(null);
+
+  const [editingRecord, setEditingRecord] = useState<{
+    sliceKey:
+      | 'mills'
+      | 'millLicenses'
+      | 'millWheatReceipts'
+      | 'millDailyOperations'
+      | 'millProductions'
+      | 'millMachinery'
+      | 'millMaintenance'
+      | 'millInspections'
+      | 'millAssets';
+    title: string;
+    record: Record<string, any>;
   } | null>(null);
 
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
-    entityType: 'mill';
+    sliceKey:
+      | 'mills'
+      | 'millLicenses'
+      | 'millWheatReceipts'
+      | 'millDailyOperations'
+      | 'millProductions'
+      | 'millMachinery'
+      | 'millMaintenance'
+      | 'millInspections'
+      | 'millAssets';
     entityId: string;
     entityTitle: string;
     recordSummary: { label: string; value: string | number }[];
   } | null>(null);
 
-  const handleConfirmDelete = () => {
-    if (!deleteModal) return;
-    const { entityId, entityTitle } = deleteModal;
+  const handleSaveUniversalEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRecord) return;
+    const { sliceKey, title, record } = editingRecord;
     onUpdateState(
       (prev) => ({
         ...prev,
-        mills: (prev.mills || []).filter((m) => m.id !== entityId && m.millCode !== entityId),
+        [sliceKey]: ((prev[sliceKey] as any[]) || []).map((item) =>
+          item.id === record.id ? { ...item, ...record } : item
+        ),
       }),
-      `حذف مطحن: ${entityTitle}`
+      `تعديل سجل مطاحن: ${title}`
     );
-    onNotify('ok', `تم حذف المطحن «${entityTitle}» بنجاح.`);
+    onNotify('ok', `تم حفظ التعديلات على «${title}» بنجاح.`);
+    setEditingRecord(null);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deleteModal) return;
+    const { sliceKey, entityId, entityTitle } = deleteModal;
+    onUpdateState(
+      (prev) => ({
+        ...prev,
+        [sliceKey]: ((prev[sliceKey] as any[]) || []).filter(
+          (m) => m.id !== entityId && m.millCode !== entityId
+        ),
+      }),
+      `حذف سجل مطاحن: ${entityTitle}`
+    );
+    onNotify('ok', `تم حذف السجل «${entityTitle}» بنجاح.`);
     setDeleteModal(null);
   };
 
@@ -599,7 +643,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full compact-erp-table text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">كود المطحن</th>
@@ -680,6 +724,12 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                                   title: `بطاقة المطحن: ${m.millName}`,
                                   subtitle: `كود ${m.millCode} — ${m.millSectorType}`,
                                   entityType: 'بيانات تفصيلية لمطحن تمويني',
+                                  onEdit: () =>
+                                    setEditingRecord({
+                                      sliceKey: 'mills',
+                                      title: m.millName,
+                                      record: { ...m },
+                                    }),
                                   fields: [
                                     { label: 'كود المطحن', value: m.millCode, mono: true },
                                     { label: 'اسم المطحن', value: m.millName },
@@ -697,10 +747,17 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                                   ],
                                 })
                               }
+                              onEdit={() =>
+                                setEditingRecord({
+                                  sliceKey: 'mills',
+                                  title: m.millName,
+                                  record: { ...m },
+                                })
+                              }
                               onDelete={() =>
                                 setDeleteModal({
                                   isOpen: true,
-                                  entityType: 'mill',
+                                  sliceKey: 'mills',
                                   entityId: m.id,
                                   entityTitle: m.millName,
                                   recordSummary: [
@@ -756,7 +813,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">المطحن</th>
@@ -766,6 +823,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                   <th className="p-3">عقد التشغيل والملكية</th>
                   <th className="p-3">شهادات السلامة والصحة المهنية</th>
                   <th className="p-3 text-center">حالة المستندات</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -800,8 +858,66 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                         {lic.documentStatus}
                       </span>
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={lic.licenseNumber}
+                        permissions={effectivePermissions}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `ترخيص المطحن: ${lic.millName}`,
+                            subtitle: `رقم الترخيص ${lic.licenseNumber}`,
+                            entityType: 'مستندات وتراخيص مطحن',
+                            onEdit: () =>
+                              setEditingRecord({
+                                sliceKey: 'millLicenses',
+                                title: lic.licenseNumber,
+                                record: { ...lic },
+                              }),
+                            fields: [
+                              { label: 'المطحن', value: `${lic.millName} (${lic.millCode})` },
+                              { label: 'رقم الترخيص', value: lic.licenseNumber, mono: true },
+                              { label: 'تاريخ الإصدار / الانتهاء', value: `${lic.issueDate} ← ${lic.expiryDate}`, mono: true },
+                              { label: 'السجل التجاري والضريبية', value: `${lic.commercialRegNumber} / ${lic.taxCardNumber}` },
+                              { label: 'عقد التشغيل والملكية', value: `${lic.operatingContractNumber} — ${lic.ownershipOrLeaseDoc}` },
+                              { label: 'شهادات السلامة', value: lic.safetyCertificatesStatus },
+                              { label: 'حالة المستندات', value: lic.documentStatus, badge: true, badgeColor: 'teal' },
+                            ],
+                          })
+                        }
+                        onEdit={() =>
+                          setEditingRecord({
+                            sliceKey: 'millLicenses',
+                            title: lic.licenseNumber,
+                            record: { ...lic },
+                          })
+                        }
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            sliceKey: 'millLicenses',
+                            entityId: lic.id,
+                            entityTitle: lic.licenseNumber,
+                            recordSummary: [
+                              { label: 'رقم الترخيص', value: lic.licenseNumber },
+                              { label: 'المطحن', value: lic.millName },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                {licenses.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={licenses.length}
+                    labelColSpan={4}
+                    metricCells={[
+                      { content: `${licenses.filter((l) => l.documentStatus === 'سارية').length} سارية`, align: 'center' },
+                      { content: '—', align: 'center', colSpan: 3 },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -833,7 +949,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full compact-erp-table text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم إذن استلام المطحن</th>
@@ -845,6 +961,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                     <th className="p-3 text-center">الرطوبة والنظافة</th>
                     <th className="p-3 text-center">إجمالي القيمة</th>
                     <th className="p-3">المستلم</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
@@ -874,8 +991,78 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                         {r.totalValue.toLocaleString('ar-EG')} ج.م
                       </td>
                       <td className="p-3">{r.receiverName}</td>
+                      <td className="p-3 text-center">
+                        <ModuleRowActions
+                          entityLabel={r.receiptOrderNumber}
+                          permissions={effectivePermissions}
+                          onView={() =>
+                            setProfileModal({
+                              isOpen: true,
+                              title: `إذن استلام قمح بالمطحن: ${r.receiptOrderNumber}`,
+                              subtitle: `${r.millName} — ${r.receiptDate}`,
+                              entityType: 'إذن استلام قمح بالمطاحن',
+                              onEdit: () =>
+                                setEditingRecord({
+                                  sliceKey: 'millWheatReceipts',
+                                  title: r.receiptOrderNumber,
+                                  record: { ...r },
+                                }),
+                              fields: [
+                                { label: 'رقم إذن الاستلام', value: r.receiptOrderNumber, mono: true },
+                                { label: 'تاريخ الاستلام', value: r.receiptDate, mono: true },
+                                { label: 'المطحن المستلم', value: r.millName },
+                                { label: 'الشونة الموردة', value: `${r.sourceShunaOrSiloName} (إذن ${r.linkedShunaIssueOrderNumber})` },
+                                { label: 'الوزن القائم / الفارغ', value: `${r.grossWeightTons} / ${r.tareWeightTons} طن`, mono: true },
+                                { label: 'الوزن المقبول للطحن', value: `${r.acceptedMillingWeightTons} طن`, mono: true },
+                                { label: 'درجة النظافة والرطوبة', value: `${r.cleanlinessGrade} (${r.moisturePct}%)` },
+                                { label: 'إجمالي القيمة المالية', value: `${r.totalValue.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                { label: 'المستلم المسؤول', value: r.receiverName },
+                              ],
+                            })
+                          }
+                          onEdit={() =>
+                            setEditingRecord({
+                              sliceKey: 'millWheatReceipts',
+                              title: r.receiptOrderNumber,
+                              record: { ...r },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModal({
+                              isOpen: true,
+                              sliceKey: 'millWheatReceipts',
+                              entityId: r.id,
+                              entityTitle: r.receiptOrderNumber,
+                              recordSummary: [
+                                { label: 'رقم الإذن', value: r.receiptOrderNumber },
+                                { label: 'الوزن المقبول', value: `${r.acceptedMillingWeightTons} طن` },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   ))}
+                  {wheatReceipts.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={wheatReceipts.length}
+                      labelColSpan={5}
+                      metricCells={[
+                        {
+                          content: `${wheatReceipts.reduce((s, r) => s + (Number(r.acceptedMillingWeightTons) || 0), 0).toLocaleString('ar-EG', { maximumFractionDigits: 3 })} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        { content: '—', align: 'center' },
+                        {
+                          content: `${wheatReceipts.reduce((s, r) => s + (Number(r.totalValue) || 0), 0).toLocaleString('ar-EG')} ج.م`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        { content: '—', align: 'center', colSpan: 2 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -909,7 +1096,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full compact-erp-table text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">التاريخ والمطحن</th>
@@ -922,6 +1109,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                     <th className="p-3 text-center">النواتج الثانوية (السن)</th>
                     <th className="p-3 text-center">الفاقد ونسبته %</th>
                     <th className="p-3 text-center">ساعات التشغيل / التوقف</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
@@ -967,8 +1155,97 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                         <div>تشغيل: {op.operatingHours} س</div>
                         <div className="text-[10px] text-slate-500">توقف: {op.downtimeHours} س</div>
                       </td>
+                      <td className="p-3 text-center">
+                        <ModuleRowActions
+                          entityLabel={`${op.millName} (${op.operationDate})`}
+                          permissions={effectivePermissions}
+                          onView={() =>
+                            setProfileModal({
+                              isOpen: true,
+                              title: `يومية تشغيل المطحن: ${op.millName}`,
+                              subtitle: `بتاريخ ${op.operationDate}`,
+                              entityType: 'سجل تشغيل يومي ونسب استخراج',
+                              onEdit: () =>
+                                setEditingRecord({
+                                  sliceKey: 'millDailyOperations',
+                                  title: `${op.millName} (${op.operationDate})`,
+                                  record: { ...op },
+                                }),
+                              fields: [
+                                { label: 'المطحن', value: op.millName },
+                                { label: 'التاريخ', value: op.operationDate, mono: true },
+                                { label: 'القمح المتاح', value: `${op.totalAvailableWheatTons} طن`, mono: true },
+                                { label: 'القمح المطحون فعلياً', value: `${op.actualMilledWheatTons} طن`, mono: true },
+                                { label: 'الدقيق المنتج', value: `${op.producedFlourTons} طن`, mono: true },
+                                { label: 'نسبة الاستخراج', value: `${op.actualExtractionPct}% (المقرر ${op.standardExtractionPct}%)`, badge: true, badgeColor: 'indigo' },
+                                { label: 'الردة الناتجة', value: `${op.producedBranTons} طن (${op.branPct}%)`, mono: true },
+                                { label: 'الفاقد', value: `${op.lossOrWasteTons} طن (${op.lossPct}%)`, mono: true },
+                              ],
+                            })
+                          }
+                          onEdit={() =>
+                            setEditingRecord({
+                              sliceKey: 'millDailyOperations',
+                              title: `${op.millName} (${op.operationDate})`,
+                              record: { ...op },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModal({
+                              isOpen: true,
+                              sliceKey: 'millDailyOperations',
+                              entityId: op.id,
+                              entityTitle: `${op.millName} (${op.operationDate})`,
+                              recordSummary: [
+                                { label: 'المطحن', value: op.millName },
+                                { label: 'الدقيق المنتج', value: `${op.producedFlourTons} طن` },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   ))}
+                  {dailyOperations.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={dailyOperations.length}
+                      labelColSpan={2}
+                      metricCells={[
+                        {
+                          content: `${dailyOperations.reduce((s, op) => s + (Number(op.actualMilledWheatTons) || 0), 0).toLocaleString('ar-EG')} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        {
+                          content: `${dailyOperations.reduce((s, op) => s + (Number(op.closingWheatBalanceTons) || 0), 0).toLocaleString('ar-EG')} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        {
+                          content: `${dailyOperations.reduce((s, op) => s + (Number(op.producedFlourTons) || 0), 0).toLocaleString('ar-EG')} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        { content: '82%', align: 'center', mono: true },
+                        {
+                          content: `${dailyOperations.reduce((s, op) => s + (Number(op.producedBranTons) || 0), 0).toLocaleString('ar-EG')} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        {
+                          content: `${dailyOperations.reduce((s, op) => s + (Number(op.secondaryOutputsTons) || 0), 0).toLocaleString('ar-EG')} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        {
+                          content: `${dailyOperations.reduce((s, op) => s + (Number(op.lossOrWasteTons) || 0), 0).toLocaleString('ar-EG')} طن`,
+                          align: 'center',
+                          mono: true,
+                        },
+                        { content: '—', align: 'center', colSpan: 2 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -988,7 +1265,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">رقم التشغيلة والتاريخ</th>
@@ -1000,6 +1277,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                   <th className="p-3 text-center">تحقيق المستهدف %</th>
                   <th className="p-3 text-center">رصيد الدقيق (قبل / بعد)</th>
                   <th className="p-3 text-center">إجمالي القيمة</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1030,8 +1308,84 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                     <td className="p-3 text-center">
                       {p.totalProducedFlourValue.toLocaleString('ar-EG')} ج.م
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={p.batchNumber}
+                        permissions={effectivePermissions}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `تشغيلة إنتاج الدقيق: ${p.batchNumber}`,
+                            subtitle: `${p.millName} — ${p.productionDate}`,
+                            entityType: 'سجل إنتاج دقيق',
+                            onEdit: () =>
+                              setEditingRecord({
+                                sliceKey: 'millProductions',
+                                title: p.batchNumber,
+                                record: { ...p },
+                              }),
+                            fields: [
+                              { label: 'رقم التشغيلة', value: p.batchNumber, mono: true },
+                              { label: 'المطحن', value: p.millName },
+                              { label: 'القمح الداخل', value: `${p.inputWheatTons} طن`, mono: true },
+                              { label: 'الدقيق الناتج', value: `${p.outputFlourTons} طن (${p.producedSacksCount} شيكارة)`, mono: true },
+                              { label: 'إجمالي القيمة', value: `${p.totalProducedFlourValue.toLocaleString('ar-EG')} ج.م`, mono: true },
+                            ],
+                          })
+                        }
+                        onEdit={() =>
+                          setEditingRecord({
+                            sliceKey: 'millProductions',
+                            title: p.batchNumber,
+                            record: { ...p },
+                          })
+                        }
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            sliceKey: 'millProductions',
+                            entityId: p.id,
+                            entityTitle: p.batchNumber,
+                            recordSummary: [
+                              { label: 'رقم التشغيلة', value: p.batchNumber },
+                              { label: 'الدقيق الناتج', value: `${p.outputFlourTons} طن` },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                {productions.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={productions.length}
+                    labelColSpan={3}
+                    metricCells={[
+                      {
+                        content: `${productions.reduce((s, p) => s + (Number(p.inputWheatTons) || 0), 0).toLocaleString('ar-EG')} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${productions.reduce((s, p) => s + (Number(p.outputFlourTons) || 0), 0).toLocaleString('ar-EG')} طن`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${productions.reduce((s, p) => s + (Number(p.producedSacksCount) || 0), 0).toLocaleString('ar-EG')} شيكارة`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center', colSpan: 2 },
+                      {
+                        content: `${productions.reduce((s, p) => s + (Number(p.totalProducedFlourValue) || 0), 0).toLocaleString('ar-EG')} ج.م`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center' },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -1047,7 +1401,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
             </h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">كود المعدة</th>
@@ -1058,6 +1412,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                   <th className="p-3 text-center">القيمة التقديرية</th>
                   <th className="p-3 text-center">حالة المعدة</th>
                   <th className="p-3 text-center">آخر صيانة / القادمة</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1094,8 +1449,69 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                       <div>آخر: {m.lastMaintenanceDate}</div>
                       <div className="text-indigo-700">قادمة: {m.nextMaintenanceDate}</div>
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={m.machineName}
+                        permissions={effectivePermissions}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `بطاقة معدة مطحن: ${m.machineName}`,
+                            subtitle: `${m.machineCode} — ${m.millName}`,
+                            entityType: 'معدات مطاحن',
+                            onEdit: () =>
+                              setEditingRecord({
+                                sliceKey: 'millMachinery',
+                                title: m.machineName,
+                                record: { ...m },
+                              }),
+                            fields: [
+                              { label: 'كود المعدة', value: m.machineCode, mono: true },
+                              { label: 'اسم المعدة', value: m.machineName },
+                              { label: 'المطحن', value: m.millName },
+                              { label: 'الشركة والموديل', value: `${m.manufacturer} - ${m.model}` },
+                              { label: 'القيمة التقديرية', value: `${m.estimatedValue.toLocaleString('ar-EG')} ج.م`, mono: true },
+                              { label: 'الحالة', value: m.status, badge: true, badgeColor: 'teal' },
+                            ],
+                          })
+                        }
+                        onEdit={() =>
+                          setEditingRecord({
+                            sliceKey: 'millMachinery',
+                            title: m.machineName,
+                            record: { ...m },
+                          })
+                        }
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            sliceKey: 'millMachinery',
+                            entityId: m.id,
+                            entityTitle: m.machineName,
+                            recordSummary: [
+                              { label: 'المعدة', value: m.machineName },
+                              { label: 'المطحن', value: m.millName },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                {machinery.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={machinery.length}
+                    labelColSpan={5}
+                    metricCells={[
+                      {
+                        content: `${machinery.reduce((s, m) => s + (Number(m.estimatedValue) || 0), 0).toLocaleString('ar-EG')} ج.م`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center', colSpan: 3 },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -1111,7 +1527,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
             </h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">رقم أمر الصيانة</th>
@@ -1122,6 +1538,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                   <th className="p-3 text-center">إجمالي التكلفة</th>
                   <th className="p-3">المهندس / الفني</th>
                   <th className="p-3 text-center">الحالة</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1144,8 +1561,73 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                         {m.status}
                       </span>
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={m.orderNumber}
+                        permissions={effectivePermissions}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `أمر صيانة مطحن: ${m.orderNumber}`,
+                            subtitle: `${m.millName} — ${m.machineName}`,
+                            entityType: 'سجل صيانة مطاحن',
+                            onEdit: () =>
+                              setEditingRecord({
+                                sliceKey: 'millMaintenance',
+                                title: m.orderNumber,
+                                record: { ...m },
+                              }),
+                            fields: [
+                              { label: 'رقم الأمر', value: m.orderNumber, mono: true },
+                              { label: 'المطحن والمعدة', value: `${m.millName} — ${m.machineName}` },
+                              { label: 'نوع العطل', value: m.faultType },
+                              { label: 'إجمالي التكلفة', value: `${m.totalMaintenanceCost.toLocaleString('ar-EG')} ج.م`, mono: true },
+                            ],
+                          })
+                        }
+                        onEdit={() =>
+                          setEditingRecord({
+                            sliceKey: 'millMaintenance',
+                            title: m.orderNumber,
+                            record: { ...m },
+                          })
+                        }
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            sliceKey: 'millMaintenance',
+                            entityId: m.id,
+                            entityTitle: m.orderNumber,
+                            recordSummary: [
+                              { label: 'رقم الأمر', value: m.orderNumber },
+                              { label: 'التكلفة', value: `${m.totalMaintenanceCost.toLocaleString('ar-EG')} ج.م` },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                {maintenance.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={maintenance.length}
+                    labelColSpan={3}
+                    metricCells={[
+                      {
+                        content: `${maintenance.reduce((s, m) => s + (Number(m.downtimeHours) || 0), 0)} س`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center' },
+                      {
+                        content: `${maintenance.reduce((s, m) => s + (Number(m.totalMaintenanceCost) || 0), 0).toLocaleString('ar-EG')} ج.م`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center', colSpan: 3 },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -1174,7 +1656,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full compact-erp-table text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم المحضر والتاريخ</th>
@@ -1184,6 +1666,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                     <th className="p-3">المخالفات أو الملاحظات المرصودة</th>
                     <th className="p-3">الإجراءات والتوصيات</th>
                     <th className="p-3 text-center">حالة المتابعة</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
@@ -1221,8 +1704,62 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                           {ins.followUpStatus}
                         </span>
                       </td>
+                      <td className="p-3 text-center">
+                        <ModuleRowActions
+                          entityLabel={ins.reportNumber}
+                          permissions={effectivePermissions}
+                          onView={() =>
+                            setProfileModal({
+                              isOpen: true,
+                              title: `محضر مرور وتفتيش: ${ins.reportNumber}`,
+                              subtitle: `${ins.millName} — ${ins.visitDate}`,
+                              entityType: 'محضر تفتيش مطاحن',
+                              onEdit: () =>
+                                setEditingRecord({
+                                  sliceKey: 'millInspections',
+                                  title: ins.reportNumber,
+                                  record: { ...ins },
+                                }),
+                              fields: [
+                                { label: 'رقم المحضر', value: ins.reportNumber, mono: true },
+                                { label: 'المطحن', value: ins.millName },
+                                { label: 'اللجنة', value: ins.inspectorsCommittee },
+                                { label: 'المخالفات', value: ins.observedViolations, colSpan: 2 },
+                              ],
+                            })
+                          }
+                          onEdit={() =>
+                            setEditingRecord({
+                              sliceKey: 'millInspections',
+                              title: ins.reportNumber,
+                              record: { ...ins },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModal({
+                              isOpen: true,
+                              sliceKey: 'millInspections',
+                              entityId: ins.id,
+                              entityTitle: ins.reportNumber,
+                              recordSummary: [
+                                { label: 'رقم المحضر', value: ins.reportNumber },
+                                { label: 'المطحن', value: ins.millName },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   ))}
+                  {inspections.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={inspections.length}
+                      labelColSpan={4}
+                      metricCells={[
+                        { content: `${inspections.length} محضر مرور`, align: 'center', colSpan: 4 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1239,7 +1776,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
             </h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full compact-erp-table text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">المطحن</th>
@@ -1249,6 +1786,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                   <th className="p-3 text-center bg-indigo-950/80">إجمالي الأصول الثابتة</th>
                   <th className="p-3 text-center bg-emerald-950/80">قيمة القمح والدقيق المخزن</th>
                   <th className="p-3 text-center bg-amber-950/80">إجمالي القيمة التقديرية للمطحن</th>
+                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1284,9 +1822,78 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
                       <td className="p-3 text-center font-black text-amber-900 bg-amber-50">
                         {calc.totalEstimatedMillValue.toLocaleString('ar-EG')} ج.م
                       </td>
+                      <td className="p-3 text-center">
+                        <ModuleRowActions
+                          entityLabel={a.millName}
+                          permissions={effectivePermissions}
+                          onView={() =>
+                            setProfileModal({
+                              isOpen: true,
+                              title: `تقييم أصول المطحن: ${a.millName}`,
+                              subtitle: a.millCode,
+                              entityType: 'تقييم مالي وأصول مطحن',
+                              onEdit: () =>
+                                setEditingRecord({
+                                  sliceKey: 'millAssets',
+                                  title: a.millName,
+                                  record: { ...a },
+                                }),
+                              fields: [
+                                { label: 'المطحن', value: `${a.millName} (${a.millCode})` },
+                                { label: 'إجمالي الأصول الثابتة', value: `${calc.fixedAssetsTotal.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                { label: 'قيمة القمح والدقيق المخزن', value: `${calc.inventoryTotal.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                { label: 'إجمالي القيمة التقديرية', value: `${calc.totalEstimatedMillValue.toLocaleString('ar-EG')} ج.م`, mono: true },
+                              ],
+                            })
+                          }
+                          onEdit={() =>
+                            setEditingRecord({
+                              sliceKey: 'millAssets',
+                              title: a.millName,
+                              record: { ...a },
+                            })
+                          }
+                          onDelete={() =>
+                            setDeleteModal({
+                              isOpen: true,
+                              sliceKey: 'millAssets',
+                              entityId: a.id,
+                              entityTitle: a.millName,
+                              recordSummary: [
+                                { label: 'المطحن', value: a.millName },
+                                { label: 'إجمالي القيمة', value: `${calc.totalEstimatedMillValue.toLocaleString('ar-EG')} ج.م` },
+                              ],
+                            })
+                          }
+                        />
+                      </td>
                     </tr>
                   );
                 })}
+                {assets.length > 0 && (
+                  <VillageGrandTotalRow
+                    totalCount={assets.length}
+                    labelColSpan={4}
+                    metricCells={[
+                      {
+                        content: `${assets.reduce((s, a) => s + computeMillAssetValuation(a).fixedAssetsTotal, 0).toLocaleString('ar-EG')} ج.م`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${assets.reduce((s, a) => s + computeMillAssetValuation(a).inventoryTotal, 0).toLocaleString('ar-EG')} ج.م`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      {
+                        content: `${assets.reduce((s, a) => s + computeMillAssetValuation(a).totalEstimatedMillValue, 0).toLocaleString('ar-EG')} ج.م`,
+                        align: 'center',
+                        mono: true,
+                      },
+                      { content: '—', align: 'center' },
+                    ]}
+                  />
+                )}
               </tbody>
             </table>
           </div>
@@ -1295,7 +1902,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
 
       {/* نافذة إضافة مطحن جديد */}
       {showAddMillModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">إضافة مطحن تمويني جديد</h3>
             <form onSubmit={handleCreateMill} className="space-y-4 text-xs font-bold">
@@ -1371,7 +1978,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
 
       {/* نافذة تسجيل يومية تشغيل وطحن جديدة */}
       {showAddOpModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل يومية تشغيل المطحن وحساب نسب الاستخراج والردة والفاقد تلقائياً
@@ -1496,7 +2103,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
 
       {/* نافذة تسجيل استلام قمح بالمطحن */}
       {showAddWheatRecModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل استلام قمح بالمطحن (مربوط بإذن صرف الشونة)
@@ -1583,7 +2190,7 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
 
       {/* نافذة تسجيل محضر مرور دوري على المطحن */}
       {showAddInspModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل محضر مرور وتفتيش دوري على المطحن
@@ -1646,7 +2253,60 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
         </div>
       )}
 
-      {/* نافذة بطاقة السجل للقراءة فقط */}
+      {/* نافذة التعديل السريع للسجل */}
+      {editingRecord && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6 max-h-[88vh] overflow-y-auto">
+            <h3 className="text-lg font-black text-slate-900 mb-3">
+              تعديل بيانات السجل: {editingRecord.title}
+            </h3>
+            <form onSubmit={handleSaveUniversalEdit} className="space-y-4 text-xs font-bold">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Object.entries(editingRecord.record)
+                  .filter(([k, v]) => k !== 'id' && k !== 'serialNo' && (typeof v === 'string' || typeof v === 'number'))
+                  .slice(0, 12)
+                  .map(([key, val]) => (
+                    <div key={key}>
+                      <label className="block mb-1 text-slate-700 font-mono text-[11px]">{key}</label>
+                      <input
+                        type={typeof val === 'number' ? 'number' : 'text'}
+                        step="any"
+                        value={val as any}
+                        onChange={(e) =>
+                          setEditingRecord({
+                            ...editingRecord,
+                            record: {
+                              ...editingRecord.record,
+                              [key]: typeof val === 'number' ? Number(e.target.value) : e.target.value,
+                            },
+                          })
+                        }
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                      />
+                    </div>
+                  ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditingRecord(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-indigo-700 text-white font-black"
+                >
+                  حفظ التعديلات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة بطاقة السجل للقراءة فقط مع الانتقال للتعديل */}
       {profileModal && (
         <ModuleRecordProfileModal
           isOpen={profileModal.isOpen}
@@ -1654,6 +2314,8 @@ export const MillsDatabaseView: React.FC<MillsDatabaseViewProps> = ({
           subtitle={profileModal.subtitle}
           entityType={profileModal.entityType}
           fields={profileModal.fields}
+          canEdit={effectivePermissions.canEdit}
+          onEdit={profileModal.onEdit}
           onClose={() => setProfileModal(null)}
         />
       )}

@@ -206,18 +206,109 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
     title: string;
     entityType: string;
     subtitle?: string;
+    onEdit?: () => void;
     fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
   } | null>(null);
 
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
-    entityType: 'shuna' | 'receipt';
+    entityType: 'shuna' | 'receipt' | 'issue' | 'reconciliation';
     entityId: string;
     entityTitle: string;
     recordSummary: { label: string; value: string | number }[];
   } | null>(null);
 
   const [editingShuna, setEditingShuna] = useState<ShunaRecord | null>(null);
+  const [editingSubRecord, setEditingSubRecord] = useState<{
+    type: 'receipt' | 'issue' | 'reconciliation';
+    title: string;
+    data: Record<string, any>;
+  } | null>(null);
+
+  const handleSaveSubRecord = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSubRecord) return;
+    const { type, data } = editingSubRecord;
+    const nowIso = new Date().toISOString();
+    if (type === 'receipt') {
+      const calc = computeWheatReceiptNetAndValue({
+        grossWeightKg: Number(data.grossWeightKg) || 0,
+        tareWeightKg: Number(data.tareWeightKg) || 0,
+        excludedWeightTons: Number(data.excludedWeightTons) || 0,
+        tonPrice: Number(data.tonPrice) || 13333.33,
+      });
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatReceipts: (prev.wheatReceipts || []).map((r) =>
+            r.id === data.id
+              ? {
+                  ...r,
+                  ...data,
+                  grossWeightKg: Number(data.grossWeightKg) || 0,
+                  tareWeightKg: Number(data.tareWeightKg) || 0,
+                  excludedWeightTons: Number(data.excludedWeightTons) || 0,
+                  tonPrice: Number(data.tonPrice) || r.tonPrice,
+                  netWeightKg: calc.netWeightKg,
+                  netWeightTons: calc.netWeightTons,
+                  acceptedNetWeightTons: calc.acceptedNetWeightTons,
+                  totalSupplyValue: calc.totalSupplyValue,
+                  updatedAt: nowIso,
+                }
+              : r
+          ),
+        }),
+        `تعديل إذن استلام قمح: ${data.receiptOrderNumber}`
+      );
+      onNotify('ok', `تم تعديل إذن الاستلام «${data.receiptOrderNumber}» وحفظه بنجاح.`);
+    } else if (type === 'issue') {
+      const issued = Number(data.issuedWeightTons) || 0;
+      const price = Number(data.tonPrice) || 13333.33;
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatIssues: (prev.wheatIssues || []).map((iss) =>
+            iss.id === data.id
+              ? {
+                  ...iss,
+                  ...data,
+                  issuedWeightTons: issued,
+                  totalIssuedValue: Math.round(issued * price),
+                  updatedAt: nowIso,
+                }
+              : iss
+          ),
+        }),
+        `تعديل إذن صرف قمح: ${data.issueOrderNumber}`
+      );
+      onNotify('ok', `تم تعديل إذن الصرف «${data.issueOrderNumber}» وحفظه بنجاح.`);
+    } else if (type === 'reconciliation') {
+      const phys = Number(data.physicalCountTons) || 0;
+      const book = Number(data.bookBalanceTons) || 0;
+      const variance = Number((phys - book).toFixed(3));
+      const status = variance === 0 ? 'مطابق' : variance < 0 ? 'عجز' : 'زيادة';
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          shunaReconciliations: (prev.shunaReconciliations || []).map((rec) =>
+            rec.id === data.id
+              ? {
+                  ...rec,
+                  ...data,
+                  physicalCountTons: phys,
+                  varianceTons: variance,
+                  reconciliationStatus: status,
+                  updatedAt: nowIso,
+                }
+              : rec
+          ),
+        }),
+        `تعديل محضر مطابقة جرد: ${data.reconciliationNumber}`
+      );
+      onNotify('ok', `تم تعديل محضر المطابقة «${data.reconciliationNumber}» وحفظه بنجاح.`);
+    }
+    setEditingSubRecord(null);
+  };
 
   const handleConfirmDelete = () => {
     if (!deleteModal) return;
@@ -240,6 +331,24 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
         `حذف إذن استلام قمح: ${entityTitle}`
       );
       onNotify('ok', `تم حذف إذن الاستلام «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'issue') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatIssues: (prev.wheatIssues || []).filter((i) => i.id !== entityId),
+        }),
+        `حذف إذن صرف قمح: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف إذن الصرف «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'reconciliation') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          shunaReconciliations: (prev.shunaReconciliations || []).filter((rec) => rec.id !== entityId),
+        }),
+        `حذف محضر مطابقة جرد: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف محضر المطابقة «${entityTitle}» بنجاح.`);
     }
     setDeleteModal(null);
   };
@@ -938,7 +1047,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">كود الشونة</th>
@@ -1044,6 +1153,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                                   title: `بطاقة الشونة: ${shuna.shunaName}`,
                                   subtitle: `كود ${shuna.shunaCode} — ${shuna.affiliatedEntity}`,
                                   entityType: 'بيانات تفصيلية لشونة معتمدة',
+                                  onEdit: () => setEditingShuna(shuna),
                                   fields: [
                                     { label: 'كود الشونة', value: shuna.shunaCode, mono: true },
                                     { label: 'اسم الشونة', value: shuna.shunaName },
@@ -1337,7 +1447,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-2.5">م</th>
@@ -1457,6 +1567,12 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                                 title: `إذن استلام قمح رقم: ${r.receiptOrderNumber}`,
                                 subtitle: `${r.shunaName} (${r.shunaCode}) — حالة الاعتماد: ${r.approvalStatus}`,
                                 entityType: 'بيانات تفصيلية لإذن استلام القمح',
+                                onEdit: () =>
+                                  setEditingSubRecord({
+                                    type: 'receipt',
+                                    title: `تعديل إذن استلام القمح: ${r.receiptOrderNumber}`,
+                                    data: { ...r },
+                                  }),
                                 fields: [
                                   { label: 'رقم إذن الاستلام', value: r.receiptOrderNumber, mono: true },
                                   { label: 'تاريخ ووقت الاستلام', value: `${r.receiptDate} ${r.receiptTime}` },
@@ -1478,6 +1594,13 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                                   { label: 'أمين الشونة وعضو اللجنة', value: `${r.shunaKeeperName} | ${r.committeeMemberName}` },
                                   { label: 'حالة الاعتماد', value: r.approvalStatus, badge: true, badgeColor: r.approvalStatus === 'معتمد' ? 'green' : 'amber' },
                                 ],
+                              })
+                            }
+                            onEdit={() =>
+                              setEditingSubRecord({
+                                type: 'receipt',
+                                title: `تعديل إذن استلام القمح: ${r.receiptOrderNumber}`,
+                                data: { ...r },
                               })
                             }
                             onPrint={() => handlePrintOfficialReceiptVoucher(r)}
@@ -1595,7 +1718,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم إذن الصرف</th>
@@ -1609,49 +1732,115 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                     <th className="p-3 text-center">إجمالي القيمة</th>
                     <th className="p-3">السيارة والسائق والمستلم</th>
                     <th className="p-3 text-center">الحالة</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {wheatIssues.map((iss) => (
-                    <tr key={iss.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-amber-800">
-                        {iss.issueOrderNumber}
-                      </td>
-                      <td className="p-3">
-                        {iss.issueDate} | {iss.issueTime}
-                      </td>
-                      <td className="p-3">
-                        <div className="font-black text-slate-900">{iss.shunaName}</div>
-                        <div className="text-[10px] text-slate-500">{iss.shunaCode}</div>
-                      </td>
-                      <td className="p-3">
-                        <div className="font-black text-indigo-900">{iss.beneficiaryMillName}</div>
-                        <div className="text-[10px] text-slate-500">{iss.beneficiaryMillCode}</div>
-                      </td>
-                      <td className="p-3 text-center">{iss.wheatType}</td>
-                      <td className="p-3 text-center">{iss.balanceBeforeIssueTons} طن</td>
-                      <td className="p-3 text-center font-black text-amber-800 bg-amber-50/70">
-                        {iss.issuedWeightTons} طن
-                      </td>
-                      <td className="p-3 text-center font-black text-emerald-800">
-                        {iss.balanceAfterIssueTons} طن
-                      </td>
-                      <td className="p-3 text-center">
-                        {iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م
-                      </td>
-                      <td className="p-3">
-                        <div>
-                          {iss.vehicleNumber} - {iss.driverName}
-                        </div>
-                        <div className="text-[10px] text-slate-500">المستلم: {iss.receiverName}</div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[11px] font-black">
-                          {iss.approvalStatus}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {wheatIssues.map((iss) => {
+                    const openEditIssue = () =>
+                      setEditingSubRecord({
+                        type: 'issue',
+                        title: `تعديل إذن صرف القمح: ${iss.issueOrderNumber}`,
+                        data: { ...iss },
+                      });
+                    return (
+                      <tr key={iss.id} className="hover:bg-slate-50">
+                        <td className="p-3 font-mono font-black text-amber-800">
+                          {iss.issueOrderNumber}
+                        </td>
+                        <td className="p-3">
+                          {iss.issueDate} | {iss.issueTime}
+                        </td>
+                        <td className="p-3">
+                          <div className="font-black text-slate-900">{iss.shunaName}</div>
+                          <div className="text-[10px] text-slate-500">{iss.shunaCode}</div>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-black text-indigo-900">{iss.beneficiaryMillName}</div>
+                          <div className="text-[10px] text-slate-500">{iss.beneficiaryMillCode}</div>
+                        </td>
+                        <td className="p-3 text-center">{iss.wheatType}</td>
+                        <td className="p-3 text-center">{iss.balanceBeforeIssueTons} طن</td>
+                        <td className="p-3 text-center font-black text-amber-800 bg-amber-50/70">
+                          {iss.issuedWeightTons} طن
+                        </td>
+                        <td className="p-3 text-center font-black text-emerald-800">
+                          {iss.balanceAfterIssueTons} طن
+                        </td>
+                        <td className="p-3 text-center">
+                          {iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م
+                        </td>
+                        <td className="p-3">
+                          <div>
+                            {iss.vehicleNumber} - {iss.driverName}
+                          </div>
+                          <div className="text-[10px] text-slate-500">المستلم: {iss.receiverName}</div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[11px] font-black">
+                            {iss.approvalStatus}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <ModuleRowActions
+                            entityLabel={iss.issueOrderNumber}
+                            updatedAt={(iss as unknown as { updatedAt?: string }).updatedAt}
+                            permissions={effectivePermissions}
+                            testIdPrefix={`issue-row-${iss.id}`}
+                            onView={() =>
+                              setProfileModal({
+                                isOpen: true,
+                                title: `إذن صرف قمح للمطحن: ${iss.issueOrderNumber}`,
+                                subtitle: `${iss.shunaName} → ${iss.beneficiaryMillName}`,
+                                entityType: 'إذن صرف قمح لمطحن تمويني',
+                                onEdit: openEditIssue,
+                                fields: [
+                                  { label: 'رقم إذن الصرف', value: iss.issueOrderNumber, mono: true },
+                                  { label: 'التاريخ والوقت', value: `${iss.issueDate} | ${iss.issueTime}` },
+                                  { label: 'الشونة الموردة', value: `${iss.shunaName} (${iss.shunaCode})` },
+                                  { label: 'المطحن المستفيد', value: `${iss.beneficiaryMillName} (${iss.beneficiaryMillCode})` },
+                                  { label: 'نوع القمح', value: iss.wheatType },
+                                  { label: 'الرصيد قبل الصرف', value: `${iss.balanceBeforeIssueTons} طن` },
+                                  { label: 'الكمية المنصرفة', value: `${iss.issuedWeightTons} طن`, mono: true },
+                                  { label: 'الرصيد بعد الصرف', value: `${iss.balanceAfterIssueTons} طن` },
+                                  { label: 'إجمالي القيمة المالية', value: `${iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                  { label: 'السيارة والسائق', value: `${iss.vehicleNumber} — ${iss.driverName}` },
+                                  { label: 'المستلم بالمطحن', value: iss.receiverName },
+                                  { label: 'الحالة', value: iss.approvalStatus },
+                                ],
+                              })
+                            }
+                            onEdit={openEditIssue}
+                            onDelete={() =>
+                              setDeleteModal({
+                                isOpen: true,
+                                entityType: 'issue',
+                                entityId: iss.id,
+                                entityTitle: iss.issueOrderNumber,
+                                recordSummary: [
+                                  { label: 'رقم إذن الصرف', value: iss.issueOrderNumber },
+                                  { label: 'الشونة', value: iss.shunaName },
+                                  { label: 'المطحن', value: iss.beneficiaryMillName },
+                                  { label: 'الكمية المنصرفة', value: `${iss.issuedWeightTons} طن` },
+                                ],
+                              })
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <VillageGrandTotalRow
+                    totalCount={wheatIssues.length}
+                    labelColSpan={6}
+                    title="الإجمالي العام للمنصرف من الشون للمطاحن TOTAL"
+                    metricCells={[
+                      { content: `${Number(wheatIssues.reduce((s, i) => s + (i.issuedWeightTons || 0), 0).toFixed(3))} طن`, mono: true },
+                      { content: '—' },
+                      { content: `${wheatIssues.reduce((s, i) => s + (i.totalIssuedValue || 0), 0).toLocaleString('ar-EG')} ج.م`, mono: true },
+                      { content: '—', colSpan: 3 },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -1673,7 +1862,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full text-xs text-right compact-erp-table">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">رقم الحركة</th>
@@ -1686,6 +1875,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                   <th className="p-3 text-center">الرصيد بعد الحركة</th>
                   <th className="p-3 text-center">القيمة المالية</th>
                   <th className="p-3">المسؤول والبيان</th>
+                  <th className="p-3 text-center">عرض</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1726,8 +1916,47 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                       <div>{m.performedBy}</div>
                       <div className="text-[10px] text-slate-500">{m.notes}</div>
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={m.movementCode}
+                        permissions={effectivePermissions}
+                        testIdPrefix={`ledger-row-${m.id}`}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `حركة دفتر أرصدة القمح: ${m.movementCode}`,
+                            subtitle: `${m.shunaName} — ${m.movementType}`,
+                            entityType: 'قيد رقابي بدفتر أرصدة القمح',
+                            fields: [
+                              { label: 'كود الحركة', value: m.movementCode, mono: true },
+                              { label: 'التاريخ والوقت', value: `${m.movementDate} | ${m.movementTime}` },
+                              { label: 'الشونة', value: m.shunaName },
+                              { label: 'نوع الحركة', value: m.movementType },
+                              { label: 'المستند المرجعي', value: m.referenceDocNumber, mono: true },
+                              { label: 'الرصيد قبل الحركة', value: `${m.balanceBeforeTons} طن` },
+                              { label: 'الكمية', value: `${m.quantityTons} طن`, mono: true },
+                              { label: 'الرصيد بعد الحركة', value: `${m.balanceAfterTons} طن`, mono: true },
+                              { label: 'القيمة المالية', value: `${m.totalValue.toLocaleString('ar-EG')} ج.م` },
+                              { label: 'المنفذ', value: m.performedBy },
+                              { label: 'البيان', value: m.notes || '—' },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                <VillageGrandTotalRow
+                  totalCount={wheatLedgerMovements.length}
+                  labelColSpan={6}
+                  title="الإجمالي العام لحركات دفتر أرصدة القمح TOTAL"
+                  metricCells={[
+                    { content: `${Number(wheatLedgerMovements.reduce((s, m) => s + (m.quantityTons || 0), 0).toFixed(3))} طن صافي`, mono: true },
+                    { content: '—' },
+                    { content: `${wheatLedgerMovements.reduce((s, m) => s + (m.totalValue || 0), 0).toLocaleString('ar-EG')} ج.م`, mono: true },
+                    { content: '—', colSpan: 2 },
+                  ]}
+                />
               </tbody>
             </table>
           </div>
@@ -1760,7 +1989,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم محضر المطابقة</th>
@@ -1772,52 +2001,115 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                     <th className="p-3 text-center">حالة المطابقة</th>
                     <th className="p-3">لجنة الجرد</th>
                     <th className="p-3">تفسير الفرق والإجراء المتخذ</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {shunaReconciliations.map((rec) => (
-                    <tr key={rec.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-indigo-900">
-                        {rec.reconciliationNumber}
-                      </td>
-                      <td className="p-3">{rec.reconciliationDate}</td>
-                      <td className="p-3 font-black text-slate-900">{rec.shunaName}</td>
-                      <td className="p-3 text-center">{rec.bookBalanceTons} طن</td>
-                      <td className="p-3 text-center font-black">{rec.physicalCountTons} طن</td>
-                      <td
-                        className={`p-3 text-center font-black ${
-                          rec.varianceTons < 0
-                            ? 'text-rose-700 bg-rose-50'
-                            : rec.varianceTons > 0
-                            ? 'text-emerald-700 bg-emerald-50'
-                            : 'text-slate-700'
-                        }`}
-                      >
-                        {rec.varianceTons > 0 ? `+${rec.varianceTons}` : rec.varianceTons} طن
-                      </td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${
-                            rec.reconciliationStatus === 'مطابق'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : rec.reconciliationStatus === 'عجز'
-                              ? 'bg-rose-100 text-rose-800'
-                              : 'bg-teal-100 text-teal-800'
+                  {shunaReconciliations.map((rec) => {
+                    const openEditRecon = () =>
+                      setEditingSubRecord({
+                        type: 'reconciliation',
+                        title: `تعديل محضر مطابقة الجرد: ${rec.reconciliationNumber}`,
+                        data: { ...rec },
+                      });
+                    return (
+                      <tr key={rec.id} className="hover:bg-slate-50">
+                        <td className="p-3 font-mono font-black text-indigo-900">
+                          {rec.reconciliationNumber}
+                        </td>
+                        <td className="p-3">{rec.reconciliationDate}</td>
+                        <td className="p-3 font-black text-slate-900">{rec.shunaName}</td>
+                        <td className="p-3 text-center">{rec.bookBalanceTons} طن</td>
+                        <td className="p-3 text-center font-black">{rec.physicalCountTons} طن</td>
+                        <td
+                          className={`p-3 text-center font-black ${
+                            rec.varianceTons < 0
+                              ? 'text-rose-700 bg-rose-50'
+                              : rec.varianceTons > 0
+                              ? 'text-emerald-700 bg-emerald-50'
+                              : 'text-slate-700'
                           }`}
                         >
-                          {rec.reconciliationStatus}
-                        </span>
-                      </td>
-                      <td className="p-3">
-                        <div className="font-black">{rec.committeeHead}</div>
-                        <div className="text-[10px] text-slate-500">{rec.committeeMembers}</div>
-                      </td>
-                      <td className="p-3">
-                        <div>{rec.reasonOrExplanation}</div>
-                        <div className="text-[10px] text-indigo-700">{rec.actionTaken}</div>
-                      </td>
-                    </tr>
-                  ))}
+                          {rec.varianceTons > 0 ? `+${rec.varianceTons}` : rec.varianceTons} طن
+                        </td>
+                        <td className="p-3 text-center">
+                          <span
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${
+                              rec.reconciliationStatus === 'مطابق'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : rec.reconciliationStatus === 'عجز'
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-teal-100 text-teal-800'
+                            }`}
+                          >
+                            {rec.reconciliationStatus}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-black">{rec.committeeHead}</div>
+                          <div className="text-[10px] text-slate-500">{rec.committeeMembers}</div>
+                        </td>
+                        <td className="p-3">
+                          <div>{rec.reasonOrExplanation}</div>
+                          <div className="text-[10px] text-indigo-700">{rec.actionTaken}</div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <ModuleRowActions
+                            entityLabel={rec.reconciliationNumber}
+                            updatedAt={(rec as unknown as { updatedAt?: string }).updatedAt}
+                            permissions={effectivePermissions}
+                            testIdPrefix={`recon-row-${rec.id}`}
+                            onView={() =>
+                              setProfileModal({
+                                isOpen: true,
+                                title: `محضر مطابقة جرد: ${rec.reconciliationNumber}`,
+                                subtitle: `${rec.shunaName} — ${rec.reconciliationStatus}`,
+                                entityType: 'محضر جرد ومطابقة شونة',
+                                onEdit: openEditRecon,
+                                fields: [
+                                  { label: 'رقم محضر المطابقة', value: rec.reconciliationNumber, mono: true },
+                                  { label: 'تاريخ الجرد', value: rec.reconciliationDate },
+                                  { label: 'الشونة', value: rec.shunaName },
+                                  { label: 'الرصيد الدفتري المحسوب', value: `${rec.bookBalanceTons} طن`, mono: true },
+                                  { label: 'الرصيد الفعلي بالجرد', value: `${rec.physicalCountTons} طن`, mono: true },
+                                  { label: 'فرق الجرد', value: `${rec.varianceTons} طن`, mono: true },
+                                  { label: 'حالة المطابقة', value: rec.reconciliationStatus },
+                                  { label: 'رئيس اللجنة', value: rec.committeeHead },
+                                  { label: 'أعضاء اللجنة', value: rec.committeeMembers },
+                                  { label: 'التفسير والإجراء', value: `${rec.reasonOrExplanation} — ${rec.actionTaken}` },
+                                ],
+                              })
+                            }
+                            onEdit={openEditRecon}
+                            onDelete={() =>
+                              setDeleteModal({
+                                isOpen: true,
+                                entityType: 'reconciliation',
+                                entityId: rec.id,
+                                entityTitle: rec.reconciliationNumber,
+                                recordSummary: [
+                                  { label: 'رقم المحضر', value: rec.reconciliationNumber },
+                                  { label: 'الشونة', value: rec.shunaName },
+                                  { label: 'فرق الجرد', value: `${rec.varianceTons} طن` },
+                                ],
+                              })
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <VillageGrandTotalRow
+                    totalCount={shunaReconciliations.length}
+                    labelColSpan={3}
+                    title="الإجمالي العام لمحاضر الجرد والمطابقة TOTAL"
+                    metricCells={[
+                      { content: `${Number(shunaReconciliations.reduce((s, r) => s + (r.bookBalanceTons || 0), 0).toFixed(3))} طن`, mono: true },
+                      { content: `${Number(shunaReconciliations.reduce((s, r) => s + (r.physicalCountTons || 0), 0).toFixed(3))} طن`, mono: true },
+                      { content: `${Number(shunaReconciliations.reduce((s, r) => s + (r.varianceTons || 0), 0).toFixed(3))} طن`, mono: true },
+                      { content: '—', colSpan: 4 },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -1827,7 +2119,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة إضافة شونة جديدة */}
       {showAddShunaModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6">
             <h3 className="text-lg font-black text-slate-900 mb-4">
               تسجيل شونة جديدة وتقييم أصولها ومعداتها
@@ -1989,7 +2281,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة تسجيل إذن استلام قمح يومي جديد (27 حقلاً) */}
       {showAddReceiptModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
             <h3 className="text-lg font-black text-slate-900 mb-1">
               تسجيل إذن استلام قمح جديد في دفتر الاستلام اليومي
@@ -2304,7 +2596,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة تسجيل إذن صرف قمح من الشونة لمطحن */}
       {showAddIssueModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل إذن صرف قمح من الشونة إلى مطحن تمويني
@@ -2425,7 +2717,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة تسجيل محضر مطابقة جرد شونة */}
       {showAddReconModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل محضر مطابقة وجرد فعلي للشونة
@@ -2532,7 +2824,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة تعديل بيانات الشونة */}
       {editingShuna && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تعديل بيانات الشونة: {editingShuna.shunaName}
@@ -2632,6 +2924,56 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
         </div>
       )}
 
+      {/* نافذة تعديل أذون الاستلام / الصرف / المطابقة */}
+      {editingSubRecord && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-black text-slate-900 mb-3">{editingSubRecord.title}</h3>
+            <form onSubmit={handleSaveSubRecord} className="space-y-4 text-xs font-bold">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Object.entries(editingSubRecord.data)
+                  .filter(([k]) => !['id', 'updatedAt', 'netWeightKg', 'netWeightTons', 'acceptedNetWeightTons', 'totalSupplyValue', 'totalIssuedValue', 'varianceTons'].includes(k))
+                  .map(([key, val]) => (
+                    <div key={key}>
+                      <label className="block mb-1 text-slate-700 font-mono text-[11px]">{key}</label>
+                      <input
+                        type={typeof val === 'number' ? 'number' : 'text'}
+                        step={typeof val === 'number' ? 'any' : undefined}
+                        value={val ?? ''}
+                        onChange={(e) =>
+                          setEditingSubRecord({
+                            ...editingSubRecord,
+                            data: {
+                              ...editingSubRecord.data,
+                              [key]: typeof val === 'number' ? Number(e.target.value) : e.target.value,
+                            },
+                          })
+                        }
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                      />
+                    </div>
+                  ))}
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditingSubRecord(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 text-white font-black"
+                >
+                  حفظ التعديلات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* نافذة بطاقة السجل للقراءة فقط */}
       {profileModal && (
         <ModuleRecordProfileModal
@@ -2640,6 +2982,8 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
           subtitle={profileModal.subtitle}
           entityType={profileModal.entityType}
           fields={profileModal.fields}
+          canEdit={effectivePermissions.canEdit}
+          onEdit={profileModal.onEdit}
           onClose={() => setProfileModal(null)}
         />
       )}
