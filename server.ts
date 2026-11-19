@@ -4111,6 +4111,7 @@ async function startServer() {
         prevPayload && typeof prevPayload === 'object' ? { ...prevPayload } : {};
       const targetSlice =
         typeof body.department === 'string' && body.department ? body.department : null;
+      let anyAuthorizedSliceUpdated = false;
 
       for (const [sliceKey, deptKey] of Object.entries(MODULE_SLICE_TO_DEPT)) {
         if (!(sliceKey in (rawPayload || {}))) continue;
@@ -4125,6 +4126,9 @@ async function startServer() {
             hasDepartmentPermission(actor.user, deptKey, 'update') ||
             hasDepartmentPermission(actor.user, deptKey, 'delete');
           if (!canMutate) {
+            if (prevSlice === undefined && targetSlice !== deptKey) {
+              continue;
+            }
             await denyUnauthorizedAndAudit(
               req,
               res,
@@ -4137,7 +4141,7 @@ async function startServer() {
             return;
           }
           const shrinkCheck = inspectModuleSliceShrinkage(prevSlice, incomingSlice);
-          if (shrinkCheck.operationalDeleted || shrinkCheck.auditLogsDeletedCount > 0) {
+          if (shrinkCheck.auditLogsDeletedCount > 0) {
             await denyUnauthorizedAndAudit(
               req,
               res,
@@ -4145,12 +4149,37 @@ async function startServer() {
               403,
               deptKey,
               'DELETE',
-              `تم حظر حذف السجلات أو سجل التدقيق في قسم (${deptKey}) لأن الحذف مقتصر على مدير النظام فقط.`,
-              'NON_ADMIN_DELETE_BLOCKED'
+              `تم حظر حذف سجل التدقيق في قسم (${deptKey}) لأن حذف سجل التدقيق مقتصر على مدير النظام فقط.`,
+              'NON_ADMIN_AUDIT_DELETE_BLOCKED'
+            );
+            return;
+          }
+          if (shrinkCheck.operationalDeleted && !hasDepartmentPermission(actor.user, deptKey, 'delete')) {
+            await denyUnauthorizedAndAudit(
+              req,
+              res,
+              actor.user,
+              403,
+              deptKey,
+              'DELETE',
+              `تم حظر حذف السجلات في قسم (${deptKey}) لعدم توفر صلاحية الحذف لهذا الحساب.`,
+              'DELETE_PERMISSION_REQUIRED'
             );
             return;
           }
           mergedAuthorized[sliceKey] = incomingSlice;
+          anyAuthorizedSliceUpdated = true;
+        }
+      }
+      if (anyAuthorizedSliceUpdated || rawPayload?.seedMeta || rawPayload?.updatedAt) {
+        if (rawPayload?.seedMeta && typeof rawPayload.seedMeta === 'object') {
+          mergedAuthorized.seedMeta = {
+            ...(prevPayload?.seedMeta || {}),
+            ...rawPayload.seedMeta,
+          };
+        }
+        if (typeof rawPayload?.updatedAt === 'string' && rawPayload.updatedAt) {
+          mergedAuthorized.updatedAt = rawPayload.updatedAt;
         }
       }
       payload = mergedAuthorized;

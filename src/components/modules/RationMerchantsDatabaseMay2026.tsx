@@ -1114,7 +1114,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
             اضغط على أي قرية لتصفية الجدول مباشرة ({stats.byVillageList.length} قرية)
           </span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {stats.byVillageList.map((item) => {
             const isSelected = villageFilter === item.village;
             return (
@@ -1124,7 +1124,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 onClick={() =>
                   setVillageFilter((prev) => (prev === item.village ? 'ALL' : item.village))
                 }
-                className={`p-3.5 rounded-xl border text-right transition-all cursor-pointer flex flex-col justify-between gap-2 min-h-[96px] ${
+                className={`p-3.5 rounded-xl border text-right transition-all cursor-pointer flex flex-col justify-between gap-2.5 min-h-[104px] overflow-hidden ${
                   isSelected
                     ? 'bg-[#0A1931] text-white border-[#0A1931] shadow-sm'
                     : 'bg-slate-50/90 hover:bg-teal-50/60 hover:border-teal-400 text-slate-900 border-slate-200'
@@ -1137,21 +1137,39 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 >
                   {item.village}
                 </div>
-                <div className="flex items-baseline justify-between gap-2 pt-1.5 border-t border-current/10">
-                  <span
-                    className={`text-sm font-black font-mono tabular-nums whitespace-nowrap ${
-                      isSelected ? 'text-emerald-300' : 'text-teal-800'
-                    }`}
-                  >
-                    {item.count.toLocaleString()} تاجر
-                  </span>
-                  <span
-                    className={`text-xs font-bold font-mono tabular-nums whitespace-nowrap ${
-                      isSelected ? 'text-amber-300' : 'text-slate-600'
-                    }`}
-                  >
-                    {item.insurance.toLocaleString()} ج.م
-                  </span>
+                <div className="flex flex-col gap-1 pt-2 border-t border-current/10 w-full">
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`text-[11px] font-bold ${
+                        isSelected ? 'text-slate-300' : 'text-slate-500'
+                      }`}
+                    >
+                      عدد التجار
+                    </span>
+                    <span
+                      className={`text-sm font-black font-mono tabular-nums ${
+                        isSelected ? 'text-emerald-300' : 'text-teal-800'
+                      }`}
+                    >
+                      {item.count.toLocaleString()} تاجر
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`text-[11px] font-bold ${
+                        isSelected ? 'text-slate-300' : 'text-slate-500'
+                      }`}
+                    >
+                      إجمالي التأمين
+                    </span>
+                    <span
+                      className={`text-xs font-extrabold font-mono tabular-nums ${
+                        isSelected ? 'text-amber-300' : 'text-slate-800'
+                      }`}
+                    >
+                      {item.insurance.toLocaleString()} ج.م
+                    </span>
+                  </div>
                 </div>
               </button>
             );
@@ -1376,17 +1394,17 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
             <table className="w-full text-xs border-collapse compact-erp-table">
               <thead className="bg-[#0A1931] text-white sticky top-0 z-10">
                 <tr>
-                  <th className="p-2.5 text-center font-black">مسلسل</th>
-                  <th className="p-2.5 text-right font-black">اسم التاجر</th>
-                  <th className="p-2.5 text-center font-black">الرقم القومي</th>
-                  <th className="p-2.5 text-center font-black">كود التاجر</th>
-                  <th className="p-2.5 text-center font-black">رقم ماكينة التاجر</th>
-                  <th className="p-2.5 text-right font-black">العنوان بالتفصيل</th>
-                  <th className="p-2.5 text-center font-black">مبلغ التأمين بالجنيه</th>
-                  <th className="p-2.5 text-center font-black">السجل التجاري / الترخيص</th>
-                  <th className="p-2.5 text-center font-black">انتهاء الرخصة / الضريبية / السجل</th>
-                  <th className="p-2.5 text-center font-black">حالة التاجر</th>
-                  <th className="p-2.5 text-center font-black">إجراءات الملف</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">مسلسل</th>
+                  <th className="p-2.5 !text-right font-black min-w-[190px]">اسم التاجر</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">الرقم القومي</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">كود التاجر</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">رقم ماكينة التاجر</th>
+                  <th className="p-2.5 !text-right font-black min-w-[175px]">العنوان بالتفصيل</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">مبلغ التأمين بالجنيه</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">السجل التجاري / الترخيص</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">انتهاء الرخصة / الضريبية / السجل</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">حالة التاجر</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">إجراءات الملف</th>
                 </tr>
               </thead>
               <tbody>
@@ -1414,41 +1432,43 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                                 key={m.id}
                                 className="border-b border-slate-200 hover:bg-slate-50 transition-colors"
                               >
-                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
+                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931] whitespace-nowrap">
                                   {m.serialNo}
                                 </td>
-                                <td className="p-2.5 font-black text-slate-900">
+                                <td className="p-2.5 !text-right font-black text-slate-900 min-w-[190px]">
                                   <button
                                     type="button"
                                     onClick={() => setSelectedMerchantId(m.id)}
-                                    className="text-right hover:text-teal-700 hover:underline cursor-pointer"
+                                    className="text-right hover:text-teal-700 hover:underline cursor-pointer block w-full leading-snug"
                                   >
                                     {m.merchantName}
                                   </button>
-                                  <div className="text-[10px] text-slate-500 font-bold">
+                                  <div className="text-[11px] text-slate-500 font-bold mt-0.5 leading-snug">
                                     {m.village} · {m.localUnit} {m.phone ? `· ${m.phone}` : ''}
                                   </div>
                                 </td>
-                                <td className="p-2.5 text-center font-mono tabular-nums text-slate-700">
+                                <td className="p-2.5 text-center font-mono tabular-nums text-slate-700 whitespace-nowrap">
                                   {m.nationalId || (
                                     <span className="text-rose-600 font-black">غير مسجل</span>
                                   )}
                                 </td>
-                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-teal-800">
+                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-teal-800 whitespace-nowrap">
                                   {m.traderCode || m.activityCardNumber || '-'}
                                 </td>
-                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-slate-800">
+                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-slate-800 whitespace-nowrap">
                                   {m.posMachineNumber}
                                 </td>
-                                <td className="p-2.5 text-slate-700 font-bold">{m.detailedAddress}</td>
-                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
+                                <td className="p-2.5 !text-right text-slate-700 font-bold min-w-[175px] leading-snug">
+                                  {m.detailedAddress}
+                                </td>
+                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931] whitespace-nowrap">
                                   {m.cashInsuranceAmount.toLocaleString()} ج.م
                                 </td>
-                                <td className="p-2.5 text-center font-mono text-[11px] font-bold text-slate-700">
+                                <td className="p-2.5 text-center font-mono text-[11px] font-bold text-slate-700 whitespace-nowrap">
                                   <div>سجل: {m.commercialRegNumber || '—'}</div>
                                   <div className="text-teal-800">رخصة: {m.licenseNumber || '—'}</div>
                                 </td>
-                                <td className="p-2.5 text-center font-mono text-[10px] font-bold">
+                                <td className="p-2.5 text-center font-mono text-[11px] font-bold whitespace-nowrap">
                                   <div>رخصة: {m.licenseExpiryDate || '—'}</div>
                                   <div>ضريبية: {m.taxCardExpiryDate || '—'}</div>
                                   <div>سجل: {m.commercialRegExpiryDate || '—'}</div>
