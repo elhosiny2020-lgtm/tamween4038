@@ -71,7 +71,12 @@ import {
   evaluateSingleDateStatus,
   round2,
 } from '../../utils/rationMathEngine';
-import { exportRowsToArabicCsv, printModuleReportA4 } from '../../services/modulesStorage';
+import {
+  exportRowsToArabicCsv,
+  printModuleReportA4,
+  MINISTRY_LOGO_URL,
+  computeReportSubtotalsByLocalUnitAndVillage,
+} from '../../services/modulesStorage';
 import {
   checkRationDeleteIntegrity,
   resolveModuleCrudPermissions,
@@ -2896,91 +2901,212 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
     reportToDate,
   ]);
 
-  const navItems: { id: RationSubView; label: string; icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'لوحة التحكم الرئيسية', icon: <ShoppingBasket className="w-3.5 h-3.5" /> },
-    { id: 'commodities', label: 'قاعدة بيانات السلع', icon: <Package className="w-3.5 h-3.5" /> },
-    { id: 'merchants', label: 'منافذ التموين والتجار', icon: <Store className="w-3.5 h-3.5" /> },
-    { id: 'requisitions', label: 'الحصص التموينية الشهرية', icon: <Truck className="w-3.5 h-3.5" /> },
-    { id: 'warehouses', label: 'حركة المخازن والمشتريات', icon: <Warehouse className="w-3.5 h-3.5" /> },
-    { id: 'cards', label: 'البطاقات والمستفيدين', icon: <CreditCard className="w-3.5 h-3.5" /> },
-    { id: 'disbursements', label: 'عمليات صرف المواطنين', icon: <Receipt className="w-3.5 h-3.5" /> },
-    { id: 'inspections', label: `التنبيهات الذكية والرقابة (${smartAlerts.length})`, icon: <ShieldAlert className="w-3.5 h-3.5" /> },
-    ...(canSeeAlerts
-      ? [
-          {
-            id: 'alerts' as RationSubView,
-            label: `التنبيهات والإشعارات (${unreadAlertsCount})`,
-            icon: <Bell className="w-3.5 h-3.5" />,
-          },
-        ]
-      : []),
-    { id: 'reports', label: 'مركز التقارير والطباعة (10)', icon: <Printer className="w-3.5 h-3.5" /> },
-    { id: 'settings', label: 'إعدادات القرارات', icon: <Settings className="w-3.5 h-3.5" /> },
-    { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" /> },
+  const navGroups: Array<{
+    groupTitle: string;
+    items: Array<{ id: RationSubView; label: string; icon: React.ReactNode; count?: number }>;
+  }> = [
+    {
+      groupTitle: '1. القيادة والمنافذ والبطاقات',
+      items: [
+        { id: 'dashboard', label: 'لوحة التحكم الرئيسية', icon: <ShoppingBasket className="w-3.5 h-3.5" /> },
+        { id: 'merchants', label: 'منافذ التموين والتجار', icon: <Store className="w-3.5 h-3.5" />, count: state.merchants.length },
+        { id: 'cards', label: 'البطاقات والمستفيدين', icon: <CreditCard className="w-3.5 h-3.5" />, count: state.cards.length },
+      ],
+    },
+    {
+      groupTitle: '2. السلع والحصص والمخازن والصرف',
+      items: [
+        { id: 'commodities', label: 'قاعدة بيانات السلع', icon: <Package className="w-3.5 h-3.5" />, count: state.commodities.length },
+        { id: 'requisitions', label: 'الحصص التموينية الشهرية', icon: <Truck className="w-3.5 h-3.5" />, count: state.requisitions.length },
+        { id: 'warehouses', label: 'حركة المخازن والمشتريات', icon: <Warehouse className="w-3.5 h-3.5" />, count: state.movements.length },
+        { id: 'disbursements', label: 'عمليات صرف المواطنين', icon: <Receipt className="w-3.5 h-3.5" />, count: state.disbursements.length },
+      ],
+    },
+    {
+      groupTitle: '3. الرقابة والتقارير والإعدادات',
+      items: [
+        { id: 'inspections', label: 'التنبيهات الذكية والرقابة', icon: <ShieldAlert className="w-3.5 h-3.5" />, count: smartAlerts.length },
+        ...(canSeeAlerts
+          ? [
+              {
+                id: 'alerts' as RationSubView,
+                label: 'التنبيهات والإشعارات',
+                icon: <Bell className="w-3.5 h-3.5" />,
+                count: unreadAlertsCount,
+              },
+            ]
+          : []),
+        { id: 'reports', label: 'مركز التقارير الرسمية', icon: <Printer className="w-3.5 h-3.5" />, count: 10 },
+        { id: 'settings', label: 'إعدادات القرارات', icon: <Settings className="w-3.5 h-3.5" /> },
+        { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" />, count: state.auditLogs.length },
+      ],
+    },
   ];
+
+  const reportGroupedSubtotals = useMemo(
+    () => computeReportSubtotalsByLocalUnitAndVillage(activeReportData.headers, activeReportData.rows),
+    [activeReportData.headers, activeReportData.rows]
+  );
 
   return (
     <div className="space-y-4" dir="rtl" data-testid="ration-commodities-suite">
-      {/* Header Banner */}
-      <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0D9488] text-white rounded-2xl p-5 shadow-lg border border-[#D4AF37]/40 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-3 rounded-2xl bg-[#D4AF37] text-[#0A1628] shadow-md">
-            <ShoppingBasket className="w-7 h-7" />
+      {/* Executive Header & Categorized Sub-Navigation matching InternalTradeSuite */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#0A1931] text-white flex items-center justify-center shadow-xs shrink-0">
+              <ShoppingBasket className="w-6 h-6 text-[#D4AF37]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-600">
+                  مديرية التموين والتجارة الداخلية بالغربية · إدارة تموين مركز المحلة الكبرى
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[#0A1931] text-[10px] font-black border border-slate-200">
+                  {state.settings.decisionNumber}
+                </span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-black text-[#0A1931]">
+                منظومة السلع التموينية وإدارة المنافذ والحصص والمخازن ({branchName})
+              </h2>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-black">
-              قسم السلع التموينية وإدارة المنافذ والحصص والمخازن
-            </h2>
-            <p className="text-xs text-[#5EEAD4] font-bold mt-0.5">
-              {branchName} • {state.settings.decisionNumber} • دعم الفرد: {state.settings.supportPerBeneficiary} ج.م
-              {state.settings.additionalGrantEnabled && ` + منحة إضافية منفصلة: ${state.settings.additionalGrantPerCard2026} ج.م`}
-            </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {permissions.canAdd && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubView('merchants');
+                  }}
+                  className="px-3 py-2 bg-[#0A1931] hover:bg-[#13294B] text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  <span>منافذ التموين والتجار</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubView('requisitions');
+                  }}
+                  className="px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>الحصص الشهرية</span>
+                </button>
+              </>
+            )}
+
+            {permissions.canExport && (
+              <button
+                type="button"
+                onClick={() =>
+                  exportRowsToArabicCsv(
+                    `السلع_التموينية_${branchName}`,
+                    activeReportData.headers,
+                    activeReportData.rows
+                  )
+                }
+                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>تصدير Excel</span>
+              </button>
+            )}
+
+            {permissions.canPrint && (
+              <button
+                type="button"
+                onClick={() =>
+                  printModuleReportA4({
+                    title: activeReportData.title,
+                    subtitle: `${state.settings.decisionNumber} • شهر ${state.settings.activeMonth}`,
+                    branchName,
+                    headers: activeReportData.headers,
+                    rows: activeReportData.rows,
+                    summaryItems: [
+                      { label: 'إجمالي السلع المسجلة', value: String(kpis.totalCommodities) },
+                      { label: 'قيمة المخزون الحالي', value: `${kpis.stockValuation.toLocaleString()} ج.م` },
+                      { label: 'التجار والمنافذ النشطة', value: `${kpis.activeMerchants} / ${kpis.totalMerchants}` },
+                      { label: 'نسبة تنفيذ الحصص الشهرية', value: `${kpis.monthlyQuotaExecutionPct}%` },
+                    ],
+                    preparedBy: currentUser?.fullName,
+                  })
+                }
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-[#0A1931] border border-slate-300 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition"
+              >
+                <Printer className="w-3.5 h-3.5 text-[#0A1931]" />
+                <span>طباعة A4</span>
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {permissions.canExport && (
-            <button
-              type="button"
-              onClick={() =>
-                exportRowsToArabicCsv(
-                  `السلع_التموينية_${branchName}`,
-                  activeReportData.headers,
-                  activeReportData.rows
-                )
-              }
-              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-sm"
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              <span>تصدير Excel</span>
-            </button>
-          )}
+        {/* Clean Executive Info Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-[#0A1931] font-black">
+              إجمالي المنافذ والتجار: {kpis.totalMerchants} ({kpis.activeMerchants} نشط)
+            </span>
+            <span className="text-slate-300">|</span>
+            <span>السلع التموينية: {kpis.totalCommodities} صنف</span>
+            <span className="text-slate-300">|</span>
+            <span>البطاقات التموينية: {state.cards.length} بطاقة</span>
+            <span className="text-slate-300">|</span>
+            <span className="text-teal-800 font-black">
+              دعم الفرد: {state.settings.supportPerBeneficiary} ج.م
+              {state.settings.additionalGrantEnabled && ` + منحة إضافية: ${state.settings.additionalGrantPerCard2026} ج.م`}
+            </span>
+          </div>
+          <div className="text-[11px] font-black text-[#0A1931]">
+            نسبة تنفيذ الحصص الشهرية: {kpis.monthlyQuotaExecutionPct}% • شهر الاستحقاق: {state.settings.activeMonth}
+          </div>
+        </div>
 
-          {permissions.canPrint && (
-            <button
-              type="button"
-              onClick={() =>
-                printModuleReportA4({
-                  title: activeReportData.title,
-                  subtitle: `${state.settings.decisionNumber} • شهر ${state.settings.activeMonth}`,
-                  branchName,
-                  headers: activeReportData.headers,
-                  rows: activeReportData.rows,
-                  summaryItems: [
-                    { label: 'إجمالي السلع المسجلة', value: String(kpis.totalCommodities) },
-                    { label: 'قيمة المخزون الحالي', value: `${kpis.stockValuation.toLocaleString()} ج.م` },
-                    { label: 'التجار والمنافذ النشطة', value: `${kpis.activeMerchants} / ${kpis.totalMerchants}` },
-                    { label: 'نسبة تنفيذ الحصص الشهرية', value: `${kpis.monthlyQuotaExecutionPct}%` },
-                  ],
-                  preparedBy: currentUser?.fullName,
-                })
-              }
-              className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+        {/* Categorized Sub-Navigation Tabs */}
+        <div className="pt-2 border-t border-slate-200 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          {navGroups.map((grp) => (
+            <div
+              key={grp.groupTitle}
+              className="bg-slate-50/90 border border-slate-200 rounded-xl p-2 space-y-1.5"
             >
-              <Printer className="w-4 h-4 text-[#D4AF37]" />
-              <span>طباعة A4</span>
-            </button>
-          )}
+              <div className="text-[11px] font-black text-[#0A1931] px-2 py-0.5 rounded-md bg-slate-200/70 inline-block">
+                {grp.groupTitle}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {grp.items.map((item) => {
+                  const isActive = subView === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSubView(item.id)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                        isActive
+                          ? 'bg-[#0A1931] text-white shadow-xs'
+                          : 'bg-white hover:bg-slate-100 text-[#0A1931] border border-slate-300'
+                      }`}
+                    >
+                      {item.icon}
+                      <span>{item.label}</span>
+                      {typeof item.count === 'number' && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                            isActive
+                              ? 'bg-[#D4AF37] text-[#0A1931] font-black'
+                              : 'bg-slate-200 text-[#0A1931] font-bold'
+                          }`}
+                        >
+                          {item.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -3000,25 +3126,6 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           <span>{feedback.text}</span>
         </div>
       )}
-
-      {/* Navigation Tabs */}
-      <div className="bg-white rounded-2xl p-2 border border-slate-200 shadow-sm flex flex-wrap gap-1.5">
-        {navItems.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setSubView(tab.id)}
-            className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
-              subView === tab.id
-                ? 'bg-[#0A1628] text-[#D4AF37] shadow-sm'
-                : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
-            }`}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
 
       {/* SubView 1: Main Dashboard (10 KPIs + Unified Bakeries & Commodities Overview + Charts) */}
       {subView === 'dashboard' && (
@@ -6026,7 +6133,42 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
               })}
             </div>
 
-            {/* Report Table */}
+            {/* Official Governmental Report Header with Pinned Ministry Logo */}
+            <div className="border-2 border-[#0A1931] rounded-2xl p-4 bg-slate-50/70 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <img
+                  src={MINISTRY_LOGO_URL}
+                  alt="شعار وزارة التموين والتجارة الداخلية"
+                  className="w-16 h-16 object-contain rounded-xl border border-slate-300 bg-white p-1 shadow-xs shrink-0"
+                />
+                <div>
+                  <div className="text-[11px] font-black text-slate-600">
+                    جمهورية مصر العربية — وزارة التموين والتجارة الداخلية
+                  </div>
+                  <div className="text-xs font-black text-[#0A1931]">
+                    محافظة الغربية — مديرية التموين والتجارة الداخلية بالغربية
+                  </div>
+                  <div className="text-xs font-black text-teal-700">
+                    {branchName} • قسم السلع التموينية والمنافذ
+                  </div>
+                </div>
+              </div>
+              <div className="text-center">
+                <h4 className="text-sm sm:text-base font-black text-[#0A1931]">
+                  {activeReportData.title}
+                </h4>
+                <div className="text-[11px] font-bold text-slate-600 mt-0.5">
+                  {state.settings.decisionNumber} • شهر الاستحقاق: {state.settings.activeMonth}
+                </div>
+              </div>
+              <div className="text-left text-[11px] font-bold text-slate-700 space-y-0.5">
+                <div>تاريخ التقرير: {new Date().toLocaleDateString('ar-EG')}</div>
+                <div>إجمالي السجلات: {activeReportData.rows.length} سجل</div>
+                <div>إعداد: {currentUser?.fullName || 'إدارة المنظومة'}</div>
+              </div>
+            </div>
+
+            {/* Report Table with Local Unit & Village Subtotal Rows */}
             <div className="overflow-x-auto">
               <table className="compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
@@ -6061,6 +6203,56 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                     ))
                   )}
                 </tbody>
+                {activeReportData.rows.length > 0 && (
+                  <tfoot className="font-black text-xs">
+                    {reportGroupedSubtotals.localUnitColIdx >= 0 &&
+                      reportGroupedSubtotals.localUnitTotals.map((lu) => (
+                        <tr key={`lu-${lu.localUnit}`} className="bg-sky-100/90 text-sky-950 border-t-2 border-sky-300">
+                          {activeReportData.headers.map((_, idx) => {
+                            if (hiddenReportCols.includes(idx)) return null;
+                            let val: string | number = '—';
+                            if (idx === 0) val = `إجمالي الوحدة المحلية: ${lu.localUnit}`;
+                            else if (idx === reportGroupedSubtotals.localUnitColIdx) val = lu.localUnit;
+                            else if (idx === 1 && lu.columnSums[1] === null) val = `${lu.count} سجل`;
+                            else if (lu.columnSums[idx] !== null) val = lu.columnSums[idx]!.toLocaleString('ar-EG');
+                            return (
+                              <td key={idx} className="py-2 px-2 border border-sky-200 text-center">
+                                {val}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    {reportGroupedSubtotals.villageColIdx >= 0 &&
+                      reportGroupedSubtotals.villageTotals.map((v) => (
+                        <tr key={`vil-${v.localUnit}-${v.village}`} className="bg-amber-50/90 text-amber-950 border-t border-amber-300">
+                          {activeReportData.headers.map((_, idx) => {
+                            if (hiddenReportCols.includes(idx)) return null;
+                            let val: string | number = '—';
+                            if (idx === 0) val = `إجمالي القرية: ${v.village}`;
+                            else if (idx === reportGroupedSubtotals.localUnitColIdx) val = v.localUnit;
+                            else if (idx === reportGroupedSubtotals.villageColIdx) val = v.village;
+                            else if (idx === 1 && v.columnSums[1] === null) val = `${v.count} سجل`;
+                            else if (v.columnSums[idx] !== null) val = v.columnSums[idx]!.toLocaleString('ar-EG');
+                            return (
+                              <td key={idx} className="py-2 px-2 border border-amber-200 text-center">
+                                {val}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    <tr className="bg-[#0A1931] text-white border-t-2 border-[#D4AF37]">
+                      {reportGroupedSubtotals.grandTotalRow.map((cell, idx) =>
+                        hiddenReportCols.includes(idx) ? null : (
+                          <td key={idx} className="py-2.5 px-2 border border-slate-700 text-center">
+                            {cell}
+                          </td>
+                        )
+                      )}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>

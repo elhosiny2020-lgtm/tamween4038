@@ -267,6 +267,7 @@ const HrPersonnelSuite = lazy(() =>
 import {
   loadBranchModulesBundle,
   saveBranchModulesBundle,
+  saveBranchModulesBundleDebounced,
   subscribeBranchModulesRealtime,
 } from './services/modulesStorage';
 import {
@@ -1360,7 +1361,7 @@ export default function App() {
       setModulesBundle((prev) => {
         if (!prev) return prev;
         const next = updater(prev);
-        void saveBranchModulesBundle(currentBranchId, next, currentUserLabel);
+        saveBranchModulesBundleDebounced(currentBranchId, next, currentUserLabel);
         return next;
       });
       if (toastMsg) {
@@ -2711,7 +2712,7 @@ export default function App() {
     if (!appState?.currentUser) return;
 
     let idleTimeout: ReturnType<typeof setTimeout>;
-    const IDLE_LIMIT_MS = 10 * 60 * 1000; // 10 minutes of inactivity
+    const IDLE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes of inactivity
 
     const resetIdleTimer = () => {
       clearTimeout(idleTimeout);
@@ -2737,7 +2738,7 @@ export default function App() {
             console.error('Pre-logout autosave failed:', e);
           }
         }
-        handleLogout('تم الحفظ التلقائي لجميع البيانات وقفل الشاشة وتأمين تسجيل الخروج التلقائي لعدم وجود نشاط لمدة 10 دقائق.');
+        handleLogout('تم الحفظ التلقائي لجميع البيانات وقفل الشاشة وتأمين تسجيل الخروج التلقائي لعدم وجود نشاط لمدة 5 دقائق.');
       }, IDLE_LIMIT_MS);
     };
 
@@ -3440,7 +3441,7 @@ export default function App() {
     try {
       fn();
     } finally {
-      setTimeout(() => setIsActionLocked(false), 450);
+      setTimeout(() => setIsActionLocked(false), 180);
     }
   };
 

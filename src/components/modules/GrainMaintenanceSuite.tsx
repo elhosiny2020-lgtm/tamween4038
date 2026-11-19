@@ -1073,22 +1073,40 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
     notify('ok', `تم تسجيل حركة الحبوب (${rec.documentNumber}) بالوزن المصحح (${previewCorrectedWeight} طن).`);
   };
 
-  const navItems: { id: GrainSubView; label: string; icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'لوحة التحكم الشاملة', icon: <Wrench className="w-3.5 h-3.5" /> },
-    { id: 'shunas', label: `الشون وتقييم الأصول (${(state.shunas || []).length})`, icon: <Warehouse className="w-3.5 h-3.5" /> },
-    { id: 'wheat_receipts_book', label: `دفتر استلام القمح اليومي (${(state.wheatReceipts || []).length})`, icon: <FileText className="w-3.5 h-3.5" /> },
-    { id: 'refrigerators', label: `قاعدة بيانات الثلاجات (${(state.refrigerators || []).length})`, icon: <ThermometerSnowflake className="w-3.5 h-3.5" /> },
-    { id: 'mills', label: `قاعدة بيانات المطاحن (${(state.mills || []).length})`, icon: <Factory className="w-3.5 h-3.5" /> },
-    { id: 'flour_quotas', label: `حصص الدقيق والمخابز (${(state.flourQuotaMaster || []).length})`, icon: <Wheat className="w-3.5 h-3.5" /> },
-    { id: 'assets', label: 'الصوامع والمعدات OEE', icon: <Warehouse className="w-3.5 h-3.5" /> },
-    { id: 'orders', label: 'أوامر الصيانة المركزية', icon: <Cog className="w-3.5 h-3.5" /> },
-    { id: 'parts', label: 'قطع الغيار والفنيون', icon: <Cog className="w-3.5 h-3.5" /> },
-    { id: 'grain_moisture', label: 'معادلة تصحيح الرطوبة', icon: <Droplets className="w-3.5 h-3.5" /> },
-    { id: 'financials', label: 'الحسابات والتقييم المالي', icon: <Landmark className="w-3.5 h-3.5" /> },
-    { id: 'reports', label: 'مركز التقارير والطباعة', icon: <FileBarChart2 className="w-3.5 h-3.5" /> },
-    { id: 'alerts', label: `التنبيهات الذكية (${smartAlerts.length})`, icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-    { id: 'settings', label: 'الإعدادات', icon: <Settings className="w-3.5 h-3.5" /> },
-    { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" /> },
+  const navGroups: Array<{
+    groupTitle: string;
+    items: Array<{ id: GrainSubView; label: string; icon: React.ReactNode; count?: number }>;
+  }> = [
+    {
+      groupTitle: '1. الشون والقمح والمطاحن وحصص الدقيق',
+      items: [
+        { id: 'dashboard', label: 'لوحة التحكم الشاملة', icon: <Wrench className="w-3.5 h-3.5" /> },
+        { id: 'shunas', label: 'الشون وتقييم الأصول', icon: <Warehouse className="w-3.5 h-3.5" />, count: (state.shunas || []).length },
+        { id: 'wheat_receipts_book', label: 'دفتر استلام القمح اليومي', icon: <FileText className="w-3.5 h-3.5" />, count: (state.wheatReceipts || []).length },
+        { id: 'mills', label: 'قاعدة بيانات المطاحن', icon: <Factory className="w-3.5 h-3.5" />, count: (state.mills || []).length },
+        { id: 'flour_quotas', label: 'حصص الدقيق والمخابز', icon: <Wheat className="w-3.5 h-3.5" />, count: (state.flourQuotaMaster || []).length },
+      ],
+    },
+    {
+      groupTitle: '2. الثلاجات والصوامع وأوامر الصيانة',
+      items: [
+        { id: 'refrigerators', label: 'قاعدة بيانات الثلاجات', icon: <ThermometerSnowflake className="w-3.5 h-3.5" />, count: (state.refrigerators || []).length },
+        { id: 'assets', label: 'الصوامع والمعدات OEE', icon: <Warehouse className="w-3.5 h-3.5" />, count: (state.assets || []).length },
+        { id: 'orders', label: 'أوامر الصيانة المركزية', icon: <Cog className="w-3.5 h-3.5" />, count: (state.orders || []).length },
+        { id: 'parts', label: 'قطع الغيار والفنيون', icon: <Cog className="w-3.5 h-3.5" />, count: (state.spareParts || []).length },
+        { id: 'grain_moisture', label: 'معادلة تصحيح الرطوبة', icon: <Droplets className="w-3.5 h-3.5" />, count: (state.grainMovements || []).length },
+      ],
+    },
+    {
+      groupTitle: '3. الحسابات والتقارير والتنبيهات',
+      items: [
+        { id: 'financials', label: 'الحسابات والتقييم المالي', icon: <Landmark className="w-3.5 h-3.5" />, count: (state.centralFinancialLedger || []).length },
+        { id: 'reports', label: 'مركز التقارير الرسمية', icon: <FileBarChart2 className="w-3.5 h-3.5" />, count: 7 },
+        { id: 'alerts', label: 'التنبيهات الذكية', icon: <AlertTriangle className="w-3.5 h-3.5" />, count: smartAlerts.length },
+        { id: 'settings', label: 'الإعدادات', icon: <Settings className="w-3.5 h-3.5" /> },
+        { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" />, count: (state.auditLogs || []).length },
+      ],
+    },
   ];
 
   const activeDeleteCheck = useMemo(() => {
@@ -1098,39 +1116,126 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
 
   return (
     <div className="space-y-4" dir="rtl" data-testid="grain-maintenance-suite">
-      {/* Banner */}
-      <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0D9488] text-white rounded-2xl p-5 shadow-lg border border-[#D4AF37]/40 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-3 rounded-2xl bg-[#D4AF37] text-[#0A1628] shadow-md">
-            <Wrench className="w-7 h-7" />
+      {/* Executive Header & Categorized Sub-Navigation matching InternalTradeSuite */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#0A1931] text-white flex items-center justify-center shadow-xs shrink-0">
+              <Wrench className="w-6 h-6 text-[#D4AF37]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-600">
+                  مديرية التموين والتجارة الداخلية بالغربية · إدارة تموين مركز المحلة الكبرى
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[#0A1931] text-[10px] font-black border border-slate-200">
+                  قطاع صيانة الحبوب والمطاحن
+                </span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-black text-[#0A1931]">
+                منظومة قسم صيانة الحبوب المتكاملة (الشون • استلام القمح • الثلاجات • المطاحن • حصص الدقيق)
+              </h2>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-black">
-              منظومة قسم صيانة الحبوب المتكاملة (الشون • دفتر استلام القمح • الثلاجات • المطاحن • حصص الدقيق)
-            </h2>
-            <p className="text-xs text-[#5EEAD4] font-bold mt-0.5">
-              مديرية التموين والتجارة الداخلية بالغربية • {branchName} • قاعدة بيانات مترابطة ومحمية محاسبياً ورقابياً
-            </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSubView('wheat_receipts_book')}
+              className="px-3 py-2 bg-[#0A1931] hover:bg-[#13294B] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+            >
+              <FileText className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <span>دفتر استلام القمح اليومي</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubView('mills')}
+              className="px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+            >
+              <Factory className="w-3.5 h-3.5" />
+              <span>قاعدة بيانات المطاحن</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubView('reports')}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>مركز التقارير الرسمية A4 و Excel</span>
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSubView('wheat_receipts_book')}
-            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow"
-          >
-            <FileText className="w-4 h-4" />
-            <span>دفتر استلام القمح اليومي</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubView('reports')}
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-          >
-            <Printer className="w-4 h-4" />
-            <span>مركز التقارير A4 و Excel</span>
-          </button>
+        {/* Clean Executive Info Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-[#0A1931] font-black">
+              الشون التموينية: {(state.shunas || []).length} شونة
+            </span>
+            <span className="text-slate-300">|</span>
+            <span>محاضر استلام القمح: {(state.wheatReceipts || []).length} محضر</span>
+            <span className="text-slate-300">|</span>
+            <span>المطاحن التموينية: {(state.mills || []).length} مطحن</span>
+            <span className="text-slate-300">|</span>
+            <span>الثلاجات: {(state.refrigerators || []).length} ثلاجة</span>
+            <span className="text-slate-300">|</span>
+            <span className="text-teal-800 font-black">
+              حصص الدقيق للمخابز: {(state.flourQuotaMaster || []).length} مخبز
+            </span>
+          </div>
+          <div className="text-[11px] font-black text-[#0A1931]">
+            أوامر الصيانة: {(state.orders || []).length} • التنبيهات النشطة: {smartAlerts.length}
+          </div>
+        </div>
+
+        {/* Categorized Sub-Navigation Tabs */}
+        <div className="pt-2 border-t border-slate-200 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          {navGroups.map((grp) => (
+            <div
+              key={grp.groupTitle}
+              className="bg-slate-50/90 border border-slate-200 rounded-xl p-2 space-y-1.5"
+            >
+              <div className="text-[11px] font-black text-[#0A1931] px-2 py-0.5 rounded-md bg-slate-200/70 inline-block">
+                {grp.groupTitle}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {grp.items.map((item) => {
+                  const isActive = subView === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setSubView(item.id);
+                        setTableSearch('');
+                        setTablePage(1);
+                      }}
+                      data-testid={`grain-nav-${item.id}`}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                        isActive
+                          ? 'bg-[#0A1931] text-white shadow-xs'
+                          : 'bg-white hover:bg-slate-100 text-[#0A1931] border border-slate-300'
+                      }`}
+                    >
+                      {item.icon}
+                      <span>{item.label}</span>
+                      {typeof item.count === 'number' && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                            isActive
+                              ? 'bg-[#D4AF37] text-[#0A1931] font-black'
+                              : 'bg-slate-200 text-[#0A1931] font-bold'
+                          }`}
+                        >
+                          {item.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -1147,28 +1252,6 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           <span>{feedback.text}</span>
         </div>
       )}
-
-      {/* Nav */}
-      <div className="bg-white rounded-2xl p-2 border border-slate-200 shadow-sm flex flex-wrap gap-1.5">
-        {navItems.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => {
-              setSubView(tab.id);
-              setTableSearch('');
-              setTablePage(1);
-            }}
-            data-testid={`grain-nav-${tab.id}`}
-            className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer ${
-              subView === tab.id ? 'bg-[#0A1628] text-[#D4AF37]' : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
-            }`}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
 
       {subView === 'shunas' && (
         <ShunasAndWheatReceiptsView

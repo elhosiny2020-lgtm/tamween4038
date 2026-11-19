@@ -1342,18 +1342,36 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
     notify('ok', `تم تجديد تعاقد الموظف (${emp.fullName}) بنجاح حتى تاريخ ${newEndStr}.`);
   };
 
-  const navItems: { id: HrSubView; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: 'dashboard', label: 'لوحة الموارد البشرية', icon: <Users className="w-3.5 h-3.5" /> },
-    { id: 'employees', label: 'الموظفون والأقسام', icon: <Users className="w-3.5 h-3.5" />, badge: state.employees.length },
-    { id: 'public_service', label: 'قسم موظفو الخدمة العامة', icon: <Award className="w-3.5 h-3.5" />, badge: publicServiceCount },
-    { id: 'external_assistance', label: 'قسم موظفو الاستعانة', icon: <Award className="w-3.5 h-3.5" />, badge: assistanceCount },
-    { id: 'attendance', label: 'الحضور والانصراف', icon: <Clock className="w-3.5 h-3.5" /> },
-    { id: 'leaves', label: 'الأرصدة والإجازات', icon: <CalendarDays className="w-3.5 h-3.5" /> },
-    { id: 'payroll', label: 'الرواتب والأجور', icon: <Wallet className="w-3.5 h-3.5" /> },
-    { id: 'loans_promotions', label: 'السلف والترقيات والخدمة', icon: <CreditCard className="w-3.5 h-3.5" /> },
-    { id: 'alerts', label: 'التنبيهات والعقود (30 يوم)', icon: <Bell className="w-3.5 h-3.5" />, badge: hrAlertsList.length },
-    { id: 'settings', label: 'الضرائب والتأمينات', icon: <Settings className="w-3.5 h-3.5" /> },
-    { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" />, badge: state.auditLogs.length },
+  const navGroups: Array<{
+    groupTitle: string;
+    items: Array<{ id: HrSubView; label: string; icon: React.ReactNode; count?: number }>;
+  }> = [
+    {
+      groupTitle: '1. القيادة وسجلات العاملين والتعاقدات',
+      items: [
+        { id: 'dashboard', label: 'لوحة الموارد البشرية', icon: <Users className="w-3.5 h-3.5" /> },
+        { id: 'employees', label: 'الموظفون والأقسام', icon: <Users className="w-3.5 h-3.5" />, count: state.employees.length },
+        { id: 'public_service', label: 'موظفو الخدمة العامة', icon: <Award className="w-3.5 h-3.5" />, count: publicServiceCount },
+        { id: 'external_assistance', label: 'موظفو الاستعانة', icon: <Award className="w-3.5 h-3.5" />, count: assistanceCount },
+      ],
+    },
+    {
+      groupTitle: '2. الحضور والإجازات والرواتب والسلف',
+      items: [
+        { id: 'attendance', label: 'الحضور والانصراف', icon: <Clock className="w-3.5 h-3.5" />, count: state.attendance.length },
+        { id: 'leaves', label: 'الأرصدة والإجازات', icon: <CalendarDays className="w-3.5 h-3.5" />, count: state.leaveRequests.length },
+        { id: 'payroll', label: 'الرواتب والأجور', icon: <Wallet className="w-3.5 h-3.5" />, count: (activeRun?.lines || []).length },
+        { id: 'loans_promotions', label: 'السلف والترقيات والخدمة', icon: <CreditCard className="w-3.5 h-3.5" />, count: state.loans.length },
+      ],
+    },
+    {
+      groupTitle: '3. التنبيهات واللائحة وسجل التدقيق',
+      items: [
+        { id: 'alerts', label: 'التنبيهات والعقود (30 يوم)', icon: <Bell className="w-3.5 h-3.5" />, count: hrAlertsList.length },
+        { id: 'settings', label: 'الضرائب والتأمينات', icon: <Settings className="w-3.5 h-3.5" /> },
+        { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" />, count: state.auditLogs.length },
+      ],
+    },
   ];
 
   const activeDeleteCheck = useMemo(() => {
@@ -1363,85 +1381,169 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
 
   return (
     <div className="space-y-4" dir="rtl" data-testid="hr-personnel-suite">
-      {/* Banner */}
-      <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0D9488] text-white rounded-2xl p-5 shadow-lg border border-[#D4AF37]/40 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-3 rounded-2xl bg-[#D4AF37] text-[#0A1628] shadow-md">
-            <Users className="w-7 h-7" />
+      {/* Executive Header & Categorized Sub-Navigation matching InternalTradeSuite */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#0A1931] text-white flex items-center justify-center shadow-xs shrink-0">
+              <Users className="w-6 h-6 text-[#D4AF37]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-600">
+                  مديرية التموين والتجارة الداخلية بالغربية · إدارة تموين مركز المحلة الكبرى
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[#0A1931] text-[10px] font-black border border-slate-200">
+                  {state.policySettings.lawDecisionReference}
+                </span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-black text-[#0A1931]">
+                منظومة الموارد البشرية وشؤون العاملين والمرتبات ({branchName})
+              </h2>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-black">منظومة الموارد البشرية وشؤون العاملين والمرتبات</h2>
-            <p className="text-xs text-[#5EEAD4] font-bold mt-0.5">
-              {branchName} • {state.policySettings.lawDecisionReference}
-            </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSubView('employees')}
+              className="px-3 py-2 bg-[#0A1931] hover:bg-[#13294B] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+            >
+              <Users className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <span>سجل الموظفين والأقسام</span>
+            </button>
+
+            {permissions.canExport && (
+              <button
+                type="button"
+                onClick={() =>
+                  exportRowsToArabicCsv(
+                    `مسير_رواتب_${branchName}`,
+                    ['الكود', 'الاسم', 'القسم', 'الأجر الوظيفي', 'المكمل', 'العلاوات', 'الحوافز', 'الإجمالي', 'التأمين', 'الضريبة', 'السلف', 'الصافي'],
+                    (activeRun?.lines || []).map((l) => [
+                      l.employeeCode,
+                      l.employeeName,
+                      l.departmentName,
+                      l.functionalWage,
+                      l.complementaryWage,
+                      l.allowancesAndRaises,
+                      l.incentivesAndRewards,
+                      l.grossEarnings,
+                      l.employeeInsurance,
+                      l.monthlyIncomeTax,
+                      l.loanInstallmentDeduction,
+                      l.netSalary,
+                    ])
+                  )
+                }
+                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>تصدير مسير الرواتب Excel</span>
+              </button>
+            )}
+
+            {permissions.canPrint && (
+              <button
+                type="button"
+                onClick={() =>
+                  printModuleReportA4({
+                    title: `كشف استحقاقات ومرتبات العاملين — شهر ${activeRun?.monthKey || payrollMonth}`,
+                    subtitle: `${state.policySettings.lawDecisionReference}`,
+                    branchName,
+                    headers: ['الكود', 'اسم الموظف', 'القسم', 'الإجمالي', 'التأمينات', 'الضريبة', 'أقساط السلف', 'الصافي المنصرف'],
+                    rows: (activeRun?.lines || []).map((l) => [
+                      l.employeeCode,
+                      l.employeeName,
+                      l.departmentName,
+                      `${l.grossEarnings.toLocaleString()} ج.م`,
+                      `${l.employeeInsurance.toLocaleString()} ج.م`,
+                      `${l.monthlyIncomeTax.toLocaleString()} ج.م`,
+                      `${l.loanInstallmentDeduction.toLocaleString()} ج.م`,
+                      `${l.netSalary.toLocaleString()} ج.م`,
+                    ]),
+                    summaryItems: [
+                      { label: 'عدد الموظفين', value: String(state.employees.length) },
+                      { label: 'إجمالي الاستحقاقات', value: `${payrollSummary.grossTotal.toLocaleString()} ج.م` },
+                      { label: 'إجمالي التأمين والضريبة', value: `${(payrollSummary.insuranceTotal + payrollSummary.taxTotal).toLocaleString()} ج.م` },
+                      { label: 'صافي المنصرف', value: `${payrollSummary.netTotal.toLocaleString()} ج.م` },
+                    ],
+                    preparedBy: currentUser?.fullName,
+                  })
+                }
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-[#0A1931] border border-slate-300 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition"
+              >
+                <Printer className="w-3.5 h-3.5 text-[#0A1931]" />
+                <span>طباعة كشف الرواتب A4</span>
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {permissions.canExport && (
-            <button
-              type="button"
-              onClick={() =>
-                exportRowsToArabicCsv(
-                  `مسير_رواتب_${branchName}`,
-                  ['الكود', 'الاسم', 'القسم', 'الأجر الوظيفي', 'المكمل', 'العلاوات', 'الحوافز', 'الإجمالي', 'التأمين', 'الضريبة', 'السلف', 'الصافي'],
-                  (activeRun?.lines || []).map((l) => [
-                    l.employeeCode,
-                    l.employeeName,
-                    l.departmentName,
-                    l.functionalWage,
-                    l.complementaryWage,
-                    l.allowancesAndRaises,
-                    l.incentivesAndRewards,
-                    l.grossEarnings,
-                    l.employeeInsurance,
-                    l.monthlyIncomeTax,
-                    l.loanInstallmentDeduction,
-                    l.netSalary,
-                  ])
-                )
-              }
-              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              <span>تصدير Excel</span>
-            </button>
-          )}
+        {/* Clean Executive Info Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-[#0A1931] font-black">
+              إجمالي العاملين: {state.employees.length} موظف
+            </span>
+            <span className="text-slate-300">|</span>
+            <span>الخدمة العامة: {publicServiceCount}</span>
+            <span className="text-slate-300">|</span>
+            <span>الاستعانة: {assistanceCount}</span>
+            <span className="text-slate-300">|</span>
+            <span className="text-teal-800 font-black">
+              صافي مسير الرواتب الشهري: {payrollSummary.netTotal.toLocaleString()} ج.م
+            </span>
+          </div>
+          <div className="text-[11px] font-black text-[#0A1931]">
+            الأقسام الإدارية: {state.departments.length} • التنبيهات والعقود: {hrAlertsList.length}
+          </div>
+        </div>
 
-          {permissions.canPrint && (
-            <button
-              type="button"
-              onClick={() =>
-                printModuleReportA4({
-                  title: `كشف استحقاقات ومرتبات العاملين — شهر ${activeRun?.monthKey || payrollMonth}`,
-                  subtitle: `${state.policySettings.lawDecisionReference}`,
-                  branchName,
-                  headers: ['الكود', 'اسم الموظف', 'القسم', 'الإجمالي', 'التأمينات', 'الضريبة', 'أقساط السلف', 'الصافي المنصرف'],
-                  rows: (activeRun?.lines || []).map((l) => [
-                    l.employeeCode,
-                    l.employeeName,
-                    l.departmentName,
-                    `${l.grossEarnings.toLocaleString()} ج.م`,
-                    `${l.employeeInsurance.toLocaleString()} ج.م`,
-                    `${l.monthlyIncomeTax.toLocaleString()} ج.م`,
-                    `${l.loanInstallmentDeduction.toLocaleString()} ج.م`,
-                    `${l.netSalary.toLocaleString()} ج.م`,
-                  ]),
-                  summaryItems: [
-                    { label: 'عدد الموظفين', value: String(state.employees.length) },
-                    { label: 'إجمالي الاستحقاقات', value: `${payrollSummary.grossTotal.toLocaleString()} ج.م` },
-                    { label: 'إجمالي التأمين والضريبة', value: `${(payrollSummary.insuranceTotal + payrollSummary.taxTotal).toLocaleString()} ج.م` },
-                    { label: 'صافي المنصرف', value: `${payrollSummary.netTotal.toLocaleString()} ج.م` },
-                  ],
-                  preparedBy: currentUser?.fullName,
-                })
-              }
-              className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/25 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+        {/* Categorized Sub-Navigation Tabs */}
+        <div className="pt-2 border-t border-slate-200 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          {navGroups.map((grp) => (
+            <div
+              key={grp.groupTitle}
+              className="bg-slate-50/90 border border-slate-200 rounded-xl p-2 space-y-1.5"
             >
-              <Printer className="w-4 h-4 text-[#D4AF37]" />
-              <span>طباعة كشف الرواتب A4</span>
-            </button>
-          )}
+              <div className="text-[11px] font-black text-[#0A1931] px-2 py-0.5 rounded-md bg-slate-200/70 inline-block">
+                {grp.groupTitle}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {grp.items.map((item) => {
+                  const isActive = subView === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSubView(item.id)}
+                      data-testid={`hr-nav-${item.id}`}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                        isActive
+                          ? 'bg-[#0A1931] text-white shadow-xs'
+                          : 'bg-white hover:bg-slate-100 text-[#0A1931] border border-slate-300'
+                      }`}
+                    >
+                      {item.icon}
+                      <span>{item.label}</span>
+                      {typeof item.count === 'number' && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                            isActive
+                              ? 'bg-[#D4AF37] text-[#0A1931] font-black'
+                              : 'bg-slate-200 text-[#0A1931] font-bold'
+                          }`}
+                        >
+                          {item.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -1456,29 +1558,6 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
           <span>{feedback.text}</span>
         </div>
       )}
-
-      {/* Nav */}
-      <div className="bg-white rounded-2xl p-2 border border-slate-200 shadow-sm flex flex-wrap gap-1.5">
-        {navItems.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setSubView(tab.id)}
-            data-testid={`hr-nav-${tab.id}`}
-            className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer ${
-              subView === tab.id ? 'bg-[#0A1628] text-[#D4AF37]' : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
-            }`}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-            {typeof tab.badge === 'number' && (
-              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${subView === tab.id ? 'bg-[#D4AF37] text-[#0A1628]' : 'bg-slate-200 text-slate-800'}`}>
-                {tab.badge}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
 
       {subView === 'dashboard' && (
         <div className="space-y-4">

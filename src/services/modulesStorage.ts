@@ -1789,12 +1789,39 @@ export async function saveBranchModulesBundle(
     };
   };
 
+  lastLocalSaveTimeByBranch.set(branchId, Date.now());
   if (inFlightSavePromise) {
     inFlightSavePromise = inFlightSavePromise.then(() => runSave(), () => runSave());
   } else {
     inFlightSavePromise = runSave();
   }
   return inFlightSavePromise;
+}
+
+const lastLocalSaveTimeByBranch = new Map<string, number>();
+const pendingDebouncedBundleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function saveBranchModulesBundleDebounced(
+  branchId: string,
+  bundle: BranchModulesBundle,
+  updatedBy = 'مدير النظام',
+  delayMs = 400
+): void {
+  writeLocalBranchModulesBundle(branchId, {
+    ...bundle,
+    branchId,
+    updatedAt: new Date().toISOString(),
+  });
+  lastLocalSaveTimeByBranch.set(branchId, Date.now());
+  const existingTimer = pendingDebouncedBundleTimers.get(branchId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+  const timer = setTimeout(() => {
+    pendingDebouncedBundleTimers.delete(branchId);
+    void saveBranchModulesBundle(branchId, bundle, updatedBy);
+  }, delayMs);
+  pendingDebouncedBundleTimers.set(branchId, timer);
 }
 
 /**
@@ -1840,6 +1867,10 @@ export function subscribeBranchModulesRealtime(
         filter: `id=eq.${snapshotRowId}`,
       },
       (payload: any) => {
+        const lastSave = lastLocalSaveTimeByBranch.get(branchId) || 0;
+        if (Date.now() - lastSave < 2500) {
+          return;
+        }
         const incoming = payload?.new?.payload as BranchModulesBundle | undefined;
         if (incoming?.ration && incoming?.grainMaintenance && incoming?.hr) {
           writeLocalBranchModulesBundle(branchId, incoming);
@@ -1885,8 +1916,135 @@ export function exportRowsToArabicCsv(
   URL.revokeObjectURL(url);
 }
 
+export const MINISTRY_LOGO_URL = '/assets/aistudio/images_a82c183a.jpeg';
+
+export interface GroupedSubtotalSummary {
+  localUnitColIdx: number;
+  villageColIdx: number;
+  localUnitTotals: Array<{
+    localUnit: string;
+    count: number;
+    columnSums: (number | null)[];
+  }>;
+  villageTotals: Array<{
+    village: string;
+    localUnit: string;
+    count: number;
+    columnSums: (number | null)[];
+  }>;
+  grandTotalRow: (string | number)[];
+}
+
 /**
- * طباعة رسمية A4 بهيدر وتذييل مديرية التموين والتجارة الداخلية بالغربية بدون window.open
+ * حساب صفوف الإجماليات المجمعة حسب الوحدة المحلية وحسب القرية تلقائياً لأي جدول تقارير
+ */
+export function computeReportSubtotalsByLocalUnitAndVillage(
+  headers: string[],
+  rows: (string | number)[][]
+): GroupedSubtotalSummary {
+  const localUnitColIdx = headers.findIndex((h) =>
+    /الوحدة المحلية|وحدة محلية|القطاع|المنطقة/i.test(String(h))
+  );
+  const villageColIdx = headers.findIndex((h) =>
+    /القرية|المدينة|العنوان|الموقع|الحي|المنطقة الفرعية/i.test(String(h))
+  );
+
+  const isCodeOrIdHeader = (h: string) =>
+    /كود|رقم البطاقة|رقم قومي|هاتف|موبايل|تليفون|تاريخ|مسلسل|^م$|ترخيص|سجل تجاري|ضريبي/i.test(h);
+
+  const parseNumericCell = (val: string | number | undefined, colIdx: number): number | null => {
+    if (colIdx === 0 || colIdx === localUnitColIdx || colIdx === villageColIdx) return null;
+    if (isCodeOrIdHeader(String(headers[colIdx] || ''))) return null;
+    if (typeof val === 'number' && Number.isFinite(val)) return val;
+    if (typeof val === 'string') {
+      const cleaned = val.replace(/,/g, '').replace(/[^\d.-]/g, '').trim();
+      if (!cleaned || cleaned.length > 11) return null;
+      const num = Number(cleaned);
+      return Number.isFinite(num) ? num : null;
+    }
+    return null;
+  };
+
+  // Determine which columns have numeric values across rows
+  const numericCols = headers.map((_, colIdx) => {
+    if (colIdx === 0 || colIdx === localUnitColIdx || colIdx === villageColIdx) return false;
+    if (isCodeOrIdHeader(String(headers[colIdx] || ''))) return false;
+    let numericCount = 0;
+    for (const r of rows) {
+      if (parseNumericCell(r[colIdx], colIdx) !== null) numericCount++;
+    }
+    return numericCount > 0 && numericCount >= Math.ceil(rows.length * 0.3);
+  });
+
+  const localUnitMap = new Map<string, { count: number; sums: number[] }>();
+  const villageMap = new Map<string, { localUnit: string; count: number; sums: number[] }>();
+  const grandSums = headers.map(() => 0);
+
+  for (const r of rows) {
+    const lu =
+      localUnitColIdx >= 0
+        ? String(r[localUnitColIdx] ?? '').trim() || 'غير محدد'
+        : 'إجمالي الإدارة';
+    const vil =
+      villageColIdx >= 0
+        ? String(r[villageColIdx] ?? '').trim() || 'غير محدد'
+        : lu;
+
+    if (!localUnitMap.has(lu)) {
+      localUnitMap.set(lu, { count: 0, sums: headers.map(() => 0) });
+    }
+    const luEntry = localUnitMap.get(lu)!;
+    luEntry.count += 1;
+
+    const vilKey = `${lu}__${vil}`;
+    if (!villageMap.has(vilKey)) {
+      villageMap.set(vilKey, { localUnit: lu, count: 0, sums: headers.map(() => 0) });
+    }
+    const vilEntry = villageMap.get(vilKey)!;
+    vilEntry.count += 1;
+
+    headers.forEach((_, colIdx) => {
+      if (!numericCols[colIdx]) return;
+      const n = parseNumericCell(r[colIdx], colIdx);
+      if (n !== null) {
+        luEntry.sums[colIdx] += n;
+        vilEntry.sums[colIdx] += n;
+        grandSums[colIdx] += n;
+      }
+    });
+  }
+
+  const localUnitTotals = Array.from(localUnitMap.entries()).map(([localUnit, data]) => ({
+    localUnit,
+    count: data.count,
+    columnSums: data.sums.map((s, idx) => (numericCols[idx] ? Math.round(s * 100) / 100 : null)),
+  }));
+
+  const villageTotals = Array.from(villageMap.entries()).map(([key, data]) => ({
+    village: key.split('__')[1] || 'غير محدد',
+    localUnit: data.localUnit,
+    count: data.count,
+    columnSums: data.sums.map((s, idx) => (numericCols[idx] ? Math.round(s * 100) / 100 : null)),
+  }));
+
+  const grandTotalRow: (string | number)[] = headers.map((_, idx) => {
+    if (idx === 0) return 'الإجمالي العام';
+    if (idx === 1 && !numericCols[1]) return `${rows.length} سجل`;
+    if (numericCols[idx]) return (Math.round(grandSums[idx] * 100) / 100).toLocaleString('ar-EG');
+    return '—';
+  });
+
+  return {
+    localUnitColIdx,
+    villageColIdx,
+    localUnitTotals,
+    villageTotals,
+    grandTotalRow,
+  };
+}
+
+/**
+ * طباعة رسمية A4 بهيدر وتذييل مديرية التموين والتجارة الداخلية بالغربية وشعار الوزارة المثبت وتجميع الإجماليات حسب الوحدة المحلية والقرية
  */
 export function printModuleReportA4(options: {
   title: string;
@@ -1923,6 +2081,8 @@ export function printModuleReportA4(options: {
     return;
   }
 
+  const grouped = computeReportSubtotalsByLocalUnitAndVillage(options.headers, options.rows);
+
   const summaryHtml = (options.summaryItems || [])
     .map(
       (s) =>
@@ -1947,16 +2107,70 @@ export function printModuleReportA4(options: {
     )
     .join('');
 
+  const localUnitSubtotalsHtml =
+    grouped.localUnitColIdx >= 0 && grouped.localUnitTotals.length > 0
+      ? grouped.localUnitTotals
+          .map((lu) => {
+            const cells = options.headers.map((_, idx) => {
+              if (idx === 0) return `إجمالي الوحدة المحلية: ${lu.localUnit}`;
+              if (idx === grouped.localUnitColIdx) return lu.localUnit;
+              if (idx === 1 && lu.columnSums[1] === null) return `${lu.count} سجل`;
+              if (lu.columnSums[idx] !== null) return lu.columnSums[idx]!.toLocaleString('ar-EG');
+              return '—';
+            });
+            return `<tr style="background:#e0f2fe;color:#0c4a6e;font-weight:800;">${cells
+              .map(
+                (c) =>
+                  `<td style="border:1px solid #7dd3fc;padding:6px 8px;font-size:11px;text-align:center;font-weight:800;font-variant-numeric:tabular-nums;">${esc(
+                    c
+                  )}</td>`
+              )
+              .join('')}</tr>`;
+          })
+          .join('')
+      : '';
+
+  const villageSubtotalsHtml =
+    grouped.villageColIdx >= 0 && grouped.villageTotals.length > 0
+      ? grouped.villageTotals
+          .map((v) => {
+            const cells = options.headers.map((_, idx) => {
+              if (idx === 0) return `إجمالي القرية: ${v.village}`;
+              if (idx === grouped.localUnitColIdx) return v.localUnit;
+              if (idx === grouped.villageColIdx) return v.village;
+              if (idx === 1 && v.columnSums[1] === null) return `${v.count} سجل`;
+              if (v.columnSums[idx] !== null) return v.columnSums[idx]!.toLocaleString('ar-EG');
+              return '—';
+            });
+            return `<tr style="background:#fef3c7;color:#78350f;font-weight:800;">${cells
+              .map(
+                (c) =>
+                  `<td style="border:1px solid #fcd34d;padding:6px 8px;font-size:11px;text-align:center;font-weight:800;font-variant-numeric:tabular-nums;">${esc(
+                    c
+                  )}</td>`
+              )
+              .join('')}</tr>`;
+          })
+          .join('')
+      : '';
+
+  const finalTotalsRow =
+    options.totalsRow && options.totalsRow.length > 0 ? options.totalsRow : grouped.grandTotalRow;
+
   const totalsHtml =
-    options.totalsRow && options.totalsRow.length > 0
-      ? `<tfoot><tr style="background:#0f2342;color:#ffffff;font-weight:900;">${options.totalsRow
-          .map(
-            (c) =>
-              `<td style="border:1px solid #1e3a8a;padding:7px 8px;font-size:11px;text-align:center;font-weight:900;font-variant-numeric:tabular-nums;">${esc(
-                c ?? ''
-              )}</td>`
-          )
-          .join('')}</tr></tfoot>`
+    finalTotalsRow && finalTotalsRow.length > 0
+      ? `<tfoot>
+          ${localUnitSubtotalsHtml}
+          ${villageSubtotalsHtml}
+          <tr style="background:#0f2342;color:#ffffff;font-weight:900;">${finalTotalsRow
+            .map(
+              (c) =>
+                `<td style="border:1px solid #1e3a8a;padding:7px 8px;font-size:11px;text-align:center;font-weight:900;font-variant-numeric:tabular-nums;">${esc(
+                  c ?? ''
+                )}</td>`
+            )
+            .join('')}</tr>
+        </tfoot>`
       : '';
 
   doc.open();
@@ -1968,18 +2182,21 @@ export function printModuleReportA4(options: {
       <title>${esc(options.title)}</title>
       <style>
         @page { size: A4 landscape; margin: 12mm; }
-        body { font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; margin: 0; }
+        body { font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         table { width: 100%; border-collapse: collapse; margin-top: 12px; }
         th { background: #0f2342; color: #ffffff; border: 1px solid #1e3a8a; padding: 7px 8px; font-size: 11px; }
-        tr:nth-child(even) td { background: #f8fafc; }
+        tbody tr:nth-child(even) td { background: #f8fafc; }
       </style>
     </head>
     <body>
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0f2342;padding-bottom:10px;margin-bottom:10px;">
-        <div>
-          <div style="font-size:12px;font-weight:900;">${esc(options.governorateTitle || 'محافظة الغربية')}</div>
-          <div style="font-size:13px;font-weight:900;color:#0f2342;">${esc(options.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية')}</div>
-          <div style="font-size:12px;font-weight:800;color:#0d9488;">${esc(options.branchName)}</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <img src="${MINISTRY_LOGO_URL}" alt="شعار وزارة التموين والتجارة الداخلية" style="width:62px;height:62px;object-fit:contain;border:1px solid #cbd5e1;border-radius:10px;padding:3px;background:#fff;" />
+          <div>
+            <div style="font-size:11px;font-weight:900;color:#475569;">جمهورية مصر العربية — وزارة التموين والتجارة الداخلية</div>
+            <div style="font-size:12px;font-weight:900;">${esc(options.governorateTitle || 'محافظة الغربية')} — ${esc(options.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية')}</div>
+            <div style="font-size:12px;font-weight:800;color:#0d9488;">${esc(options.branchName)}</div>
+          </div>
         </div>
         <div style="text-align:center;">
           <h1 style="margin:0;font-size:16px;font-weight:900;color:#0f2342;">${esc(options.title)}</h1>

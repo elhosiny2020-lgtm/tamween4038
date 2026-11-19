@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Store,
   Plus,
@@ -2025,10 +2026,19 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Merchant Profile Modal (صفحة الملف الشخصي للتاجر) */}
-      {selectedMerchant && (
-        <div className="fixed inset-0 bg-slate-950/65 backdrop-blur-xs z-[70] flex items-center justify-center p-4" data-testid="may26-profile-modal">
-          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border-2 border-[#0A1931] p-6 space-y-5">
+      {/* Merchant Profile Modal (صفحة الملف الشخصي للتاجر — تظهر فوراً أمام المستخدم عبر Portal) */}
+      {selectedMerchant &&
+        createPortal(
+          <div
+            dir="rtl"
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-[9990] flex items-center justify-center p-4"
+            data-testid="may26-profile-modal"
+            onClick={() => setSelectedMerchantId(null)}
+          >
+            <div
+              className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border-2 border-[#0A1931] p-6 space-y-5"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
               <div>
                 <div className="text-xs font-bold text-teal-700">
@@ -2188,16 +2198,23 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Add / Edit Merchant Modal */}
-      {showAddOrEditModal && (
-        <div
-          className="fixed inset-0 bg-slate-950/65 backdrop-blur-xs z-[80] flex items-center justify-center p-4 overflow-y-auto"
-          data-testid="ration-merchant-may2026-modal"
-        >
-          <div className="bg-white rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 my-auto max-h-[92vh] overflow-y-auto">
+      {showAddOrEditModal &&
+        createPortal(
+          <div
+            dir="rtl"
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-[9992] flex items-center justify-center p-4 overflow-y-auto"
+            data-testid="ration-merchant-may2026-modal"
+            onClick={() => setShowAddOrEditModal(false)}
+          >
+            <div
+              className="bg-white rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 my-auto max-h-[92vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div>
                 <h4 className="text-sm font-black text-[#0A1931]">
@@ -2409,7 +2426,8 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {deleteConfirmMerchant && (

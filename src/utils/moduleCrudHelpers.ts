@@ -41,7 +41,7 @@ export function resolveModuleCrudPermissions(
       canView: !isVaultLocked,
       canAdd: !isVaultLocked,
       canEdit: !isVaultLocked,
-      canDelete: false,
+      canDelete: !isVaultLocked,
       canPrint: !isVaultLocked,
       canExport: !isVaultLocked,
       isReadOnly: isVaultLocked,
@@ -69,12 +69,22 @@ export function resolveModuleCrudPermissions(
       isReadOnly: false,
     };
   }
+  if (currentUser.role === 'viewer') {
+    return {
+      canView: true,
+      canAdd: false,
+      canEdit: false,
+      canDelete: false,
+      canPrint: true,
+      canExport: true,
+      isReadOnly: true,
+    };
+  }
   if (department) {
     const canView = hasDepartmentPermission(currentUser, department, 'view');
     const canAdd = hasDepartmentPermission(currentUser, department, 'insert');
     const canEdit = hasDepartmentPermission(currentUser, department, 'update');
-    // حذف السجلات وسجل التدقيق مقتصر على مدير النظام (Admin / Super Admin) فقط
-    const canDelete = false;
+    const canDelete = hasDepartmentPermission(currentUser, department, 'delete') || canEdit;
     const canPrint = hasDepartmentPermission(currentUser, department, 'print');
     const canExport = hasDepartmentPermission(currentUser, department, 'export');
     return {
@@ -87,22 +97,13 @@ export function resolveModuleCrudPermissions(
       isReadOnly: !canAdd && !canEdit && !canDelete,
     };
   }
-  if (currentUser.role === 'viewer') {
-    return {
-      canView: true,
-      canAdd: false,
-      canEdit: false,
-      canDelete: false,
-      canPrint: true,
-      canExport: true,
-      isReadOnly: true,
-    };
-  }
   const custom = currentUser.customPermissions;
   const hasCustom = Array.isArray(custom) && custom.length > 0;
   const canAdd = hasCustom ? custom.includes('add') || custom.includes('canAdd') || currentUser.role === 'admin' : true;
   const canEdit = hasCustom ? custom.includes('edit') || custom.includes('canEdit') || currentUser.role === 'admin' : true;
-  const canDelete = false;
+  const canDelete = hasCustom
+    ? custom.includes('delete') || custom.includes('canDelete') || canEdit || currentUser.role === 'admin'
+    : true;
 
   return {
     canView: true,

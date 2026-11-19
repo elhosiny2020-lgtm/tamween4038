@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus,
   Edit3,
@@ -142,12 +143,13 @@ export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
   extraAction,
   testIdPrefix = 'row',
 }) => {
-  const canDeleteFinal = isSuperAdmin !== undefined ? isSuperAdmin : (permissions?.canDelete ?? false);
-  const canEditFinal = permissions ? permissions.canEdit : true;
+  const isViewerOnly = permissions?.isReadOnly === true && permissions?.canEdit === false && permissions?.canAdd === false;
+  const canEditFinal = Boolean(onEdit) && (!permissions || permissions.canEdit !== false || Boolean(isSuperAdmin));
+  const canDeleteFinal = Boolean(onDelete) && (isSuperAdmin !== undefined ? Boolean(isSuperAdmin || !isViewerOnly) : !isViewerOnly);
 
   return (
     <div
-      className="flex flex-col items-center justify-center gap-0.5"
+      className="flex flex-col items-center justify-center gap-0.5 relative z-10"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="inline-flex items-center justify-center gap-1 flex-nowrap">
@@ -163,9 +165,9 @@ export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
             data-testid={`${testIdPrefix}-view-btn`}
             aria-label={`عرض ملف ${entityLabel}`}
             title={`العين السحرية — عرض بيانات ${entityLabel}`}
-            className="px-2 py-0.5 bg-teal-600 hover:bg-teal-700 text-white border border-teal-500/60 rounded-md text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+            className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 active:scale-95 text-white border border-teal-500/60 rounded-lg text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap shadow-2xs"
           >
-            <Eye className="w-3 h-3 text-white shrink-0" />
+            <Eye className="w-3.5 h-3.5 text-white shrink-0" />
             <span>عرض</span>
           </button>
         )}
@@ -179,9 +181,9 @@ export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
             }}
             aria-label={`طباعة ${entityLabel}`}
             title={`طباعة تقرير ${entityLabel}`}
-            className="px-2 py-0.5 bg-slate-700 hover:bg-slate-800 text-white rounded-md text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+            className="px-2.5 py-1 bg-slate-700 hover:bg-slate-800 active:scale-95 text-white rounded-lg text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap shadow-2xs"
           >
-            <Printer className="w-3 h-3 text-white shrink-0" />
+            <Printer className="w-3.5 h-3.5 text-white shrink-0" />
             <span>طباعة</span>
           </button>
         )}
@@ -196,9 +198,9 @@ export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
             data-testid={`${testIdPrefix}-edit-btn`}
             aria-label={`تعديل ${entityLabel}`}
             title={`تعديل ${entityLabel}`}
-            className="px-2 py-0.5 bg-[#0A1628] hover:bg-[#13294B] text-white border border-[#D4AF37]/60 rounded-md text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+            className="px-2.5 py-1 bg-[#0A1628] hover:bg-[#13294B] active:scale-95 text-white border border-[#D4AF37]/60 rounded-lg text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap shadow-2xs"
           >
-            <Edit3 className="w-3 h-3 text-[#D4AF37] shrink-0" />
+            <Edit3 className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
             <span>تعديل</span>
           </button>
         )}
@@ -213,9 +215,9 @@ export const ModuleRowActions: React.FC<ModuleRowActionsProps> = ({
             data-testid={`${testIdPrefix}-delete-btn`}
             aria-label={`حذف ${entityLabel}`}
             title={`حذف ${entityLabel}`}
-            className="px-2 py-0.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-md text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+            className="px-2.5 py-1 bg-white hover:bg-rose-50 active:scale-95 text-rose-700 border border-rose-300 rounded-lg text-[11px] font-black inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap shadow-2xs"
           >
-            <Trash2 className="w-3 h-3 text-rose-600 shrink-0" />
+            <Trash2 className="w-3.5 h-3.5 text-rose-600 shrink-0" />
             <span>حذف</span>
           </button>
         )}
@@ -248,6 +250,52 @@ interface ModuleFormModalProps {
   onFieldChange?: (key: string, value: any, currentValues: Record<string, any>) => Record<string, any> | void;
 }
 
+function computeFormRecordSignature(
+  mode: 'add' | 'edit',
+  title: string,
+  initialValues: Record<string, any> | null | undefined
+): string {
+  if (!initialValues || typeof initialValues !== 'object') {
+    return `${mode}:${title}:empty`;
+  }
+  const explicitKey =
+    initialValues.id ??
+    initialValues.establishmentCode ??
+    initialValues.code ??
+    initialValues.employeeCode ??
+    initialValues.merchantCode ??
+    initialValues.traderCode ??
+    initialValues.stationCode ??
+    initialValues.depotCode ??
+    initialValues.distributorCode ??
+    initialValues.shunaCode ??
+    initialValues.millCode ??
+    initialValues.siloCode ??
+    initialValues.refrigeratorCode ??
+    initialValues.quotaCode ??
+    initialValues.cardNumber ??
+    initialValues.requestNumber ??
+    initialValues.operationNumber ??
+    initialValues.documentNumber ??
+    initialValues.reportNumber ??
+    initialValues.ticketNumber ??
+    initialValues.licenseNumber ??
+    initialValues.reconciliationNumber ??
+    initialValues.issueOrderNumber ??
+    initialValues.receiptOrderNumber ??
+    initialValues.movementCode ??
+    initialValues.partCode ??
+    initialValues.assetCode ??
+    initialValues.orderNumber ??
+    '';
+
+  try {
+    return `${mode}:${title}:${String(explicitKey)}:${JSON.stringify(initialValues)}`;
+  } catch {
+    return `${mode}:${title}:${String(explicitKey)}`;
+  }
+}
+
 export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
   isOpen,
   mode,
@@ -259,29 +307,34 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
   onSubmit,
   onFieldChange,
 }) => {
-  const [values, setValues] = useState<Record<string, any>>(initialValues);
+  const [values, setValues] = useState<Record<string, any>>(() => ({ ...(initialValues || {}) }));
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const prevOpenRef = useRef<boolean>(false);
   const prevSigRef = useRef<string>('');
 
   useEffect(() => {
-    const sig = `${mode}:${title}:${String(
-      initialValues?.id ||
-        initialValues?.establishmentCode ||
-        initialValues?.code ||
-        initialValues?.employeeCode ||
-        initialValues?.merchantCode ||
-        ''
-    )}`;
+    const sig = computeFormRecordSignature(mode, title, initialValues);
     if (isOpen && (!prevOpenRef.current || prevSigRef.current !== sig)) {
-      setValues({ ...initialValues });
+      setValues({ ...(initialValues || {}) });
       setErrorMsg(null);
       setIsSubmitting(false);
     }
     prevOpenRef.current = isOpen;
     prevSigRef.current = sig;
   }, [isOpen, mode, title, initialValues]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   const updateFieldValue = (key: string, nextVal: any) => {
     setValues((prev) => {
@@ -333,16 +386,22 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
     }
   };
 
-  return (
+  const modalNode = (
     <div
-      className="fixed inset-0 z-[80] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-[9990] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
       dir="rtl"
       role="dialog"
       aria-modal="true"
       aria-label={title}
       data-testid="module-crud-form-modal"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="bg-white rounded-2xl border-2 border-[#0A1628] shadow-2xl w-full max-w-2xl overflow-hidden my-auto">
+      <div
+        className="bg-white rounded-2xl border-2 border-[#0A1628] shadow-2xl w-full max-w-2xl overflow-hidden my-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0A1628] text-white px-5 py-4 flex items-center justify-between border-b border-[#D4AF37]/40">
           <div className="flex items-center gap-2.5">
@@ -494,6 +553,8 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };
 
 export interface ModuleDeleteConfirmModalProps {
@@ -522,25 +583,49 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
   onConfirm,
 }) => {
   const [isDeleting, setIsDeleting] = useState(false);
-  const canDeleteAllowed = isSuperAdmin !== undefined ? isSuperAdmin : canDelete;
+  // Allow deletion unless explicitly blocked by a relational integrity blockReason or canDelete=false
+  const hasRelationalBlock = canDelete === false && Boolean(blockReason);
+  const canDeleteAllowed = hasRelationalBlock
+    ? false
+    : isSuperAdmin !== undefined
+    ? Boolean(isSuperAdmin || canDelete)
+    : Boolean(canDelete);
   const handleConfirm = onConfirmDelete || onConfirm || (() => {});
 
   useEffect(() => {
     if (isOpen) setIsDeleting(false);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
-  return (
+  const modalNode = (
     <div
-      className="fixed inset-0 z-[90] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9995] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
       dir="rtl"
       role="dialog"
       aria-modal="true"
       aria-label={`تأكيد حذف ${entityTitle}`}
       data-testid="module-delete-confirm-modal"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="bg-white rounded-2xl border-2 border-[#0A1628] shadow-2xl w-full max-w-md overflow-hidden">
+      <div
+        className="bg-white rounded-2xl border-2 border-[#0A1628] shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="bg-[#0A1628] text-white px-5 py-3.5 flex items-center justify-between border-b border-rose-500/40">
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-rose-600 text-white">
@@ -567,7 +652,10 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
             <div className="font-black text-[#0A1628] mb-1">بيانات السجل المراد حذفه:</div>
             {recordSummary.map((item, idx) => (
-              <div key={idx} className="flex items-center justify-between gap-2 border-b border-slate-200/70 pb-1 last:border-0 last:pb-0">
+              <div
+                key={`${item.label}-${idx}`}
+                className="flex items-center justify-between gap-2 border-b border-slate-200/70 pb-1 last:border-0 last:pb-0"
+              >
                 <span className="text-slate-500 font-bold">{item.label}:</span>
                 <span className="font-black text-slate-900 font-mono">{String(item.value)}</span>
               </div>
@@ -580,7 +668,7 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
               data-testid="module-delete-blocked-reason"
             >
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <span>{blockReason || 'الحذف مقتصر على المشرف العام (Super Admin) فقط.'}</span>
+              <span>{blockReason || 'لا يمكن حذف هذا السجل لوجود حركات مرتبطة به.'}</span>
             </div>
           ) : (
             <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl font-bold">
@@ -601,11 +689,16 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
                 type="button"
                 disabled={isDeleting}
                 data-testid="module-confirm-delete-btn"
-                onClick={() => {
+                onClick={async () => {
                   if (isDeleting) return;
                   setIsDeleting(true);
-                  handleConfirm();
-                  onClose();
+                  try {
+                    await Promise.resolve(handleConfirm());
+                    onClose();
+                  } catch (err) {
+                    console.error('Delete action error:', err);
+                    setIsDeleting(false);
+                  }
                 }}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl font-black inline-flex items-center gap-1.5 cursor-pointer shadow-sm"
               >
@@ -618,6 +711,8 @@ export const ModuleDeleteConfirmModal: React.FC<ModuleDeleteConfirmModalProps> =
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };
 
 /* ============================================================================
@@ -676,6 +771,18 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
 }) => {
   const profilePrintRef = useRef<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   const normalizedSections: RecordProfileSection[] = useMemo(() => {
     if (sections && sections.length > 0) return sections;
     if (fields && fields.length > 0) {
@@ -706,16 +813,22 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
     }
   };
 
-  return (
+  const modalNode = (
     <div
-      className="fixed inset-0 z-[70] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-[9985] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
       dir="rtl"
       role="dialog"
       aria-modal="true"
       aria-label={`بطاقة عرض ${title}`}
       data-testid="module-magic-eye-modal"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="bg-white rounded-2xl border-2 border-[#0A1628] shadow-2xl w-full max-w-3xl overflow-hidden my-auto">
+      <div
+        className="bg-white rounded-2xl border-2 border-[#0A1628] shadow-2xl w-full max-w-3xl overflow-hidden my-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0D9488] text-white px-5 py-3.5 flex items-center justify-between gap-2 border-b border-[#D4AF37]/40">
           <div className="flex items-center gap-3 min-w-0">
             <div className="p-2 rounded-xl bg-teal-400/20 border border-teal-300/40 text-teal-200 shrink-0">
@@ -734,12 +847,15 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            {onEdit && canEdit && (
+            {onEdit && canEdit !== false && (
               <button
                 type="button"
                 onClick={() => {
+                  const triggerEdit = onEdit;
                   onClose();
-                  onEdit();
+                  setTimeout(() => {
+                    triggerEdit();
+                  }, 0);
                 }}
                 data-testid="magic-eye-switch-edit-btn"
                 className="px-3 py-1.5 rounded-xl bg-[#D4AF37] hover:bg-amber-400 text-[#0A1628] text-xs font-black inline-flex items-center gap-1 cursor-pointer no-print shadow-xs"
@@ -771,10 +887,26 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
         </div>
 
         <div ref={profilePrintRef} className="p-5 space-y-4 max-h-[76vh] overflow-y-auto bg-slate-50/70">
-          <div className="hidden print:block border-b-2 border-[#0A1628] pb-2 mb-3 text-right">
-            <div className="text-xs font-bold text-slate-600">{printTitle || 'مديرية التموين والتجارة الداخلية بالغربية'}</div>
-            <div className="text-base font-black text-[#0A1628]">{title}</div>
-            {preparedBy && <div className="text-[11px] font-bold text-slate-500">أعده: {preparedBy}</div>}
+          <div className="hidden print:block border-b-2 border-[#0A1628] pb-3 mb-3 text-right">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <img
+                  src="/assets/aistudio/images_a82c183a.jpeg"
+                  alt="شعار وزارة التموين والتجارة الداخلية"
+                  className="w-14 h-14 object-contain rounded-lg border border-slate-300 p-1 bg-white"
+                />
+                <div>
+                  <div className="text-xs font-black text-[#0A1628]">
+                    وزارة التموين والتجارة الداخلية — محافظة الغربية
+                  </div>
+                  <div className="text-xs font-bold text-slate-600">
+                    {printTitle || 'مديرية التموين والتجارة الداخلية بالغربية — إدارة تموين مركز المحلة الكبرى'}
+                  </div>
+                  <div className="text-base font-black text-[#0A1628]">{title}</div>
+                </div>
+              </div>
+              {preparedBy && <div className="text-[11px] font-bold text-slate-500">أعده: {preparedBy}</div>}
+            </div>
           </div>
 
           <div className="px-3 py-2 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 text-xs font-bold flex flex-wrap items-center justify-between gap-2 no-print">
@@ -788,7 +920,7 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
           </div>
 
           {normalizedSections.map((sec, idx) => (
-            <div key={idx} className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+            <div key={`${sec.title}-${idx}`} className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
               <div className="bg-slate-100 px-4 py-2 border-b border-slate-200 text-xs font-black text-[#0A1628]">
                 {sec.title}
               </div>
@@ -804,7 +936,7 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
                       : String(fld.value);
                   return (
                     <div
-                      key={fIdx}
+                      key={`${fld.label}-${fIdx}`}
                       className={`p-2.5 rounded-lg border ${
                         fld.highlight ? 'bg-amber-50 border-amber-300' : 'bg-slate-50/80 border-slate-200/80'
                       }`}
@@ -827,12 +959,15 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
 
         <div className="px-5 py-3 bg-white border-t border-slate-200 flex items-center justify-between gap-2 no-print">
           <div>
-            {onEdit && canEdit && (
+            {onEdit && canEdit !== false && (
               <button
                 type="button"
                 onClick={() => {
+                  const triggerEdit = onEdit;
                   onClose();
-                  onEdit();
+                  setTimeout(() => {
+                    triggerEdit();
+                  }, 0);
                 }}
                 className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black inline-flex items-center gap-1.5 cursor-pointer"
               >
@@ -852,6 +987,8 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };
 
 /* ============================================================================

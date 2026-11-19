@@ -9,6 +9,7 @@ import {
   normalizeArabicText,
 } from '../utils/auditHelper';
 import { exportElementToPdf, printHtmlElementA4 } from '../utils/pdfHelper';
+import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
 import {
   canUserPrintDepartment,
   canUserExportDepartment,
@@ -1662,13 +1663,11 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
           {/* 4.1 Official Report Header (رأس التقرير الموحد) */}
           <div className="border-b-2 border-[#0F2342] pb-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3.5">
-              {systemConfig.logoBase64 && (
-                <img
-                  src={systemConfig.logoBase64}
-                  alt="شعار المديرية"
-                  className="w-14 h-14 object-contain rounded-lg border border-slate-200 p-1 bg-white"
-                />
-              )}
+              <img
+                src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
+                alt="شعار وزارة التموين والتجارة الداخلية"
+                className="w-16 h-16 object-contain rounded-xl border border-slate-300 p-1 bg-white shadow-xs shrink-0"
+              />
               <div>
                 <p className="text-xs font-extrabold text-slate-700">
                   {systemConfig.governorateTitle || 'محافظة الغربية'} · {systemConfig.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'}
@@ -1829,28 +1828,146 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                   ))
                 )}
               </tbody>
-              {filteredBakeries.length > 0 && (
-                <tfoot>
-                  <tr className="bg-[#0F2342] text-amber-300 font-black border-t-2 border-amber-500 total-summary-row">
-                    {activeColumnsMeta.map((col, idx) => (
-                      <td
-                        key={col.key}
-                        dir={col.key === 'avgDiff' ? 'ltr' : undefined}
-                        className={`py-2.5 px-2 border border-[#1E3A8A] font-black ${
-                          col.align === 'right' ? 'text-right' : 'text-center'
-                        } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
+              {filteredBakeries.length > 0 && (() => {
+                const byLocalUnit = new Map<string, Bakery[]>();
+                const byVillage = new Map<string, { localUnit: string; list: Bakery[] }>();
+                filteredBakeries.forEach((b) => {
+                  const lu = (b.localUnit || 'مركز المحلة الكبرى').trim();
+                  const vil = (b.village || 'غير محدد').trim();
+                  const luList = byLocalUnit.get(lu) || [];
+                  luList.push(b);
+                  byLocalUnit.set(lu, luList);
+
+                  const vilKey = `${lu}__${vil}`;
+                  const vilEntry = byVillage.get(vilKey) || { localUnit: lu, list: [] };
+                  vilEntry.list.push(b);
+                  byVillage.set(vilKey, vilEntry);
+                });
+
+                const renderGroupMetricCell = (colKey: string, idx: number, groupList: Bakery[], labelText: string, luName: string, vilName?: string) => {
+                  if (idx === 0) return labelText;
+                  switch (colKey) {
+                    case 'bakeryOwnerName':
+                      return `${labelText} (${groupList.length} مخبز)`;
+                    case 'localUnit':
+                      return luName;
+                    case 'village':
+                      return vilName || `${groupList.length} مخبز`;
+                    case 'insuranceValue':
+                      return safeFormatNum(groupList.reduce((s, x) => s + (Number(x.insuranceValue) || 0), 0));
+                    case 'insuranceQuota': {
+                      const v = groupList.reduce((s, x) => s + (Number(x.insuranceQuota) || 0), 0);
+                      return safeFormatNum(v, v % 1 !== 0 ? 2 : 0);
+                    }
+                    case 'actualQuota': {
+                      const v = groupList.reduce((s, x) => s + (Number(x.actualQuota) || 0), 0);
+                      return safeFormatNum(v, v % 1 !== 0 ? 2 : 0);
+                    }
+                    case 'quotaDiff': {
+                      const v = groupList.reduce(
+                        (s, x) => s + ((Number(x.actualQuota) || 0) - (Number(x.insuranceQuota) || 0)),
+                        0
+                      );
+                      return (v > 0 ? '+' : '') + safeFormatNum(v, v % 1 !== 0 ? 2 : 0);
+                    }
+                    case 'loavesCount':
+                    case 'totalLoaves':
+                      return safeFormatNum(
+                        groupList.reduce(
+                          (s, x) => s + (Number(x.actualQuota) || 0) * extractBreadLoafMultiplier(x.breadType),
+                          0
+                        )
+                      );
+                    case 'beneficiaries2023':
+                      return safeFormatNum(groupList.reduce((s, x) => s + (Number(x.beneficiaries2023) || 0), 0));
+                    case 'beneficiaries2024':
+                      return safeFormatNum(groupList.reduce((s, x) => s + (Number(x.beneficiaries2024) || 0), 0));
+                    case 'beneficiaries2025':
+                      return safeFormatNum(groupList.reduce((s, x) => s + (Number(x.beneficiaries2025) || 0), 0));
+                    case 'remainingDebt':
+                      return safeFormatNum(groupList.reduce((s, x) => s + (bakeryDebtMap[x.id] || 0), 0));
+                    default:
+                      return '—';
+                  }
+                };
+
+                return (
+                  <tfoot>
+                    {Array.from(byLocalUnit.entries()).map(([luName, luBakeries]) => (
+                      <tr
+                        key={`lu-sub-${luName}`}
+                        className="bg-sky-100/95 text-sky-950 font-black border-t-2 border-sky-300"
                       >
-                        {renderFooterCell(col.key, idx)}
-                      </td>
+                        {activeColumnsMeta.map((col, idx) => (
+                          <td
+                            key={col.key}
+                            className={`py-2 px-2 border border-sky-300 font-black ${
+                              col.align === 'right' ? 'text-right' : 'text-center'
+                            } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
+                          >
+                            {renderGroupMetricCell(col.key, idx, luBakeries, `إجمالي الوحدة المحلية: ${luName}`, luName)}
+                          </td>
+                        ))}
+                        {onSelectBakeryDetails && (
+                          <td className="py-2 px-2 border border-sky-300 text-center font-mono text-[10px] no-print">
+                            {luBakeries.length} مخبز
+                          </td>
+                        )}
+                      </tr>
                     ))}
-                    {onSelectBakeryDetails && (
-                      <td className="py-2.5 px-2 border border-[#1E3A8A] text-center font-mono text-[10px] text-amber-200 no-print">
-                        100% مكتمل
-                      </td>
-                    )}
-                  </tr>
-                </tfoot>
-              )}
+                    {Array.from(byVillage.entries()).map(([vilKey, vilData]) => {
+                      const vilName = vilKey.split('__')[1] || 'غير محدد';
+                      return (
+                        <tr
+                          key={`vil-sub-${vilKey}`}
+                          className="bg-amber-50/95 text-amber-950 font-extrabold border-t border-amber-300"
+                        >
+                          {activeColumnsMeta.map((col, idx) => (
+                            <td
+                              key={col.key}
+                              className={`py-1.5 px-2 border border-amber-200 font-extrabold ${
+                                col.align === 'right' ? 'text-right' : 'text-center'
+                              } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
+                            >
+                              {renderGroupMetricCell(
+                                col.key,
+                                idx,
+                                vilData.list,
+                                `إجمالي القرية: ${vilName}`,
+                                vilData.localUnit,
+                                vilName
+                              )}
+                            </td>
+                          ))}
+                          {onSelectBakeryDetails && (
+                            <td className="py-1.5 px-2 border border-amber-200 text-center font-mono text-[10px] no-print">
+                              {vilData.list.length} مخبز
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                    <tr className="bg-[#0F2342] text-amber-300 font-black border-t-2 border-amber-500 total-summary-row">
+                      {activeColumnsMeta.map((col, idx) => (
+                        <td
+                          key={col.key}
+                          dir={col.key === 'avgDiff' ? 'ltr' : undefined}
+                          className={`py-2.5 px-2 border border-[#1E3A8A] font-black ${
+                            col.align === 'right' ? 'text-right' : 'text-center'
+                          } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
+                        >
+                          {renderFooterCell(col.key, idx)}
+                        </td>
+                      ))}
+                      {onSelectBakeryDetails && (
+                        <td className="py-2.5 px-2 border border-[#1E3A8A] text-center font-mono text-[10px] text-amber-200 no-print">
+                          100% مكتمل
+                        </td>
+                      )}
+                    </tr>
+                  </tfoot>
+                );
+              })()}
             </table>
           </div>
 

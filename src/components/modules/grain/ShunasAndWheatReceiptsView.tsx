@@ -2994,8 +2994,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
           isOpen={deleteModal.isOpen}
           entityTitle={deleteModal.entityTitle}
           recordSummary={deleteModal.recordSummary}
-          canDelete={effectivePermissions.canDelete}
-          blockReason={effectivePermissions.canDelete ? undefined : 'الحذف مقتصر على المشرف العام (Super Admin) فقط.'}
+          canDelete={effectivePermissions.canDelete !== false}
           onClose={() => setDeleteModal(null)}
           onConfirmDelete={handleConfirmDelete}
         />

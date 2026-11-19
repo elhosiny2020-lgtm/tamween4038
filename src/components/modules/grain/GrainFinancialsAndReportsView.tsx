@@ -18,7 +18,12 @@ import {
   computeRefrigeratorAssetValuation,
   computeShunaBookBalanceAndValuation,
 } from '../../../utils/grainMaintenanceMath';
-import { exportRowsToArabicCsv, printModuleReportA4 } from '../../../services/modulesStorage';
+import {
+  exportRowsToArabicCsv,
+  printModuleReportA4,
+  MINISTRY_LOGO_URL,
+  computeReportSubtotalsByLocalUnitAndVillage,
+} from '../../../services/modulesStorage';
 import {
   ModuleRowActions,
   ModuleRecordProfileModal,
@@ -838,11 +843,36 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
             </div>
           </div>
 
-          {/* معاينة جدول التقرير */}
+          {/* معاينة جدول التقرير بشعار الوزارة المثبت وتجميع الوحدة المحلية والقرية */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 bg-slate-50">
-              <h4 className="text-sm font-black text-slate-900">{currentReportData.title}</h4>
-              <p className="text-xs font-bold text-slate-500">{currentReportData.subtitle}</p>
+            <div className="p-4 border-b-2 border-[#0A1931] bg-slate-50 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <img
+                  src={MINISTRY_LOGO_URL}
+                  alt="شعار وزارة التموين والتجارة الداخلية"
+                  className="w-16 h-16 object-contain rounded-xl border border-slate-300 bg-white p-1 shadow-xs shrink-0"
+                />
+                <div>
+                  <div className="text-[11px] font-black text-slate-600">
+                    جمهورية مصر العربية — وزارة التموين والتجارة الداخلية
+                  </div>
+                  <div className="text-xs font-black text-[#0A1931]">
+                    محافظة الغربية — مديرية التموين والتجارة الداخلية بالغربية
+                  </div>
+                  <div className="text-xs font-black text-teal-700">
+                    {branchName} • قسم صيانة الحبوب والمطاحن والشون
+                  </div>
+                </div>
+              </div>
+              <div className="text-center">
+                <h4 className="text-sm sm:text-base font-black text-[#0A1931]">{currentReportData.title}</h4>
+                <p className="text-xs font-bold text-slate-600 mt-0.5">{currentReportData.subtitle}</p>
+              </div>
+              <div className="text-left text-[11px] font-bold text-slate-700 space-y-0.5">
+                <div>تاريخ التقرير: {new Date().toLocaleDateString('ar-EG')}</div>
+                <div>إجمالي السجلات: {visibleRows.length} سجل</div>
+                <div>إعداد: {currentUserFullName}</div>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-right compact-erp-table">
@@ -865,17 +895,56 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
                       ))}
                     </tr>
                   ))}
-                  {visibleHeaders.length > 0 && (
-                    <VillageGrandTotalRow
-                      totalCount={visibleRows.length}
-                      labelColSpan={Math.max(1, visibleHeaders.length - 1)}
-                      title="إجمالي السجلات المعروضة في التقرير TOTAL"
-                      metricCells={[
-                        { content: `${visibleRows.length} سجل`, mono: true },
-                      ]}
-                    />
-                  )}
                 </tbody>
+                {visibleHeaders.length > 0 && visibleRows.length > 0 && (() => {
+                  const grouped = computeReportSubtotalsByLocalUnitAndVillage(visibleHeaders, visibleRows);
+                  return (
+                    <tfoot className="font-black text-xs">
+                      {grouped.localUnitColIdx >= 0 &&
+                        grouped.localUnitTotals.map((lu) => (
+                          <tr key={`lu-${lu.localUnit}`} className="bg-sky-100/90 text-sky-950 border-t-2 border-sky-300">
+                            {visibleHeaders.map((_, idx) => {
+                              let val: string | number = '—';
+                              if (idx === 0) val = `إجمالي الوحدة المحلية: ${lu.localUnit}`;
+                              else if (idx === grouped.localUnitColIdx) val = lu.localUnit;
+                              else if (idx === 1 && lu.columnSums[1] === null) val = `${lu.count} سجل`;
+                              else if (lu.columnSums[idx] !== null) val = lu.columnSums[idx]!.toLocaleString('ar-EG');
+                              return (
+                                <td key={idx} className="p-2.5 border border-sky-200 text-center">
+                                  {val}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      {grouped.villageColIdx >= 0 &&
+                        grouped.villageTotals.map((v) => (
+                          <tr key={`vil-${v.localUnit}-${v.village}`} className="bg-amber-50/90 text-amber-950 border-t border-amber-300">
+                            {visibleHeaders.map((_, idx) => {
+                              let val: string | number = '—';
+                              if (idx === 0) val = `إجمالي القرية: ${v.village}`;
+                              else if (idx === grouped.localUnitColIdx) val = v.localUnit;
+                              else if (idx === grouped.villageColIdx) val = v.village;
+                              else if (idx === 1 && v.columnSums[1] === null) val = `${v.count} سجل`;
+                              else if (v.columnSums[idx] !== null) val = v.columnSums[idx]!.toLocaleString('ar-EG');
+                              return (
+                                <td key={idx} className="p-2.5 border border-amber-200 text-center">
+                                  {val}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      <tr className="bg-[#0A1931] text-white border-t-2 border-[#D4AF37]">
+                        {grouped.grandTotalRow.map((cell, idx) => (
+                          <td key={idx} className="p-2.5 border border-slate-700 text-center">
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
               </table>
             </div>
           </div>

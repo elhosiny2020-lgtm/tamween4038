@@ -85,6 +85,10 @@ import {
   type TableColumnOption,
 } from '../../utils/tableSmartHelpers';
 import { exportElementToPdf, printHtmlElementA4 } from '../../utils/pdfHelper';
+import {
+  MINISTRY_LOGO_URL,
+  computeReportSubtotalsByLocalUnitAndVillage,
+} from '../../services/modulesStorage';
 import { createInitialInternalTradeState } from '../../data/internalTradeInitialData';
 import { resolveModuleCrudPermissions } from '../../utils/moduleCrudHelpers';
 import { isSuperAdmin } from '../../utils/departmentRbac';
@@ -1121,7 +1125,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
     const escUserName = escapeHtmlText(currentUser?.fullName || 'مسؤول الرقابة التموينية');
     const safeTableHtml = DOMPurify.sanitize(String(tableHtml || ''), {
       USE_PROFILES: { html: true },
-      ADD_ATTR: ['dir', 'colspan', 'rowspan', 'style', 'class'],
+      ADD_ATTR: ['dir', 'colspan', 'rowspan', 'style', 'class', 'src', 'alt', 'width', 'height'],
     });
     const htmlDoc = `<!DOCTYPE html>
       <html lang="ar" dir="rtl">
@@ -1129,14 +1133,15 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
         <meta charset="UTF-8" />
         <title>${escTitle}</title>
         <style>
-          body { font-family: 'Cairo', 'Tajawal', sans-serif; margin: 14px; color: #0A1931; direction: rtl; background: #fff; }
+          body { font-family: 'Cairo', 'Tajawal', sans-serif; margin: 14px; color: #0A1931; direction: rtl; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px double #0A1931; padding-bottom: 10px; margin-bottom: 14px; }
+          .header-right { display: flex; align-items: center; gap: 12px; }
           .header-right h2, .header-right h3, .header-right p { margin: 2px 0; }
           .report-title { text-align: center; background: #F8FAFC; border: 2px solid #0A1931; padding: 8px; border-radius: 8px; margin-bottom: 12px; }
-          table { width: 100%; border-collapse: collapse; font-size: 11px; }
+          table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 10px; }
           th, td { border: 1px solid #0A1931; padding: 5px 7px; text-align: right; }
           th { background: #0A1931; color: #FFFFFF; font-weight: bold; }
-          tr:nth-child(even) { background: #F8FAFC; }
+          tbody tr:nth-child(even) { background: #F8FAFC; }
           .signatures { display: flex; justify-content: space-between; margin-top: 28px; font-weight: bold; font-size: 12px; }
           @media print { @page { size: A4 ${orientation}; margin: 10mm; } }
         </style>
@@ -1144,8 +1149,12 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
       <body>
         <div class="header">
           <div class="header-right">
-            <h3>محافظة الغربية — مديرية التموين والتجارة الداخلية</h3>
-            <h2>${escBranchName} — المركز الرقابي الموحد (التجارة الداخلية)</h2>
+            <img src="${MINISTRY_LOGO_URL}" alt="شعار وزارة التموين والتجارة الداخلية" style="width:62px;height:62px;object-fit:contain;border:1px solid #cbd5e1;border-radius:10px;padding:3px;background:#fff;" />
+            <div>
+              <p style="font-size:11px;font-weight:900;color:#475569;">جمهورية مصر العربية — وزارة التموين والتجارة الداخلية</p>
+              <h3>محافظة الغربية — مديرية التموين والتجارة الداخلية بالغربية</h3>
+              <h2>${escBranchName} — المركز الرقابي الموحد (التجارة الداخلية)</h2>
+            </div>
           </div>
           <div class="header-left">
             <p><strong>تاريخ التقرير:</strong> ${escapeHtmlText(new Date().toLocaleDateString('ar-EG'))}</p>
@@ -6435,12 +6444,26 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
               id="internal-trade-printable-area"
               className="border-2 border-[#0A1931] rounded-2xl p-5 bg-white space-y-4 overflow-x-auto"
             >
-              <div className="flex flex-wrap items-center justify-between border-b-2 border-[#0A1931] pb-3 gap-2">
-                <div>
-                  <div className="text-xs font-black text-slate-600">محافظة الغربية — مديرية التموين والتجارة الداخلية</div>
-                  <div className="text-base font-black text-[#0A1931]">{branchName} — {activeRepMeta.label}</div>
+              <div className="flex flex-wrap items-center justify-between border-b-2 border-[#0A1931] pb-3 gap-3">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={MINISTRY_LOGO_URL}
+                    alt="شعار وزارة التموين والتجارة الداخلية"
+                    className="w-16 h-16 object-contain rounded-xl border border-slate-300 bg-white p-1 shadow-xs shrink-0"
+                  />
+                  <div>
+                    <div className="text-[11px] font-black text-slate-600">
+                      جمهورية مصر العربية — وزارة التموين والتجارة الداخلية
+                    </div>
+                    <div className="text-xs font-black text-slate-700">
+                      محافظة الغربية — مديرية التموين والتجارة الداخلية بالغربية
+                    </div>
+                    <div className="text-base font-black text-[#0A1931]">
+                      {branchName} — {activeRepMeta.label}
+                    </div>
+                  </div>
                 </div>
-                <div className="text-left text-xs font-bold">
+                <div className="text-left text-xs font-bold space-y-0.5">
                   <div>تاريخ الإصدار: {new Date().toLocaleDateString('ar-EG')}</div>
                   <div>المعد: {currentUser?.fullName || 'مسؤول الرقابة التموينية'}</div>
                 </div>
@@ -6987,6 +7010,89 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   </tbody>
                 </table>
               )}
+
+              {/* جدول تجميع صفوف الإجماليات حسب الوحدة المحلية وحسب القرية */}
+              {(() => {
+                const ds = buildSelectedCsvDataset();
+                const villageToUnit = new Map<string, string>();
+                villages.forEach((v) => villageToUnit.set(v.village, v.localUnits?.[0] || 'مركز المحلة الكبرى'));
+                const hasLuCol = ds.headers.some((h) => /الوحدة المحلية|وحدة محلية/i.test(String(h)));
+                const vilIdx = ds.headers.findIndex((h) => /القرية|نطاق القرية/i.test(String(h)));
+                const enrichedHeaders =
+                  !hasLuCol && vilIdx >= 0 ? [...ds.headers, 'الوحدة المحلية'] : ds.headers;
+                const enrichedRows =
+                  !hasLuCol && vilIdx >= 0
+                    ? ds.rows.map((r) => [
+                        ...r,
+                        villageToUnit.get(String(r[vilIdx] ?? '').trim()) || 'مركز المحلة الكبرى',
+                      ])
+                    : ds.rows;
+                const grouped = computeReportSubtotalsByLocalUnitAndVillage(enrichedHeaders, enrichedRows);
+                if (enrichedRows.length === 0) return null;
+                return (
+                  <div className="pt-3 border-t-2 border-slate-200 space-y-2">
+                    <div className="text-xs font-black text-[#0A1931]">
+                      بيان تجميع الإجماليات حسب الوحدة المحلية وحسب القرية ({activeRepMeta.label})
+                    </div>
+                    <table className="compact-erp-table w-full text-right text-xs">
+                      <thead>
+                        <tr>
+                          {enrichedHeaders.map((h, i) => (
+                            <th key={i}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tfoot className="font-black">
+                        {grouped.localUnitColIdx >= 0 &&
+                          grouped.localUnitTotals.map((lu) => (
+                            <tr key={`it-lu-${lu.localUnit}`} className="bg-sky-100/90 text-sky-950">
+                              {enrichedHeaders.map((_, idx) => {
+                                let val: string | number = '—';
+                                if (idx === 0) val = `إجمالي الوحدة المحلية: ${lu.localUnit}`;
+                                else if (idx === grouped.localUnitColIdx) val = lu.localUnit;
+                                else if (idx === 1 && lu.columnSums[1] === null) val = `${lu.count} سجل`;
+                                else if (lu.columnSums[idx] !== null) val = lu.columnSums[idx]!.toLocaleString('ar-EG');
+                                return (
+                                  <td key={idx} className="py-1.5 px-2 border border-sky-200 text-center">
+                                    {val}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        {grouped.villageColIdx >= 0 &&
+                          grouped.villageTotals.map((v) => (
+                            <tr key={`it-vil-${v.localUnit}-${v.village}`} className="bg-amber-50/90 text-amber-950">
+                              {enrichedHeaders.map((_, idx) => {
+                                let val: string | number = '—';
+                                if (idx === 0) val = `إجمالي القرية: ${v.village}`;
+                                else if (idx === grouped.localUnitColIdx) val = v.localUnit;
+                                else if (idx === grouped.villageColIdx) val = v.village;
+                                else if (idx === 1 && v.columnSums[1] === null) val = `${v.count} سجل`;
+                                else if (luOrVal(v.columnSums[idx])) val = v.columnSums[idx]!.toLocaleString('ar-EG');
+                                return (
+                                  <td key={idx} className="py-1.5 px-2 border border-amber-200 text-center">
+                                    {val}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        <tr className="bg-[#0A1931] text-white">
+                          {grouped.grandTotalRow.map((cell, idx) => (
+                            <td key={idx} className="py-2 px-2 border border-slate-700 text-center">
+                              {cell}
+                            </td>
+                          ))}
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                );
+                function luOrVal(n: number | null | undefined): n is number {
+                  return typeof n === 'number' && Number.isFinite(n);
+                }
+              })()}
             </div>
           </div>
         );
