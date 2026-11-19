@@ -15,6 +15,12 @@ import {
   findLocalUnitDemographics,
 } from '../utils/auditHelper';
 import {
+  sanitizeNationalIdInput,
+  sanitizePhoneInput,
+  validateExactNationalId,
+  validateExactPhone,
+} from '../utils/fieldValidation';
+import {
   X,
   Calculator,
   Save,
@@ -636,16 +642,16 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
       }
     }
 
-    // 3. Phone Check (Warning/Optional for existing data)
-    const cleanPhone = phone.trim().replace(/\D/g, '');
-    if (phone.trim() && cleanPhone.length > 0 && cleanPhone.length < 7) {
-      newErrors.phone = 'رقم الهاتف قصير جداً وغير مكتمل';
+    // 3. Strict 11-digit Phone Check
+    const phoneValidation = validateExactPhone(phone, true);
+    if (!phoneValidation.valid) {
+      newErrors.phone = phoneValidation.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.';
     }
 
-    // 4. National ID Check (Forgiving for legacy imports)
-    const cleanNid = nationalId.trim().replace(/\D/g, '');
-    if (nationalId.trim() && cleanNid.length > 0 && cleanNid.length < 10) {
-      newErrors.nationalId = 'الرقم القومي غير مكتمل';
+    // 4. Strict 14-digit National ID Check
+    const nidValidation = validateExactNationalId(nationalId, true);
+    if (!nidValidation.valid) {
+      newErrors.nationalId = nidValidation.error || 'الرقم القومي يجب أن يتكون من 14 رقماً بالضبط.';
     }
 
     // 5. Quotas & Numeric Values Validation
@@ -1791,11 +1797,12 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 <div className="relative">
                   <input
                     type="tel"
+                    inputMode="numeric"
                     required
                     maxLength={11}
                     value={phone}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
+                      const val = sanitizePhoneInput(e.target.value);
                       setPhone(val);
                       if (val.length === 11) {
                         setErrors((prev) => ({ ...prev, phone: '' }));
@@ -1825,11 +1832,12 @@ export const BakeryModal: React.FC<BakeryModalProps> = ({
                 <div className="relative">
                   <input
                     type="text"
+                    inputMode="numeric"
                     required
                     maxLength={14}
                     value={nationalId}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
+                      const val = sanitizeNationalIdInput(e.target.value);
                       setNationalId(val);
                       if (val.length === 14) {
                         setErrors((prev) => ({ ...prev, nationalId: '' }));

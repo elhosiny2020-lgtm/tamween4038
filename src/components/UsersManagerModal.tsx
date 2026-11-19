@@ -25,6 +25,7 @@ import {
   resolveUserDepartmentMatrix,
 } from '../utils/departmentRbac';
 import { getSecurityShieldHeaders } from '../lib/supabase';
+import { sanitizePhoneInput, validateExactPhone } from '../utils/fieldValidation';
 import {
   Users,
   UserPlus,
@@ -616,6 +617,14 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       return;
     }
 
+    if (editPhone.trim()) {
+      const phoneCheck = validateExactPhone(editPhone, true);
+      if (!phoneCheck.valid) {
+        setError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
+        return;
+      }
+    }
+
     const originalUser = users.find((u) => u.id === editingUserId);
     if (!originalUser) return;
 
@@ -630,7 +639,7 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       notes: editNotes.trim(),
       jobTitle: editJobTitle.trim(),
       department: editDepartment.trim(),
-      phone: editPhone.trim(),
+      phone: editPhone.trim() ? sanitizePhoneInput(editPhone) : '',
       allowedDepartments: derivedAllowed,
       departmentPermissions: editIsSuperAdmin ? buildFullMatrix() : editDeptMatrix,
       applyToAllBranches: editApplyToAllBranches,
@@ -689,6 +698,14 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       return;
     }
 
+    if (phone.trim()) {
+      const phoneCheck = validateExactPhone(phone, true);
+      if (!phoneCheck.valid) {
+        setError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const effectiveRole = newIsSuperAdmin
@@ -707,7 +724,7 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
         notes: newNotes.trim(),
         jobTitle: jobTitle.trim(),
         department: department.trim(),
-        phone: phone.trim(),
+        phone: phone.trim() ? sanitizePhoneInput(phone) : '',
         allowedDepartments: derivedAllowed,
         departmentPermissions: newIsSuperAdmin ? buildFullMatrix() : newDeptMatrix,
         applyToAllBranches,
@@ -1243,14 +1260,22 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                               </div>
 
                               <div>
-                                <label className="block text-[11px] font-black text-slate-800 mb-1 flex items-center gap-1">
-                                  <Phone className="w-3 h-3 text-amber-700" />
-                                  <span>رقم التليفون</span>
+                                <label className="flex items-center justify-between text-[11px] font-black text-slate-800 mb-1">
+                                  <span className="inline-flex items-center gap-1">
+                                    <Phone className="w-3 h-3 text-amber-700" />
+                                    <span>رقم التليفون (11 رقماً)</span>
+                                  </span>
+                                  <span className="text-[10px] font-mono tabular-nums text-slate-500">
+                                    {editPhone.replace(/\D/g, '').length} / 11
+                                  </span>
                                 </label>
                                 <input
                                   type="text"
+                                  inputMode="numeric"
+                                  maxLength={11}
                                   value={editPhone}
-                                  onChange={(e) => setEditPhone(e.target.value)}
+                                  onChange={(e) => setEditPhone(sanitizePhoneInput(e.target.value))}
+                                  placeholder="01012345678"
                                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 font-mono text-left"
                                 />
                               </div>
@@ -1511,13 +1536,19 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-black text-slate-700 mb-1">
-                      رقم التليفون
+                    <label className="flex items-center justify-between text-[11px] font-black text-slate-700 mb-1">
+                      <span>رقم التليفون (11 رقماً)</span>
+                      <span className="text-[10px] font-mono tabular-nums text-slate-500">
+                        {phone.replace(/\D/g, '').length} / 11
+                      </span>
                     </label>
                     <input
                       type="text"
+                      inputMode="numeric"
+                      maxLength={11}
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))}
+                      placeholder="01012345678"
                       className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 font-mono text-left"
                     />
                   </div>

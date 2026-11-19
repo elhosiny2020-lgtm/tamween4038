@@ -39,6 +39,12 @@ import { isSuperAdmin } from '../../utils/departmentRbac';
 import { groupRecordsByLocalUnit } from '../../utils/tableGroupingHelpers';
 import { matchesSmartSearch, paginateRecords } from '../../utils/tableSmartHelpers';
 import {
+  sanitizeNationalIdInput,
+  sanitizePhoneInput,
+  validateExactNationalId,
+  validateExactPhone,
+} from '../../utils/fieldValidation';
+import {
   LocalUnitSubtotalRow,
   VillageGrandTotalRow,
   ModuleDeleteConfirmModal,
@@ -109,6 +115,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   const [pendingDiffResult, setPendingDiffResult] = useState<MerchantMonthlyDiffResult | null>(null);
   const [pendingIncomingMerchants, setPendingIncomingMerchants] = useState<RationMerchant[] | null>(null);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Form state for Add/Edit Merchant
   const [formState, setFormState] = useState({
@@ -280,16 +287,18 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       reviewStatus: 'تمت المراجعة',
       notes: '',
     });
+    setFormError(null);
     setShowAddOrEditModal(true);
   };
 
   const openEditMerchant = (m: RationMerchant) => {
     setEditingMerchant(m);
+    setFormError(null);
     setFormState({
       merchantName: m.merchantName,
-      nationalId: m.nationalId || '',
+      nationalId: sanitizeNationalIdInput(m.nationalId || ''),
       detailedAddress: m.detailedAddress || '',
-      phone: m.phone || '',
+      phone: sanitizePhoneInput(m.phone || ''),
       cashInsuranceAmount: String(m.cashInsuranceAmount || 0),
       activityStatus: m.activityStatus === 'موقوف' ? 'متوقف' : m.activityStatus,
       posMachineNumber: m.posMachineNumber || '',
@@ -309,8 +318,19 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   };
 
   const handleSaveMerchantForm = () => {
+    setFormError(null);
     if (!formState.merchantName.trim()) {
-      setBannerMessage('يرجى إدخال اسم التاجر التمويني.');
+      setFormError('يرجى إدخال اسم التاجر التمويني.');
+      return;
+    }
+    const nidCheck = validateExactNationalId(formState.nationalId, true);
+    if (!nidCheck.valid) {
+      setFormError(nidCheck.error || 'الرقم القومي يجب أن يتكون من 14 رقماً بالضبط.');
+      return;
+    }
+    const phoneCheck = validateExactPhone(formState.phone, true);
+    if (!phoneCheck.valid) {
+      setFormError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
       return;
     }
     // Prevent duplicate POS or Trader Code on other merchants
@@ -321,7 +341,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         m.posMachineNumber === formState.posMachineNumber.trim()
     );
     if (dupPos) {
-      setBannerMessage(`رقم الماكينة (${formState.posMachineNumber}) مسجل بالفعل للتاجر: ${dupPos.merchantName}`);
+      setFormError(`رقم الماكينة (${formState.posMachineNumber}) مسجل بالفعل للتاجر: ${dupPos.merchantName}`);
       return;
     }
 
@@ -334,9 +354,9 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         ...editingMerchant,
         merchantName: formState.merchantName.trim(),
         ownerName: formState.merchantName.trim(),
-        nationalId: formState.nationalId.trim(),
+        nationalId: nidCheck.normalized,
         detailedAddress: formState.detailedAddress.trim(),
-        phone: formState.phone.trim(),
+        phone: phoneCheck.normalized,
         cashInsuranceAmount: Math.max(0, Number(formState.cashInsuranceAmount) || 0),
         activityStatus: formState.activityStatus,
         posMachineNumber: formState.posMachineNumber.trim(),
@@ -387,8 +407,8 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         village: formState.village,
         localUnit: formState.localUnit,
         detailedAddress: formState.detailedAddress.trim(),
-        phone: formState.phone.trim(),
-        nationalId: formState.nationalId.trim(),
+        phone: phoneCheck.normalized,
+        nationalId: nidCheck.normalized,
         commercialRegNumber: formState.commercialRegNumber.trim() || `CR-${30000 + nextSerial}`,
         taxCardNumber: formState.taxCardNumber.trim() || `TX-400-${100 + nextSerial}-16`,
         licenseNumber: formState.licenseNumber.trim() || `LIC-TM-${2000 + nextSerial}`,
@@ -1020,7 +1040,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       )}
 
       {/* 10 Automatic KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
         <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs">
           <div className="text-[11px] font-bold text-slate-500">إجمالي التجار</div>
           <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">{stats.total}</div>
@@ -1082,42 +1102,60 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       </div>
 
       {/* Visual Distribution by Village & Status */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <h4 className="text-xs font-black text-[#0A1931]">
+      <div
+        className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs"
+        data-testid="may26-village-distribution"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3.5">
+          <h4 className="text-sm font-black text-[#0A1931]">
             التوزيع الإحصائي للتجار ومبالغ التأمين حسب قرى مركز المحلة الكبرى
           </h4>
-          <span className="text-[11px] font-bold text-slate-500">
-            اضغط على أي قرية لتصفية الجدول مباشرة
+          <span className="text-xs font-bold text-slate-600">
+            اضغط على أي قرية لتصفية الجدول مباشرة ({stats.byVillageList.length} قرية)
           </span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2">
-          {stats.byVillageList.map((item) => (
-            <button
-              key={item.village}
-              type="button"
-              onClick={() =>
-                setVillageFilter((prev) => (prev === item.village ? 'ALL' : item.village))
-              }
-              className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer ${
-                villageFilter === item.village
-                  ? 'bg-[#0A1931] text-white border-[#0A1931]'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-900 border-slate-200'
-              }`}
-            >
-              <div className="text-xs font-black truncate">{item.village}</div>
-              <div className="text-sm font-black font-mono tabular-nums mt-0.5">
-                {item.count} تاجر
-              </div>
-              <div
-                className={`text-[10px] font-mono tabular-nums ${
-                  villageFilter === item.village ? 'text-amber-300' : 'text-slate-500'
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+          {stats.byVillageList.map((item) => {
+            const isSelected = villageFilter === item.village;
+            return (
+              <button
+                key={item.village}
+                type="button"
+                onClick={() =>
+                  setVillageFilter((prev) => (prev === item.village ? 'ALL' : item.village))
+                }
+                className={`p-3.5 rounded-xl border text-right transition-all cursor-pointer flex flex-col justify-between gap-2 min-h-[96px] ${
+                  isSelected
+                    ? 'bg-[#0A1931] text-white border-[#0A1931] shadow-sm'
+                    : 'bg-slate-50/90 hover:bg-teal-50/60 hover:border-teal-400 text-slate-900 border-slate-200'
                 }`}
               >
-                {item.insurance.toLocaleString()} ج.م
-              </div>
-            </button>
-          ))}
+                <div
+                  className={`text-[13px] font-black leading-snug break-words ${
+                    isSelected ? 'text-white' : 'text-[#0A1931]'
+                  }`}
+                >
+                  {item.village}
+                </div>
+                <div className="flex items-baseline justify-between gap-2 pt-1.5 border-t border-current/10">
+                  <span
+                    className={`text-sm font-black font-mono tabular-nums whitespace-nowrap ${
+                      isSelected ? 'text-emerald-300' : 'text-teal-800'
+                    }`}
+                  >
+                    {item.count.toLocaleString()} تاجر
+                  </span>
+                  <span
+                    className={`text-xs font-bold font-mono tabular-nums whitespace-nowrap ${
+                      isSelected ? 'text-amber-300' : 'text-slate-600'
+                    }`}
+                  >
+                    {item.insurance.toLocaleString()} ج.م
+                  </span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -2233,23 +2271,52 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </button>
             </div>
 
+            {formError && (
+              <div
+                data-testid="merchant-form-error"
+                className="p-3 rounded-xl bg-rose-50 border border-rose-400 text-rose-900 text-xs font-black flex items-center gap-2"
+              >
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               <div className="sm:col-span-2">
                 <label className="block font-black text-slate-700 mb-1">اسم التاجر التمويني *</label>
                 <input
                   type="text"
+                  data-testid="merchant-form-name"
                   value={formState.merchantName}
-                  onChange={(e) => setFormState((p) => ({ ...p, merchantName: e.target.value }))}
+                  onChange={(e) => {
+                    setFormState((p) => ({ ...p, merchantName: e.target.value }));
+                    if (formError) setFormError(null);
+                  }}
                   placeholder="الاسم الرباعي للتاجر التمويني"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold"
                 />
               </div>
               <div>
-                <label className="block font-black text-slate-700 mb-1">الرقم القومي (14 رقماً)</label>
+                <label className="flex items-center justify-between font-black text-slate-700 mb-1">
+                  <span>الرقم القومي (14 رقماً) *</span>
+                  <span
+                    className={`text-[10px] font-mono tabular-nums ${
+                      formState.nationalId.length === 14 ? 'text-emerald-700' : 'text-rose-600'
+                    }`}
+                  >
+                    {formState.nationalId.length} / 14
+                  </span>
+                </label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  maxLength={14}
+                  data-testid="merchant-form-national-id"
                   value={formState.nationalId}
-                  onChange={(e) => setFormState((p) => ({ ...p, nationalId: e.target.value }))}
+                  onChange={(e) => {
+                    setFormState((p) => ({ ...p, nationalId: sanitizeNationalIdInput(e.target.value) }));
+                    if (formError) setFormError(null);
+                  }}
                   placeholder="28501011601234"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
                 />
@@ -2294,11 +2361,26 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 />
               </div>
               <div>
-                <label className="block font-black text-slate-700 mb-1">رقم التليفون</label>
+                <label className="flex items-center justify-between font-black text-slate-700 mb-1">
+                  <span>رقم التليفون (11 رقماً) *</span>
+                  <span
+                    className={`text-[10px] font-mono tabular-nums ${
+                      formState.phone.length === 11 ? 'text-emerald-700' : 'text-rose-600'
+                    }`}
+                  >
+                    {formState.phone.length} / 11
+                  </span>
+                </label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  maxLength={11}
+                  data-testid="merchant-form-phone"
                   value={formState.phone}
-                  onChange={(e) => setFormState((p) => ({ ...p, phone: e.target.value }))}
+                  onChange={(e) => {
+                    setFormState((p) => ({ ...p, phone: sanitizePhoneInput(e.target.value) }));
+                    if (formError) setFormError(null);
+                  }}
                   placeholder="01012345678"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
                 />

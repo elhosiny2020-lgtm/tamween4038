@@ -5657,16 +5657,21 @@ export function subscribeToSupabaseRealtime(
 }
 
 /**
- * مسح شامل لكافة قواعد البيانات الموجودة حالياً على Supabase والخادم والذاكرة المحلية
- * لبدء التسجيل والكتابة على قاعدة البيانات من أول وجديد (0 مخبز، 0 مديونية)
+ * مسح قواعد البيانات على Supabase والخادم والذاكرة المحلية.
+ * عند تمرير branchId يتم مسح بيانات الفرع المحدد فقط دون المساس ببقية الفروع نهائياً.
  */
-export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; message: string }> {
+export async function clearSupabaseDatabaseData(
+  branchId?: string
+): Promise<{ success: boolean; message: string }> {
   const startMs = Date.now();
   const nowIso = new Date().toISOString();
+  const scopedBranchId = typeof branchId === 'string' && branchId.trim() ? branchId.trim() : null;
 
   try {
-    // 1. Purge local Permanent Safety Vault, offline sync queue, and cached state counts
-    clearPermanentSafetyVault();
+    // 1. Purge offline sync queue / vault (scoped when branchId is given)
+    if (!scopedBranchId) {
+      clearPermanentSafetyVault();
+    }
     clearOfflineSyncQueue();
     pendingSyncPayload = null;
     lastObservedStateCounts = {
@@ -5678,37 +5683,54 @@ export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; m
       dailyTasks: 0,
     };
 
-    // 2. Purge server-side live-db and alerts snapshots + broadcast state_cleared to all connected peers
+    // 2. Purge server-side live-db (branch-scoped when scopedBranchId is provided)
     if (typeof window !== 'undefined' && !isBrowserOffline()) {
-      await Promise.all([
-        fetch(
-          `${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&confirmPurge=true`,
-          {
-            method: 'DELETE',
-            credentials: 'same-origin',
-            headers: getSecurityShieldHeaders(true),
-            body: JSON.stringify({ confirmPurge: true }),
-          }
-        ).catch(() => null),
-        fetch(`${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
+      const liveDbQuery = scopedBranchId
+        ? `${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&confirmPurge=true&branchId=${encodeURIComponent(scopedBranchId)}`
+        : `${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&confirmPurge=true`;
+      const requests: Promise<Response | null>[] = [
+        fetch(liveDbQuery, {
           method: 'DELETE',
           credentials: 'same-origin',
-          headers: getSecurityShieldHeaders(false),
+          headers: getSecurityShieldHeaders(true),
+          body: JSON.stringify(
+            scopedBranchId ? { confirmPurge: true, branchId: scopedBranchId } : { confirmPurge: true }
+          ),
         }).catch(() => null),
-      ]);
+      ];
+      if (!scopedBranchId) {
+        requests.push(
+          fetch(`${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+            headers: getSecurityShieldHeaders(false),
+          }).catch(() => null)
+        );
+      }
+      await Promise.all(requests);
     }
 
-    // 3. If external Supabase SQL project is configured, delete all records across tables
+    // 3. If external Supabase SQL project is configured, delete records (strictly scoped to branchId when given)
     const client = getSupabaseClient();
     if (client) {
       try {
-        await Promise.all([
-          client.from('debts').delete().neq('id', '__non_existent__'),
-          client.from('bakeries').delete().neq('id', '__non_existent__'),
-          client.from('daily_tasks').delete().neq('id', '__non_existent__'),
-          client.from('high_debt_alerts').delete().neq('id', '__non_existent__'),
-          client.from('backup_snapshots').delete().neq('id', '__non_existent__'),
-        ]);
+        if (scopedBranchId) {
+          await Promise.all([
+            client.from('debts').delete().eq('branch_id', scopedBranchId),
+            client.from('bakeries').delete().eq('branch_id', scopedBranchId),
+            client.from('daily_tasks').delete().eq('branch_id', scopedBranchId),
+            client.from('high_debt_alerts').delete().eq('branch_id', scopedBranchId),
+            client.from('backup_snapshots').delete().eq('id', `mod__${scopedBranchId}__all_modules`),
+          ]);
+        } else {
+          await Promise.all([
+            client.from('debts').delete().neq('id', '__non_existent__'),
+            client.from('bakeries').delete().neq('id', '__non_existent__'),
+            client.from('daily_tasks').delete().neq('id', '__non_existent__'),
+            client.from('high_debt_alerts').delete().neq('id', '__non_existent__'),
+            client.from('backup_snapshots').delete().neq('id', '__non_existent__'),
+          ]);
+        }
         if (activeRealtimeChannel) {
           activeRealtimeChannel.send({
             type: 'broadcast',
@@ -5717,6 +5739,7 @@ export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; m
               clientId: SESSION_CLIENT_ID,
               timestamp: nowIso,
               cleared: true,
+              branchId: scopedBranchId || undefined,
               data: { bakeries: [], debts: [], dailyTasks: [] },
             },
           });
@@ -5729,22 +5752,28 @@ export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; m
       markTableRealtimeEvent(tbl, 'DELETE', nowIso);
     }
 
+    const scopeMsg = scopedBranchId
+      ? `تم تنفيذ استعادة ضبط المصنع ومسح بيانات الفرع المحدد (${scopedBranchId}) فقط (${latencyMs}ms) مع الحفاظ الكامل على بيانات جميع الفروع الأخرى`
+      : 'تم المسح الشامل لجميع قواعد البيانات الموجودة حالياً على Supabase والخادم بنجاح (0 مخبز، 0 مديونية). يمكنك الآن التسجيل والكتابة على قاعدة البيانات من أول وجديد!';
+
     recordRealtimeDiagnosticEvent({
       direction: 'OUTGOING',
       channel: 'SUPABASE_REALTIME',
-      eventType: 'FULL_DATABASE_PURGE_AND_RESET',
+      eventType: scopedBranchId ? 'BRANCH_FACTORY_RESET' : 'FULL_DATABASE_PURGE_AND_RESET',
       sqlOperation: 'DELETE',
       table: 'bakeries',
       affectedTable: 'bakeries',
       responseLatencyMs: latencyMs,
       senderClientId: SESSION_CLIENT_ID,
       isSelf: true,
-      summary: `تم تنفيذ مسح شامل لجميع قواعد البيانات على Supabase وتصفير الجداول (${latencyMs}ms) لبدء التسجيل من أول وجديد`,
+      summary: scopeMsg,
     });
 
     setCloudConnectionStatus(
       'connected',
-      'تم المسح الشامل لقواعد البيانات — جاهز للتسجيل والكتابة من أول وجديد',
+      scopedBranchId
+        ? 'تمت استعادة ضبط المصنع للفرع الحالي فقط مع الحفاظ على باقي الفروع'
+        : 'تم المسح الشامل لقواعد البيانات — جاهز للتسجيل والكتابة من أول وجديد',
       {
         hasPendingSync: false,
         pendingQueueCount: 0,
@@ -5753,8 +5782,7 @@ export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; m
 
     return {
       success: true,
-      message:
-        'تم المسح الشامل لجميع قواعد البيانات الموجودة حالياً على Supabase والخادم بنجاح (0 مخبز، 0 مديونية). يمكنك الآن التسجيل والكتابة على قاعدة البيانات من أول وجديد!',
+      message: scopeMsg,
     };
   } catch (err: any) {
     return {

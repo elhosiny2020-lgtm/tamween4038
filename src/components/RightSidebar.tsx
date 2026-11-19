@@ -256,9 +256,9 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       items: [
         {
           id: 'user-guide',
-          label: 'دليل المستخدم (صور وفيديو)',
+          label: 'دليل المستخدم الشامل (PDF وطباعة)',
           icon: <BookOpen className="w-3.5 h-3.5 text-[#5EEAD4]" />,
-          badge: 'شرح',
+          badge: 'PDF',
           badgeVariant: 'teal',
         },
         {

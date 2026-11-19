@@ -79,6 +79,12 @@ import {
   paginateItems,
 } from '../../utils/tableSmartHelpers';
 import {
+  sanitizeNationalIdInput,
+  sanitizePhoneInput,
+  validateExactNationalId,
+  validateExactPhone,
+} from '../../utils/fieldValidation';
+import {
   buildHrDepartmentAlerts,
   canDeleteDepartmentAlert,
 } from '../../utils/moduleAlertsEngine';
@@ -964,11 +970,21 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
   // Quick Form Handlers
   const handleAddEmployee = (e: React.FormEvent) => {
     e.preventDefault();
+    const nidStrict = validateExactNationalId(newNationalId, true);
+    if (!nidStrict.valid) {
+      notify('err', nidStrict.error || 'الرقم القومي يجب أن يتكون من 14 رقماً بالضبط.');
+      return;
+    }
+    const phoneStrict = validateExactPhone(newPhone, true);
+    if (!phoneStrict.valid) {
+      notify('err', phoneStrict.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
+      return;
+    }
     const code = newEmpCode.trim() || `EMP-${1000 + state.employees.length + 1}`;
     const validation = validateHrEmployeeInput({
       fullName: newFullName,
-      nationalId: newNationalId,
-      phone: newPhone || '01000000000',
+      nationalId: nidStrict.normalized,
+      phone: phoneStrict.normalized,
       employeeCode: code,
       existingEmployees: state.employees,
     });
@@ -2316,8 +2332,8 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-6 gap-2.5 text-xs">
                   <input type="text" value={newFullName} onChange={(e) => setNewFullName(e.target.value)} placeholder="الاسم رباعي *" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold sm:col-span-2" />
-                  <input type="text" value={newNationalId} onChange={(e) => setNewNationalId(e.target.value)} placeholder="الرقم القومي (14 رقم) *" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
-                  <input type="text" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="رقم الهاتف (010xxxxxxxx) *" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
+                  <input type="text" inputMode="numeric" maxLength={14} value={newNationalId} onChange={(e) => setNewNationalId(sanitizeNationalIdInput(e.target.value))} placeholder="الرقم القومي (14 رقماً بالضبط) *" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
+                  <input type="text" inputMode="numeric" maxLength={11} value={newPhone} onChange={(e) => setNewPhone(sanitizePhoneInput(e.target.value))} placeholder="رقم الهاتف (11 رقماً بالضبط) *" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
                   <input type="text" value={newEmpCode} onChange={(e) => setNewEmpCode(e.target.value)} placeholder="الكود الوظيفي (اختياري)" className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold" />
                   <select value={newDepartment} onChange={(e) => setNewDepartment(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold">
                     {state.departments.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}

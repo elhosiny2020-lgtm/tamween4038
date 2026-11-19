@@ -514,3 +514,490 @@ export async function exportElementToPdf(
     return true;
   }
 }
+
+// ============================================================================
+// Local Partition / Drive Picker, Partition Readiness Test, & PDF Blob Export
+// ============================================================================
+
+export interface FileSystemDirectoryHandleLike {
+  name: string;
+  getFileHandle: (
+    name: string,
+    opts?: { create?: boolean }
+  ) => Promise<{
+    createWritable: () => Promise<{
+      write: (data: Blob | Uint8Array | string) => Promise<void>;
+      close: () => Promise<void>;
+    }>;
+  }>;
+  removeEntry?: (name: string) => Promise<void>;
+}
+
+export interface PartitionReadinessReport {
+  status: 'ready' | 'fallback_download' | 'error';
+  canPickNativePartition: boolean;
+  isEmbeddedIframe: boolean;
+  selectedFolderName: string | null;
+  folderWriteVerified: boolean;
+  directDownloadReady: boolean;
+  storageQuotaMB: number | null;
+  storageUsageMB: number | null;
+  checkedAt: string;
+  summary: string;
+  checks: Array<{ label: string; ok: boolean; detail: string }>;
+}
+
+export async function pickLocalPartitionDirectory(): Promise<{
+  ok: boolean;
+  handle: FileSystemDirectoryHandleLike | null;
+  folderName: string | null;
+  reason?: string;
+}> {
+  const win = window as unknown as {
+    showDirectoryPicker?: (opts?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandleLike>;
+  };
+
+  if (typeof win.showDirectoryPicker !== 'function') {
+    return {
+      ok: false,
+      handle: null,
+      folderName: null,
+      reason: 'المتصفح الحالي لا يدعم اختيار المجلد مباشرة، وسيتم تنزيل ملف PDF مباشرة إلى الجهاز المحلي.',
+    };
+  }
+
+  try {
+    const handle = await win.showDirectoryPicker({ mode: 'readwrite' });
+    return { ok: true, handle, folderName: handle?.name || 'المجلد المختار' };
+  } catch (err: unknown) {
+    const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: unknown }).name) : '';
+    if (name === 'AbortError') {
+      return { ok: false, handle: null, folderName: null, reason: 'تم إلغاء اختيار البارتيشن أو المجلد.' };
+    }
+    return {
+      ok: false,
+      handle: null,
+      folderName: null,
+      reason:
+        'نافذة المعاينة الحالية تقيّد اختيار المجلد المباشر؛ يمكنك الحفظ مباشرة عبر زر التصدير لتنزيل ملف PDF على جهازك واختيار البارتيشن من المتصفح.',
+    };
+  }
+}
+
+export async function testLocalPartitionReadiness(
+  directoryHandle?: FileSystemDirectoryHandleLike | null,
+  selectedPartitionLabel?: string
+): Promise<PartitionReadinessReport> {
+  const win = window as unknown as {
+    showDirectoryPicker?: unknown;
+    showSaveFilePicker?: unknown;
+  };
+  let isEmbeddedIframe = false;
+  try {
+    isEmbeddedIframe = window.self !== window.top;
+  } catch {
+    isEmbeddedIframe = true;
+  }
+
+  const hasFsApi =
+    typeof win.showDirectoryPicker === 'function' || typeof win.showSaveFilePicker === 'function';
+  const canPickNativePartition = hasFsApi && !isEmbeddedIframe;
+  const directDownloadReady =
+    typeof Blob !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function';
+
+  let storageQuotaMB: number | null = null;
+  let storageUsageMB: number | null = null;
+  try {
+    if (navigator.storage && typeof navigator.storage.estimate === 'function') {
+      const est = await navigator.storage.estimate();
+      if (typeof est.quota === 'number') {
+        storageQuotaMB = Math.round(est.quota / (1024 * 1024));
+      }
+      if (typeof est.usage === 'number') {
+        storageUsageMB = Math.round((est.usage / (1024 * 1024)) * 10) / 10;
+      }
+    }
+  } catch {
+    // Ignore storage estimate restriction
+  }
+
+  let folderWriteVerified = false;
+  let folderTestDetail = directoryHandle
+    ? `تم تحديد المجلد (${directoryHandle.name})`
+    : `المسار المختار: ${selectedPartitionLabel || 'D:\\'} (سيُطلب موقع الحفظ أو التنزيل المباشر)`;
+
+  if (directoryHandle) {
+    try {
+      const testFilename = `.supply_manual_write_test_${Date.now()}.tmp`;
+      const fileHandle = await directoryHandle.getFileHandle(testFilename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write('OK');
+      await writable.close();
+      if (typeof directoryHandle.removeEntry === 'function') {
+        await directoryHandle.removeEntry(testFilename);
+      }
+      folderWriteVerified = true;
+      folderTestDetail = `تم اختبار الكتابة والحذف بنجاح داخل المجلد (${directoryHandle.name})`;
+    } catch {
+      folderWriteVerified = false;
+      folderTestDetail = 'تعذر الكتابة المباشرة في المجلد المختار — سيتم استخدام التنزيل المباشر كبديل آمن.';
+    }
+  }
+
+  const checks: Array<{ label: string; ok: boolean; detail: string }> = [
+    {
+      label: 'جاهزية إنشاء وتنزيل ملفات PDF محلياً (Blob API)',
+      ok: directDownloadReady,
+      detail: directDownloadReady
+        ? 'متاح ويعمل بكفاءة لتنزيل ملف PDF على الجهاز المحلي.'
+        : 'غير متاح في البيئة الحالية.',
+    },
+    {
+      label: 'واجهة اختيار البارتيشن والمجلد المباشر (File System Access)',
+      ok: canPickNativePartition || folderWriteVerified,
+      detail: folderWriteVerified
+        ? folderTestDetail
+        : canPickNativePartition
+        ? 'مدعومة بالكامل — يمكنك اختيار أي بارتيشن (C: / D: / E: / F:) مباشرة.'
+        : isEmbeddedIframe
+        ? 'النظام يعمل داخل إطار معاينة؛ عند التصدير سيتم تنزيل ملف PDF مباشرة إلى جهازك المحلي.'
+        : 'المتصفح يستخدم التنزيل المباشر إلى مجلد التنزيلات أو نافذة حفظ باسم.',
+    },
+    {
+      label: 'فحص مساحة التخزين المتاحة للمتصفح',
+      ok: storageQuotaMB === null || storageQuotaMB > 50,
+      detail:
+        storageQuotaMB !== null
+          ? `المساحة المتاحة: ${storageQuotaMB.toLocaleString('ar-EG')} ميجابايت (المستخدم حالياً: ${storageUsageMB ?? 0} ميجابايت)`
+          : 'المساحة التخزينية المحلية جاهزة لاستقبال ملف دليل المستخدم.',
+    },
+  ];
+
+  const status: PartitionReadinessReport['status'] = !directDownloadReady
+    ? 'error'
+    : folderWriteVerified || canPickNativePartition
+    ? 'ready'
+    : 'fallback_download';
+
+  const summary =
+    status === 'ready'
+      ? `البارتيشن جاهز تماماً للتحميل والحفظ المباشر (${directoryHandle?.name || selectedPartitionLabel || 'الجهاز المحلي'}).`
+      : status === 'fallback_download'
+      ? 'الجهاز جاهز تماماً لتصدير وتنزيل ملف PDF محلياً (ملاحظة: لتحديد بارتيشن مختلف تلقائياً فعّل خيار السؤال عن مكان الحفظ في إعدادات المتصفح أو افتح المنظومة في نافذة مستقلة).'
+      : 'تعذر التحقق من آلية التنزيل — يمكنك استخدام زر طباعة دليل المستخدم (حفظ كـ PDF).';
+
+  return {
+    status,
+    canPickNativePartition,
+    isEmbeddedIframe,
+    selectedFolderName: directoryHandle?.name || null,
+    folderWriteVerified,
+    directDownloadReady,
+    storageQuotaMB,
+    storageUsageMB,
+    checkedAt: new Date().toLocaleTimeString('ar-EG'),
+    summary,
+    checks,
+  };
+}
+
+export function printHtmlStringA4(
+  htmlContent: string,
+  documentTitle: string,
+  options?: {
+    paperSize?: 'a4' | 'a3';
+    orientation?: 'landscape' | 'portrait';
+    margins?: 'normal' | 'narrow' | 'wide';
+    fontClass?: string;
+  }
+) {
+  const tempDiv = document.createElement('div');
+  tempDiv.dir = 'rtl';
+  tempDiv.innerHTML = DOMPurify.sanitize(htmlContent, {
+    USE_PROFILES: { html: true, svg: true },
+    ADD_ATTR: ['dir', 'colspan', 'rowspan', 'style', 'class'],
+  });
+  printHtmlElementA4(tempDiv, documentTitle, options?.fontClass || 'report-font-standard', {
+    paperSize: options?.paperSize || 'a4',
+    orientation: options?.orientation || 'portrait',
+    margins: options?.margins || 'normal',
+  });
+}
+
+export async function generateHtmlStringToPdfBlob(
+  htmlContent: string,
+  options: PdfExportOptions = {}
+): Promise<Blob | null> {
+  const paperSize = options.paperSize || 'a4';
+  const orientation = options.orientation || 'portrait';
+  const marginArr =
+    options.margins === 'narrow'
+      ? [4, 4, 4, 4]
+      : options.margins === 'wide'
+      ? [12, 12, 12, 12]
+      : [6, 6, 6, 6];
+
+  options.onProgress?.('جاري تجهيز محتوى دليل المستخدم للتحويل إلى PDF...');
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  const win = window as unknown as {
+    html2pdf?: () => {
+      from: (el: HTMLElement) => {
+        set: (o: unknown) => {
+          outputPdf: (type: 'blob') => Promise<Blob>;
+          save: () => Promise<void>;
+        };
+      };
+    };
+    loadHtml2PdfOnDemand?: () => Promise<unknown>;
+    __html2pdfLoadPromise?: Promise<unknown> | null;
+  };
+
+  if (typeof win.html2pdf !== 'function') {
+    try {
+      options.onProgress?.('جاري تحميل محرك تحويل PDF باللغة العربية...');
+      if (typeof win.loadHtml2PdfOnDemand === 'function') {
+        await win.loadHtml2PdfOnDemand();
+      } else if (typeof document !== 'undefined') {
+        if (!win.__html2pdfLoadPromise) {
+          win.__html2pdfLoadPromise = new Promise((resolve) => {
+            const script = document.createElement('script');
+            script.src = HTML2PDF_CDN_URL;
+            script.integrity = HTML2PDF_CDN_SRI;
+            script.crossOrigin = 'anonymous';
+            script.async = true;
+            script.onload = () => resolve(win.html2pdf ?? null);
+            script.onerror = () => {
+              win.__html2pdfLoadPromise = null;
+              resolve(null);
+            };
+            document.head.appendChild(script);
+          });
+        }
+        await win.__html2pdfLoadPromise;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof win.html2pdf !== 'function') {
+    return null;
+  }
+
+  const isolatedWrapper = document.createElement('div');
+  isolatedWrapper.setAttribute('data-pdf-export-target', 'manual');
+  isolatedWrapper.className = `manual-pdf-root ${options.fontClass || 'report-font-standard'}`;
+  isolatedWrapper.dir = 'rtl';
+  isolatedWrapper.style.cssText =
+    'background:#ffffff;color:#0f172a;padding:8px;width:100%;direction:rtl;font-family:Cairo,Tajawal,Tahoma,Arial,sans-serif;';
+  isolatedWrapper.innerHTML = DOMPurify.sanitize(htmlContent, {
+    USE_PROFILES: { html: true, svg: true },
+    ADD_ATTR: ['dir', 'colspan', 'rowspan', 'style', 'class', 'alt', 'src'],
+  });
+
+  const manualPureHexCss = `
+    * {
+      box-sizing: border-box !important;
+      font-family: 'Cairo', 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    html, body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background-color: #ffffff !important;
+      color: #0f172a !important;
+      direction: rtl !important;
+    }
+    [data-pdf-export-target="manual"] {
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      width: 100% !important;
+      background-color: #ffffff !important;
+      color: #0f172a !important;
+      direction: rtl !important;
+      line-height: 1.45 !important;
+    }
+    [data-pdf-export-target="manual"] table {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      direction: rtl !important;
+      background-color: #ffffff !important;
+    }
+    [data-pdf-export-target="manual"] tr {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    [data-pdf-export-target="manual"] th,
+    [data-pdf-export-target="manual"] td {
+      word-break: break-word !important;
+      vertical-align: middle !important;
+    }
+    [data-pdf-export-target="manual"] img {
+      object-fit: contain !important;
+    }
+  `;
+
+  const opt = {
+    margin: marginArr,
+    filename: options.filename || 'user_manual.pdf',
+    image: { type: 'jpeg', quality: 0.92 },
+    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+    html2canvas: {
+      scale: 1.25,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      windowWidth: orientation === 'landscape' ? 1160 : 840,
+      scrollX: 0,
+      scrollY: 0,
+      onclone: (clonedDoc: Document) => {
+        try {
+          // Strip all Tailwind v4 stylesheets (oklch/oklab/color-mix) without detaching html2pdf target
+          clonedDoc.querySelectorAll('link[rel="stylesheet"], style').forEach((el) => {
+            el.parentNode?.removeChild(el);
+          });
+          if ('adoptedStyleSheets' in clonedDoc) {
+            try {
+              (clonedDoc as unknown as { adoptedStyleSheets: CSSStyleSheet[] }).adoptedStyleSheets = [];
+            } catch {}
+          }
+          // Hide unrelated background root containers to keep html2canvas fast & clean
+          const targetNode = clonedDoc.querySelector('[data-pdf-export-target="manual"]');
+          if (targetNode) {
+            Array.from(clonedDoc.body.children).forEach((child) => {
+              if (!child.contains(targetNode) && child !== targetNode) {
+                (child as HTMLElement).style.display = 'none';
+              }
+            });
+          }
+          const masterStyle = clonedDoc.createElement('style');
+          masterStyle.textContent = manualPureHexCss;
+          clonedDoc.head.appendChild(masterStyle);
+        } catch (sanitizeErr) {
+          console.warn('Manual PDF clone sanitize warning:', sanitizeErr);
+        }
+      },
+    },
+    jsPDF: { unit: 'mm', format: paperSize, orientation },
+  };
+
+  try {
+    options.onProgress?.('جاري بناء صفحات ملف PDF باللغة العربية (قد يستغرق بضع ثوانٍ)...');
+    const blobTask = win.html2pdf().from(isolatedWrapper).set(opt).outputPdf('blob');
+    const timeoutTask = new Promise<Blob>((_, reject) =>
+      setTimeout(() => reject(new Error('PDF blob timeout')), 45000)
+    );
+    const pdfBlob = await Promise.race([blobTask, timeoutTask]);
+    try { isolatedWrapper.remove(); } catch {}
+    return pdfBlob;
+  } catch (err) {
+    console.warn('PDF blob generation notice:', err);
+    try { isolatedWrapper.remove(); } catch {}
+    return null;
+  }
+}
+
+export async function savePdfBlobToPartitionOrDownload(
+  blob: Blob,
+  options: {
+    filename: string;
+    directoryHandle?: FileSystemDirectoryHandleLike | null;
+    useSaveAsPicker?: boolean;
+  }
+): Promise<{
+  ok: boolean;
+  method: 'directory_handle' | 'save_picker' | 'download';
+  filename: string;
+  sizeKB: number;
+  message: string;
+}> {
+  const sizeKB = Math.max(1, Math.round(blob.size / 1024));
+  const filename = options.filename.endsWith('.pdf') ? options.filename : `${options.filename}.pdf`;
+
+  if (options.directoryHandle) {
+    try {
+      const fileHandle = await options.directoryHandle.getFileHandle(filename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return {
+        ok: true,
+        method: 'directory_handle',
+        filename,
+        sizeKB,
+        message: `تم حفظ ملف PDF (${filename} — ${sizeKB} كيلوبايت) مباشرة داخل المجلد المختار (${options.directoryHandle.name}).`,
+      };
+    } catch (err) {
+      console.warn('Directory handle save fallback to picker/download:', err);
+    }
+  }
+
+  const win = window as unknown as {
+    showSaveFilePicker?: (opts?: {
+      suggestedName?: string;
+      types?: Array<{ description: string; accept: Record<string, string[]> }>;
+    }) => Promise<{
+      name?: string;
+      createWritable: () => Promise<{
+        write: (data: Blob) => Promise<void>;
+        close: () => Promise<void>;
+      }>;
+    }>;
+  };
+
+  if (options.useSaveAsPicker && typeof win.showSaveFilePicker === 'function') {
+    try {
+      const fileHandle = await win.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'ملف PDF (دليل المستخدم)', accept: { 'application/pdf': ['.pdf'] } }],
+      });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return {
+        ok: true,
+        method: 'save_picker',
+        filename: fileHandle?.name || filename,
+        sizeKB,
+        message: `تم حفظ ملف PDF (${fileHandle?.name || filename} — ${sizeKB} كيلوبايت) على البارتيشن والمجلد الذي اخترته بنجاح.`,
+      };
+    } catch (err: unknown) {
+      const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: unknown }).name) : '';
+      if (name === 'AbortError') {
+        return {
+          ok: false,
+          method: 'save_picker',
+          filename,
+          sizeKB,
+          message: 'تم إلغاء عملية حفظ الملف من نافذة اختيار البارتيشن.',
+        };
+      }
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    try { document.body.removeChild(a); } catch {}
+    try { URL.revokeObjectURL(url); } catch {}
+  }, 1500);
+
+  return {
+    ok: true,
+    method: 'download',
+    filename,
+    sizeKB,
+    message: `تم تصدير وتنزيل ملف PDF (${filename} — ${sizeKB} كيلوبايت) على جهازك المحلي بنجاح.`,
+  };
+}
+

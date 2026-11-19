@@ -167,7 +167,7 @@ export const BakeryDetailsModal: React.FC<BakeryDetailsModalProps> = ({
               <Users className="w-4 h-4 text-[#1E40AF]" />
               <span>ثانياً: بيانات الحصص والمبالغ التأمينية والمستفيدين (مدخلات المعادلات)</span>
             </h4>
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-center">
                 <span className="text-slate-500 block text-[10px]">سعر الشيكارة</span>
                 <span className="font-mono font-extrabold text-slate-900 text-sm tabular-nums">

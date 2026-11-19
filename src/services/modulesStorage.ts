@@ -1344,10 +1344,119 @@ export function createInitialBranchModulesBundle(
     grainMaintenance: createInitialGrainMaintenanceState(branchId, branchName, villages),
     hr: createInitialHrState(branchId, branchName),
     updatedAt: new Date().toISOString(),
+    seedMeta: {
+      may2026MerchantsSeeded: true,
+      grainCollectionsSeeded: true,
+    },
   };
 }
 
-function upgradeModulesBundleIfNeeded(
+export function createEmptyBranchModulesBundle(
+  branchId: string,
+  branchName: string,
+  villages: VillageHierarchy[]
+): BranchModulesBundle {
+  const base = createInitialBranchModulesBundle(branchId, branchName, villages);
+  const nowIso = new Date().toISOString();
+  return {
+    ...base,
+    ration: {
+      ...base.ration,
+      merchants: [],
+      commodities: [],
+      priceHistory: [],
+      cards: [],
+      warehouses: [],
+      movements: [],
+      requisitions: [],
+      disbursements: [],
+      financialEntries: [],
+      inspections: [],
+      gasCylinders: [],
+      petroleumProducts: [],
+      rationOfficeAccounts: [],
+      merchantMonthlyArchives: [],
+      complaints: [],
+      auditLogs: [],
+    },
+    internalTrade: base.internalTrade
+      ? {
+          ...base.internalTrade,
+          establishments: [],
+          campaigns: [],
+          violations: [],
+          seizures: [],
+          complaints: [],
+          marketPrices: [],
+          lpgVillageCirculation: [],
+          petroleumVillageCirculation: [],
+          fuelStations: [],
+          fuelStationMovements: [],
+          lpgDepots: [],
+          lpgDistributors: [],
+          auditLogs: [],
+        }
+      : undefined,
+    grainMaintenance: {
+      ...base.grainMaintenance,
+      assets: [],
+      orders: [],
+      spareParts: [],
+      technicians: [],
+      grainMovements: [],
+      shunas: [],
+      wheatReceipts: [],
+      wheatIssues: [],
+      wheatLedgerMovements: [],
+      shunaReconciliations: [],
+      refrigerators: [],
+      refrigeratorRooms: [],
+      refrigeratorReceipts: [],
+      refrigeratorIssues: [],
+      refrigeratorAssets: [],
+      refrigeratorTempLogs: [],
+      refrigeratorMaintenance: [],
+      refrigeratorFinancials: [],
+      mills: [],
+      millLicenses: [],
+      millWheatReceipts: [],
+      millDailyOperations: [],
+      millProductions: [],
+      millMachinery: [],
+      millMaintenance: [],
+      millInspections: [],
+      millAssets: [],
+      flourQuotaMaster: [],
+      flourDailyDistributions: [],
+      flourMonthlyQuotas: [],
+      flourIssues: [],
+      flourQuotaAmendments: [],
+      millBakeryMappings: [],
+      millFlourStockBalances: [],
+      centralFinancialLedger: [],
+      auditLogs: [],
+    },
+    hr: {
+      ...base.hr,
+      employees: [],
+      attendance: [],
+      leaveBalances: [],
+      leaveRequests: [],
+      loans: [],
+      promotions: [],
+      payrollRuns: [],
+      auditLogs: [],
+    },
+    updatedAt: nowIso,
+    seedMeta: {
+      may2026MerchantsSeeded: true,
+      grainCollectionsSeeded: true,
+      factoryResetAt: nowIso,
+    },
+  };
+}
+
+export function upgradeModulesBundleIfNeeded(
   bundle: BranchModulesBundle,
   branchId: string,
   branchName: string,
@@ -1355,24 +1464,80 @@ function upgradeModulesBundleIfNeeded(
 ): { bundle: BranchModulesBundle; upgraded: boolean } {
   let upgraded = false;
   let nextRation = bundle.ration;
+  const nextSeedMeta = { ...(bundle.seedMeta || {}) };
 
-  const needsExpiryBackfill =
+  const wasFactoryReset = Boolean(nextSeedMeta.factoryResetAt);
+  const alreadyHasMay2026Archive =
+    Array.isArray(nextRation.merchantMonthlyArchives) &&
+    nextRation.merchantMonthlyArchives.some(
+      (a) =>
+        String(a?.id || '').includes('may2026') ||
+        String(a?.monthLabel || '').includes('مايو 2026')
+    );
+  const alreadySeededMerchants =
+    Boolean(nextSeedMeta.may2026MerchantsSeeded) ||
+    wasFactoryReset ||
+    alreadyHasMay2026Archive;
+
+  if (!alreadySeededMerchants && !nextSeedMeta.may2026MerchantsSeeded) {
+    // Only seed legacy bundles that have NEVER been seeded with May 2026 merchants (e.g., undefined or <= 3 old demo entries)
+    const currentMerchants = Array.isArray(nextRation.merchants) ? nextRation.merchants : [];
+    const shouldSeedLegacy = !Array.isArray(nextRation.merchants) || currentMerchants.length <= 3;
+
+    if (shouldSeedLegacy) {
+      const fullMayList = buildMay2026RationMerchantsList(branchId, branchName, villages);
+      const existingById = new Map(currentMerchants.map((m) => [m.id, m]));
+      const mergedMerchants = fullMayList.map((m) => existingById.get(m.id) || m);
+      nextRation = {
+        ...nextRation,
+        merchants: mergedMerchants,
+        merchantMonthlyArchives:
+          Array.isArray(nextRation.merchantMonthlyArchives) &&
+          nextRation.merchantMonthlyArchives.length > 0
+            ? nextRation.merchantMonthlyArchives
+            : [
+                {
+                  id: `${branchId}-arch-may2026`,
+                  monthLabel: 'تحديث بيانات التجار شهر مايو 2026 (النسخة الأصلية)',
+                  importedAt: '2026-05-01 09:00',
+                  importedBy: 'النظام الرئيسي',
+                  totalMerchants: mergedMerchants.length,
+                  activeCount: mergedMerchants.filter((m) => m.activityStatus === 'نشط').length,
+                  stoppedCount: mergedMerchants.filter(
+                    (m) => m.activityStatus === 'متوقف' || m.activityStatus === 'موقوف'
+                  ).length,
+                  onLeaveCount: mergedMerchants.filter((m) => m.activityStatus === 'إجازة').length,
+                  totalInsuranceAmount: mergedMerchants.reduce(
+                    (s, m) => s + (Number(m.cashInsuranceAmount) || 0),
+                    0
+                  ),
+                  summaryNotes:
+                    'النسخة المرجعية المعتمدة من ملف Excel «تحديث بيانات التجار شهر مايو 2026» بإجمالي 116 تاجراً تموينياً.',
+                  merchantsSnapshot: mergedMerchants,
+                },
+              ],
+      };
+      nextSeedMeta.may2026MerchantsSeeded = true;
+      upgraded = true;
+    } else {
+      nextSeedMeta.may2026MerchantsSeeded = true;
+      upgraded = true;
+    }
+  } else if (!nextSeedMeta.may2026MerchantsSeeded) {
+    nextSeedMeta.may2026MerchantsSeeded = true;
+    upgraded = true;
+  }
+
+  // Safely backfill missing expiry metadata ONLY on existing merchants — NEVER re-add deleted merchants!
+  if (
     Array.isArray(nextRation.merchants) &&
-    nextRation.merchants.some((m) => !m.taxCardExpiryDate || !m.commercialRegExpiryDate);
-
-  if (!Array.isArray(nextRation.merchants) || nextRation.merchants.length < 116 || needsExpiryBackfill) {
+    nextRation.merchants.length > 0 &&
+    nextRation.merchants.some((m) => !m.taxCardExpiryDate || !m.commercialRegExpiryDate)
+  ) {
     const fullMayList = buildMay2026RationMerchantsList(branchId, branchName, villages);
     const seedById = new Map(fullMayList.map((m) => [m.id, m]));
-    const existingById = new Map(
-      (nextRation.merchants || []).map((m) => [m.id, m])
-    );
-    const baseList =
-      Array.isArray(nextRation.merchants) && nextRation.merchants.length >= 116
-        ? nextRation.merchants
-        : fullMayList.map((m) => existingById.get(m.id) || m);
-
-    const mergedMerchants = baseList.map((m, idx) => {
-      const seededRef = seedById.get(m.id) || fullMayList[idx % fullMayList.length];
+    const backfilledMerchants = nextRation.merchants.map((m, idx) => {
+      const seededRef = seedById.get(m.id);
       return {
         ...m,
         traderCode: m.traderCode || seededRef?.traderCode || `TRD-16-${5001 + idx}`,
@@ -1385,35 +1550,9 @@ function upgradeModulesBundleIfNeeded(
         commercialRegExpiryDate: m.commercialRegExpiryDate || seededRef?.commercialRegExpiryDate || '2027-09-30',
       };
     });
-
     nextRation = {
       ...nextRation,
-      merchants: mergedMerchants,
-      merchantMonthlyArchives:
-        Array.isArray(nextRation.merchantMonthlyArchives) &&
-        nextRation.merchantMonthlyArchives.length > 0
-          ? nextRation.merchantMonthlyArchives
-          : [
-              {
-                id: `${branchId}-arch-may2026`,
-                monthLabel: 'تحديث بيانات التجار شهر مايو 2026 (النسخة الأصلية)',
-                importedAt: '2026-05-01 09:00',
-                importedBy: 'النظام الرئيسي',
-                totalMerchants: mergedMerchants.length,
-                activeCount: mergedMerchants.filter((m) => m.activityStatus === 'نشط').length,
-                stoppedCount: mergedMerchants.filter(
-                  (m) => m.activityStatus === 'متوقف' || m.activityStatus === 'موقوف'
-                ).length,
-                onLeaveCount: mergedMerchants.filter((m) => m.activityStatus === 'إجازة').length,
-                totalInsuranceAmount: mergedMerchants.reduce(
-                  (s, m) => s + (Number(m.cashInsuranceAmount) || 0),
-                  0
-                ),
-                summaryNotes:
-                  'النسخة المرجعية المعتمدة من ملف Excel «تحديث بيانات التجار شهر مايو 2026» بإجمالي 116 تاجراً تموينياً.',
-                merchantsSnapshot: mergedMerchants,
-              },
-            ],
+      merchants: backfilledMerchants,
     };
     upgraded = true;
   }
@@ -1425,131 +1564,84 @@ function upgradeModulesBundleIfNeeded(
   }
 
   let nextGrain = bundle.grainMaintenance;
+  // ONLY populate collections that are literally undefined (not Arrays); NEVER overwrite intentionally emptied arrays []
   if (
-    !nextGrain.shunas ||
-    !nextGrain.wheatReceipts ||
-    !nextGrain.refrigerators ||
-    !nextGrain.mills ||
-    !nextGrain.flourQuotaMaster
+    !nextSeedMeta.grainCollectionsSeeded &&
+    (!Array.isArray(nextGrain.shunas) ||
+      !Array.isArray(nextGrain.wheatReceipts) ||
+      !Array.isArray(nextGrain.refrigerators) ||
+      !Array.isArray(nextGrain.mills) ||
+      !Array.isArray(nextGrain.flourQuotaMaster))
   ) {
     const seeded = buildGrainDepartmentCollections(branchId, branchName, villages);
     nextGrain = {
       ...nextGrain,
-      shunas: Array.isArray(nextGrain.shunas) && nextGrain.shunas.length > 0 ? nextGrain.shunas : seeded.shunas,
-      wheatReceipts:
-        Array.isArray(nextGrain.wheatReceipts) && nextGrain.wheatReceipts.length > 0
-          ? nextGrain.wheatReceipts
-          : seeded.wheatReceipts,
-      wheatIssues:
-        Array.isArray(nextGrain.wheatIssues) && nextGrain.wheatIssues.length > 0
-          ? nextGrain.wheatIssues
-          : seeded.wheatIssues,
-      wheatLedgerMovements:
-        Array.isArray(nextGrain.wheatLedgerMovements) && nextGrain.wheatLedgerMovements.length > 0
-          ? nextGrain.wheatLedgerMovements
-          : seeded.wheatLedgerMovements,
-      shunaReconciliations:
-        Array.isArray(nextGrain.shunaReconciliations) && nextGrain.shunaReconciliations.length > 0
-          ? nextGrain.shunaReconciliations
-          : seeded.shunaReconciliations,
-      refrigerators:
-        Array.isArray(nextGrain.refrigerators) && nextGrain.refrigerators.length > 0
-          ? nextGrain.refrigerators
-          : seeded.refrigerators,
-      refrigeratorRooms:
-        Array.isArray(nextGrain.refrigeratorRooms) && nextGrain.refrigeratorRooms.length > 0
-          ? nextGrain.refrigeratorRooms
-          : seeded.refrigeratorRooms,
-      refrigeratorReceipts:
-        Array.isArray(nextGrain.refrigeratorReceipts) && nextGrain.refrigeratorReceipts.length > 0
-          ? nextGrain.refrigeratorReceipts
-          : seeded.refrigeratorReceipts,
-      refrigeratorIssues:
-        Array.isArray(nextGrain.refrigeratorIssues) && nextGrain.refrigeratorIssues.length > 0
-          ? nextGrain.refrigeratorIssues
-          : seeded.refrigeratorIssues,
-      refrigeratorAssets:
-        Array.isArray(nextGrain.refrigeratorAssets) && nextGrain.refrigeratorAssets.length > 0
-          ? nextGrain.refrigeratorAssets
-          : seeded.refrigeratorAssets,
-      refrigeratorTempLogs:
-        Array.isArray(nextGrain.refrigeratorTempLogs) && nextGrain.refrigeratorTempLogs.length > 0
-          ? nextGrain.refrigeratorTempLogs
-          : seeded.refrigeratorTempLogs,
-      refrigeratorMaintenance:
-        Array.isArray(nextGrain.refrigeratorMaintenance) && nextGrain.refrigeratorMaintenance.length > 0
-          ? nextGrain.refrigeratorMaintenance
-          : seeded.refrigeratorMaintenance,
-      refrigeratorFinancials:
-        Array.isArray(nextGrain.refrigeratorFinancials) && nextGrain.refrigeratorFinancials.length > 0
-          ? nextGrain.refrigeratorFinancials
-          : seeded.refrigeratorFinancials,
-      mills:
-        Array.isArray(nextGrain.mills) && nextGrain.mills.length > 0 ? nextGrain.mills : seeded.mills,
-      millLicenses:
-        Array.isArray(nextGrain.millLicenses) && nextGrain.millLicenses.length > 0
-          ? nextGrain.millLicenses
-          : seeded.millLicenses,
-      millWheatReceipts:
-        Array.isArray(nextGrain.millWheatReceipts) && nextGrain.millWheatReceipts.length > 0
-          ? nextGrain.millWheatReceipts
-          : seeded.millWheatReceipts,
-      millDailyOperations:
-        Array.isArray(nextGrain.millDailyOperations) && nextGrain.millDailyOperations.length > 0
-          ? nextGrain.millDailyOperations
-          : seeded.millDailyOperations,
-      millProductions:
-        Array.isArray(nextGrain.millProductions) && nextGrain.millProductions.length > 0
-          ? nextGrain.millProductions
-          : seeded.millProductions,
-      millMachinery:
-        Array.isArray(nextGrain.millMachinery) && nextGrain.millMachinery.length > 0
-          ? nextGrain.millMachinery
-          : seeded.millMachinery,
-      millMaintenance:
-        Array.isArray(nextGrain.millMaintenance) && nextGrain.millMaintenance.length > 0
-          ? nextGrain.millMaintenance
-          : seeded.millMaintenance,
-      millInspections:
-        Array.isArray(nextGrain.millInspections) && nextGrain.millInspections.length > 0
-          ? nextGrain.millInspections
-          : seeded.millInspections,
-      millAssets:
-        Array.isArray(nextGrain.millAssets) && nextGrain.millAssets.length > 0
-          ? nextGrain.millAssets
-          : seeded.millAssets,
-      flourQuotaMaster:
-        Array.isArray(nextGrain.flourQuotaMaster) && nextGrain.flourQuotaMaster.length > 0
-          ? nextGrain.flourQuotaMaster
-          : seeded.flourQuotaMaster,
-      flourDailyDistributions:
-        Array.isArray(nextGrain.flourDailyDistributions) && nextGrain.flourDailyDistributions.length > 0
-          ? nextGrain.flourDailyDistributions
-          : seeded.flourDailyDistributions,
-      flourMonthlyQuotas:
-        Array.isArray(nextGrain.flourMonthlyQuotas) && nextGrain.flourMonthlyQuotas.length > 0
-          ? nextGrain.flourMonthlyQuotas
-          : seeded.flourMonthlyQuotas,
-      flourIssues:
-        Array.isArray(nextGrain.flourIssues) && nextGrain.flourIssues.length > 0
-          ? nextGrain.flourIssues
-          : seeded.flourIssues,
-      flourQuotaAmendments:
-        Array.isArray(nextGrain.flourQuotaAmendments) && nextGrain.flourQuotaAmendments.length > 0
-          ? nextGrain.flourQuotaAmendments
-          : seeded.flourQuotaAmendments,
-      millBakeryMappings:
-        Array.isArray(nextGrain.millBakeryMappings) && nextGrain.millBakeryMappings.length > 0
-          ? nextGrain.millBakeryMappings
-          : seeded.millBakeryMappings,
-      millFlourStockBalances:
-        Array.isArray(nextGrain.millFlourStockBalances) && nextGrain.millFlourStockBalances.length > 0
-          ? nextGrain.millFlourStockBalances
-          : seeded.millFlourStockBalances,
-      centralFinancialLedger:
-        Array.isArray(nextGrain.centralFinancialLedger) && nextGrain.centralFinancialLedger.length > 0
-          ? nextGrain.centralFinancialLedger
-          : seeded.centralFinancialLedger,
+      shunas: Array.isArray(nextGrain.shunas) ? nextGrain.shunas : seeded.shunas,
+      wheatReceipts: Array.isArray(nextGrain.wheatReceipts) ? nextGrain.wheatReceipts : seeded.wheatReceipts,
+      wheatIssues: Array.isArray(nextGrain.wheatIssues) ? nextGrain.wheatIssues : seeded.wheatIssues,
+      wheatLedgerMovements: Array.isArray(nextGrain.wheatLedgerMovements)
+        ? nextGrain.wheatLedgerMovements
+        : seeded.wheatLedgerMovements,
+      shunaReconciliations: Array.isArray(nextGrain.shunaReconciliations)
+        ? nextGrain.shunaReconciliations
+        : seeded.shunaReconciliations,
+      refrigerators: Array.isArray(nextGrain.refrigerators) ? nextGrain.refrigerators : seeded.refrigerators,
+      refrigeratorRooms: Array.isArray(nextGrain.refrigeratorRooms)
+        ? nextGrain.refrigeratorRooms
+        : seeded.refrigeratorRooms,
+      refrigeratorReceipts: Array.isArray(nextGrain.refrigeratorReceipts)
+        ? nextGrain.refrigeratorReceipts
+        : seeded.refrigeratorReceipts,
+      refrigeratorIssues: Array.isArray(nextGrain.refrigeratorIssues)
+        ? nextGrain.refrigeratorIssues
+        : seeded.refrigeratorIssues,
+      refrigeratorAssets: Array.isArray(nextGrain.refrigeratorAssets)
+        ? nextGrain.refrigeratorAssets
+        : seeded.refrigeratorAssets,
+      refrigeratorTempLogs: Array.isArray(nextGrain.refrigeratorTempLogs)
+        ? nextGrain.refrigeratorTempLogs
+        : seeded.refrigeratorTempLogs,
+      refrigeratorMaintenance: Array.isArray(nextGrain.refrigeratorMaintenance)
+        ? nextGrain.refrigeratorMaintenance
+        : seeded.refrigeratorMaintenance,
+      refrigeratorFinancials: Array.isArray(nextGrain.refrigeratorFinancials)
+        ? nextGrain.refrigeratorFinancials
+        : seeded.refrigeratorFinancials,
+      mills: Array.isArray(nextGrain.mills) ? nextGrain.mills : seeded.mills,
+      millLicenses: Array.isArray(nextGrain.millLicenses) ? nextGrain.millLicenses : seeded.millLicenses,
+      millWheatReceipts: Array.isArray(nextGrain.millWheatReceipts)
+        ? nextGrain.millWheatReceipts
+        : seeded.millWheatReceipts,
+      millDailyOperations: Array.isArray(nextGrain.millDailyOperations)
+        ? nextGrain.millDailyOperations
+        : seeded.millDailyOperations,
+      millProductions: Array.isArray(nextGrain.millProductions) ? nextGrain.millProductions : seeded.millProductions,
+      millMachinery: Array.isArray(nextGrain.millMachinery) ? nextGrain.millMachinery : seeded.millMachinery,
+      millMaintenance: Array.isArray(nextGrain.millMaintenance) ? nextGrain.millMaintenance : seeded.millMaintenance,
+      millInspections: Array.isArray(nextGrain.millInspections) ? nextGrain.millInspections : seeded.millInspections,
+      millAssets: Array.isArray(nextGrain.millAssets) ? nextGrain.millAssets : seeded.millAssets,
+      flourQuotaMaster: Array.isArray(nextGrain.flourQuotaMaster)
+        ? nextGrain.flourQuotaMaster
+        : seeded.flourQuotaMaster,
+      flourDailyDistributions: Array.isArray(nextGrain.flourDailyDistributions)
+        ? nextGrain.flourDailyDistributions
+        : seeded.flourDailyDistributions,
+      flourMonthlyQuotas: Array.isArray(nextGrain.flourMonthlyQuotas)
+        ? nextGrain.flourMonthlyQuotas
+        : seeded.flourMonthlyQuotas,
+      flourIssues: Array.isArray(nextGrain.flourIssues) ? nextGrain.flourIssues : seeded.flourIssues,
+      flourQuotaAmendments: Array.isArray(nextGrain.flourQuotaAmendments)
+        ? nextGrain.flourQuotaAmendments
+        : seeded.flourQuotaAmendments,
+      millBakeryMappings: Array.isArray(nextGrain.millBakeryMappings)
+        ? nextGrain.millBakeryMappings
+        : seeded.millBakeryMappings,
+      millFlourStockBalances: Array.isArray(nextGrain.millFlourStockBalances)
+        ? nextGrain.millFlourStockBalances
+        : seeded.millFlourStockBalances,
+      centralFinancialLedger: Array.isArray(nextGrain.centralFinancialLedger)
+        ? nextGrain.centralFinancialLedger
+        : seeded.centralFinancialLedger,
       settings: {
         defaultIndirectOverheadPct: nextGrain.settings?.defaultIndirectOverheadPct ?? 10,
         defaultTaxPct: nextGrain.settings?.defaultTaxPct ?? 14,
@@ -1568,6 +1660,10 @@ function upgradeModulesBundleIfNeeded(
           'لائحة تشغيل وصيانة الصوامع والشون والثلاجات والمطاحن وحصص الدقيق القابلة للتعديل',
       },
     };
+    nextSeedMeta.grainCollectionsSeeded = true;
+    upgraded = true;
+  } else if (!nextSeedMeta.grainCollectionsSeeded) {
+    nextSeedMeta.grainCollectionsSeeded = true;
     upgraded = true;
   }
 
@@ -1578,13 +1674,21 @@ function upgradeModulesBundleIfNeeded(
       ration: nextRation,
       internalTrade: nextInternalTrade,
       grainMaintenance: nextGrain,
+      seedMeta: nextSeedMeta,
     },
     upgraded: true,
   };
 }
 
+function parseBundleTimestampMs(bundle?: BranchModulesBundle | null): number {
+  if (!bundle?.updatedAt) return 0;
+  const ms = Date.parse(bundle.updatedAt);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 export function readLocalBranchModulesBundle(branchId: string): BranchModulesBundle | null {
   try {
+    if (typeof localStorage === 'undefined') return null;
     const raw = localStorage.getItem(`${LOCAL_MODULES_STORAGE_PREFIX}${branchId}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
@@ -1599,10 +1703,54 @@ export function readLocalBranchModulesBundle(branchId: string): BranchModulesBun
 
 export function writeLocalBranchModulesBundle(branchId: string, bundle: BranchModulesBundle): void {
   try {
+    if (typeof localStorage === 'undefined') return;
     localStorage.setItem(`${LOCAL_MODULES_STORAGE_PREFIX}${branchId}`, JSON.stringify(bundle));
   } catch {
     // ignore storage quota overflow
   }
+}
+
+export function clearLocalBranchModulesBundle(branchId: string): void {
+  try {
+    const existingTimer = pendingDebouncedBundleTimers.get(branchId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      pendingDebouncedBundleTimers.delete(branchId);
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(`${LOCAL_MODULES_STORAGE_PREFIX}${branchId}`);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * تصفير بيانات الأقسام (السلع التموينية، التجارة الداخلية، صيانة الحبوب، الموارد البشرية)
+ * للفرع المحدد فقط دون المساس بأي فرع آخر.
+ */
+export async function resetBranchModulesBundleForBranch(
+  branchId: string,
+  branchName: string,
+  villages: VillageHierarchy[],
+  updatedBy = 'مدير النظام'
+): Promise<BranchModulesBundle> {
+  const emptyBundle = createEmptyBranchModulesBundle(branchId, branchName, villages);
+  writeLocalBranchModulesBundle(branchId, emptyBundle);
+  try {
+    if (getAuthSessionToken()) {
+      await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: {
+          ...getSecurityShieldHeaders(true),
+        },
+        body: JSON.stringify({ confirmPurge: true, branchId, clientId: SESSION_CLIENT_ID }),
+      }).catch(() => null);
+    }
+  } catch {}
+  await saveBranchModulesBundle(branchId, emptyBundle, updatedBy).catch(() => null);
+  return emptyBundle;
 }
 
 export interface ModuleSaveResult {
@@ -1618,6 +1766,9 @@ export async function loadBranchModulesBundle(
   villages: VillageHierarchy[]
 ): Promise<BranchModulesBundle> {
   const local = readLocalBranchModulesBundle(branchId);
+  const localTs = parseBundleTimestampMs(local);
+
+  let remoteCandidate: BranchModulesBundle | null = null;
 
   if (getAuthSessionToken()) {
     try {
@@ -1630,17 +1781,7 @@ export async function loadBranchModulesBundle(
       if (resp.ok) {
         const json = await resp.json();
         if (json?.exists && json?.payload?.ration && json?.payload?.grainMaintenance && json?.payload?.hr) {
-          const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
-            json.payload as BranchModulesBundle,
-            branchId,
-            branchName,
-            villages
-          );
-          writeLocalBranchModulesBundle(branchId, bundle);
-          if (upgraded) {
-            void saveBranchModulesBundle(branchId, bundle, 'ترقية قاعدة بيانات مايو 2026 والتجارة الداخلية');
-          }
-          return bundle;
+          remoteCandidate = json.payload as BranchModulesBundle;
         }
       }
     } catch {
@@ -1648,37 +1789,47 @@ export async function loadBranchModulesBundle(
     }
   }
 
-  // Check Supabase directly if configured
-  const sb = getSupabaseClient();
-  if (sb) {
-    try {
-      const { data } = await sb
-        .from('backup_snapshots')
-        .select('payload')
-        .eq('id', `mod__${branchId}__all_modules`)
-        .maybeSingle();
-      if (data?.payload?.ration && data?.payload?.grainMaintenance && data?.payload?.hr) {
-        const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
-          data.payload as BranchModulesBundle,
-          branchId,
-          branchName,
-          villages
-        );
-        writeLocalBranchModulesBundle(branchId, bundle);
-        if (upgraded) {
-          void saveBranchModulesBundle(branchId, bundle, 'ترقية قاعدة بيانات مايو 2026 والتجارة الداخلية');
+  if (!remoteCandidate) {
+    const sb = getSupabaseClient();
+    if (sb) {
+      try {
+        const { data } = await sb
+          .from('backup_snapshots')
+          .select('payload')
+          .eq('id', `mod__${branchId}__all_modules`)
+          .maybeSingle();
+        if (data?.payload?.ration && data?.payload?.grainMaintenance && data?.payload?.hr) {
+          remoteCandidate = data.payload as BranchModulesBundle;
         }
-        return bundle;
+      } catch {
+        // ignore if backup_snapshots doesn't have it
       }
-    } catch {
-      // ignore if backup_snapshots doesn't have it
     }
   }
 
-  if (local) {
-    const { bundle } = upgradeModulesBundleIfNeeded(local, branchId, branchName, villages);
+  const remoteTs = parseBundleTimestampMs(remoteCandidate);
+
+  // Respect the most recent mutation timestamp so local deletions/edits are NEVER overwritten by stale remote copies
+  if (local && (!remoteCandidate || localTs >= remoteTs)) {
+    const { bundle, upgraded } = upgradeModulesBundleIfNeeded(local, branchId, branchName, villages);
     writeLocalBranchModulesBundle(branchId, bundle);
-    void saveBranchModulesBundle(branchId, bundle, 'مزامنة تلقائية');
+    if (upgraded || localTs > remoteTs) {
+      void saveBranchModulesBundle(branchId, bundle, 'مزامنة تلقائية لأحدث التعديلات');
+    }
+    return bundle;
+  }
+
+  if (remoteCandidate) {
+    const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
+      remoteCandidate,
+      branchId,
+      branchName,
+      villages
+    );
+    writeLocalBranchModulesBundle(branchId, bundle);
+    if (upgraded) {
+      void saveBranchModulesBundle(branchId, bundle, 'تحديث هيكل بيانات الأقسام');
+    }
     return bundle;
   }
 
@@ -1710,10 +1861,14 @@ export async function saveBranchModulesBundle(
     ...bundle,
     branchId,
     updatedAt: nowIso,
+    seedMeta: {
+      may2026MerchantsSeeded: true,
+      grainCollectionsSeeded: true,
+      ...(bundle.seedMeta || {}),
+    },
   };
-  setTimeout(() => {
-    writeLocalBranchModulesBundle(branchId, withTimestamp);
-  }, 0);
+  // Write synchronously to localStorage immediately so deletions/edits persist even on instant reload
+  writeLocalBranchModulesBundle(branchId, withTimestamp);
 
   const runSave = async (): Promise<ModuleSaveResult> => {
     let serverOk = false;
@@ -1763,7 +1918,6 @@ export async function saveBranchModulesBundle(
         if (!error) {
           supaOk = true;
         }
-        // Broadcast via reused Supabase Realtime channel for instant multi-device sync
         const ch = getOrCreateBroadcastChannel(sb, branchId);
         void ch.send({
           type: 'broadcast',
@@ -1805,13 +1959,20 @@ export function saveBranchModulesBundleDebounced(
   branchId: string,
   bundle: BranchModulesBundle,
   updatedBy = 'مدير النظام',
-  delayMs = 400
+  delayMs = 150
 ): void {
-  writeLocalBranchModulesBundle(branchId, {
+  const nowIso = new Date().toISOString();
+  const stamped: BranchModulesBundle = {
     ...bundle,
     branchId,
-    updatedAt: new Date().toISOString(),
-  });
+    updatedAt: nowIso,
+    seedMeta: {
+      may2026MerchantsSeeded: true,
+      grainCollectionsSeeded: true,
+      ...(bundle.seedMeta || {}),
+    },
+  };
+  writeLocalBranchModulesBundle(branchId, stamped);
   lastLocalSaveTimeByBranch.set(branchId, Date.now());
   const existingTimer = pendingDebouncedBundleTimers.get(branchId);
   if (existingTimer) {
@@ -1819,7 +1980,7 @@ export function saveBranchModulesBundleDebounced(
   }
   const timer = setTimeout(() => {
     pendingDebouncedBundleTimers.delete(branchId);
-    void saveBranchModulesBundle(branchId, bundle, updatedBy);
+    void saveBranchModulesBundle(branchId, stamped, updatedBy);
   }, delayMs);
   pendingDebouncedBundleTimers.set(branchId, timer);
 }
@@ -1843,6 +2004,15 @@ export function subscribeBranchModulesRealtime(
     activeBroadcastChannels.delete(branchId);
   }
 
+  const shouldAcceptIncoming = (incoming: BranchModulesBundle | undefined): incoming is BranchModulesBundle => {
+    if (!incoming?.ration || !incoming?.grainMaintenance || !incoming?.hr) return false;
+    const local = readLocalBranchModulesBundle(branchId);
+    if (local && parseBundleTimestampMs(local) > parseBundleTimestampMs(incoming)) {
+      return false;
+    }
+    return true;
+  };
+
   const channel = sb
     .channel(`tamween-modules-${branchId}`)
     .on(
@@ -1852,7 +2022,7 @@ export function subscribeBranchModulesRealtime(
         const data = msg?.payload;
         if (!data || data.clientId === SESSION_CLIENT_ID || data.branchId !== branchId) return;
         const incoming = data.bundle as BranchModulesBundle;
-        if (incoming?.ration && incoming?.grainMaintenance && incoming?.hr) {
+        if (shouldAcceptIncoming(incoming)) {
           writeLocalBranchModulesBundle(branchId, incoming);
           onRemoteUpdate(incoming);
         }
@@ -1872,7 +2042,7 @@ export function subscribeBranchModulesRealtime(
           return;
         }
         const incoming = payload?.new?.payload as BranchModulesBundle | undefined;
-        if (incoming?.ration && incoming?.grainMaintenance && incoming?.hr) {
+        if (shouldAcceptIncoming(incoming)) {
           writeLocalBranchModulesBundle(branchId, incoming);
           onRemoteUpdate(incoming);
         }

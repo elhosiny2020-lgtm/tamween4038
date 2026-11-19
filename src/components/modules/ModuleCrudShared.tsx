@@ -40,6 +40,13 @@ import {
 import { Button } from '../common/Button';
 import { ReportToolbar } from '../common/ReportToolbar';
 import { ErrorBoundary } from '../ErrorBoundary';
+import {
+  detectStrictFieldKind,
+  sanitizeNationalIdInput,
+  sanitizePhoneInput,
+  validateExactNationalId,
+  validateExactPhone,
+} from '../../utils/fieldValidation';
 
 export { Button, ReportToolbar, ErrorBoundary };
 
@@ -358,6 +365,24 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
           return;
         }
       }
+      if (!f.readOnly && f.type !== 'select' && f.type !== 'checkbox' && f.type !== 'date' && f.type !== 'time') {
+        const strictKind = detectStrictFieldKind(f.key, f.label);
+        if (strictKind === 'nationalId') {
+          const nidRes = validateExactNationalId(String(values[f.key] ?? ''), Boolean(f.required));
+          if (!nidRes.valid) {
+            setErrorMsg(nidRes.error || `الرقم القومي في (${f.label}) يجب أن يتكون من 14 رقماً بالضبط.`);
+            return;
+          }
+          values[f.key] = nidRes.normalized;
+        } else if (strictKind === 'phone') {
+          const phoneRes = validateExactPhone(String(values[f.key] ?? ''), Boolean(f.required));
+          if (!phoneRes.valid) {
+            setErrorMsg(phoneRes.error || `رقم التليفون في (${f.label}) يجب أن يتكون من 11 رقماً بالضبط.`);
+            return;
+          }
+          values[f.key] = phoneRes.normalized;
+        }
+      }
     }
 
     setIsSubmitting(true);
@@ -432,6 +457,12 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             {fields.map((f) => {
               const val = values[f.key] ?? (f.type === 'checkbox' ? false : '');
+              const strictKind =
+                f.type !== 'select' && f.type !== 'checkbox' && f.type !== 'date' && f.type !== 'time' && f.type !== 'textarea'
+                  ? detectStrictFieldKind(f.key, f.label)
+                  : null;
+              const strictMaxLen = strictKind === 'nationalId' ? 14 : strictKind === 'phone' ? 11 : undefined;
+              const currentDigitsCount = strictKind ? String(val).replace(/\D/g, '').length : 0;
               return (
                 <div
                   key={f.key}
@@ -439,10 +470,25 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
                 >
                   <label
                     htmlFor={`crud-field-${f.key}`}
-                    className="block font-black text-[#0A1628]"
+                    className="flex items-center justify-between gap-2 font-black text-[#0A1628]"
                   >
-                    <span>{f.label}</span>
-                    {f.required && <span className="text-rose-600 mr-1">*</span>}
+                    <span>
+                      {f.label}
+                      {f.required && <span className="text-rose-600 mr-1">*</span>}
+                    </span>
+                    {strictMaxLen && (
+                      <span
+                        className={`text-[10px] font-mono tabular-nums font-black ${
+                          currentDigitsCount === strictMaxLen
+                            ? 'text-emerald-700'
+                            : currentDigitsCount > 0
+                            ? 'text-rose-600'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        {currentDigitsCount} / {strictMaxLen} رقم
+                      </span>
+                    )}
                   </label>
 
                   {f.type === 'select' ? (
@@ -483,24 +529,32 @@ export const ModuleFormModal: React.FC<ModuleFormModalProps> = ({
                   ) : (
                     <input
                       id={`crud-field-${f.key}`}
-                      type={f.type}
+                      type={strictKind ? 'text' : f.type}
+                      inputMode={strictKind ? 'numeric' : undefined}
+                      maxLength={strictMaxLen}
                       step={f.step || (f.type === 'number' ? 'any' : undefined)}
                       min={f.min}
                       disabled={f.readOnly}
                       value={val}
                       placeholder={f.placeholder}
-                      onChange={(e) =>
-                        updateFieldValue(
-                          f.key,
-                          f.type === 'number'
-                            ? e.target.value === ''
-                              ? ''
-                              : Number(e.target.value)
-                            : e.target.value
-                        )
-                      }
+                      onChange={(e) => {
+                        if (strictKind === 'nationalId') {
+                          updateFieldValue(f.key, sanitizeNationalIdInput(e.target.value));
+                        } else if (strictKind === 'phone') {
+                          updateFieldValue(f.key, sanitizePhoneInput(e.target.value));
+                        } else {
+                          updateFieldValue(
+                            f.key,
+                            f.type === 'number'
+                              ? e.target.value === ''
+                                ? ''
+                                : Number(e.target.value)
+                              : e.target.value
+                          );
+                        }
+                      }}
                       className={`w-full px-3 py-2 bg-slate-50 border border-slate-300 focus:border-[#0A1628] rounded-xl font-bold text-slate-900 ${
-                        f.type === 'number' || f.type === 'date' || f.type === 'time'
+                        strictKind || f.type === 'number' || f.type === 'date' || f.type === 'time'
                           ? 'font-mono'
                           : ''
                       }`}

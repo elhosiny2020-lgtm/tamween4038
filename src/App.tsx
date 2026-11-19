@@ -34,6 +34,7 @@ import {
   readBranchPartitionFromLocal,
   isDefaultSeedState,
   resetNonMahallaBranchesLocal,
+  factoryResetBranch,
 } from './storage';
 import {
   loadBranchAuthVault,
@@ -279,6 +280,7 @@ import {
   saveBranchModulesBundle,
   saveBranchModulesBundleDebounced,
   subscribeBranchModulesRealtime,
+  resetBranchModulesBundleForBranch,
 } from './services/modulesStorage';
 import {
   canUserAccessTab,
@@ -1356,7 +1358,15 @@ export default function App() {
       ) {
         const incoming = msg.payload as BranchModulesBundle;
         if (incoming.ration && incoming.grainMaintenance && incoming.hr) {
-          setModulesBundle(incoming);
+          setModulesBundle((prev) => {
+            if (!prev) return incoming;
+            const prevMs = Date.parse(prev.updatedAt || '');
+            const incMs = Date.parse(incoming.updatedAt || '');
+            if (Number.isFinite(prevMs) && Number.isFinite(incMs) && incMs < prevMs) {
+              return prev;
+            }
+            return incoming;
+          });
         }
       }
     });
@@ -1372,8 +1382,13 @@ export default function App() {
         'مستخدم المنظومة';
       setModulesBundle((prev) => {
         if (!prev) return prev;
-        const next = updater(prev);
-        saveBranchModulesBundleDebounced(currentBranchId, next, currentUserLabel);
+        const nextRaw = updater(prev);
+        const next: BranchModulesBundle = {
+          ...nextRaw,
+          updatedAt: new Date().toISOString(),
+        };
+        // Persist synchronously to localStorage + dispatch server/Supabase save immediately so deletes & edits NEVER revert on reload
+        void saveBranchModulesBundle(currentBranchId, next, currentUserLabel);
         return next;
       });
       if (toastMsg) {
@@ -5288,6 +5303,10 @@ export default function App() {
               bakeriesCount={appState.bakeries.length}
               debtsCount={appState.debts.length}
               villagesCount={appState.villages.length}
+              logoBase64={appState.systemConfig.logoBase64}
+              administrationTitle={appState.systemConfig.administrationTitle}
+              directorateTitle={appState.systemConfig.directorateTitle}
+              preparedBy={appState.currentUser?.fullName}
             />
             </Suspense>
           ) : activeTab === 'realtime-diagnostics' ? (
@@ -5303,8 +5322,16 @@ export default function App() {
                 await handleManualCloudPull();
               }}
               onPurgeAllDatabases={async () => {
-                const res = await clearSupabaseDatabaseData();
-                await factoryReset();
+                const targetBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+                const targetBranchName = appState.systemConfig.administrationTitle || 'الفرع الحالي';
+                const res = await clearSupabaseDatabaseData(targetBranchId);
+                await factoryResetBranch(targetBranchId);
+                const emptyMod = await resetBranchModulesBundleForBranch(
+                  targetBranchId,
+                  targetBranchName,
+                  appState.villages || DEFAULT_VILLAGES_HIERARCHY
+                );
+                setModulesBundle(emptyMod);
                 setHighDebtNotifications([]);
                 setAppState((prev) =>
                   prev
@@ -7452,8 +7479,16 @@ export default function App() {
           onRestoreState={(restored) => triggerSave(restored, 'تم استعادة وتطبيق قاعدة البيانات بنجاح')}
           onResetNonMahallaBranches={handleResetNonMahallaBranches}
           onFactoryReset={async () => {
-            await clearSupabaseDatabaseData().catch(() => {});
-            await factoryReset();
+            const targetBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+            const targetBranchName = appState.systemConfig.administrationTitle || 'الفرع الحالي';
+            await clearSupabaseDatabaseData(targetBranchId).catch(() => {});
+            await factoryResetBranch(targetBranchId);
+            const emptyMod = await resetBranchModulesBundleForBranch(
+              targetBranchId,
+              targetBranchName,
+              appState.villages || DEFAULT_VILLAGES_HIERARCHY
+            );
+            setModulesBundle(emptyMod);
             setHighDebtNotifications([]);
             setAppState((prev) =>
               prev
@@ -7462,6 +7497,7 @@ export default function App() {
                     bakeries: [],
                     debts: [],
                     dailyTasks: [],
+                    inboxMessages: [],
                   }
                 : prev
             );

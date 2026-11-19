@@ -1705,7 +1705,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
           </div>
 
           {/* 4.2 Executive Summary Strip inside Report */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
               <span className="text-[11px] font-bold text-slate-600 block">عدد المخابز</span>
               <span className="text-sm font-black text-[#0F2342] font-mono">

@@ -269,7 +269,18 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Table Sticky Header & Unified Compact ERP Table System */
+/* ============================================================================
+   UNIFIED PROFESSIONAL ERP TABLE SYSTEM (كافة جداول المنظومة — خطوط احترافية وتنسيق متوازن)
+   ============================================================================ */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-family: 'Cairo', 'Tajawal', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  text-align: start;
+}
+
 table th {
   position: sticky;
   top: 0;
@@ -277,6 +288,28 @@ table th {
 }
 
 @layer base {
+  table thead th {
+    font-size: 0.76rem;
+    font-weight: 800;
+    line-height: 1.4;
+    letter-spacing: 0.01em;
+    padding: 0.6rem 0.7rem;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  table tbody td {
+    font-size: 0.76rem;
+    font-weight: 600;
+    line-height: 1.48;
+    padding: 0.52rem 0.68rem;
+    vertical-align: middle;
+    word-break: normal;
+    overflow-wrap: break-word;
+    border-bottom: 1px solid #E2E8F0;
+    color: #0F172A;
+  }
+
   tbody tr {
     transition: background-color 0.14s ease;
   }
@@ -290,7 +323,7 @@ table th {
   }
 }
 
-/* Unified Compact ERP Table Class for All 4 Departments (خط أصغر بدرجة واحدة فقط، صفوف متناسقة ومريحة للعين) */
+/* Unified Compact ERP Table Class for All Departments (وضوح فائق وتنسيق احترافي للخطوط والأرقام) */
 .compact-erp-table table,
 .enlarged-bold-table table {
   border-collapse: collapse;
@@ -302,34 +335,46 @@ table th {
 .compact-erp-table table th,
 .enlarged-bold-table table thead th,
 .enlarged-bold-table table th {
-  font-size: 0.72rem !important; /* ~13.7px on 19px root - crisp 1 step smaller & ultra clean */
-  font-weight: 900 !important;
-  padding: 0.44rem 0.5rem !important;
-  line-height: 1.25 !important;
-  border-color: rgba(30, 58, 95, 0.45) !important;
+  font-size: 0.75rem !important; /* ~14.2px — crisp, authoritative Arabic table headers */
+  font-weight: 800 !important;
+  padding: 0.58rem 0.68rem !important;
+  line-height: 1.38 !important;
+  letter-spacing: 0.01em !important;
+  border-color: rgba(30, 58, 95, 0.35) !important;
   white-space: nowrap;
+  vertical-align: middle !important;
 }
 
 .compact-erp-table table tbody td,
 .compact-erp-table table td,
 .enlarged-bold-table table tbody td,
 .enlarged-bold-table table td {
-  font-size: 0.70rem !important; /* ~13.3px - compact 1 step reduction keeping Arabic bold & sharp */
-  font-weight: 700 !important;
-  padding: 0.36rem 0.46rem !important;
-  line-height: 1.3 !important;
+  font-size: 0.74rem !important; /* ~14px — clean, easy-to-scan executive body text */
+  font-weight: 600 !important;
+  padding: 0.5rem 0.65rem !important;
+  line-height: 1.48 !important;
   vertical-align: middle !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
   border-bottom: 1px solid #E2E8F0;
 }
 
 .compact-erp-table table td .font-black,
-.enlarged-bold-table table td .font-black {
+.enlarged-bold-table table td .font-black,
+.compact-erp-table table td strong,
+.enlarged-bold-table table td strong {
   font-weight: 800 !important;
+}
+
+.compact-erp-table table td .font-mono,
+.enlarged-bold-table table td .font-mono {
+  font-variant-numeric: tabular-nums !important;
+  letter-spacing: 0.02em;
 }
 
 .compact-erp-table table tbody tr:hover,
 .enlarged-bold-table table tbody tr:hover {
-  background-color: rgba(13, 148, 136, 0.09) !important;
+  background-color: rgba(13, 148, 136, 0.08) !important;
 }
 
 /* Summary / Totals Row Styling */
@@ -338,7 +383,7 @@ tr.grand-total-row,
 tfoot tr {
   background: linear-gradient(90deg, #0A1628 0%, #0F1E36 60%, #0D9488 100%) !important;
   color: #ffffff !important;
-  font-weight: 900 !important;
+  font-weight: 800 !important;
 }
 
 tr.summary-row td,
@@ -346,8 +391,9 @@ tr.grand-total-row td,
 tfoot tr td {
   color: #ffffff !important;
   border-color: rgba(212, 175, 55, 0.35) !important;
-  font-weight: 900 !important;
-  padding: 0.46rem 0.5rem !important;
+  font-weight: 800 !important;
+  padding: 0.56rem 0.68rem !important;
+  line-height: 1.4 !important;
 }
 
 /* Local Unit Subtotal Row Styling (إجمالي الوحدة المحلية) */
@@ -360,9 +406,10 @@ tr.unit-subtotal-row {
 
 tr.unit-subtotal-row td {
   color: #0A1628 !important;
-  font-weight: 900 !important;
+  font-weight: 800 !important;
   border-color: rgba(13, 148, 136, 0.35) !important;
-  padding: 0.42rem 0.5rem !important;
+  padding: 0.52rem 0.65rem !important;
+  line-height: 1.4 !important;
 }
 
 /* Official Print Styles */

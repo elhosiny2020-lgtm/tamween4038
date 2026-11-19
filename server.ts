@@ -3395,8 +3395,57 @@ async function startServer() {
       }
       const clientIp = getClientIp(req);
       const clientId = String(req.headers['x-tamween-client-id'] || req.query?.clientId || '');
+      const targetBranchId = String(req.query?.branchId || req.body?.branchId || '').trim();
       const timestamp = new Date().toISOString();
       liveRevision += 1;
+
+      if (targetBranchId) {
+        // Branch-scoped factory reset: purge ONLY the active branch's records without touching any other branch!
+        const existingSnap = cachedLiveSnapshot as Record<string, any> | null;
+        if (existingSnap && typeof existingSnap === 'object') {
+          if (existingSnap.branchPartitions && typeof existingSnap.branchPartitions === 'object') {
+            delete existingSnap.branchPartitions[targetBranchId];
+          }
+          if (existingSnap.activeBranchId === targetBranchId || targetBranchId === DEFAULT_BRANCH_ID) {
+            existingSnap.bakeries = [];
+            existingSnap.debts = [];
+            existingSnap.dailyTasks = [];
+            existingSnap.inboxMessages = [];
+          }
+          existingSnap.updatedAt = timestamp;
+        }
+        cachedBranchModules.delete(`${targetBranchId}::all_modules`);
+
+        recordSecurityAudit({
+          ip: clientIp,
+          method: 'DELETE',
+          path: '/api/supabase/live-db',
+          threatType: 'AUTHORIZED_BRANCH_FACTORY_RESET',
+          actionTaken: 'VERIFIED',
+          detail: `تم تنفيذ إعادة ضبط المصنع للفرع (${targetBranchId}) فقط دون المساس بباقي الفروع`,
+        });
+
+        broadcastWs({
+          type: 'branch_state_cleared',
+          branchId: targetBranchId,
+          clientId,
+          timestamp,
+          revision: liveRevision,
+          sqlOperation: 'DELETE',
+          affectedTable: 'bakeries',
+          cleared: true,
+        });
+
+        res.json({
+          success: true,
+          cleared: true,
+          branchId: targetBranchId,
+          revision: liveRevision,
+          timestamp,
+          message: `تم مسح بيانات الفرع (${targetBranchId}) وإعادة ضبط المصنع بنجاح دون المساس بباقي الفروع.`,
+        });
+        return;
+      }
 
       await purgeAllPostgresData().catch(() => {});
 
@@ -4073,7 +4122,8 @@ async function startServer() {
         if (sliceChanged || targetSlice === deptKey) {
           const canMutate =
             hasDepartmentPermission(actor.user, deptKey, 'insert') ||
-            hasDepartmentPermission(actor.user, deptKey, 'update');
+            hasDepartmentPermission(actor.user, deptKey, 'update') ||
+            hasDepartmentPermission(actor.user, deptKey, 'delete');
           if (!canMutate) {
             await denyUnauthorizedAndAudit(
               req,
@@ -4147,6 +4197,76 @@ async function startServer() {
         success: false,
         code: 'DB_PERSISTENCE_UNAVAILABLE',
         error: err?.message || 'تعذر حفظ بيانات الأقسام في قاعدة البيانات الدائمة.',
+      });
+    }
+  });
+
+  // Branch-scoped Factory Reset for module states (clears ONLY target branchId, never other branches)
+  app.delete('/api/modules/:branchId', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.authenticated ? 403 : 401,
+        'modules',
+        'FACTORY_RESET_BRANCH',
+        'إعادة ضبط المصنع لبيانات الأقسام داخل الفرع مقتصرة على مدير النظام فقط.'
+      );
+      return;
+    }
+    const branchId = String(req.params.branchId || actor.user.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    const body = req.body || {};
+    const moduleKey = String(body.moduleKey || req.query.moduleKey || 'all_modules').trim() || 'all_modules';
+    const emptyPayload = body.payload || null;
+    const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
+    const cacheKey = `${branchId}::${moduleKey}`;
+    try {
+      let version = 1;
+      let updatedAt = new Date().toISOString();
+      if (emptyPayload) {
+        const saved = await upsertBranchModuleStateInPostgres(branchId, emptyPayload, actor.user.username, moduleKey);
+        version = saved.version;
+        updatedAt = saved.updatedAt;
+        cachedBranchModules.set(cacheKey, {
+          payload: emptyPayload,
+          version,
+          updatedAt,
+        });
+      } else {
+        cachedBranchModules.delete(cacheKey);
+      }
+      await recordAuditLog(
+        actor.user.username,
+        'BRANCH_MODULES_FACTORY_RESET',
+        `إعادة ضبط المصنع لبيانات الأقسام داخل الفرع (${branchId}) فقط دون المساس ببقية الفروع`,
+        getClientIp(req),
+        branchId,
+        {
+          username: actor.user.username,
+          department: 'modules',
+          operation: 'DELETE',
+          recordId: `${branchId}:${moduleKey}`,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+      if (emptyPayload) {
+        broadcastWs({
+          type: 'module_state_update',
+          branchId,
+          moduleKey,
+          payload: emptyPayload,
+          version,
+          updatedAt,
+          clientId,
+        });
+      }
+      res.json({ success: true, branchId, version, updatedAt });
+    } catch (err: any) {
+      res.status(503).json({
+        success: false,
+        error: err?.message || 'تعذر تصفير بيانات الأقسام للفرع المحدد.',
       });
     }
   });

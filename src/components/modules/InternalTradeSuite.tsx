@@ -1,6 +1,12 @@
 import React, { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import DOMPurify from 'dompurify';
 import {
+  sanitizeNationalIdInput,
+  sanitizePhoneInput,
+  validateExactNationalId,
+  validateExactPhone,
+} from '../../utils/fieldValidation';
+import {
   Building2,
   ShieldCheck,
   AlertTriangle,
@@ -287,6 +293,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
 
   const [isMovementModalOpen, setIsMovementModalOpen] = useState(false);
   const [movementError, setMovementError] = useState<string | null>(null);
+  const [formValidationError, setFormValidationError] = useState<string | null>(null);
   const [isFuelStationModalOpen, setIsFuelStationModalOpen] = useState(false);
   const [editingFuelStation, setEditingFuelStation] = useState<FuelStationControlRecord | null>(null);
 
@@ -1511,7 +1518,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
         <div className="space-y-4">
           {/* 14 Interactive Clickable Executive KPI Cards */}
           <div
-            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2.5"
+            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3"
             data-testid="internal-trade-14-kpis"
           >
             {[
@@ -7400,7 +7407,18 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             key={editingEst?.id || 'new-est'}
             onSubmit={(e) => {
               e.preventDefault();
+              setFormValidationError(null);
               const fd = new FormData(e.currentTarget);
+              const nidCheck = validateExactNationalId(String(fd.get('nationalId') || ''), true);
+              if (!nidCheck.valid) {
+                setFormValidationError(nidCheck.error || 'الرقم القومي يجب أن يتكون من 14 رقماً بالضبط.');
+                return;
+              }
+              const phoneCheck = validateExactPhone(String(fd.get('phone') || ''), true);
+              if (!phoneCheck.valid) {
+                setFormValidationError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
+                return;
+              }
               const newRec: InternalTradeEstablishment = {
                 id: editingEst?.id || `it-est-${Date.now()}`,
                 establishmentCode:
@@ -7409,8 +7427,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   `IT-2026-${100 + state.establishments.length + 1}`,
                 ownerName: String(fd.get('ownerName') || '').trim(),
                 establishmentName: String(fd.get('establishmentName') || '').trim(),
-                nationalId: String(fd.get('nationalId') || '').trim(),
-                phone: String(fd.get('phone') || '').trim(),
+                nationalId: nidCheck.normalized,
+                phone: phoneCheck.normalized,
                 governorate: 'الغربية',
                 center: 'المحلة الكبرى',
                 village: String(fd.get('village') || 'بلقينا'),
@@ -7447,6 +7465,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   afterSummary: newRec.establishmentName,
                 }
               );
+              setFormValidationError(null);
               setIsEstModalOpen(false);
               setEditingEst(null);
             }}
@@ -7455,6 +7474,12 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <h3 className="text-lg font-black text-[#0A1931]">
               {editingEst ? 'تعديل بيانات المنشأة التجارية' : 'إضافة منشأة جديدة بالمركز الرقابي الموحد'}
             </h3>
+            {formValidationError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-400 text-rose-900 text-xs font-black flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{formValidationError}</span>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               <div>
                 <label className="font-black block mb-1">اسم المحل / المنشأة التجارية *</label>
@@ -7498,20 +7523,36 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 />
               </div>
               <div>
-                <label className="font-black block mb-1">الرقم القومي *</label>
+                <label className="font-black block mb-1">الرقم القومي (14 رقماً بالضبط) *</label>
                 <input
                   name="nationalId"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={14}
+                  minLength={14}
+                  pattern="[0-9]{14}"
                   required
-                  defaultValue={editingEst?.nationalId || '28201011601234'}
+                  defaultValue={sanitizeNationalIdInput(editingEst?.nationalId || '28201011601234')}
+                  onInput={(e) => {
+                    e.currentTarget.value = sanitizeNationalIdInput(e.currentTarget.value);
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
               <div>
-                <label className="font-black block mb-1">رقم الهاتف *</label>
+                <label className="font-black block mb-1">رقم الهاتف (11 رقماً بالضبط) *</label>
                 <input
                   name="phone"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={11}
+                  minLength={11}
+                  pattern="[0-9]{11}"
                   required
-                  defaultValue={editingEst?.phone || '01012345678'}
+                  defaultValue={sanitizePhoneInput(editingEst?.phone || '01012345678')}
+                  onInput={(e) => {
+                    e.currentTarget.value = sanitizePhoneInput(e.currentTarget.value);
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
@@ -8376,6 +8417,12 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 (fd.get('status') as InternalTradeComplaintRecord['status']) ||
                 editingComplaint?.status ||
                 'قيد الفحص';
+              setFormValidationError(null);
+              const phoneCheck = validateExactPhone(String(fd.get('phone') || ''), true);
+              if (!phoneCheck.valid) {
+                setFormValidationError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
+                return;
+              }
               const rec: InternalTradeComplaintRecord = {
                 id: editingComplaint?.id || `cmp-${Date.now()}`,
                 complaintNumber: editingComplaint?.complaintNumber || `SHK-2026-0${state.complaints.length + 1}`,
@@ -8383,7 +8430,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 source:
                   (fd.get('source') as InternalTradeComplaintRecord['source']) || 'بوابة الشكاوى الحكومية',
                 complainantName: String(fd.get('complainantName') || 'مواطن'),
-                phone: String(fd.get('phone') || '01000000000'),
+                phone: phoneCheck.normalized,
                 subject: String(fd.get('subject') || 'شكوى تموينية'),
                 targetEstablishmentCode: editingComplaint?.targetEstablishmentCode,
                 targetEstablishmentName: String(fd.get('targetEstablishmentName') || 'منشأة تجارية'),
@@ -8419,6 +8466,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   afterSummary: `${rec.targetEstablishmentName} (${rec.status})`,
                 }
               );
+              setFormValidationError(null);
               setIsComplaintModalOpen(false);
               setEditingComplaint(null);
             }}
@@ -8427,6 +8475,12 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <h3 className="text-lg font-black text-[#0A1931]">
               {editingComplaint ? `تعديل الشكوى رقم ${editingComplaint.complaintNumber}` : 'تسجيل شكوى أو بلاغ تمويني جديد'}
             </h3>
+            {formValidationError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-400 text-rose-900 text-xs font-black flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{formValidationError}</span>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
                 <label className="font-black block mb-1">اسم مقدم الشكوى *</label>
@@ -8438,11 +8492,19 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 />
               </div>
               <div>
-                <label className="font-black block mb-1">رقم الهاتف *</label>
+                <label className="font-black block mb-1">رقم الهاتف (11 رقماً بالضبط) *</label>
                 <input
                   name="phone"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={11}
+                  minLength={11}
+                  pattern="[0-9]{11}"
                   required
-                  defaultValue={editingComplaint?.phone || '01011223344'}
+                  defaultValue={sanitizePhoneInput(editingComplaint?.phone || '01011223344')}
+                  onInput={(e) => {
+                    e.currentTarget.value = sanitizePhoneInput(e.currentTarget.value);
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
@@ -9250,15 +9312,26 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             key={editingLpgDist?.id || 'new-dist'}
             onSubmit={(e) => {
               e.preventDefault();
+              setFormValidationError(null);
               const fd = new FormData(e.currentTarget);
+              const nidCheck = validateExactNationalId(String(fd.get('nationalId') || ''), true);
+              if (!nidCheck.valid) {
+                setFormValidationError(nidCheck.error || 'الرقم القومي يجب أن يتكون من 14 رقماً بالضبط.');
+                return;
+              }
+              const phoneCheck = validateExactPhone(String(fd.get('phone') || ''), true);
+              if (!phoneCheck.valid) {
+                setFormValidationError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
+                return;
+              }
               const rec: LpgDistributorRecord = {
                 id: editingLpgDist?.id || `dist-${Date.now()}`,
                 distributorCode:
                   editingLpgDist?.distributorCode ||
                   String(fd.get('distributorCode') || `DST-MHL-0${state.lpgDistributors.length + 1}`),
                 distributorName: String(fd.get('distributorName') || 'موزع أسطوانات'),
-                nationalId: String(fd.get('nationalId') || '28501011600000'),
-                phone: String(fd.get('phone') || '01000000000'),
+                nationalId: nidCheck.normalized,
+                phone: phoneCheck.normalized,
                 address: String(fd.get('address') || 'مركز المحلة'),
                 distributionScopeVillage: String(fd.get('distributionScopeVillage') || 'بلقينا'),
                 localUnit: String(fd.get('localUnit') || 'الوحدة المحلية ببلقينا'),
@@ -9286,6 +9359,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                   afterSummary: rec.distributorName,
                 }
               );
+              setFormValidationError(null);
               setIsLpgDistModalOpen(false);
               setEditingLpgDist(null);
             }}
@@ -9294,6 +9368,12 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
             <h3 className="text-lg font-black text-[#0A1931]">
               {editingLpgDist ? `تعديل بيانات الموزع ${editingLpgDist.distributorName}` : 'إضافة موزع أسطوانات معتمد'}
             </h3>
+            {formValidationError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-400 text-rose-900 text-xs font-black flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{formValidationError}</span>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
                 <label className="font-black block mb-1">اسم الموزع *</label>
@@ -9305,20 +9385,36 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 />
               </div>
               <div>
-                <label className="font-black block mb-1">الرقم القومي (14 رقم) *</label>
+                <label className="font-black block mb-1">الرقم القومي (14 رقماً بالضبط) *</label>
                 <input
                   name="nationalId"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={14}
+                  minLength={14}
+                  pattern="[0-9]{14}"
                   required
-                  defaultValue={editingLpgDist?.nationalId || '28501011600000'}
+                  defaultValue={sanitizeNationalIdInput(editingLpgDist?.nationalId || '28501011600000')}
+                  onInput={(e) => {
+                    e.currentTarget.value = sanitizeNationalIdInput(e.currentTarget.value);
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
               <div>
-                <label className="font-black block mb-1">رقم الهاتف *</label>
+                <label className="font-black block mb-1">رقم الهاتف (11 رقماً بالضبط) *</label>
                 <input
                   name="phone"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={11}
+                  minLength={11}
+                  pattern="[0-9]{11}"
                   required
-                  defaultValue={editingLpgDist?.phone || '01012345678'}
+                  defaultValue={sanitizePhoneInput(editingLpgDist?.phone || '01012345678')}
+                  onInput={(e) => {
+                    e.currentTarget.value = sanitizePhoneInput(e.currentTarget.value);
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono"
                 />
               </div>
