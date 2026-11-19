@@ -19,6 +19,7 @@ import {
   Lock,
   RotateCcw,
   Sparkles,
+  FolderKanban,
 } from 'lucide-react';
 
 interface BranchesManagerModalProps {
@@ -32,6 +33,7 @@ interface BranchesManagerModalProps {
   onRenameBranch: (branchId: string, name: string, directorate: string, governorate: string, description: string) => Promise<void> | void;
   onDeleteBranch: (branchId: string) => Promise<void> | void;
   onFactoryResetBranch?: (branchId: string) => Promise<{ success: boolean; message?: string; error?: string }> | void;
+  onManageDepartments?: (branch: SupplyBranch) => void;
   isVaultUnlocked: boolean;
   onRequireVaultUnlock: (label: string, onUnlocked: () => void) => void;
 }
@@ -47,6 +49,7 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   onRenameBranch,
   onDeleteBranch,
   onFactoryResetBranch,
+  onManageDepartments,
   isVaultUnlocked,
   onRequireVaultUnlock,
 }) => {
@@ -584,6 +587,28 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                               <ShieldCheck className="w-3 h-3 text-emerald-600" />
                               رئيسية
                             </span>
+                          )}
+
+                          {canManageBranches && onManageDepartments && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!isVaultUnlocked) {
+                                  onRequireVaultUnlock(`إدارة أقسام فرع (${branch.name})`, () => {
+                                    onManageDepartments(branch);
+                                  });
+                                  return;
+                                }
+                                onManageDepartments(branch);
+                              }}
+                              data-testid={`manage-branch-departments-btn-${branch.id}`}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-[10px] font-black transition-colors cursor-pointer whitespace-nowrap"
+                              title={`إدارة وتخصيص أقسام فرع ${branch.name} بشكل مستقل`}
+                            >
+                              <FolderKanban className="w-3 h-3" />
+                              <span>إدارة الأقسام</span>
+                            </button>
                           )}
 
                           {canManageBranches && onFactoryResetBranch && (

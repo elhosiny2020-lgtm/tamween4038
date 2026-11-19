@@ -88,7 +88,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
 
     const providerTitle =
       hostKey === 'google'
-        ? 'Google Cloud'
+        ? 'الاستضافة السحابية الرئيسية'
         : hostKey === 'cloudflare'
         ? 'Cloudflare Pages'
         : hostKey === 'vercel'
@@ -223,7 +223,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                 النشر والاستضافة السحابية المجانية (Cloud Deployment)
               </h3>
               <p className="text-xs text-slate-300 font-bold">
-                إدارة تموين مركز المحلة الكبرى • Cloudflare Pages • Vercel • Google Cloud
+                إدارة تموين مركز المحلة الكبرى • قاعدة بيانات PostgreSQL/Supabase • Cloudflare Pages • Vercel
               </p>
             </div>
           </div>
@@ -250,7 +250,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
             }`}
           >
             <Globe className="w-4 h-4 text-emerald-400" />
-            <span>الرابط المباشر والفعال (Google Cloud)</span>
+            <span>الرابط المباشر والفعال (PostgreSQL / Supabase)</span>
           </button>
 
           <button
@@ -311,7 +311,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                     </h4>
                   </div>
                   <span className="text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full">
-                    مستضاف على سيرفرات Google Cloud الرسمية
+                    مربوط بقاعدة بيانات المنظومة (PostgreSQL / Supabase)
                   </span>
                 </div>
 
@@ -346,7 +346,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                       type="button"
                       onClick={() => handleReenableHosting('google')}
                       className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-black flex items-center gap-1 cursor-pointer transition shadow"
-                      title="إعادة تفعيل استضافة Google Cloud"
+                      title="إعادة تفعيل رابط الاستضافة المباشرة"
                     >
                       <RotateCw className="w-3.5 h-3.5" />
                       <span>إعادة التفعيل</span>
@@ -356,7 +356,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                       type="button"
                       onClick={() => handleCancelHosting('google')}
                       className="px-3 py-1.5 bg-red-900/80 hover:bg-red-800 text-red-200 border border-red-500/50 rounded text-xs font-black flex items-center gap-1 cursor-pointer transition shadow"
-                      title="إلغاء استضافة Google Cloud في أي وقت"
+                      title="إلغاء النشر المباشر في أي وقت"
                     >
                       <Trash2 className="w-3.5 h-3.5 text-red-400" />
                       <span>إلغاء الاستضافة 🚫</span>

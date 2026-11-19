@@ -39,9 +39,11 @@ import {
   Wrench,
   TrendingUp,
   History,
+  FolderKanban,
 } from 'lucide-react';
 import { CloudConnectionStatus } from '../lib/supabase';
-import type { AppUser } from '../types';
+import type { AppUser, BranchDepartmentConfigItem } from '../types';
+import type { SidebarCountsSummary } from '../utils/branchOperations';
 import {
   canUserAccessDepartment,
   canUserAccessTab,
@@ -191,6 +193,9 @@ interface RightSidebarProps {
   unreadInboxCount?: number;
   pendingTasksCount?: number;
   largeDebtsCount: number;
+  sidebarCounts?: SidebarCountsSummary;
+  branchDepartments?: BranchDepartmentConfigItem[];
+  onOpenBranchDepartments?: () => void;
   logoBase64?: string;
   administrationTitle?: string;
   directorateTitle?: string;
@@ -213,6 +218,9 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   unreadInboxCount = 0,
   pendingTasksCount = 0,
   largeDebtsCount,
+  sidebarCounts,
+  branchDepartments,
+  onOpenBranchDepartments,
   logoBase64,
   administrationTitle = 'إدارة تموين مركز المحلة الكبرى',
   directorateTitle = 'مديرية التموين والتجارة الداخلية بالغربية',
@@ -361,6 +369,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           id: 'internal-trade-establishments',
           label: '1. قاعدة بيانات المحلات والمنشآت التجارية',
           icon: <Store className="w-3.5 h-3.5" />,
+          badge: sidebarCounts ? sidebarCounts.establishmentsCount : undefined,
+          badgeVariant: 'teal',
         },
         {
           id: 'internal-trade-activities',
@@ -369,18 +379,22 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         },
         {
           id: 'internal-trade-map',
-          label: 'خريطة الرقابة التموينية لمركز المحلة',
+          label: 'خريطة الرقابة التموينية للفرع',
           icon: <Eye className="w-3.5 h-3.5" />,
         },
         {
           id: 'internal-trade-campaigns',
           label: '4. الحملات التموينية ومؤشر الأداء ∑',
           icon: <CheckSquare className="w-3.5 h-3.5" />,
+          badge: sidebarCounts ? sidebarCounts.campaignsCount : undefined,
+          badgeVariant: 'info',
         },
         {
           id: 'internal-trade-violations',
           label: '5-11. المخالفات والمحاضر والتصالحات',
           icon: <Scale className="w-3.5 h-3.5" />,
+          badge: sidebarCounts ? sidebarCounts.violationsCount : undefined,
+          badgeVariant: 'warning',
         },
         {
           id: 'internal-trade-seizures',
@@ -447,17 +461,35 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       icon: <ShoppingBasket className="w-4 h-4" />,
       items: [
         { id: 'commodities-dashboard', label: 'لوحة التحكم الرئيسية للسلع', icon: <BarChart3 className="w-3.5 h-3.5" /> },
-        { id: 'commodities-catalog', label: 'قاعدة بيانات السلع التموينية', icon: <FileText className="w-3.5 h-3.5" /> },
+        {
+          id: 'commodities-catalog',
+          label: 'قاعدة بيانات السلع التموينية',
+          icon: <FileText className="w-3.5 h-3.5" />,
+          badge: sidebarCounts ? sidebarCounts.commoditiesCount : undefined,
+          badgeVariant: 'teal',
+        },
         {
           id: 'commodities-merchants',
-          label: 'قاعدة بيانات التجار التموينيين (مايو 2026)',
+          label: 'قاعدة بيانات التجار التموينيين',
           icon: <Store className="w-3.5 h-3.5" />,
-          badge: '116 تاجر',
+          badge: `${sidebarCounts?.merchantsCount ?? 0} تاجر`,
           badgeVariant: 'gold',
         },
-        { id: 'commodities-quotas', label: 'إدارة الحصص التموينية الشهرية', icon: <Calendar className="w-3.5 h-3.5" /> },
+        {
+          id: 'commodities-quotas',
+          label: 'إدارة الحصص التموينية الشهرية',
+          icon: <Calendar className="w-3.5 h-3.5" />,
+          badge: sidebarCounts ? sidebarCounts.quotasCount : undefined,
+          badgeVariant: 'info',
+        },
         { id: 'commodities-warehouses', label: 'حركة المخازن والمشتريات', icon: <Database className="w-3.5 h-3.5" /> },
-        { id: 'commodities-cards', label: 'متابعة البطاقات والمستفيدين', icon: <Users className="w-3.5 h-3.5" /> },
+        {
+          id: 'commodities-cards',
+          label: 'متابعة البطاقات والمستفيدين',
+          icon: <Users className="w-3.5 h-3.5" />,
+          badge: sidebarCounts ? sidebarCounts.cardsCount : undefined,
+          badgeVariant: 'teal',
+        },
         { id: 'commodities-disbursements', label: 'سجل عمليات صرف المواطنين', icon: <CheckSquare className="w-3.5 h-3.5" /> },
         { id: 'commodities-inspections', label: 'نظام التنبيهات الذكي والرقابة', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
         { id: 'commodities-reports', label: 'مركز التقارير والطباعة (10 تقارير)', icon: <Printer className="w-3.5 h-3.5" /> },
@@ -472,11 +504,11 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       icon: <Wrench className="w-4 h-4" />,
       items: [
         { id: 'grain-dashboard', label: 'لوحة تحكم صيانة الحبوب الشاملة', icon: <BarChart3 className="w-3.5 h-3.5" /> },
-        { id: 'grain-shunas', label: '1. قاعدة بيانات الشون وتقييم الأصول', icon: <Building2 className="w-3.5 h-3.5" />, badge: 'شون', badgeVariant: 'gold' },
-        { id: 'grain-wheat-receipts', label: 'دفتر استلام القمح اليومي الرسمي', icon: <Scale className="w-3.5 h-3.5" />, badge: '27 عمود', badgeVariant: 'teal' },
-        { id: 'grain-refrigerators', label: '2. قاعدة بيانات الثلاجات ومخازن التبريد', icon: <Database className="w-3.5 h-3.5" />, badge: '8 جداول', badgeVariant: 'info' },
-        { id: 'grain-mills', label: '3. قاعدة بيانات المطاحن والاستخراج', icon: <Calculator className="w-3.5 h-3.5" />, badge: '9 جداول', badgeVariant: 'gold' },
-        { id: 'grain-flour-quotas', label: '4. قاعدة بيانات حصص الدقيق للمخابز', icon: <ShoppingBasket className="w-3.5 h-3.5" />, badge: 'حصص', badgeVariant: 'teal' },
+        { id: 'grain-shunas', label: '1. قاعدة بيانات الشون وتقييم الأصول', icon: <Building2 className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.shunasCount : 0, badgeVariant: 'gold' },
+        { id: 'grain-wheat-receipts', label: 'دفتر استلام القمح اليومي الرسمي', icon: <Scale className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.wheatReceiptsCount : 0, badgeVariant: 'teal' },
+        { id: 'grain-refrigerators', label: '2. قاعدة بيانات الثلاجات ومخازن التبريد', icon: <Database className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.refrigeratorsCount : 0, badgeVariant: 'info' },
+        { id: 'grain-mills', label: '3. قاعدة بيانات المطاحن والاستخراج', icon: <Calculator className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.millsCount : 0, badgeVariant: 'gold' },
+        { id: 'grain-flour-quotas', label: '4. قاعدة بيانات حصص الدقيق للمخابز', icon: <ShoppingBasket className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.flourQuotasCount : 0, badgeVariant: 'teal' },
         { id: 'grain-financials', label: '5. الحسابات المالية الموحدة للقسم', icon: <TrendingUp className="w-3.5 h-3.5" /> },
         { id: 'grain-reports', label: '6. مركز التقارير والطباعة (A4 & Excel)', icon: <Printer className="w-3.5 h-3.5" /> },
         { id: 'grain-assets', label: 'الأصول الهندسية والمعدات', icon: <Building2 className="w-3.5 h-3.5" /> },
@@ -494,9 +526,9 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       icon: <Briefcase className="w-4 h-4" />,
       items: [
         { id: 'hr-dashboard', label: 'لوحة تحكم الموارد البشرية', icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
-        { id: 'hr-employees', label: 'ملف العاملين والرقم القومي والهاتف', icon: <Users className="w-3.5 h-3.5" /> },
-        { id: 'hr-public-service', label: 'قسم موظفو الخدمة العامة', icon: <Award className="w-3.5 h-3.5" />, badge: 'مستقل', badgeVariant: 'teal' },
-        { id: 'hr-external-assistance', label: 'قسم موظفو الاستعانة', icon: <Award className="w-3.5 h-3.5" />, badge: 'مستقل', badgeVariant: 'gold' },
+        { id: 'hr-employees', label: 'ملف العاملين والرقم القومي والهاتف', icon: <Users className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.employeesCount : 0, badgeVariant: 'teal' },
+        { id: 'hr-public-service', label: 'قسم موظفو الخدمة العامة', icon: <Award className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.publicServiceCount : 0, badgeVariant: 'teal' },
+        { id: 'hr-external-assistance', label: 'قسم موظفو الاستعانة', icon: <Award className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.externalAssistanceCount : 0, badgeVariant: 'gold' },
         { id: 'hr-attendance', label: 'سجلات الحضور والتأخيرات', icon: <Clock className="w-3.5 h-3.5" /> },
         { id: 'hr-leaves', label: 'الإجازات والأرصدة المستقلة', icon: <Calendar className="w-3.5 h-3.5" /> },
         { id: 'hr-payroll', label: 'مسيرات المرتبات والضرائب والتأمينات', icon: <Scale className="w-3.5 h-3.5" /> },
@@ -623,7 +655,72 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
     },
   ];
 
-  const visibleGroups = groups.filter((group) => {
+  const effectiveGroups: SidebarGroup[] = React.useMemo(() => {
+    if (!Array.isArray(branchDepartments) || branchDepartments.length === 0) {
+      return groups;
+    }
+
+    const baseById = new Map<string, SidebarGroup>(groups.map((g) => [g.id, g]));
+    const subIconsById = new Map<string, SidebarSubItem>();
+    for (const g of groups) {
+      for (const s of g.items) {
+        subIconsById.set(s.id, s);
+      }
+    }
+
+    const customized: { group: SidebarGroup; order: number }[] = [];
+    for (const deptCfg of branchDepartments) {
+      if (deptCfg.visible === false || deptCfg.enabled === false) continue;
+      const baseGroup = baseById.get(deptCfg.id);
+      if (baseGroup) {
+        const mappedItems: SidebarSubItem[] = (deptCfg.subItems || [])
+          .filter((sub) => sub.visible !== false && sub.enabled !== false)
+          .sort((a, b) => (a.order || 0) - (b.order || 0))
+          .map((sub) => {
+            const orig = subIconsById.get(sub.id);
+            return {
+              id: sub.id as SidebarNavId,
+              label: sub.label,
+              icon: orig?.icon || <Sparkles className="w-3.5 h-3.5" />,
+              badge: orig?.badge,
+              badgeVariant: orig?.badgeVariant,
+            };
+          });
+        customized.push({
+          order: deptCfg.order || 0,
+          group: {
+            ...baseGroup,
+            title: deptCfg.label || baseGroup.title,
+            subtitle: deptCfg.shortLabel || baseGroup.subtitle,
+            items: mappedItems,
+          },
+        });
+      } else {
+        customized.push({
+          order: deptCfg.order || 99,
+          group: {
+            id: deptCfg.id,
+            title: deptCfg.label,
+            subtitle: deptCfg.shortLabel || 'قسم مخصص للفرع',
+            accentGradient: 'from-teal-700 to-slate-800',
+            icon: <FolderKanban className="w-4 h-4" />,
+            items: (deptCfg.subItems || [])
+              .filter((sub) => sub.visible !== false && sub.enabled !== false)
+              .sort((a, b) => (a.order || 0) - (b.order || 0))
+              .map((sub) => ({
+                id: (sub.targetTab || 'bakeries-all') as SidebarNavId,
+                label: sub.label,
+                icon: <Sparkles className="w-3.5 h-3.5" />,
+              })),
+          },
+        });
+      }
+    }
+
+    return customized.sort((a, b) => a.order - b.order).map((x) => x.group);
+  }, [branchDepartments, groups]);
+
+  const visibleGroups = effectiveGroups.filter((group) => {
     if (!currentUser) return true;
     const dept = getDepartmentForSidebarGroup(group.id);
     if (dept === 'shared') return true;
@@ -803,6 +900,26 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
               </span>
             )}
           </button>
+
+          {currentUser && isSuperAdmin(currentUser) && onOpenBranchDepartments && (
+            <button
+              type="button"
+              data-testid="sidebar-manage-branch-depts-btn"
+              onClick={onOpenBranchDepartments}
+              title="إدارة وتخصيص أقسام هذا الفرع بشكل مستقل"
+              className="w-full flex items-center justify-between px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 text-[#FDE68A] border-[#D4AF37]/40"
+            >
+              <div className="flex items-center gap-2">
+                <FolderKanban className="w-4 h-4 shrink-0 text-[#D4AF37]" />
+                {!isCollapsed && <span>إدارة أقسام هذا الفرع</span>}
+              </div>
+              {!isCollapsed && (
+                <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#D4AF37]/20 text-[#FDE68A]">
+                  مستقل
+                </span>
+              )}
+            </button>
+          )}
         </div>
       </div>
 

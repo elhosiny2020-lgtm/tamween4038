@@ -46,6 +46,7 @@ import {
   CLEAN_START_RESET_EPOCH,
   clearPermanentSafetyVault,
 } from './lib/supabase';
+import { cloneDefaultBranchDepartmentsStructure } from './utils/branchOperations';
 import {
   BranchAuthVaultRecord,
   loadBranchAuthVault,
@@ -360,12 +361,14 @@ export function addSupplyBranch(
 
   // Initialize isolated empty storage for the new branch so no data ever leaks from other branches
   const scopedKeys = getScopedKeysForBranch(newBranch.id);
+  const mahallaDepts = readBranchPartitionFromLocal(DEFAULT_BRANCH_ID)?.systemConfig?.branchDepartments;
   const initialConfig: SystemConfig = {
     ...DEFAULT_SYSTEM_CONFIG,
     governorateTitle: newBranch.governorateTitle,
     directorateTitle: newBranch.directorateTitle,
     administrationTitle: newBranch.name,
     logoBase64: DEFAULT_OFFICIAL_LOGO,
+    branchDepartments: cloneDefaultBranchDepartmentsStructure(mahallaDepts),
   };
   try {
     if (typeof localStorage !== 'undefined') {

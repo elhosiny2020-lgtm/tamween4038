@@ -26,7 +26,8 @@ import {
   AlertTriangle,
   Search,
 } from 'lucide-react';
-import type { AppUser } from '../../types';
+import type { AppUser, SystemConfig } from '../../types';
+import { resolveCustomTableTitle } from '../../utils/branchOperations';
 import type {
   HrModuleState,
   HrEmployee,
@@ -67,6 +68,7 @@ import {
   VillageGrandTotalRow,
   ReportToolbar,
   ErrorBoundary,
+  SectionFactoryResetButton,
   type CrudFieldDefinition,
 } from './ModuleCrudShared';
 import {
@@ -110,7 +112,9 @@ interface HrPersonnelSuiteProps {
   branchName: string;
   currentUser: AppUser | null;
   initialSubView?: HrSubView;
+  systemConfig?: SystemConfig;
   onChangeState: (next: HrModuleState, actionSummary?: string) => void;
+  onFactoryResetSection?: () => Promise<void> | void;
 }
 
 export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
@@ -119,7 +123,9 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
   branchName,
   currentUser,
   initialSubView = 'dashboard',
+  systemConfig,
   onChangeState,
+  onFactoryResetSection,
 }) => {
   const [subView, setSubView] = useState<HrSubView>(initialSubView);
   React.useEffect(() => {
@@ -1416,7 +1422,11 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                 </span>
               </div>
               <h2 className="text-lg sm:text-xl font-black text-[#0A1931]">
-                منظومة الموارد البشرية وشؤون العاملين والمرتبات ({branchName})
+                {resolveCustomTableTitle(
+                  systemConfig,
+                  'hr_employees',
+                  `منظومة الموارد البشرية وشؤون العاملين والمرتبات (${branchName})`
+                )}
               </h2>
             </div>
           </div>
@@ -1495,6 +1505,14 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
                 <span>طباعة كشف الرواتب A4</span>
               </button>
             )}
+
+            <SectionFactoryResetButton
+              currentUser={currentUser}
+              sectionLabel="الموارد البشرية وشؤون العاملين"
+              branchName={branchName}
+              onConfirm={onFactoryResetSection}
+              testId="hr-factory-reset-btn"
+            />
           </div>
         </div>
 

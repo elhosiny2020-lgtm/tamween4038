@@ -25,9 +25,11 @@ import {
   queryTablePaginated,
   recordAuditDeletionSecurityLog,
   recordAuditLog,
+  resetBranchSectionInPostgres,
   resetNonMahallaBranchesInPostgres,
   syncFullBranchStateToPostgres,
   syncHighDebtAlertsToPostgres,
+  updateBranchDepartmentsInPostgres,
   upsertRowInPostgres,
   upsertStorageFileInPostgres,
   getBranchModuleStateFromPostgres,
@@ -36,6 +38,7 @@ import {
   updateVaultCredentialsInPostgres,
   type NormalizedTableName,
 } from './src/db/queries.ts';
+import type { ResettableSectionKey } from './src/utils/branchOperations.ts';
 import {
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
@@ -1251,6 +1254,160 @@ async function startServer() {
     }
   });
 
+  app.post('/api/auth/register', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const branchId = String(body.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const username = normalizeDigits(String(body.username || '')).trim();
+      const fullName = String(body.fullName || '').trim();
+      const password = String(body.password || '');
+      const requestedRole = String(body.role || 'viewer').trim() || 'viewer';
+      const jobTitle = String(body.jobTitle || '').trim();
+      const department = String(body.department || '').trim();
+      const phone = String(body.phone || '').trim();
+      const applyToAllBranches = Boolean(body.applyToAllBranches);
+
+      if (!username || username.length < 3 || !fullName || !password) {
+        res.status(400).json({
+          success: false,
+          error: 'يرجى إدخال الاسم الكامل واسم المستخدم (3 أحرف فأكثر) وكلمة المرور.',
+        });
+        return;
+      }
+
+      const complexity = validatePasswordComplexity(password);
+      if (!complexity.valid) {
+        res.status(400).json({
+          success: false,
+          error: complexity.error || 'كلمة المرور يجب أن تتكون من 8 أحرف وتشمل حروفاً وأرقاماً.',
+        });
+        return;
+      }
+
+      const actor = await resolveAuthenticatedActor(req);
+      const isPrivilegedCaller = Boolean(actor.authenticated && actor.user && isUserSuperAdmin(actor.user));
+
+      if ((requestedRole === 'super_admin' || requestedRole === 'admin') && !isPrivilegedCaller) {
+        await recordAuditLog(
+          username,
+          'PRIVILEGED_REGISTRATION_BLOCKED',
+          `محاولة غير مصرح بها للتسجيل بصلاحية (${requestedRole}) دون جلسة مدير عام`,
+          getClientIp(req),
+          branchId,
+          { username, department: 'auth', operation: 'REGISTER', result: 'DENIED' }
+        ).catch(() => {});
+        res.status(403).json({
+          success: false,
+          error: 'إنشاء حساب بصلاحية مدير عام (Super Admin) أو مدير نظام مقتصر على مدير النظام المعتمد فقط.',
+        });
+        return;
+      }
+
+      const allowedSelfRoles = new Set([
+        'reader',
+        'viewer',
+        'data_entry',
+        'inspector',
+        'auditor',
+        'supervisor',
+      ]);
+      const finalRole = isPrivilegedCaller
+        ? requestedRole
+        : allowedSelfRoles.has(requestedRole)
+        ? requestedRole
+        : 'viewer';
+
+      const existing = await queryTablePaginated('app_users', {
+        branchId,
+        page: 1,
+        pageSize: 500,
+      });
+      const dup = existing.rows.find(
+        (u: any) => String(u.username || '').trim().toLowerCase() === username.toLowerCase()
+      );
+      if (dup) {
+        res.status(409).json({
+          success: false,
+          error: 'اسم المستخدم مسجل بالفعل داخل هذا الفرع. يرجى اختيار اسم مستخدم آخر.',
+        });
+        return;
+      }
+
+      const newUserId = `u-${branchId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const isSuper = finalRole === 'super_admin' || (finalRole === 'admin' && isPrivilegedCaller && Boolean(body.isSuperAdmin));
+      const newUserPayload: Partial<AppUser> = {
+        id: newUserId,
+        branchId,
+        username,
+        fullName,
+        password,
+        role: finalRole,
+        isSuperAdmin: isSuper,
+        jobTitle: jobTitle || (finalRole === 'reader' ? 'قارئ فقط' : finalRole === 'viewer' ? 'مشاهد' : 'مستخدم منظومة'),
+        department: department || 'التموين والتجارة الداخلية',
+        phone,
+        isActive: true,
+        applyToAllBranches: isPrivilegedCaller ? applyToAllBranches : false,
+        allowedDepartments: isSuper ? ['all'] : ['bakeries', 'debts', 'commodities', 'internal_trade', 'grain_maintenance', 'hr', 'reports'],
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+
+      const saved = await upsertRowInPostgres('app_users', branchId, newUserPayload);
+      if (!saved.success || !saved.row) {
+        res.status(400).json({ success: false, error: saved.error || 'تعذر إنشاء الحساب.' });
+        return;
+      }
+
+      const createdUser = saved.row as AppUser;
+      await recordAuditLog(
+        createdUser.username,
+        'USER_REGISTERED',
+        `تسجيل حساب جديد (${createdUser.fullName} — ${createdUser.username}) بدور (${finalRole}) في الفرع (${branchId})`,
+        getClientIp(req),
+        branchId,
+        {
+          username: createdUser.username,
+          department: 'auth',
+          operation: 'REGISTER',
+          recordId: createdUser.id,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+
+      const issuedToken = !actor.authenticated
+        ? createSessionToken({
+            userId: createdUser.id,
+            branchId: createdUser.branchId || branchId,
+            username: createdUser.username,
+            role: createdUser.role,
+            isSuperAdmin: isUserSuperAdmin(createdUser),
+          })
+        : undefined;
+
+      if (issuedToken) {
+        const isSecureTransport =
+          req.secure ||
+          String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+        res.cookie(SESSION_COOKIE_NAME, issuedToken, {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: isSecureTransport,
+          maxAge: SESSION_TTL_MS,
+          path: '/',
+        });
+      }
+
+      res.json({
+        success: true,
+        token: issuedToken,
+        user: createdUser,
+        message: 'تم إنشاء الحساب وتفعيله بنجاح في قاعدة البيانات.',
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل إنشاء الحساب الجديد.' });
+    }
+  });
+
   app.get('/api/auth/me', async (req, res) => {
     try {
       const actor = await resolveAuthenticatedActor(req);
@@ -2412,6 +2569,128 @@ async function startServer() {
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'فشل إعادة تعيين الفروع غير الرئيسية.' });
+    }
+  });
+
+  app.put('/api/branches/:id/departments', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'branches',
+          'UPDATE_BRANCH_DEPARTMENTS',
+          'إدارة الأقسام داخل الفرع مقتصرة على مدير عام النظام (Super Admin) فقط.'
+        );
+        return;
+      }
+      const branchId = String(req.params.id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const departments = req.body?.departments;
+      if (!Array.isArray(departments)) {
+        res.status(400).json({ success: false, error: 'قائمة الأقسام (departments) غير صالحة.' });
+        return;
+      }
+      const updated = await updateBranchDepartmentsInPostgres(branchId, departments, actor.user.username);
+      liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(branchId, {
+        clientId: actor.user.username,
+        sqlOperation: 'UPDATE_BRANCH_DEPARTMENTS',
+        affectedTable: 'system_config',
+      });
+      broadcastWs({
+        type: 'branch_departments_updated',
+        branchId,
+        departments: updated,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({
+        success: true,
+        branchId,
+        departments: updated,
+        revision: liveRevision,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل تحديث أقسام الفرع.' });
+    }
+  });
+
+  app.post('/api/branches/:id/reset-section', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'branches',
+          'SECTION_FACTORY_RESET',
+          'استعادة ضبط المصنع لبيانات القسم أو القرية مقتصرة على مدير عام النظام (Super Admin) فقط.'
+        );
+        return;
+      }
+      if (req.body?.confirmReset !== true) {
+        res.status(400).json({
+          success: false,
+          error: 'يلزم تأكيد عملية استعادة ضبط المصنع (confirmReset: true).',
+        });
+        return;
+      }
+      const branchId = String(req.params.id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const sectionKey = String(req.body?.sectionKey || '') as ResettableSectionKey;
+      const allowedSections = new Set<ResettableSectionKey>([
+        'bakeries',
+        'debts',
+        'commodities',
+        'internal_trade',
+        'grain_maintenance',
+        'hr',
+        'village',
+      ]);
+      if (!allowedSections.has(sectionKey)) {
+        res.status(400).json({ success: false, error: 'اسم القسم المطلوب غير صالح.' });
+        return;
+      }
+      const villageName = req.body?.villageName ? String(req.body.villageName).trim() : undefined;
+      if (sectionKey === 'village' && !villageName) {
+        res.status(400).json({ success: false, error: 'يرجى تحديد اسم القرية المطلوب تصفير بياناتها.' });
+        return;
+      }
+
+      const result = await resetBranchSectionInPostgres({
+        branchId,
+        sectionKey,
+        villageName,
+        actorUsername: actor.user.username,
+      });
+      cachedBranchModules.delete(`${branchId}::all_modules`);
+      liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(branchId, {
+        clientId: actor.user.username,
+        sqlOperation: 'SECTION_FACTORY_RESET',
+        affectedTable: sectionKey,
+      });
+      broadcastWs({
+        type: 'branch_section_reset',
+        branchId,
+        sectionKey,
+        villageName,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({
+        ...result,
+        branchId,
+        sectionKey,
+        villageName,
+        revision: liveRevision,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل تنفيذ استعادة ضبط المصنع للقسم.' });
     }
   });
 

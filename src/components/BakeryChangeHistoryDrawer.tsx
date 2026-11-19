@@ -41,6 +41,7 @@ export const BakeryChangeHistoryDrawer: React.FC<BakeryChangeHistoryDrawerProps>
   initialOwnerQuery = '',
   onSelectBakery,
 }) => {
+  const [instantQuery, setInstantQuery] = useState('');
   const [ownerQuery, setOwnerQuery] = useState(initialOwnerQuery);
   const [exactDate, setExactDate] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -61,13 +62,14 @@ export const BakeryChangeHistoryDrawer: React.FC<BakeryChangeHistoryDrawerProps>
   const filteredEntries = useMemo(
     () =>
       filterBakeryChangeHistory(allEntries, {
+        instantQuery,
         ownerQuery,
         exactDate,
         fromDate,
         toDate,
         actionQuery,
       }),
-    [allEntries, ownerQuery, exactDate, fromDate, toDate, actionQuery]
+    [allEntries, instantQuery, ownerQuery, exactDate, fromDate, toDate, actionQuery]
   );
 
   const bakeryByIdMap = useMemo(() => {
@@ -79,6 +81,7 @@ export const BakeryChangeHistoryDrawer: React.FC<BakeryChangeHistoryDrawerProps>
   }, [bakeries]);
 
   const handleResetFilters = () => {
+    setInstantQuery('');
     setOwnerQuery('');
     setExactDate('');
     setFromDate('');
@@ -135,6 +138,22 @@ export const BakeryChangeHistoryDrawer: React.FC<BakeryChangeHistoryDrawerProps>
 
         {/* Search & Filter Panel */}
         <div className="bg-slate-50 border-b border-slate-200 p-4 space-y-3 shrink-0">
+          {/* Unified Real-Time Instant Search Box */}
+          <div className="space-y-1 text-start">
+            <label className="text-xs font-black text-[#0A1628] flex items-center gap-1.5">
+              <Search className="w-4 h-4 text-[#0D9488]" />
+              <span>بحث فوري شامل (اسم صاحب المخبز، نوع التعديل، التاريخ، أو الماكينة):</span>
+            </label>
+            <input
+              type="text"
+              value={instantQuery}
+              onChange={(e) => setInstantQuery(e.target.value)}
+              data-testid="history-instant-search-input"
+              placeholder="بحث فوري باسم صاحب المخبز أو نوع التعديل أو التاريخ..."
+              className="w-full px-3.5 py-2.5 bg-white border-2 border-[#0D9488]/60 rounded-xl text-xs font-black text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#0D9488] shadow-2xs"
+            />
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* Search by Bakery Owner Name */}
             <div className="space-y-1 text-start">
@@ -203,7 +222,7 @@ export const BakeryChangeHistoryDrawer: React.FC<BakeryChangeHistoryDrawerProps>
             </div>
           </div>
 
-          {(ownerQuery || exactDate || fromDate || toDate || actionQuery) && (
+          {(instantQuery || ownerQuery || exactDate || fromDate || toDate || actionQuery) && (
             <div className="flex items-center justify-between pt-1">
               <span className="text-[11px] font-bold text-teal-800">
                 تمت التصفية: {filteredEntries.length.toLocaleString('en-US')} سجل مطابق

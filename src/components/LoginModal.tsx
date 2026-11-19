@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AppUser, SupplyBranch, SystemConfig } from '../types';
+import { AppUser, SupplyBranch, SystemConfig, UserRoleType } from '../types';
 import { INITIAL_USERS } from '../defaultData';
 import { normalizePasscodeInput } from '../utils/branchVaultUtils';
 import { getSecurityShieldHeaders, setAuthSessionToken } from '../lib/supabase';
@@ -47,6 +47,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
+  const [registerRole, setRegisterRole] = useState<UserRoleType>('viewer');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -77,6 +78,62 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setError('كلمة المرور يجب أن تتكون من 8 أحرف على الأقل وتحتوي على أحرف وأرقام.');
         return;
       }
+
+      const safeRegisterRole: UserRoleType =
+        registerRole === 'super_admin' || registerRole === 'admin' ? 'viewer' : registerRole;
+
+      const isHttpOriginReg =
+        typeof window !== 'undefined' &&
+        (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+
+      if (isHttpOriginReg) {
+        setIsSubmitting(true);
+        try {
+          const resp = await fetch('/api/auth/register', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: getSecurityShieldHeaders(true),
+            body: JSON.stringify({
+              branchId: activeBranchId || 'branch-mahalla',
+              username: username.trim(),
+              fullName: fullName.trim(),
+              password: trimmedPass,
+              role: safeRegisterRole,
+              department:
+                activeBranch?.name ||
+                systemConfig?.administrationTitle ||
+                'إدارة تموين مركز المحلة الكبرى',
+            }),
+          });
+          const data = await resp.json().catch(() => null);
+          if (resp.ok && data?.success && data?.user) {
+            setPassword('');
+            setFullName('');
+            setUsername('');
+            setShowPassword(false);
+            if (onRegisterUser) {
+              await onRegisterUser({
+                ...data.user,
+                password: '',
+              });
+            }
+            setSuccessMsg('تم إنشاء الحساب بنجاح وحفظه في قاعدة البيانات! يمكنك تسجيل الدخول الآن.');
+            setMode('login');
+            setIsSubmitting(false);
+            return;
+          }
+          if (resp.status >= 400 && resp.status < 500) {
+            setError(data?.error || 'تعذر إنشاء الحساب الجديد.');
+            setIsSubmitting(false);
+            return;
+          }
+        } catch {
+          // Offline fallback handled below
+        } finally {
+          setIsSubmitting(false);
+        }
+      }
+
       const poolOfUsers = Array.isArray(users) && users.length > 0 ? users : INITIAL_USERS;
       const exists = poolOfUsers.some((u) => (u.username || '').toLowerCase() === trimmedUser);
       if (exists) {
@@ -88,14 +145,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         username: username.trim(),
         password: trimmedPass,
         fullName: fullName.trim(),
-        role: 'data_entry',
-        department: activeBranch?.name || systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى',
+        role: safeRegisterRole,
+        department:
+          activeBranch?.name ||
+          systemConfig?.administrationTitle ||
+          'إدارة تموين مركز المحلة الكبرى',
         isActive: true,
         createdAt: new Date().toISOString().split('T')[0],
       };
       if (onRegisterUser) {
         await onRegisterUser(newUser);
       }
+      setPassword('');
+      setFullName('');
+      setUsername('');
+      setShowPassword(false);
       setSuccessMsg('تم إنشاء الحساب بنجاح! يمكنك تسجيل الدخول الآن.');
       setMode('login');
       return;
@@ -126,6 +190,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         const data = await resp.json().catch(() => null);
         if (resp.ok && data?.success && data?.user && data?.token) {
           setAuthSessionToken(data.token);
+          setPassword('');
+          setShowPassword(false);
           setIsSubmitting(false);
           triggerLogin?.({
             ...data.user,
@@ -177,6 +243,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
 
+    setPassword('');
+    setShowPassword(false);
     triggerLogin?.({
       ...matched,
       isActive: true,
@@ -357,17 +425,47 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             )}
 
             {mode === 'register' && (
-              <div>
-                <label className="block text-xs font-black text-[#0A1628] mb-1.5">
-                  الاسم الرباعي للموظف
-                </label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="أدخل الاسم بالكامل"
-                  className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
-                />
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-black text-[#0A1628] mb-1.5">
+                    الاسم الرباعي للموظف
+                  </label>
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    data-testid="register-fullname-input"
+                    placeholder="أدخل الاسم بالكامل"
+                    autoComplete="off"
+                    className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="login-register-role-select"
+                    className="block text-xs font-black text-[#0A1628] mb-1.5"
+                  >
+                    الصلاحية / الدور الوظيفي المطلوب *
+                  </label>
+                  <select
+                    id="login-register-role-select"
+                    data-testid="login-register-role-select"
+                    value={registerRole}
+                    onChange={(e) => setRegisterRole(e.target.value as UserRoleType)}
+                    className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-black text-xs focus:outline-none focus:ring-2 focus:ring-[#0D9488] cursor-pointer"
+                  >
+                    <option value="reader">قارئ فقط — Reader (عرض بدون تعديل)</option>
+                    <option value="viewer">مشاهد — Viewer (استعراض وطباعة فقط)</option>
+                    <option value="data_entry">مسئول إدخال بيانات — Data Entry</option>
+                    <option value="inspector">مفتش رقابة وتموين — Inspector</option>
+                    <option value="auditor">مراجع حسابات ومديونيات — Auditor</option>
+                    <option value="supervisor">مشرف عام — Supervisor</option>
+                  </select>
+                  <p className="text-[10px] font-bold text-slate-500 mt-1">
+                    صلاحيات مدير النظام (Admin / Super Admin) يتم منحها من داخل لوحة المستخدمين بواسطة مدير عام النظام فقط.
+                  </p>
+                </div>
               </div>
             )}
 
@@ -423,8 +521,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               {onRegisterUser && (
                 <button
                   type="button"
+                  data-testid="toggle-login-register-mode-btn"
                   onClick={() => {
                     setMode(mode === 'login' ? 'register' : 'login');
+                    setPassword('');
+                    setShowPassword(false);
                     setError(null);
                     setSuccessMsg(null);
                   }}

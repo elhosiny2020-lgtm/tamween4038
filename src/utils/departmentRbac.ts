@@ -56,14 +56,14 @@ export function buildDefaultFlagsForRole(role: string, customPermissions?: strin
     return { ...FULL_DEPARTMENT_FLAGS };
   }
   const hasCustom = Array.isArray(customPermissions) && customPermissions.length > 0;
-  if (role === 'viewer') {
+  if (role === 'viewer' || role === 'reader') {
     return {
       view: true,
       insert: false,
       update: false,
       delete: false,
-      print: hasCustom ? customPermissions!.includes('VIEW_REPORTS') : true,
-      export: hasCustom ? customPermissions!.includes('EXPORT_DATA') : true,
+      print: hasCustom ? customPermissions!.includes('VIEW_REPORTS') : role === 'viewer',
+      export: hasCustom ? customPermissions!.includes('EXPORT_DATA') : role === 'viewer',
     };
   }
   if (role === 'supervisor') {

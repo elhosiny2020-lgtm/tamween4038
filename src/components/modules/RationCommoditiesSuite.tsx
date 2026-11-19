@@ -35,8 +35,10 @@ import {
 } from 'lucide-react';
 import type {
   AppUser,
+  SystemConfig,
   VillageHierarchy,
 } from '../../types';
+import { resolveCustomTableTitle } from '../../utils/branchOperations';
 import { RationMerchantsDatabaseMay2026 } from './RationMerchantsDatabaseMay2026';
 import type {
   RationModuleState,
@@ -104,6 +106,7 @@ import {
   TablePaginationBar,
   ReportToolbar,
   ErrorBoundary,
+  SectionFactoryResetButton,
   type CrudFieldDefinition,
   type RecordProfileSection,
 } from './ModuleCrudShared';
@@ -148,7 +151,9 @@ interface RationCommoditiesSuiteProps {
   totalBakeryDebts?: number;
   initialMode?: 'commodities' | 'internal_trade';
   initialSubView?: RationSubView;
+  systemConfig?: SystemConfig;
   onChangeState: (next: RationModuleState, actionSummary?: string) => void;
+  onFactoryResetSection?: () => Promise<void> | void;
 }
 
 const CHART_COLORS = ['#0D9488', '#1E40AF', '#D4AF37', '#10B981', '#F59E0B', '#EC4899'];
@@ -163,7 +168,9 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
   totalBakeryDebts = 0,
   initialMode = 'commodities',
   initialSubView,
+  systemConfig,
   onChangeState,
+  onFactoryResetSection,
 }) => {
   const [subView, setSubView] = useState<RationSubView>(
     initialSubView || (initialMode === 'internal_trade' ? 'merchants' : 'dashboard')
@@ -2969,7 +2976,11 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 </span>
               </div>
               <h2 className="text-lg sm:text-xl font-black text-[#0A1931]">
-                منظومة السلع التموينية وإدارة المنافذ والحصص والمخازن ({branchName})
+                {resolveCustomTableTitle(
+                  systemConfig,
+                  'commodities_merchants',
+                  `منظومة السلع التموينية وإدارة المنافذ والحصص والمخازن (${branchName})`
+                )}
               </h2>
             </div>
           </div>
@@ -3042,6 +3053,14 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                 <span>طباعة A4</span>
               </button>
             )}
+
+            <SectionFactoryResetButton
+              currentUser={currentUser}
+              sectionLabel="السلع التموينية والتجار"
+              branchName={branchName}
+              onConfirm={onFactoryResetSection}
+              testId="commodities-factory-reset-btn"
+            />
           </div>
         </div>
 

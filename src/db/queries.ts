@@ -85,6 +85,14 @@ import {
 import { resolveUserDepartmentMatrix } from '../utils/departmentRbac.ts';
 import { INITIAL_USERS } from '../defaultData.ts';
 import {
+  cloneDefaultBranchDepartmentsStructure,
+  wipeSectionFromModulesBundle,
+  wipeVillageFromModulesBundle,
+  type ResettableSectionKey,
+} from '../utils/branchOperations.ts';
+import { createEmptyBranchModulesBundle } from '../services/modulesStorage.ts';
+import type { BranchDepartmentConfigItem } from '../types.ts';
+import {
   fallbackAuthenticateUser,
   fallbackDeleteAuditLogs,
   fallbackDeleteRow,
@@ -98,6 +106,8 @@ import {
   fallbackPurgeAll,
   fallbackQueryTablePaginated,
   fallbackRecordAuditDeletionSecurityLog,
+  fallbackResetBranchSection,
+  fallbackUpdateBranchDepartments,
   fallbackResetNonMahallaBranches,
   fallbackSyncFullBranchState,
   fallbackSyncHighDebtAlerts,
@@ -567,7 +577,14 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
       return mapDbInboxToApp(row);
     case 'high_debt_alerts':
       return mapDbAlertToApp(row);
-    case 'system_config':
+    case 'system_config': {
+      const rawAlertCfg = row.daily_alert_config || {};
+      const {
+        branchDepartments: storedBranchDepts,
+        customTableTitles: storedTableTitles,
+        customColumnTitles: storedColumnTitles,
+        ...restAlertCfg
+      } = rawAlertCfg;
       return {
         branchId: String(row.branch_id || DEFAULT_BRANCH_ID),
         systemConfig: sanitizeSystemConfigForClient({
@@ -579,20 +596,26 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
           debtAlertThreshold: Number(row.debt_alert_threshold || 50000),
           dailyAlertConfig: row.daily_alert_config
             ? {
-                ...row.daily_alert_config,
+                ...restAlertCfg,
                 supervisorEmailRecipients: scrubProtectedOwnerEmailList(
-                  row.daily_alert_config.supervisorEmailRecipients
+                  restAlertCfg.supervisorEmailRecipients
                 ),
               }
             : undefined,
           rolePermissions: row.role_permissions || undefined,
           roleLabels: row.role_labels || undefined,
           customRoles: Array.isArray(row.custom_roles) ? row.custom_roles : undefined,
+          branchDepartments: Array.isArray(storedBranchDepts) ? storedBranchDepts : undefined,
+          customTableTitles:
+            storedTableTitles && typeof storedTableTitles === 'object' ? storedTableTitles : undefined,
+          customColumnTitles:
+            storedColumnTitles && typeof storedColumnTitles === 'object' ? storedColumnTitles : undefined,
         } as SystemConfig),
         columnTitles: (row.column_titles || {}) as Partial<ColumnTitles>,
         activityStatuses: Array.isArray(row.activity_statuses) ? row.activity_statuses : [],
         version: Number(row.version || 1),
       };
+    }
     case 'dropdown_lists':
       return {
         id: String(row.id),
@@ -966,6 +989,35 @@ export async function upsertRowWithClient(
         ]
       );
       resultRow = mapDbRowByTable('branches', res.rows[0]);
+      // Provision isolated cloned departments hierarchy on newly created branch without any operational data
+      const cfgCheck = await client.query(
+        `SELECT branch_id FROM public.system_config WHERE branch_id = $1`,
+        [finalBranchId]
+      );
+      if (cfgCheck.rows.length === 0) {
+        const mahallaCfg = await client.query(
+          `SELECT daily_alert_config FROM public.system_config WHERE branch_id = $1`,
+          [DEFAULT_BRANCH_ID]
+        );
+        const mahallaDepts = mahallaCfg.rows[0]?.daily_alert_config?.branchDepartments;
+        const clonedDepts = cloneDefaultBranchDepartmentsStructure(mahallaDepts);
+        await client.query(
+          `INSERT INTO public.system_config (
+            branch_id, governorate_title, directorate_title, administration_title, english_subtitle,
+            logo_base64, debt_alert_threshold, daily_alert_config, role_permissions, role_labels,
+            custom_roles, column_titles, activity_statuses
+          ) VALUES ($1, $2, $3, $4, '', '', 50000, $5::jsonb, '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, $6::jsonb)
+          ON CONFLICT (branch_id) DO NOTHING`,
+          [
+            finalBranchId,
+            String(payload.governorateTitle || 'محافظة الغربية'),
+            String(payload.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'),
+            canonicalName,
+            JSON.stringify({ branchDepartments: clonedDepts }),
+            JSON.stringify(['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى']),
+          ]
+        );
+      }
       break;
     }
 
@@ -1539,6 +1591,12 @@ export async function upsertRowWithClient(
         ),
         vaultPasscode: resolvedVaultPass,
         branchVaultCredentials: resolvedCredMap,
+        branchDepartments:
+          cfg.branchDepartments ?? existingRow?.daily_alert_config?.branchDepartments,
+        customTableTitles:
+          cfg.customTableTitles ?? existingRow?.daily_alert_config?.customTableTitles,
+        customColumnTitles:
+          cfg.customColumnTitles ?? existingRow?.daily_alert_config?.customColumnTitles,
       };
       const res = await client.query(
         `INSERT INTO public.system_config (
@@ -2960,5 +3018,154 @@ export async function updateVaultCredentialsInPostgres(params: {
     throw err;
   }
 }
+
+export async function updateBranchDepartmentsInPostgres(
+  branchId: string,
+  departments: BranchDepartmentConfigItem[],
+  actorUsername = 'admin'
+): Promise<BranchDepartmentConfigItem[]> {
+  await ensurePostgresSchema();
+  const effectiveBranchId = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  if (pgFallbackMode) {
+    return fallbackUpdateBranchDepartments(effectiveBranchId, departments, actorUsername);
+  }
+  const cloned = cloneDefaultBranchDepartmentsStructure(departments);
+  try {
+    const cfgRes = await pool.query(
+      `SELECT governorate_title, directorate_title, administration_title, daily_alert_config
+       FROM public.system_config WHERE branch_id = $1`,
+      [effectiveBranchId]
+    );
+    const branchRes = await pool.query(`SELECT name, governorate_title, directorate_title FROM public.branches WHERE id = $1`, [
+      effectiveBranchId,
+    ]);
+    const prevRow = cfgRes.rows[0];
+    const br = branchRes.rows[0];
+    await upsertRowInPostgres('system_config', effectiveBranchId, {
+      branchId: effectiveBranchId,
+      systemConfig: {
+        governorateTitle: prevRow?.governorate_title || br?.governorate_title || 'محافظة الغربية',
+        directorateTitle:
+          prevRow?.directorate_title || br?.directorate_title || 'مديرية التموين والتجارة الداخلية بالغربية',
+        administrationTitle: prevRow?.administration_title || br?.name || effectiveBranchId,
+        branchDepartments: cloned,
+      },
+    });
+    await recordAuditLog(
+      actorUsername,
+      'UPDATE_BRANCH_DEPARTMENTS',
+      `تحديث هيكل وترتيب وإظهار الأقسام (${cloned.length} قسم) داخل الفرع (${effectiveBranchId})`,
+      '127.0.0.1',
+      effectiveBranchId,
+      { username: actorUsername, department: 'branches', operation: 'UPDATE', recordId: effectiveBranchId, result: 'SUCCESS' }
+    ).catch(() => {});
+    return cloned;
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackUpdateBranchDepartments(effectiveBranchId, departments, actorUsername);
+    }
+    throw err;
+  }
+}
+
+export async function resetBranchSectionInPostgres(params: {
+  branchId: string;
+  sectionKey: ResettableSectionKey;
+  villageName?: string;
+  actorUsername?: string;
+}): Promise<{ success: boolean; deletedCounts: Record<string, number>; message: string }> {
+  await ensurePostgresSchema();
+  const effectiveBranchId = (params.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const actor = params.actorUsername || 'admin';
+  if (pgFallbackMode) {
+    return fallbackResetBranchSection({ ...params, branchId: effectiveBranchId, actorUsername: actor });
+  }
+  const client = await pool.connect();
+  const deletedCounts: Record<string, number> = { bakeries: 0, debts: 0 };
+  try {
+    await client.query('BEGIN');
+    const brRes = await client.query(`SELECT name FROM public.branches WHERE id = $1`, [effectiveBranchId]);
+    const branchName = brRes.rows[0]?.name || effectiveBranchId;
+
+    if (params.sectionKey === 'bakeries') {
+      const delDebts = await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [effectiveBranchId]);
+      const delBakeries = await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1`, [effectiveBranchId]);
+      await client.query(`DELETE FROM public.high_debt_alerts WHERE branch_id = $1`, [effectiveBranchId]);
+      deletedCounts.debts = delDebts.rowCount || 0;
+      deletedCounts.bakeries = delBakeries.rowCount || 0;
+    } else if (params.sectionKey === 'debts') {
+      const delDebts = await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [effectiveBranchId]);
+      await client.query(`DELETE FROM public.high_debt_alerts WHERE branch_id = $1`, [effectiveBranchId]);
+      deletedCounts.debts = delDebts.rowCount || 0;
+    } else if (
+      params.sectionKey === 'commodities' ||
+      params.sectionKey === 'internal_trade' ||
+      params.sectionKey === 'grain_maintenance' ||
+      params.sectionKey === 'hr'
+    ) {
+      const modState = await getBranchModuleStateFromPostgres(effectiveBranchId, 'all_modules');
+      const currentPayload = modState.exists && modState.payload
+        ? modState.payload
+        : createEmptyBranchModulesBundle(effectiveBranchId, branchName, []);
+      const wiped = wipeSectionFromModulesBundle(currentPayload, params.sectionKey, actor);
+      await upsertBranchModuleStateInPostgres(effectiveBranchId, wiped, actor, 'all_modules');
+    } else if (params.sectionKey === 'village' && params.villageName) {
+      const normVillage = params.villageName.trim().toLowerCase();
+      const delDebts = await client.query(
+        `DELETE FROM public.debts
+         WHERE branch_id = $1
+           AND (lower(trim(village)) = $2 OR bakery_id IN (SELECT id FROM public.bakeries WHERE branch_id = $1 AND lower(trim(village)) = $2))`,
+        [effectiveBranchId, normVillage]
+      );
+      const delBakeries = await client.query(
+        `DELETE FROM public.bakeries WHERE branch_id = $1 AND lower(trim(village)) = $2`,
+        [effectiveBranchId, normVillage]
+      );
+      deletedCounts.debts = delDebts.rowCount || 0;
+      deletedCounts.bakeries = delBakeries.rowCount || 0;
+      const modState = await getBranchModuleStateFromPostgres(effectiveBranchId, 'all_modules');
+      const currentPayload = modState.exists && modState.payload
+        ? modState.payload
+        : createEmptyBranchModulesBundle(effectiveBranchId, branchName, []);
+      const wiped = wipeVillageFromModulesBundle(currentPayload, params.villageName, actor);
+      await upsertBranchModuleStateInPostgres(effectiveBranchId, wiped, actor, 'all_modules');
+    }
+
+    await client.query(
+      `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
+       VALUES ($1, $2, $3, $4, 'SECTION_FACTORY_RESET', $5, 'SUCCESS', 'SECTION_FACTORY_RESET', $6, '127.0.0.1')`,
+      [
+        effectiveBranchId,
+        actor,
+        actor,
+        params.sectionKey,
+        params.villageName || params.sectionKey,
+        params.sectionKey === 'village'
+          ? `تصفير شامل لبيانات قرية (${params.villageName}) داخل (${branchName}) مع الحفاظ التام على الأقسام والقرى الأخرى.`
+          : `استعادة ضبط المصنع لبيانات قسم (${params.sectionKey}) داخل (${branchName}) مع الإبقاء التام على كافة الأقسام.`,
+      ]
+    );
+    await client.query('COMMIT');
+    return {
+      success: true,
+      deletedCounts,
+      message:
+        params.sectionKey === 'village'
+          ? `تم تصفير كافة البيانات المدخلة داخل قرية "${params.villageName}" بدون مساس بالأقسام أو القرى الأخرى.`
+          : `تمت استعادة ضبط المصنع لبيانات القسم داخل "${branchName}" مع الإبقاء التام على كافة الأقسام.`,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackResetBranchSection({ ...params, branchId: effectiveBranchId, actorUsername: actor });
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 
 

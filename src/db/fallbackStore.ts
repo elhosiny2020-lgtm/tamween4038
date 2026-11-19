@@ -41,6 +41,14 @@ import {
   verifyPasswordScrypt,
 } from '../utils/serverAuth.ts';
 import { INITIAL_USERS } from '../defaultData.ts';
+import {
+  cloneDefaultBranchDepartmentsStructure,
+  wipeSectionFromModulesBundle,
+  wipeVillageFromModulesBundle,
+  type ResettableSectionKey,
+} from '../utils/branchOperations.ts';
+import { createEmptyBranchModulesBundle } from '../services/modulesStorage.ts';
+import type { BranchDepartmentConfigItem } from '../types.ts';
 
 function getFallbackStorePath(): string {
   return process.env.TAMWEEN_FALLBACK_STORE_PATH || '/tmp/tamween_pg_fallback_store.json';
@@ -438,6 +446,26 @@ function upsertInStoreInternal(
       };
       if (idx >= 0) store.branches[idx] = nextRow;
       else store.branches.push(nextRow);
+      // Automatically provision full cloned department hierarchy for new branches with ZERO operational records
+      const hasCfg = store.system_config.some((c) => c.branchId === finalId);
+      if (!hasCfg) {
+        const mahallaDepts = store.system_config.find((c) => c.branchId === DEFAULT_BRANCH_ID)?.systemConfig
+          ?.branchDepartments;
+        store.system_config.push({
+          branchId: finalId,
+          systemConfig: {
+            governorateTitle: nextRow.governorateTitle,
+            directorateTitle: nextRow.directorateTitle,
+            administrationTitle: nextRow.name,
+            englishSubtitle: '',
+            logoBase64: '',
+            branchDepartments: cloneDefaultBranchDepartmentsStructure(mahallaDepts),
+          },
+          columnTitles: {},
+          activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى'],
+          version: 1,
+        });
+      }
       return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
     }
 
@@ -1382,4 +1410,155 @@ export function fallbackUpdateVaultCredentials(params: {
   persistStore(store);
   return { updatedBranches: targetIds };
 }
+
+export function fallbackUpdateBranchDepartments(
+  branchId: string,
+  departments: BranchDepartmentConfigItem[],
+  actorUsername = 'admin'
+): BranchDepartmentConfigItem[] {
+  const store = loadStore();
+  const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
+  ensureFallbackBranch(store, effectiveBranchId);
+  const idx = store.system_config.findIndex((c) => c.branchId === effectiveBranchId);
+  const cloned = cloneDefaultBranchDepartmentsStructure(departments);
+  if (idx >= 0) {
+    store.system_config[idx] = {
+      ...store.system_config[idx],
+      systemConfig: {
+        ...store.system_config[idx].systemConfig,
+        branchDepartments: cloned,
+      },
+      version: Number(store.system_config[idx].version || 1) + 1,
+    };
+  } else {
+    const branchRow = store.branches.find((b) => b.id === effectiveBranchId);
+    store.system_config.push({
+      branchId: effectiveBranchId,
+      systemConfig: {
+        governorateTitle: branchRow?.governorateTitle || 'محافظة الغربية',
+        directorateTitle: branchRow?.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+        administrationTitle: branchRow?.name || effectiveBranchId,
+        englishSubtitle: '',
+        logoBase64: '',
+        branchDepartments: cloned,
+      },
+      columnTitles: {},
+      activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى'],
+      version: 1,
+    });
+  }
+  store.audit_logs.unshift({
+    id: `aud-depts-${Date.now()}`,
+    branchId: effectiveBranchId,
+    userEmail: actorUsername,
+    username: actorUsername,
+    department: 'branches',
+    operation: 'UPDATE_BRANCH_DEPARTMENTS',
+    recordId: effectiveBranchId,
+    result: 'SUCCESS',
+    action: 'UPDATE_BRANCH_DEPARTMENTS',
+    details: `تحديث هيكل وترتيب وإظهار الأقسام (${cloned.length} قسم) داخل الفرع (${effectiveBranchId})`,
+    ipAddress: '127.0.0.1',
+    createdAt: new Date().toISOString(),
+  });
+  persistStore(store);
+  return cloned;
+}
+
+export function fallbackResetBranchSection(params: {
+  branchId: string;
+  sectionKey: ResettableSectionKey;
+  villageName?: string;
+  actorUsername?: string;
+}): { success: boolean; deletedCounts: Record<string, number>; message: string } {
+  const store = loadStore();
+  const effectiveBranchId = params.branchId || DEFAULT_BRANCH_ID;
+  const branchName =
+    store.branches.find((b) => b.id === effectiveBranchId)?.name || effectiveBranchId;
+  const actor = params.actorUsername || 'admin';
+  const deletedCounts: Record<string, number> = { bakeries: 0, debts: 0, alerts: 0 };
+
+  if (params.sectionKey === 'bakeries') {
+    const bBefore = store.bakeries.length;
+    const dBefore = store.debts.length;
+    store.bakeries = store.bakeries.filter((b) => b.branchId !== effectiveBranchId);
+    store.debts = store.debts.filter((d) => d.branchId !== effectiveBranchId);
+    store.high_debt_alerts = store.high_debt_alerts.filter((a) => a.branchId !== effectiveBranchId);
+    deletedCounts.bakeries = Math.max(0, bBefore - store.bakeries.length);
+    deletedCounts.debts = Math.max(0, dBefore - store.debts.length);
+  } else if (params.sectionKey === 'debts') {
+    const dBefore = store.debts.length;
+    store.debts = store.debts.filter((d) => d.branchId !== effectiveBranchId);
+    store.high_debt_alerts = store.high_debt_alerts.filter((a) => a.branchId !== effectiveBranchId);
+    deletedCounts.debts = Math.max(0, dBefore - store.debts.length);
+  } else if (
+    params.sectionKey === 'commodities' ||
+    params.sectionKey === 'internal_trade' ||
+    params.sectionKey === 'grain_maintenance' ||
+    params.sectionKey === 'hr'
+  ) {
+    const key = `${effectiveBranchId}::all_modules`;
+    const currentPayload =
+      store.module_states?.[key]?.payload || createEmptyBranchModulesBundle(effectiveBranchId, branchName, []);
+    const wiped = wipeSectionFromModulesBundle(currentPayload, params.sectionKey, actor);
+    fallbackUpsertBranchModuleState(effectiveBranchId, wiped, actor, 'all_modules');
+    const reloaded = loadStore();
+    store.module_states = reloaded.module_states;
+  } else if (params.sectionKey === 'village' && params.villageName) {
+    const normTarget = params.villageName.trim().toLowerCase();
+    const matchingBakeryIds = new Set(
+      store.bakeries
+        .filter((b) => b.branchId === effectiveBranchId && String(b.village || '').trim().toLowerCase() === normTarget)
+        .map((b) => b.id)
+    );
+    const bBefore = store.bakeries.length;
+    const dBefore = store.debts.length;
+    store.bakeries = store.bakeries.filter((b) => !matchingBakeryIds.has(b.id));
+    store.debts = store.debts.filter(
+      (d) =>
+        !(
+          d.branchId === effectiveBranchId &&
+          (String(d.village || '').trim().toLowerCase() === normTarget || matchingBakeryIds.has(d.bakeryId))
+        )
+    );
+    deletedCounts.bakeries = Math.max(0, bBefore - store.bakeries.length);
+    deletedCounts.debts = Math.max(0, dBefore - store.debts.length);
+
+    const key = `${effectiveBranchId}::all_modules`;
+    const currentPayload =
+      store.module_states?.[key]?.payload || createEmptyBranchModulesBundle(effectiveBranchId, branchName, []);
+    const wiped = wipeVillageFromModulesBundle(currentPayload, params.villageName, actor);
+    fallbackUpsertBranchModuleState(effectiveBranchId, wiped, actor, 'all_modules');
+    const reloaded = loadStore();
+    store.module_states = reloaded.module_states;
+  }
+
+  store.audit_logs.unshift({
+    id: `aud-reset-sec-${Date.now()}`,
+    branchId: effectiveBranchId,
+    userEmail: actor,
+    username: actor,
+    department: params.sectionKey,
+    operation: 'SECTION_FACTORY_RESET',
+    recordId: params.villageName || params.sectionKey,
+    result: 'SUCCESS',
+    action: 'SECTION_FACTORY_RESET',
+    details:
+      params.sectionKey === 'village'
+        ? `تصفير شامل لبيانات قرية (${params.villageName}) داخل (${branchName}) مع الحفاظ التام على الأقسام والقرى الأخرى.`
+        : `استعادة ضبط المصنع لبيانات قسم (${params.sectionKey}) داخل (${branchName}) مع الإبقاء التام على كافة الأقسام.`,
+    ipAddress: '127.0.0.1',
+    createdAt: new Date().toISOString(),
+  });
+  persistStore(store);
+  return {
+    success: true,
+    deletedCounts,
+    message:
+      params.sectionKey === 'village'
+        ? `تم تصفير كافة البيانات المدخلة داخل قرية "${params.villageName}" بدون مساس بالأقسام أو القرى الأخرى.`
+        : `تمت استعادة ضبط المصنع لبيانات القسم داخل "${branchName}" مع الإبقاء التام على كافة الأقسام.`,
+  };
+}
+
 

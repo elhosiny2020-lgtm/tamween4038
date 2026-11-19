@@ -28,7 +28,8 @@ import {
   Landmark,
   FileBarChart2,
 } from 'lucide-react';
-import type { AppUser, Bakery, VillageHierarchy } from '../../types';
+import type { AppUser, Bakery, SystemConfig, VillageHierarchy } from '../../types';
+import { resolveCustomTableTitle } from '../../utils/branchOperations';
 import type {
   GrainMaintenanceState,
   GrainAsset,
@@ -66,6 +67,7 @@ import {
   AuditLogAdminToolbar,
   ReportToolbar,
   ErrorBoundary,
+  SectionFactoryResetButton,
   type CrudFieldDefinition,
   type ProfileFieldItem,
 } from './ModuleCrudShared';
@@ -102,7 +104,9 @@ interface GrainMaintenanceSuiteProps {
   bakeries?: Bakery[];
   villages?: VillageHierarchy[];
   initialSubView?: GrainSubView;
+  systemConfig?: SystemConfig;
   onChangeState: (next: GrainMaintenanceState, actionSummary?: string) => void;
+  onFactoryResetSection?: () => Promise<void> | void;
 }
 
 const ORDER_STATUSES: MaintenanceOrderStatus[] = [
@@ -123,7 +127,9 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
   bakeries = [],
   villages = [],
   initialSubView = 'dashboard',
+  systemConfig,
   onChangeState,
+  onFactoryResetSection,
 }) => {
   const [subView, setSubView] = useState<GrainSubView>(initialSubView);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -1136,7 +1142,11 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                 </span>
               </div>
               <h2 className="text-lg sm:text-xl font-black text-[#0A1931]">
-                منظومة قسم صيانة الحبوب المتكاملة (الشون • استلام القمح • الثلاجات • المطاحن • حصص الدقيق)
+                {resolveCustomTableTitle(
+                  systemConfig,
+                  'grain_shunas_mills',
+                  'منظومة قسم صيانة الحبوب المتكاملة (الشون • استلام القمح • الثلاجات • المطاحن • حصص الدقيق)'
+                )}
               </h2>
             </div>
           </div>
@@ -1166,6 +1176,14 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
               <Printer className="w-3.5 h-3.5" />
               <span>مركز التقارير الرسمية A4 و Excel</span>
             </button>
+
+            <SectionFactoryResetButton
+              currentUser={currentUser}
+              sectionLabel="صيانة الحبوب والشون والمطاحن"
+              branchName={branchName}
+              onConfirm={onFactoryResetSection}
+              testId="grain-factory-reset-btn"
+            />
           </div>
         </div>
 

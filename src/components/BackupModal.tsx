@@ -110,15 +110,25 @@ export interface GoogleDriveAccountEntry {
 
 const loadStoredDriveAccounts = (): GoogleDriveAccountEntry[] => {
   try {
+    // Scrub any legacy plaintext Drive passwords from localStorage
+    const keysToScrub: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('TAMWEEN_DRIVE_PASS_')) {
+        keysToScrub.push(k);
+      }
+    }
+    keysToScrub.forEach((k) => localStorage.removeItem(k));
+
     const raw = localStorage.getItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS');
     if (raw !== null) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        const filtered = parsed.filter((acc) => !isProtectedOwnerEmail(acc?.email));
-        if (filtered.length !== parsed.length) {
-          localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(filtered));
-        }
-        return filtered;
+        const sanitized = parsed
+          .filter((acc) => !isProtectedOwnerEmail(acc?.email))
+          .map(({ password: _droppedPassword, ...rest }) => rest);
+        localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(sanitized));
+        return sanitized;
       }
     }
   } catch (e) {
@@ -275,13 +285,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     () => localStorage.getItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC') || null
   );
 
-  // Dedicated Google Drive Accounts Management (Add with password, delete any email, clear active)
+  // Dedicated Google Drive Accounts Management (Email & notes only — zero password saving, OAuth 2.0 only)
   const [driveAccounts, setDriveAccounts] = useState<GoogleDriveAccountEntry[]>(loadStoredDriveAccounts);
   const [newAccEmail, setNewAccEmail] = useState('');
-  const [newAccPassword, setNewAccPassword] = useState('');
   const [newAccNotes, setNewAccNotes] = useState('');
-  const [showNewAccPassword, setShowNewAccPassword] = useState(false);
-  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
 
   const handleAddOrUpdateDriveAccount = () => {
     const cleanEmail = newAccEmail.trim();
@@ -299,28 +306,27 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       updated = driveAccounts.map((a, idx) =>
         idx === existingIdx
           ? {
-              ...a,
-              password: newAccPassword.trim() || a.password,
+              id: a.id,
+              email: a.email,
               notes: newAccNotes.trim() || a.notes,
               addedAt: new Date().toLocaleDateString('ar-EG'),
             }
           : a
       );
       setStatusMsg({
-        text: `تم بنجاح تحديث بيانات وكلمة مرور الحساب (${cleanEmail}) في قائمة Google Drive!`,
+        text: `تم بنجاح تحديث بيانات الحساب (${cleanEmail}) في قائمة Google Drive (يتم الدخول عبر OAuth فقط دون حفظ كلمات مرور)!`,
         type: 'success',
       });
     } else {
       const newEntry: GoogleDriveAccountEntry = {
         id: `drive-acc-${Date.now()}`,
         email: cleanEmail,
-        password: newAccPassword.trim(),
         notes: newAccNotes.trim() || 'حساب إضافي لـ Google Drive',
         addedAt: new Date().toLocaleDateString('ar-EG'),
       };
       updated = [newEntry, ...driveAccounts];
       setStatusMsg({
-        text: `تم بنجاح إضافة الإيميل (${cleanEmail}) مع كلمة المرور إلى قائمة Google Drive وتفعيله!`,
+        text: `تم بنجاح إضافة الإيميل (${cleanEmail}) إلى قائمة Google Drive وتفعيله (بدون تخزين أي كلمة مرور)!`,
         type: 'success',
       });
     }
@@ -329,11 +335,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(updated));
     setGmailEmail(cleanEmail);
     localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', cleanEmail);
-    if (newAccPassword.trim()) {
-      localStorage.setItem(`TAMWEEN_DRIVE_PASS_${cleanEmail.toLowerCase()}`, newAccPassword.trim());
-    }
+    localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${cleanEmail.toLowerCase()}`);
     setNewAccEmail('');
-    setNewAccPassword('');
     setNewAccNotes('');
   };
 
@@ -408,9 +411,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleSelectActiveDriveAccount = (acc: GoogleDriveAccountEntry) => {
     setGmailEmail(acc.email);
     localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', acc.email);
-    if (acc.password) {
-      localStorage.setItem(`TAMWEEN_DRIVE_PASS_${acc.email.toLowerCase()}`, acc.password);
-    }
+    localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${acc.email.toLowerCase()}`);
     setStatusMsg({
       text: `تم تفعيل وتعيين الإيميل (${acc.email}) كحساب نشط حالياً لـ Google Drive.`,
       type: 'success',
@@ -2717,7 +2718,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 <div className="flex items-center gap-2">
                   <Key className="w-4 h-4 text-cyan-300" />
                   <span className="text-xs font-black text-cyan-200">
-                    إدارة حسابات Google Drive (إضافة أي إيميل مع كلمة المرور أو مسح أي إيميل) 🔐
+                    إدارة حسابات النسخ الاحتياطي السريع (إضافة بريد Gmail — بدون تخزين أي كلمات مرور 🔐)
                   </span>
                 </div>
                 <span className="text-[10px] font-bold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-500/40">
@@ -2725,7 +2726,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
                 {/* Email Input */}
                 <div>
                   <label className="block text-[10px] font-black text-slate-300 mb-1">
@@ -2737,34 +2738,9 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     value={newAccEmail}
                     onChange={(e) => setNewAccEmail(e.target.value)}
                     placeholder="user@gmail.com"
+                    autoComplete="off"
                     className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-bold focus:border-cyan-400 outline-none"
                   />
-                </div>
-
-                {/* Password Input with show/hide toggle */}
-                <div>
-                  <label className="block text-[10px] font-black text-slate-300 mb-1">
-                    كلمة المرور / كلمة مرور التطبيق (App Password)
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showNewDrivePass ? 'text' : 'password'}
-                      dir="ltr"
-                      value={newAccPassword}
-                      onChange={(e) => setNewAccPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      autoComplete="new-password"
-                      className="w-full px-3 py-1.5 pl-9 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-cyan-400 outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewDrivePass((prev) => !prev)}
-                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
-                      title={showNewDrivePass ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
-                    >
-                      {showNewDrivePass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
                 </div>
 
                 {/* Account Notes */}
@@ -2789,7 +2765,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   className="py-1.5 px-4 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer shadow transition"
                 >
                   <PlusCircle className="w-3.5 h-3.5" />
-                  <span>إضافة / حفظ الإيميل في Google Drive 💾</span>
+                  <span>إضافة / حفظ الإيميل 💾</span>
                 </button>
               </div>
 
@@ -2801,7 +2777,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                   {driveAccounts.map((acc) => {
                     const isActive = gmailEmail.toLowerCase() === acc.email.toLowerCase();
-                    const isPassRevealed = !!revealedPasswords[acc.id];
                     return (
                       <div
                         key={acc.id}
@@ -2822,14 +2797,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                           )}
                           {acc.notes && (
                             <span className="text-[10px] text-slate-400">({acc.notes})</span>
-                          )}
-                          {acc.password ? (
-                            <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-700 text-[10px]">
-                              <span className="text-slate-400">كلمة المرور:</span>
-                              <span className="font-mono text-emerald-400">•••••••• (محمي)</span>
-                            </div>
-                          ) : (
-                            <span className="text-[10px] text-slate-500">بدون كلمة مرور</span>
                           )}
                         </div>
 

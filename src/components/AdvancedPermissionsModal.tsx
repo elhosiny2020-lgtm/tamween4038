@@ -87,8 +87,14 @@ const DEFAULT_ROLE_TABS: RoleTabItem[] = [
   {
     role: 'viewer',
     shortTitle: 'مشاهد فقط',
-    fullTitle: 'مشاهد / قارئ فقط بدون تعديل',
+    fullTitle: 'مشاهد / استعراض وطباعة بدون تعديل',
     badgeColor: 'from-slate-600 to-slate-700',
+  },
+  {
+    role: 'reader',
+    shortTitle: 'قارئ فقط (Reader)',
+    fullTitle: 'قارئ فقط (تصفح البيانات بدون تعديل أو حذف)',
+    badgeColor: 'from-zinc-600 to-slate-800',
   },
 ];
 
@@ -132,6 +138,7 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
       inspector: existing.inspector ? [...existing.inspector] : [...defaults.inspector],
       data_entry: existing.data_entry ? [...existing.data_entry] : [...defaults.data_entry],
       viewer: existing.viewer ? [...existing.viewer] : [...defaults.viewer],
+      reader: existing.reader ? [...existing.reader] : [...(defaults.reader || defaults.viewer)],
     };
     Object.keys(existing).forEach((k) => {
       if (!merged[k]) {
@@ -155,6 +162,7 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
       inspector: existing.inspector ? [...existing.inspector] : [...defaults.inspector],
       data_entry: existing.data_entry ? [...existing.data_entry] : [...defaults.data_entry],
       viewer: existing.viewer ? [...existing.viewer] : [...defaults.viewer],
+      reader: existing.reader ? [...existing.reader] : [...(defaults.reader || defaults.viewer)],
     };
     Object.keys(existing).forEach((k) => {
       if (!merged[k]) {

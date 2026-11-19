@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  ArrowUp,
 } from 'lucide-react';
 import { formatArabicDateTime, type ModulePermissions } from '../../utils/moduleCrudHelpers';
 import { isSuperAdmin as checkIsSuperAdmin } from '../../utils/departmentRbac';
@@ -1056,7 +1057,8 @@ export const LocalUnitSubtotalRow: React.FC<{
   recordCount: number;
   labelColSpan: number;
   metricCells: TotalRowCell[];
-}> = ({ unitName, recordCount, labelColSpan, metricCells }) => (
+  firstRowTargetId?: string;
+}> = ({ unitName, recordCount, labelColSpan, metricCells, firstRowTargetId }) => (
   <tr className="unit-subtotal-row" data-testid="local-unit-subtotal-row">
     <td colSpan={labelColSpan} className="px-3 py-2.5 text-right font-black">
       <div className="flex flex-wrap items-center gap-2">
@@ -1065,6 +1067,28 @@ export const LocalUnitSubtotalRow: React.FC<{
         </span>
         <span className="text-[#0A1628] font-black">{unitName}</span>
         <span className="text-xs font-mono text-teal-800">({recordCount} سجل)</span>
+        {firstRowTargetId && (
+          <button
+            type="button"
+            data-testid="quick-jump-unit-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              const targetEl = document.getElementById(firstRowTargetId);
+              if (targetEl) {
+                targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                targetEl.classList.add('ring-2', 'ring-amber-400', 'bg-amber-50/80');
+                setTimeout(() => {
+                  targetEl.classList.remove('ring-2', 'ring-amber-400', 'bg-amber-50/80');
+                }, 1800);
+              }
+            }}
+            className="px-2 py-0.5 rounded-md bg-white hover:bg-amber-100 text-[#0A1628] border border-teal-300 text-[10px] font-black inline-flex items-center gap-1 shadow-2xs transition cursor-pointer no-print"
+            title={`الانتقال السريع لأول صف تابع للوحدة المحلية (${unitName})`}
+          >
+            <ArrowUp className="w-3 h-3 text-teal-700" />
+            <span>انتقال لأول صف</span>
+          </button>
+        )}
       </div>
     </td>
     {metricCells.map((cell, idx) => (
@@ -2020,5 +2044,107 @@ export const TablePaginationBar: React.FC<TablePaginationBarProps> = ({
     </div>
   );
 };
+
+export interface SectionFactoryResetButtonProps {
+  currentUser?: any;
+  sectionLabel: string;
+  branchName?: string;
+  onConfirm?: () => Promise<void> | void;
+  testId?: string;
+}
+
+export const SectionFactoryResetButton: React.FC<SectionFactoryResetButtonProps> = ({
+  currentUser,
+  sectionLabel,
+  branchName,
+  onConfirm,
+  testId = 'section-factory-reset-btn',
+}) => {
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  if (!onConfirm || !checkIsSuperAdmin(currentUser)) return null;
+
+  const confirmDialog = isConfirmOpen ? (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="section-factory-reset-title"
+      className="fixed inset-0 z-[10000] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 no-print"
+      dir="rtl"
+      onClick={() => !isResetting && setIsConfirmOpen(false)}
+    >
+      <div
+        className="bg-white border-2 border-rose-500/60 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="p-2.5 rounded-xl bg-rose-100 text-rose-700 shrink-0">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 id="section-factory-reset-title" className="text-sm font-black text-[#0A1628]">
+              تأكيد استعادة ضبط المصنع لبيانات ({sectionLabel})
+            </h3>
+            <p className="text-xs font-semibold text-slate-600 mt-1.5 leading-relaxed">
+              سيتم تنفيذ تصفير شامل لجميع السجلات والبيانات المدخلة داخل قسم «{sectionLabel}» فقط
+              {branchName ? ` ضمن «${branchName}»` : ''}، مع الحفاظ الكامل على هيكل الأقسام والقوائم
+              والإعدادات وحسابات المستخدمين وباقي الفروع بدون أي مساس.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <button
+            type="button"
+            disabled={isResetting}
+            onClick={() => setIsConfirmOpen(false)}
+            className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer disabled:opacity-50"
+          >
+            إلغاء
+          </button>
+          <button
+            type="button"
+            disabled={isResetting}
+            data-testid={`${testId}-confirm`}
+            onClick={async () => {
+              setIsResetting(true);
+              try {
+                await onConfirm();
+                setIsConfirmOpen(false);
+              } finally {
+                setIsResetting(false);
+              }
+            }}
+            className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black inline-flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
+            <span>{isResetting ? 'جاري التصفير...' : 'تأكيد التصفير الشامل للبيانات'}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <button
+        type="button"
+        data-testid={testId}
+        onClick={() => setIsConfirmOpen(true)}
+        className="px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black inline-flex items-center gap-1.5 shadow-xs transition cursor-pointer whitespace-nowrap"
+        title={`استعادة ضبط المصنع وتصفير البيانات المدخلة في (${sectionLabel}) دون مسح الأقسام`}
+      >
+        <RotateCcw className="w-3.5 h-3.5" />
+        <span>استعادة ضبط المصنع</span>
+      </button>
+      {confirmDialog &&
+        (typeof document !== 'undefined'
+          ? createPortal(confirmDialog, document.body)
+          : confirmDialog)}
+    </>
+  );
+};
+
 
 

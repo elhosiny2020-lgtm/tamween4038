@@ -229,6 +229,7 @@ function normalizeArabicForSearch(text: string): string {
 }
 
 export interface BakeryChangeHistoryFilter {
+  instantQuery?: string;
   ownerQuery?: string;
   exactDate?: string; // YYYY-MM-DD
   fromDate?: string; // YYYY-MM-DD
@@ -237,12 +238,14 @@ export interface BakeryChangeHistoryFilter {
 }
 
 /**
- * Filters historical bakery change log entries by bakery owner name and/or modification date.
+ * Filters historical bakery change log entries by unified instant query (owner name OR action/modification type),
+ * bakery owner name, modification action, and/or modification date.
  */
 export function filterBakeryChangeHistory(
   entries: SearchableBakeryChangeEntry[],
   filter: BakeryChangeHistoryFilter
 ): SearchableBakeryChangeEntry[] {
+  const normInstant = normalizeArabicForSearch(filter.instantQuery || '');
   const normOwner = normalizeArabicForSearch(filter.ownerQuery || '');
   const exactDate = String(filter.exactDate || '').trim();
   const fromDate = String(filter.fromDate || '').trim();
@@ -250,6 +253,13 @@ export function filterBakeryChangeHistory(
   const normAction = normalizeArabicForSearch(filter.actionQuery || '');
 
   return (entries || []).filter((entry) => {
+    if (normInstant) {
+      const combinedHay = normalizeArabicForSearch(
+        `${entry.bakeryOwnerName} ${entry.machineNumber} ${entry.village} ${entry.localUnit} ${entry.action} ${entry.details} ${entry.userFullName}`
+      );
+      if (!combinedHay.includes(normInstant)) return false;
+    }
+
     if (normOwner) {
       const hay = normalizeArabicForSearch(
         `${entry.bakeryOwnerName} ${entry.machineNumber} ${entry.village} ${entry.localUnit}`

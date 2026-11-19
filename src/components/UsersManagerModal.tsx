@@ -127,9 +127,15 @@ const ROLE_DEFINITIONS: {
   },
   {
     role: 'viewer',
-    title: '👁️ مشاهد / قارئ فقط (بدون تعديل)',
+    title: '👁️ مشاهد (استعراض وطباعة فقط)',
     badgeColor: 'bg-blue-100 text-blue-950 border-blue-400',
-    summary: 'عرض وتصفح كافة الجداول والرسوم البيانية دون أي تعديل أو حذف.',
+    summary: 'عرض وتصفح كافة الجداول والرسوم البيانية وطباعتها دون أي تعديل أو حذف.',
+  },
+  {
+    role: 'reader',
+    title: '📖 قارئ فقط — Reader (عرض فقط بدون تعديل)',
+    badgeColor: 'bg-slate-100 text-slate-900 border-slate-400',
+    summary: 'قراءة وتصفح البيانات فقط دون تعديل أو إضافة أو حذف أو تصدير.',
   },
 ];
 

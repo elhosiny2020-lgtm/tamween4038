@@ -53,7 +53,8 @@ import {
   CartesianGrid,
   Tooltip,
 } from 'recharts';
-import type { AppUser, Bakery, VillageHierarchy } from '../../types';
+import type { AppUser, Bakery, SystemConfig, VillageHierarchy } from '../../types';
+import { resolveCustomTableTitle } from '../../utils/branchOperations';
 import type {
   InternalTradeState,
   InternalTradeEstablishment,
@@ -120,6 +121,7 @@ import {
   TablePaginationBar,
   VillageGrandTotalRow,
   ErrorBoundary,
+  SectionFactoryResetButton,
   type RecordProfileSection,
 } from './ModuleCrudShared';
 
@@ -150,7 +152,9 @@ interface InternalTradeSuiteProps {
   bakeries: Bakery[];
   currentUser?: AppUser | null;
   initialSubView?: InternalTradeSubView;
+  systemConfig?: SystemConfig;
   onChangeState: (next: InternalTradeState, actionSummary?: string) => void;
+  onFactoryResetSection?: () => Promise<void> | void;
 }
 
 const ESTABLISHMENT_TYPES: UnifiedEstablishmentType[] = [
@@ -195,7 +199,9 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
   bakeries,
   currentUser,
   initialSubView = 'dashboard',
+  systemConfig,
   onChangeState,
+  onFactoryResetSection,
 }) => {
   const state = useMemo(
     () => propState || createInitialInternalTradeState(branchId, branchName, villages),
@@ -1377,7 +1383,11 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 <span>إدارة تموين مركز المحلة الكبرى ({branchName})</span>
               </div>
               <h1 className="text-xl sm:text-2xl font-black text-[#0A1931] mt-0.5 leading-tight">
-                المركز الرقابي الموحد – التجارة الداخلية
+                {resolveCustomTableTitle(
+                  systemConfig,
+                  'internal_trade_establishments',
+                  'المركز الرقابي الموحد – التجارة الداخلية'
+                )}
               </h1>
             </div>
           </div>
@@ -1427,6 +1437,14 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
               <Printer className="w-3.5 h-3.5 text-[#D4AF37]" />
               <span>التقارير الرسمية (A4)</span>
             </button>
+
+            <SectionFactoryResetButton
+              currentUser={currentUser}
+              sectionLabel="التجارة الداخلية والرقابة التموينية"
+              branchName={branchName}
+              onConfirm={onFactoryResetSection}
+              testId="internal-trade-factory-reset-btn"
+            />
           </div>
         </div>
 

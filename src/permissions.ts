@@ -250,7 +250,7 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
       'OPEN_DAILY_TASKS_MODAL',
     ];
   }
-  // viewer
+  // viewer / reader
   return ['VIEW_REPORTS', 'VIEW_CHARTS', 'EXPORT_DATA'];
 }
 
@@ -263,6 +263,7 @@ export function getDefaultRolePermissionsMap(): Record<UserRoleType, UserAction[
     inspector: getDefaultPermissionsForRole('inspector'),
     data_entry: getDefaultPermissionsForRole('data_entry'),
     viewer: getDefaultPermissionsForRole('viewer'),
+    reader: getDefaultPermissionsForRole('reader'),
   };
 }
 
@@ -306,7 +307,8 @@ export function getRoleNameArabic(role: UserRoleType | string, systemConfig?: Sy
   if (role === 'auditor') return 'مراجع حسابات ومديونيات وتحصيل';
   if (role === 'inspector') return 'مفتش رقابة وتموين ميداني';
   if (role === 'data_entry') return 'مسئول إدخال وتحديث بيانات';
-  if (role === 'viewer') return 'مشاهد / قارئ فقط (تصفح وطباعة بدون تعديلات)';
+  if (role === 'viewer') return 'مشاهد (تصفح وطباعة بدون تعديلات)';
+  if (role === 'reader') return 'قارئ فقط (قراءة الجداول والتقارير بدون تعديل)';
   const foundCustom = systemConfig?.customRoles?.find((r) => r.id === role || r.title === role);
   if (foundCustom) return foundCustom.fullTitle || foundCustom.title;
   return role || 'مستخدم منظومة';
