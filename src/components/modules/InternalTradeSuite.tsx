@@ -7150,7 +7150,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
               sliceKey="internalTrade"
               branchId={branchId}
               scopeLabel="التجارة الداخلية والرقابة"
-              isSuperAdmin={Boolean(currentUser?.role === 'superadmin' || isAdmin)}
+              isSuperAdmin={Boolean(isSuperAdmin(currentUser) || isAdmin)}
               totalLogsCount={allAuditLogs.length}
               onAuditLogsCleared={() => {
                 commitInternalTradeState(

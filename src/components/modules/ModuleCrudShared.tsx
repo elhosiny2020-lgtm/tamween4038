@@ -25,6 +25,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { formatArabicDateTime, type ModulePermissions } from '../../utils/moduleCrudHelpers';
+import { isSuperAdmin as checkIsSuperAdmin } from '../../utils/departmentRbac';
 import { getSecurityShieldHeaders } from '../../lib/supabase';
 import { printHtmlElementA4 } from '../../utils/pdfHelper';
 import {
@@ -1179,7 +1180,7 @@ export const AuditLogAdminToolbar: React.FC<AuditLogAdminToolbarProps> = ({
   onAuditLogsCleared,
   onLogsCleared,
 }) => {
-  const adminAllowed = isSuperAdmin !== undefined ? isSuperAdmin : (currentUser?.role === 'superadmin');
+  const adminAllowed = isSuperAdmin !== undefined ? isSuperAdmin : checkIsSuperAdmin(currentUser);
   const count = totalLogsCount !== undefined ? totalLogsCount : (logCount || 0);
   const handleCleared = (ids?: string[]) => {
     if (onAuditLogsCleared) onAuditLogsCleared(ids);

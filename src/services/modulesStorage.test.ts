@@ -11,6 +11,9 @@ import { factoryResetBranch, DEFAULT_BRANCH_ID, getScopedKeysForBranch } from '.
 import { DEFAULT_VILLAGES_HIERARCHY } from '../defaultData';
 import { CANONICAL_DEFAULT_BRANCHES, deduplicateSupplyBranches } from '../utils/branchVaultUtils';
 import { fallbackPurgeAll, fallbackSyncFullBranchState, fallbackGetBootstrap } from '../db/fallbackStore';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 class MemoryStorage implements Storage {
   private map = new Map<string, string>();
@@ -263,31 +266,126 @@ test('Deleting records across all module departments persists across save and re
 });
 
 test('fallbackSyncFullBranchState prunes ALL bakeries and debts when empty arrays are synced with pruneRemoved=true', () => {
-  fallbackPurgeAll();
-  fallbackSyncFullBranchState(
-    'branch-tanta-center',
-    {
-      bakeries: [{ id: 'bk-tanta-1', bakeryOwnerName: 'مخبز اختباري', machineNumber: '998877' }],
-      debts: [{ id: 'db-tanta-1', bakeryId: 'bk-tanta-1', violationAmount: 500 }],
-    },
-    { pruneRemoved: true }
-  );
-  let boot = fallbackGetBootstrap('branch-tanta-center');
-  assert.equal(boot.bakeries.length, 1);
-  assert.equal(boot.debts.length, 1);
+  const prevPath = process.env.TAMWEEN_FALLBACK_STORE_PATH;
+  const testStorePath = path.join(os.tmpdir(), `tamween_test_fallback_${process.pid}_${Date.now()}.json`);
+  process.env.TAMWEEN_FALLBACK_STORE_PATH = testStorePath;
+  try {
+    fallbackPurgeAll();
+    fallbackSyncFullBranchState(
+      'branch-tanta-center',
+      {
+        bakeries: [{ id: 'bk-tanta-1', bakeryOwnerName: 'مخبز اختباري', machineNumber: '998877' }],
+        debts: [{ id: 'db-tanta-1', bakeryId: 'bk-tanta-1', violationAmount: 500 }],
+      },
+      { pruneRemoved: true }
+    );
+    let boot = fallbackGetBootstrap('branch-tanta-center');
+    assert.equal(boot.bakeries.length, 1);
+    assert.equal(boot.debts.length, 1);
 
-  // Now delete the LAST bakery and LAST debt by syncing [] with pruneRemoved: true
-  fallbackSyncFullBranchState(
-    'branch-tanta-center',
-    {
-      bakeries: [],
-      debts: [],
-    },
-    { pruneRemoved: true }
-  );
-  boot = fallbackGetBootstrap('branch-tanta-center');
-  assert.equal(boot.bakeries.length, 0);
-  assert.equal(boot.debts.length, 0);
-  fallbackPurgeAll();
+    // Now delete the LAST bakery and LAST debt by syncing [] with pruneRemoved: true
+    fallbackSyncFullBranchState(
+      'branch-tanta-center',
+      {
+        bakeries: [],
+        debts: [],
+      },
+      { pruneRemoved: true }
+    );
+    boot = fallbackGetBootstrap('branch-tanta-center');
+    assert.equal(boot.bakeries.length, 0);
+    assert.equal(boot.debts.length, 0);
+    fallbackPurgeAll();
+  } finally {
+    if (prevPath === undefined) delete process.env.TAMWEEN_FALLBACK_STORE_PATH;
+    else process.env.TAMWEEN_FALLBACK_STORE_PATH = prevPath;
+    try {
+      if (fs.existsSync(testStorePath)) fs.unlinkSync(testStorePath);
+    } catch {}
+  }
 });
+
+test('wheatLedgerClearedV1 clears legacy pre-seeded ledger entries once and preserves newly added entries', () => {
+  const initial = createInitialBranchModulesBundle(
+    DEFAULT_BRANCH_ID,
+    'إدارة تموين مركز المحلة الكبرى',
+    DEFAULT_VILLAGES_HIERARCHY
+  );
+  // Fresh initial bundle has 0 wheatLedgerMovements and wheatLedgerClearedV1 unset or set
+  assert.equal(initial.grainMaintenance.wheatLedgerMovements?.length || 0, 0);
+
+  // Legacy saved bundle before wheatLedgerClearedV1 with pre-seeded rows gets cleared once
+  const legacyWithOldRows = {
+    ...initial,
+    seedMeta: { ...initial.seedMeta, wheatLedgerClearedV1: false },
+    grainMaintenance: {
+      ...initial.grainMaintenance,
+      wheatLedgerMovements: [
+        {
+          id: 'legacy-wlm-1',
+          movementCode: 'MOV-W-001',
+          movementDate: '2026-05-01',
+          movementTime: '09:00',
+          shunaCode: 'SH-MHL-001',
+          shunaName: 'شونة المحلة',
+          movementType: 'رصيد افتتاحي' as const,
+          referenceDocNumber: 'DOC-1',
+          balanceBeforeTons: 0,
+          quantityTons: 100,
+          balanceAfterTons: 100,
+          tonPrice: 13333,
+          totalValue: 1333300,
+          approvalStatus: 'معتمد' as const,
+          performedBy: 'النظام',
+          notes: '',
+        },
+      ],
+    },
+  };
+  const { bundle: afterClear } = upgradeModulesBundleIfNeeded(
+    legacyWithOldRows,
+    DEFAULT_BRANCH_ID,
+    'إدارة تموين مركز المحلة الكبرى',
+    DEFAULT_VILLAGES_HIERARCHY
+  );
+  assert.equal(afterClear.grainMaintenance.wheatLedgerMovements?.length, 0);
+  assert.equal(afterClear.seedMeta?.wheatLedgerClearedV1, true);
+
+  // Subsequent user-added row after migration must NEVER be wiped on reload
+  const withUserEntry = {
+    ...afterClear,
+    grainMaintenance: {
+      ...afterClear.grainMaintenance,
+      wheatLedgerMovements: [
+        {
+          id: 'user-wlm-1',
+          movementCode: 'MOV-W-999',
+          movementDate: '2026-05-10',
+          movementTime: '11:00',
+          shunaCode: 'SH-MHL-001',
+          shunaName: 'شونة المحلة',
+          movementType: 'وارد قمح معتمد' as const,
+          referenceDocNumber: 'DOC-999',
+          balanceBeforeTons: 100,
+          quantityTons: 25,
+          balanceAfterTons: 125,
+          tonPrice: 13333,
+          totalValue: 333325,
+          approvalStatus: 'معتمد' as const,
+          performedBy: 'مدير النظام',
+          notes: 'حركة مضافة يدوياً',
+        },
+      ],
+    },
+  };
+  const { bundle: afterReload } = upgradeModulesBundleIfNeeded(
+    withUserEntry,
+    DEFAULT_BRANCH_ID,
+    'إدارة تموين مركز المحلة الكبرى',
+    DEFAULT_VILLAGES_HIERARCHY
+  );
+  assert.equal(afterReload.grainMaintenance.wheatLedgerMovements?.length, 1);
+  assert.equal(afterReload.grainMaintenance.wheatLedgerMovements?.[0]?.movementCode, 'MOV-W-999');
+});
+
 

@@ -53,6 +53,7 @@ import {
   resolveModuleCrudPermissions,
   checkGrainDeleteIntegrity,
 } from '../../utils/moduleCrudHelpers';
+import { isSuperAdmin } from '../../utils/departmentRbac';
 import {
   ModuleTableToolbar,
   ModuleRowActions,
@@ -2493,6 +2494,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             sliceKey="grainMaintenance"
             branchId={branchId}
             currentUser={currentUser}
+            isSuperAdmin={isSuperAdmin(currentUser) || permissions.canDelete}
             totalLogsCount={(state.auditLogs || []).length}
             onAuditLogsCleared={() => {
               onChangeState(
@@ -2511,8 +2513,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                   <th className="py-2 px-2 border border-slate-700">الإجراء</th>
                   <th className="py-2 px-2 border border-slate-700">الجدول</th>
                   <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
-                  {currentUser?.role === 'superadmin' && (
-                    <th className="py-2 px-2 border border-slate-700">حذف القيد</th>
+                  {(isSuperAdmin(currentUser) || permissions.canDelete) && (
+                    <th className="py-2 px-2 border border-slate-700">إجراءات الحذف</th>
                   )}
                 </tr>
               </thead>
@@ -2524,21 +2526,23 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                     <td className="py-2 px-2 text-[#0D9488]">{a.actionType}</td>
                     <td className="py-2 px-2">{a.entityName}</td>
                     <td className="py-2 px-2 text-right">{a.afterSummary}</td>
-                    {currentUser?.role === 'superadmin' && (
+                    {(isSuperAdmin(currentUser) || permissions.canDelete) && (
                       <td className="py-2 px-2">
                         <button
                           type="button"
+                          data-testid={`grain-audit-delete-btn-${a.id}`}
                           onClick={() => {
                             onChangeState(
                               { ...state, auditLogs: state.auditLogs.filter((x) => x.id !== a.id) },
                               `حذف قيد تدقيق فردي (${a.entityName})`
                             );
-                            notify('ok', 'تم حذف قيد التدقيق الفردي بواسطة المشرف العام.');
+                            notify('ok', 'تم حذف قيد التدقيق الفردي من سجل صيانة الحبوب بنجاح.');
                           }}
-                          className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 cursor-pointer"
-                          title="حذف القيد (صلاحية المشرف العام فقط)"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-[11px] font-black cursor-pointer transition-colors"
+                          title="حذف قيد التدقيق"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
+                          <span>حذف</span>
                         </button>
                       </td>
                     )}
@@ -2549,7 +2553,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                   labelColSpan={4}
                   title="إجمالي قيود سجل التدقيق والرقابة TOTAL"
                   metricCells={[
-                    { content: `${state.auditLogs.length} قيد مسجل`, colSpan: currentUser?.role === 'superadmin' ? 2 : 1, mono: true },
+                    { content: `${state.auditLogs.length} قيد مسجل`, colSpan: isSuperAdmin(currentUser) || permissions.canDelete ? 2 : 1, mono: true },
                   ]}
                 />
               </tbody>

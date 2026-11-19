@@ -23,6 +23,7 @@ import type {
 import type { AppUser, Bakery } from '../../../types';
 import type { ModulePermissions } from '../../../utils/moduleCrudHelpers';
 import { resolveModuleCrudPermissions } from '../../../utils/moduleCrudHelpers';
+import { isSuperAdmin as checkIsSuperAdmin } from '../../../utils/departmentRbac';
 import { groupRecordsByLocalUnit } from '../../../utils/tableGroupingHelpers';
 import {
   ModuleRowActions,
@@ -834,7 +835,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
                                 })
                               }
                               isSuperAdmin={
-                                currentUser?.role === 'superadmin' || permissions?.canDelete
+                                checkIsSuperAdmin(currentUser) || permissions?.canDelete
                               }
                             />
                           </td>
@@ -2113,7 +2114,7 @@ export const FlourQuotasDatabaseView: React.FC<FlourQuotasDatabaseViewProps> = (
           entityTitle={deleteModal.entityTitle}
           entityTypeLabel="حصة دقيق تمويني"
           recordSummary={deleteModal.recordSummary}
-          isSuperAdmin={currentUser?.role === 'superadmin' || permissions?.canDelete}
+          isSuperAdmin={checkIsSuperAdmin(currentUser) || permissions?.canDelete}
         />
       )}
     </div>

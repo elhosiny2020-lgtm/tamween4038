@@ -1,3 +1,4 @@
+import { Pool } from 'pg';
 import { pool } from './index.ts';
 import type {
   Bakery,
@@ -146,99 +147,132 @@ export async function ensurePostgresSchema(): Promise<void> {
            AND NOT EXISTS (SELECT 1 FROM public.bakeries bk WHERE bk.branch_id = b.id)
            AND NOT EXISTS (SELECT 1 FROM public.debts dt WHERE dt.branch_id = b.id)`
       );
-      // Ensure cross-branch module state table, schema columns, and departments exist concurrently
-      await Promise.all([
-        pool
-          .query(
-            `CREATE TABLE IF NOT EXISTS public.branch_module_states (
-              id TEXT PRIMARY KEY,
-              branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
-              module_key TEXT NOT NULL DEFAULT 'all_modules',
-              payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-              updated_by TEXT NOT NULL DEFAULT '',
-              version INTEGER NOT NULL DEFAULT 1,
-              updated_at TIMESTAMPTZ DEFAULT NOW(),
-              CONSTRAINT uq_branch_module_state UNIQUE (branch_id, module_key)
-            )`
-          )
-          .catch(() => {}),
-        pool
-          .query(
-            `ALTER TABLE public.app_users
-               ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
-               ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE,
-               ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '',
-               ADD COLUMN IF NOT EXISTS department_permissions JSONB DEFAULT NULL`
-          )
-          .catch(() => {}),
-        pool
-          .query(
-            `CREATE TABLE IF NOT EXISTS public.app_departments (
-              id TEXT PRIMARY KEY,
-              name_ar TEXT NOT NULL,
-              display_order INTEGER NOT NULL DEFAULT 1,
-              created_at TIMESTAMPTZ DEFAULT NOW()
-            )`
-          )
-          .catch(() => {}),
-        pool
-          .query(
-            `ALTER TABLE public.audit_logs
-               ADD COLUMN IF NOT EXISTS username TEXT DEFAULT '',
-               ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
-               ADD COLUMN IF NOT EXISTS operation TEXT DEFAULT '',
-               ADD COLUMN IF NOT EXISTS record_id TEXT DEFAULT '',
-               ADD COLUMN IF NOT EXISTS result TEXT DEFAULT 'SUCCESS'`
-          )
-          .catch(() => {}),
-        pool
-          .query(
-            `CREATE TABLE IF NOT EXISTS public.audit_deletion_security_log (
-              id TEXT PRIMARY KEY,
-              branch_id TEXT NOT NULL DEFAULT 'branch-mahalla',
-              deleted_by TEXT NOT NULL,
-              deleted_by_full_name TEXT NOT NULL DEFAULT '',
-              target_scope TEXT NOT NULL,
-              deleted_count INTEGER NOT NULL DEFAULT 0,
-              reason TEXT NOT NULL DEFAULT '',
-              ip_address TEXT NOT NULL DEFAULT '127.0.0.1',
-              created_at TIMESTAMPTZ DEFAULT NOW()
-            )`
-          )
-          .catch(() => {}),
-      ]);
+      // Run DDL migrations using admin credentials when configured so app_user gets full tables & columns
+      const adminUser = String(process.env.SQL_ADMIN_USER || '').trim();
+      const adminPass = String(process.env.SQL_ADMIN_PASSWORD || '').trim();
+      const appUser = String(process.env.SQL_USER || '').trim();
+      let ddlPool: Pool = pool;
+      let ownsDdlPool = false;
+      if (adminUser && adminPass && process.env.SQL_HOST) {
+        ddlPool = new Pool({
+          host: process.env.SQL_HOST,
+          port: Number(process.env.SQL_PORT || 5432),
+          user: adminUser,
+          password: adminPass,
+          database: process.env.SQL_DB_NAME,
+          max: 2,
+          connectionTimeoutMillis: 10000,
+        });
+        ownsDdlPool = true;
+      }
 
-      await Promise.all([
-        ...SYSTEM_DEPARTMENT_KEYS.map((deptId, i) => {
-          const scope = DEPARTMENT_SCOPES.find((d) => d.id === deptId);
-          return pool
+      try {
+        await Promise.all([
+          ddlPool
             .query(
-              `INSERT INTO public.app_departments (id, name_ar, display_order)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (id) DO UPDATE SET name_ar = EXCLUDED.name_ar, display_order = EXCLUDED.display_order`,
-              [deptId, scope?.label || deptId, i + 1]
+              `CREATE TABLE IF NOT EXISTS public.branch_module_states (
+                id TEXT PRIMARY KEY,
+                branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+                module_key TEXT NOT NULL DEFAULT 'all_modules',
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                updated_by TEXT NOT NULL DEFAULT '',
+                version INTEGER NOT NULL DEFAULT 1,
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_branch_module_state UNIQUE (branch_id, module_key)
+              )`
+            )
+            .catch(() => {}),
+          ddlPool
+            .query(
+              `ALTER TABLE public.app_users
+                 ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+                 ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE,
+                 ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '',
+                 ADD COLUMN IF NOT EXISTS department_permissions JSONB DEFAULT NULL`
+            )
+            .catch(() => {}),
+          ddlPool
+            .query(
+              `CREATE TABLE IF NOT EXISTS public.app_departments (
+                id TEXT PRIMARY KEY,
+                name_ar TEXT NOT NULL,
+                display_order INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+              )`
+            )
+            .catch(() => {}),
+          ddlPool
+            .query(
+              `ALTER TABLE public.audit_logs
+                 ADD COLUMN IF NOT EXISTS username TEXT DEFAULT '',
+                 ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
+                 ADD COLUMN IF NOT EXISTS operation TEXT DEFAULT '',
+                 ADD COLUMN IF NOT EXISTS record_id TEXT DEFAULT '',
+                 ADD COLUMN IF NOT EXISTS result TEXT DEFAULT 'SUCCESS'`
+            )
+            .catch(() => {}),
+          ddlPool
+            .query(
+              `CREATE TABLE IF NOT EXISTS public.audit_deletion_security_log (
+                id TEXT PRIMARY KEY,
+                branch_id TEXT NOT NULL DEFAULT 'branch-mahalla',
+                deleted_by TEXT NOT NULL,
+                deleted_by_full_name TEXT NOT NULL DEFAULT '',
+                target_scope TEXT NOT NULL,
+                deleted_count INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL DEFAULT '',
+                ip_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+              )`
+            )
+            .catch(() => {}),
+        ]);
+
+        await Promise.all([
+          ...SYSTEM_DEPARTMENT_KEYS.map((deptId, i) => {
+            const scope = DEPARTMENT_SCOPES.find((d) => d.id === deptId);
+            return ddlPool
+              .query(
+                `INSERT INTO public.app_departments (id, name_ar, display_order)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (id) DO UPDATE SET name_ar = EXCLUDED.name_ar, display_order = EXCLUDED.display_order`,
+                [deptId, scope?.label || deptId, i + 1]
+              )
+              .catch(() => {});
+          }),
+          ddlPool
+            .query(
+              `CREATE TABLE IF NOT EXISTS public.user_department_permissions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
+                branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+                department_id TEXT NOT NULL REFERENCES public.app_departments(id) ON DELETE CASCADE,
+                can_view BOOLEAN NOT NULL DEFAULT FALSE,
+                can_insert BOOLEAN NOT NULL DEFAULT FALSE,
+                can_update BOOLEAN NOT NULL DEFAULT FALSE,
+                can_delete BOOLEAN NOT NULL DEFAULT FALSE,
+                can_print BOOLEAN NOT NULL DEFAULT FALSE,
+                can_export BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_user_dept_perm UNIQUE (user_id, department_id)
+              )`
+            )
+            .catch(() => {}),
+        ]);
+
+        if (ownsDdlPool && /^[a-zA-Z0-9_]+$/.test(appUser)) {
+          await ddlPool
+            .query(
+              `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "${appUser}";
+               GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${appUser}";`
             )
             .catch(() => {});
-        }),
-        pool
-          .query(
-            `CREATE TABLE IF NOT EXISTS public.user_department_permissions (
-              id TEXT PRIMARY KEY,
-              user_id TEXT NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
-              branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
-              department_id TEXT NOT NULL REFERENCES public.app_departments(id) ON DELETE CASCADE,
-              can_view BOOLEAN NOT NULL DEFAULT FALSE,
-              can_insert BOOLEAN NOT NULL DEFAULT FALSE,
-              can_update BOOLEAN NOT NULL DEFAULT FALSE,
-              can_delete BOOLEAN NOT NULL DEFAULT FALSE,
-              can_print BOOLEAN NOT NULL DEFAULT FALSE,
-              can_export BOOLEAN NOT NULL DEFAULT FALSE,
-              updated_at TIMESTAMPTZ DEFAULT NOW(),
-              CONSTRAINT uq_user_dept_perm UNIQUE (user_id, department_id)
-            )`
-          )
-          .catch(() => {}),
-      ]);
+        }
+      } finally {
+        if (ownsDdlPool) {
+          await ddlPool.end().catch(() => {});
+        }
+      }
 
       const isProd =
         process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
@@ -1566,24 +1600,41 @@ export async function upsertRowWithClient(
     }
 
     case 'audit_logs': {
-      const res = await client.query(
-        `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING *`,
-        [
-          effectiveBranchId,
-          String(payload.userEmail || 'system'),
-          String(payload.username || payload.userEmail || 'system'),
-          String(payload.department || ''),
-          String(payload.operation || payload.action || ''),
-          String(payload.recordId || ''),
-          String(payload.result || 'SUCCESS'),
-          String(payload.action || 'ACTION'),
-          String(payload.details || ''),
-          String(payload.ipAddress || '127.0.0.1'),
-        ]
-      );
-      resultRow = mapDbRowByTable('audit_logs', res.rows[0]);
+      try {
+        const res = await client.query(
+          `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING *`,
+          [
+            effectiveBranchId,
+            String(payload.userEmail || 'system'),
+            String(payload.username || payload.userEmail || 'system'),
+            String(payload.department || ''),
+            String(payload.operation || payload.action || ''),
+            String(payload.recordId || ''),
+            String(payload.result || 'SUCCESS'),
+            String(payload.action || 'ACTION'),
+            String(payload.details || ''),
+            String(payload.ipAddress || '127.0.0.1'),
+          ]
+        );
+        resultRow = mapDbRowByTable('audit_logs', res.rows[0]);
+      } catch (colErr: any) {
+        if (String(colErr?.code || '') !== '42703') throw colErr;
+        const res = await client.query(
+          `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING *`,
+          [
+            effectiveBranchId,
+            String(payload.userEmail || 'system'),
+            String(payload.action || 'ACTION'),
+            String(payload.details || ''),
+            String(payload.ipAddress || '127.0.0.1'),
+          ]
+        );
+        resultRow = mapDbRowByTable('audit_logs', res.rows[0]);
+      }
       break;
     }
   }
@@ -2309,22 +2360,31 @@ export async function recordAuditLog(
       });
       return;
     }
-    await pool.query(
-      `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [
-        branchId,
-        userEmail,
-        extra?.username || userEmail,
-        extra?.department || '',
-        extra?.operation || action,
-        extra?.recordId || '',
-        extra?.result || 'SUCCESS',
-        action,
-        details,
-        ipAddress || '127.0.0.1',
-      ]
-    );
+    try {
+      await pool.query(
+        `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          branchId,
+          userEmail,
+          extra?.username || userEmail,
+          extra?.department || '',
+          extra?.operation || action,
+          extra?.recordId || '',
+          extra?.result || 'SUCCESS',
+          action,
+          details,
+          ipAddress || '127.0.0.1',
+        ]
+      );
+    } catch (colErr: any) {
+      if (String(colErr?.code || '') !== '42703') throw colErr;
+      await pool.query(
+        `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [branchId, userEmail, action, details, ipAddress || '127.0.0.1']
+      );
+    }
   } catch (error) {
     if (isPostgresUnavailableError(error)) {
       pgFallbackMode = true;

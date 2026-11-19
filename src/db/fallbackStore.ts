@@ -42,7 +42,9 @@ import {
 } from '../utils/serverAuth.ts';
 import { INITIAL_USERS } from '../defaultData.ts';
 
-const FALLBACK_STORE_PATH = '/tmp/tamween_pg_fallback_store.json';
+function getFallbackStorePath(): string {
+  return process.env.TAMWEEN_FALLBACK_STORE_PATH || '/tmp/tamween_pg_fallback_store.json';
+}
 const DEFAULT_BRANCH_ID = 'branch-mahalla';
 
 const DEFAULT_BRANCH: SupplyBranch & { version?: number } = {
@@ -124,6 +126,7 @@ interface FallbackStoreData {
 }
 
 let memoryStore: FallbackStoreData | null = null;
+let memoryStorePath: string | null = null;
 
 function createEmptyStore(): FallbackStoreData {
   return {
@@ -146,10 +149,11 @@ function createEmptyStore(): FallbackStoreData {
 }
 
 function loadStore(): FallbackStoreData {
-  if (memoryStore) return memoryStore;
+  const storePath = getFallbackStorePath();
+  if (memoryStore && memoryStorePath === storePath) return memoryStore;
   try {
-    if (fs.existsSync(FALLBACK_STORE_PATH)) {
-      const raw = fs.readFileSync(FALLBACK_STORE_PATH, 'utf-8');
+    if (fs.existsSync(storePath)) {
+      const raw = fs.readFileSync(storePath, 'utf-8');
       if (raw && raw.trim()) {
         const parsed = JSON.parse(raw) as Partial<FallbackStoreData>;
         if (Array.isArray(parsed.deleted_branch_keys)) {
@@ -160,6 +164,7 @@ function loadStore(): FallbackStoreData {
           }
         }
         const base = createEmptyStore();
+        memoryStorePath = storePath;
         memoryStore = {
           ...base,
           ...parsed,
@@ -180,19 +185,22 @@ function loadStore(): FallbackStoreData {
   } catch {
     // Fall back to fresh empty store if file is unreadable
   }
+  memoryStorePath = storePath;
   memoryStore = createEmptyStore();
   return memoryStore;
 }
 
 function persistStore(store: FallbackStoreData): void {
+  const storePath = getFallbackStorePath();
   store.deleted_branch_keys = Array.from(getDeletedBranchKeys());
+  memoryStorePath = storePath;
   memoryStore = store;
   try {
-    const dir = path.dirname(FALLBACK_STORE_PATH);
+    const dir = path.dirname(storePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(FALLBACK_STORE_PATH, JSON.stringify(store), { encoding: 'utf-8', mode: 0o600 });
+    fs.writeFileSync(storePath, JSON.stringify(store), { encoding: 'utf-8', mode: 0o600 });
   } catch {
     // Keep in-memory store authoritative even if /tmp write fails
   }
@@ -219,7 +227,11 @@ function ensureFallbackBranch(store: FallbackStoreData, branchId: string, branch
 export function isPostgresUnavailableError(err: any): boolean {
   if (!err) return false;
   const code = String(err.code || '');
+  if (code === '42703') return false;
   const msg = String(err.message || '').toLowerCase();
+  const isRelationOrDbMissing =
+    (msg.includes('relation') && msg.includes('does not exist')) ||
+    (msg.includes('database') && msg.includes('does not exist'));
   return (
     code === '42501' || // insufficient_privilege / permission denied
     code === '42P01' || // undefined_table
@@ -229,9 +241,9 @@ export function isPostgresUnavailableError(err: any): boolean {
     code === 'ENOTFOUND' ||
     code === 'ETIMEDOUT' ||
     code === 'ECONNRESET' ||
+    isRelationOrDbMissing ||
     msg.includes('permission denied') ||
     msg.includes('econnrefused') ||
-    msg.includes('does not exist') ||
     msg.includes('password authentication failed') ||
     msg.includes('connect') ||
     msg.includes('connection terminated')

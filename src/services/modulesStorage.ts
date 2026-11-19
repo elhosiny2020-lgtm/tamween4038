@@ -1695,6 +1695,18 @@ export function upgradeModulesBundleIfNeeded(
     upgraded = true;
   }
 
+  // Clear pre-existing Shona wheat stock movement ledger data once (per user request) without blocking future additions
+  if (!nextSeedMeta.wheatLedgerClearedV1) {
+    if (Array.isArray(nextGrain.wheatLedgerMovements) && nextGrain.wheatLedgerMovements.length > 0) {
+      nextGrain = {
+        ...nextGrain,
+        wheatLedgerMovements: [],
+      };
+    }
+    nextSeedMeta.wheatLedgerClearedV1 = true;
+    upgraded = true;
+  }
+
   if (!upgraded) return { bundle, upgraded: false };
   return {
     bundle: {

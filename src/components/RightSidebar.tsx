@@ -650,11 +650,11 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       dir="rtl"
       aria-label="القائمة الجانبية الرئيسية"
       className={`bg-[#0A1628] text-slate-100 border-l border-[#D4AF37]/25 flex flex-col shrink-0 select-none transition-all duration-300 no-print shadow-[0_0_50px_rgba(10,22,40,0.35)] ${
-        isCollapsed ? 'w-20' : 'w-80'
+        isCollapsed ? 'w-16' : 'w-64'
       }`}
     >
       {/* Top Executive Identity Card */}
-      <div className="p-4 border-b border-[#D4AF37]/20 bg-gradient-to-b from-[#0F1E36] to-[#0A1628]">
+      <div className="p-3 border-b border-[#D4AF37]/20 bg-gradient-to-b from-[#0F1E36] to-[#0A1628]">
         <div className="flex items-center justify-between gap-2">
           {!isCollapsed && (
             <div className="flex items-center gap-3 min-w-0">
@@ -807,7 +807,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       </div>
 
       {/* Collapsible Navigation Sections */}
-      <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
+      <nav className="flex-1 overflow-y-auto px-2 py-2.5 space-y-2">
         {visibleGroups.map((group) => {
           const isExpanded = expandedGroups[group.id];
           const hasActiveChild = group.items.some((i) => i.id === activeNavId);
@@ -828,22 +828,22 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                 onClick={() => toggleGroup(group)}
                 title={group.title}
                 className={`w-full flex items-center ${
-                  isCollapsed ? 'justify-center px-2' : 'justify-between px-3'
-                } py-2.5 text-right transition-colors cursor-pointer hover:bg-white/[0.04]`}
+                  isCollapsed ? 'justify-center px-1.5' : 'justify-between px-2.5'
+                } py-2 text-right transition-colors cursor-pointer hover:bg-white/[0.04]`}
               >
-                <div className="flex items-center gap-2.5 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
                   <span
-                    className={`w-8 h-8 rounded-xl bg-gradient-to-br ${group.accentGradient} flex items-center justify-center text-white shadow-sm shrink-0`}
+                    className={`w-7 h-7 rounded-lg bg-gradient-to-br ${group.accentGradient} flex items-center justify-center text-white shadow-sm shrink-0`}
                   >
                     {group.icon}
                   </span>
                   {!isCollapsed && (
                     <div className="min-w-0">
-                      <div className="text-xs font-black text-white truncate flex items-center gap-1.5">
+                      <div className="text-[11.5px] font-black text-white truncate flex items-center gap-1">
                         <span className="truncate">{group.title}</span>
                         {group.requiresVaultSecret && !isVaultUnlocked && (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-[#F43F5E]/20 text-rose-300 border border-[#F43F5E]/40 shrink-0">
-                            <Lock className="w-2.5 h-2.5" /> محمي
+                          <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded-full bg-[#F43F5E]/20 text-rose-300 border border-[#F43F5E]/40 shrink-0">
+                            <Lock className="w-2.5 h-2.5" />
                           </span>
                         )}
                       </div>
@@ -855,7 +855,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                 </div>
                 {!isCollapsed && (
                   <ChevronDown
-                    className={`w-4 h-4 text-[#D4AF37] shrink-0 transition-transform duration-200 ${
+                    className={`w-3.5 h-3.5 text-[#D4AF37] shrink-0 transition-transform duration-200 ${
                       isExpanded ? 'rotate-180' : ''
                     }`}
                   />
@@ -864,7 +864,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
               {/* Group Sub-Items */}
               {isExpanded && (!group.requiresVaultSecret || isVaultUnlocked) && (
-                <div className="px-2.5 pb-2.5 pt-1 space-y-1">
+                <div className="px-2 pb-2 pt-1 space-y-1">
                   {group.items.map((item) => {
                     const isActive = activeNavId === item.id;
                     return (

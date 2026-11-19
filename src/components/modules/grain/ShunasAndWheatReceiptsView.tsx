@@ -212,7 +212,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
-    entityType: 'shuna' | 'receipt' | 'issue' | 'reconciliation';
+    entityType: 'shuna' | 'receipt' | 'issue' | 'reconciliation' | 'ledger';
     entityId: string;
     entityTitle: string;
     recordSummary: { label: string; value: string | number }[];
@@ -224,6 +224,135 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
     title: string;
     data: Record<string, any>;
   } | null>(null);
+
+  // Add/Edit Wheat Stock Movement Ledger modal state (متاح الإضافة والتعديل والحذف في أي وقت)
+  const [ledgerModal, setLedgerModal] = useState<{
+    mode: 'add' | 'edit';
+    id?: string;
+    movementCode: string;
+    movementDate: string;
+    movementTime: string;
+    shunaCode: string;
+    movementType: WheatLedgerMovementRecord['movementType'];
+    referenceDocNumber: string;
+    balanceBeforeTons: number;
+    quantityTons: number;
+    tonPrice: number;
+    approvalStatus: ReceiptApprovalStatus;
+    performedBy: string;
+    notes: string;
+  } | null>(null);
+
+  const openAddLedgerModal = () => {
+    const defaultShuna = shunas[0];
+    setLedgerModal({
+      mode: 'add',
+      movementCode: `MOV-W-${100 + wheatLedgerMovements.length + 1}`,
+      movementDate: today,
+      movementTime: new Date().toTimeString().slice(0, 5),
+      shunaCode: defaultShuna?.shunaCode || 'SH-MHL-001',
+      movementType: 'وارد قمح معتمد',
+      referenceDocNumber: `DOC-${Date.now().toString().slice(-4)}`,
+      balanceBeforeTons: 0,
+      quantityTons: 0,
+      tonPrice: state.settings?.defaultWheatTonPrice || 13333.33,
+      approvalStatus: 'معتمد',
+      performedBy: currentUserFullName,
+      notes: '',
+    });
+  };
+
+  const openEditLedgerModal = (m: WheatLedgerMovementRecord) => {
+    setLedgerModal({
+      mode: 'edit',
+      id: m.id,
+      movementCode: m.movementCode,
+      movementDate: m.movementDate,
+      movementTime: m.movementTime,
+      shunaCode: m.shunaCode,
+      movementType: m.movementType,
+      referenceDocNumber: m.referenceDocNumber,
+      balanceBeforeTons: Number(m.balanceBeforeTons) || 0,
+      quantityTons: Number(m.quantityTons) || 0,
+      tonPrice: Number(m.tonPrice) || 13333.33,
+      approvalStatus: m.approvalStatus || 'معتمد',
+      performedBy: m.performedBy || currentUserFullName,
+      notes: m.notes || '',
+    });
+  };
+
+  const handleSaveLedgerModal = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ledgerModal) return;
+    const targetShuna = shunas.find((s) => s.shunaCode === ledgerModal.shunaCode);
+    const shunaName = targetShuna?.shunaName || ledgerModal.shunaCode;
+    const balanceBefore = Number(ledgerModal.balanceBeforeTons) || 0;
+    const qty = Number(ledgerModal.quantityTons) || 0;
+    const balanceAfter = Number((balanceBefore + qty).toFixed(3));
+    const tonPrice = Number(ledgerModal.tonPrice) || 0;
+    const totalValue = Math.round(Math.abs(qty) * tonPrice);
+
+    if (ledgerModal.mode === 'add') {
+      const created: WheatLedgerMovementRecord = {
+        id: `wlm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        movementCode: ledgerModal.movementCode.trim() || `MOV-W-${Date.now()}`,
+        movementDate: ledgerModal.movementDate || today,
+        movementTime: ledgerModal.movementTime || '09:00',
+        shunaCode: ledgerModal.shunaCode,
+        shunaName,
+        movementType: ledgerModal.movementType,
+        referenceDocNumber: ledgerModal.referenceDocNumber.trim() || '—',
+        balanceBeforeTons: balanceBefore,
+        quantityTons: qty,
+        balanceAfterTons: balanceAfter,
+        tonPrice,
+        totalValue,
+        approvalStatus: ledgerModal.approvalStatus,
+        performedBy: ledgerModal.performedBy.trim() || currentUserFullName,
+        notes: ledgerModal.notes.trim(),
+      };
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatLedgerMovements: [created, ...(prev.wheatLedgerMovements || [])],
+        }),
+        `إضافة حركة قمح بدفتر الأرصدة: ${created.movementCode}`
+      );
+      onNotify('ok', `تمت إضافة الحركة «${created.movementCode}» إلى دفتر حركة أرصدة القمح بنجاح.`);
+    } else if (ledgerModal.id) {
+      const targetId = ledgerModal.id;
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatLedgerMovements: (prev.wheatLedgerMovements || []).map((item) =>
+            item.id === targetId
+              ? {
+                  ...item,
+                  movementCode: ledgerModal.movementCode.trim() || item.movementCode,
+                  movementDate: ledgerModal.movementDate || item.movementDate,
+                  movementTime: ledgerModal.movementTime || item.movementTime,
+                  shunaCode: ledgerModal.shunaCode,
+                  shunaName,
+                  movementType: ledgerModal.movementType,
+                  referenceDocNumber: ledgerModal.referenceDocNumber.trim() || '—',
+                  balanceBeforeTons: balanceBefore,
+                  quantityTons: qty,
+                  balanceAfterTons: balanceAfter,
+                  tonPrice,
+                  totalValue,
+                  approvalStatus: ledgerModal.approvalStatus,
+                  performedBy: ledgerModal.performedBy.trim() || currentUserFullName,
+                  notes: ledgerModal.notes.trim(),
+                }
+              : item
+          ),
+        }),
+        `تعديل حركة قمح بدفتر الأرصدة: ${ledgerModal.movementCode}`
+      );
+      onNotify('ok', `تم تعديل الحركة «${ledgerModal.movementCode}» وحفظها بنجاح.`);
+    }
+    setLedgerModal(null);
+  };
 
   const handleSaveSubRecord = (e: React.FormEvent) => {
     e.preventDefault();
@@ -349,6 +478,15 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
         `حذف محضر مطابقة جرد: ${entityTitle}`
       );
       onNotify('ok', `تم حذف محضر المطابقة «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'ledger') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatLedgerMovements: (prev.wheatLedgerMovements || []).filter((m) => m.id !== entityId),
+        }),
+        `حذف حركة من دفتر أرصدة القمح: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف الحركة «${entityTitle}» من دفتر أرصدة القمح بالشون بنجاح.`);
     }
     setDeleteModal(null);
   };
@@ -1604,22 +1742,20 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                               })
                             }
                             onPrint={() => handlePrintOfficialReceiptVoucher(r)}
-                            onDelete={
-                              r.approvalStatus !== 'معتمد'
-                                ? () =>
-                                    setDeleteModal({
-                                      isOpen: true,
-                                      entityType: 'receipt',
-                                      entityId: r.id,
-                                      entityTitle: r.receiptOrderNumber,
-                                      recordSummary: [
-                                        { label: 'رقم الإذن', value: r.receiptOrderNumber },
-                                        { label: 'الشونة', value: r.shunaName },
-                                        { label: 'المورد', value: r.supplierName },
-                                        { label: 'الكمية', value: `${r.acceptedNetWeightTons} طن` },
-                                      ],
-                                    })
-                                : undefined
+                            onDelete={() =>
+                              setDeleteModal({
+                                isOpen: true,
+                                entityType: 'receipt',
+                                entityId: r.id,
+                                entityTitle: r.receiptOrderNumber,
+                                recordSummary: [
+                                  { label: 'رقم الإذن', value: r.receiptOrderNumber },
+                                  { label: 'الشونة', value: r.shunaName },
+                                  { label: 'المورد', value: r.supplierName },
+                                  { label: 'الكمية', value: `${r.acceptedNetWeightTons} طن` },
+                                  { label: 'الحالة', value: r.approvalStatus },
+                                ],
+                              })
                             }
                           />
                           {canEdit && r.approvalStatus !== 'معتمد' && (
@@ -1851,15 +1987,26 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
       {/* 4. دفتر حركة أرصدة القمح بالشون */}
       {activeTab === 'ledger' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+          <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-black text-slate-900">
-                دفتر حركة أرصدة القمح بالشون (سجل الرقابة المحاسبية غير القابل للحذف)
+                دفتر حركة أرصدة القمح بالشون (متاح الإضافة والتعديل والحذف في أي وقت)
               </h3>
               <p className="text-xs font-bold text-slate-500">
-                يوثق الرصيد قبل وبعد كل حركة (رصيد افتتاحي، وارد معتمد، صرف لمطحن، تسوية جرد، عكس قيد)
+                يوثق الرصيد قبل وبعد كل حركة (رصيد افتتاحي، وارد معتمد، صرف لمطحن، تسوية جرد، عكس قيد) مع إتاحة الإضافة والتعديل والحذف المباشر
               </p>
             </div>
+            {canAdd && (
+              <button
+                type="button"
+                data-testid="btn-add-wheat-ledger"
+                onClick={openAddLedgerModal}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>إضافة حركة جديدة بالدفتر</span>
+              </button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-right compact-erp-table">
@@ -1875,7 +2022,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                   <th className="p-3 text-center">الرصيد بعد الحركة</th>
                   <th className="p-3 text-center">القيمة المالية</th>
                   <th className="p-3">المسؤول والبيان</th>
-                  <th className="p-3 text-center">عرض</th>
+                  <th className="p-3 text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1927,6 +2074,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                             title: `حركة دفتر أرصدة القمح: ${m.movementCode}`,
                             subtitle: `${m.shunaName} — ${m.movementType}`,
                             entityType: 'قيد رقابي بدفتر أرصدة القمح',
+                            onEdit: () => openEditLedgerModal(m),
                             fields: [
                               { label: 'كود الحركة', value: m.movementCode, mono: true },
                               { label: 'التاريخ والوقت', value: `${m.movementDate} | ${m.movementTime}` },
@@ -1942,10 +2090,32 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                             ],
                           })
                         }
+                        onEdit={() => openEditLedgerModal(m)}
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            entityType: 'ledger',
+                            entityId: m.id,
+                            entityTitle: m.movementCode,
+                            recordSummary: [
+                              { label: 'كود الحركة', value: m.movementCode },
+                              { label: 'الشونة', value: m.shunaName },
+                              { label: 'نوع الحركة', value: m.movementType },
+                              { label: 'الكمية', value: `${m.quantityTons} طن` },
+                            ],
+                          })
+                        }
                       />
                     </td>
                   </tr>
                 ))}
+                {wheatLedgerMovements.length === 0 && (
+                  <tr>
+                    <td colSpan={11} className="p-8 text-center text-slate-500 font-bold">
+                      لا توجد حركات مسجلة في دفتر حركة أرصدة القمح بالشون حالياً — يمكنك إضافة حركة جديدة في أي وقت.
+                    </td>
+                  </tr>
+                )}
                 <VillageGrandTotalRow
                   totalCount={wheatLedgerMovements.length}
                   labelColSpan={6}
@@ -2917,6 +3087,181 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                   className="px-5 py-2 rounded-xl bg-amber-600 text-white font-black"
                 >
                   حفظ التعديلات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة إضافة / تعديل حركة بدفتر أرصدة القمح بالشون */}
+      {ledgerModal && (
+        <div
+          className="fixed inset-0 z-[9980] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+          dir="rtl"
+          onClick={() => setLedgerModal(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border-2 border-[#0A1628] w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-black text-slate-900 mb-3">
+              {ledgerModal.mode === 'add'
+                ? 'إضافة حركة جديدة بدفتر أرصدة القمح بالشون'
+                : `تعديل حركة دفتر الأرصدة: ${ledgerModal.movementCode}`}
+            </h3>
+            <form onSubmit={handleSaveLedgerModal} className="space-y-4 text-xs font-bold">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block mb-1 text-slate-700">رقم / كود الحركة *</label>
+                  <input
+                    type="text"
+                    required
+                    data-testid="ledger-form-code"
+                    value={ledgerModal.movementCode}
+                    onChange={(e) => setLedgerModal({ ...ledgerModal, movementCode: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الشونة</label>
+                  <select
+                    value={ledgerModal.shunaCode}
+                    onChange={(e) => setLedgerModal({ ...ledgerModal, shunaCode: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  >
+                    {shunas.map((s) => (
+                      <option key={s.shunaCode} value={s.shunaCode}>
+                        {s.shunaName} ({s.shunaCode})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">تاريخ الحركة</label>
+                  <input
+                    type="date"
+                    required
+                    value={ledgerModal.movementDate}
+                    onChange={(e) => setLedgerModal({ ...ledgerModal, movementDate: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">نوع الحركة</label>
+                  <select
+                    value={ledgerModal.movementType}
+                    onChange={(e) =>
+                      setLedgerModal({
+                        ...ledgerModal,
+                        movementType: e.target.value as WheatLedgerMovementRecord['movementType'],
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  >
+                    <option value="رصيد افتتاحي">رصيد افتتاحي</option>
+                    <option value="وارد قمح معتمد">وارد قمح معتمد</option>
+                    <option value="صرف قمح لمطحن">صرف قمح لمطحن</option>
+                    <option value="تحويل وارد">تحويل وارد</option>
+                    <option value="تحويل صادر">تحويل صادر</option>
+                    <option value="تسوية جرد معتمدة">تسوية جرد معتمدة</option>
+                    <option value="عكس قيد">عكس قيد</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">المستند المرجعي</label>
+                  <input
+                    type="text"
+                    value={ledgerModal.referenceDocNumber}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, referenceDocNumber: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الرصيد قبل الحركة (طن)</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={ledgerModal.balanceBeforeTons}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, balanceBeforeTons: Number(e.target.value) || 0 })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الكمية (طن — موجب للوارد وسالب للمنصرف)</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    required
+                    data-testid="ledger-form-qty"
+                    value={ledgerModal.quantityTons}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, quantityTons: Number(e.target.value) || 0 })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">سعر الطن (ج.م)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={ledgerModal.tonPrice}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, tonPrice: Number(e.target.value) || 0 })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">المسؤول / المنفذ</label>
+                  <input
+                    type="text"
+                    value={ledgerModal.performedBy}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, performedBy: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">ملاحظات وبيان الحركة</label>
+                  <input
+                    type="text"
+                    value={ledgerModal.notes}
+                    onChange={(e) => setLedgerModal({ ...ledgerModal, notes: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+              </div>
+              <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs font-black text-slate-700">
+                <span>
+                  الرصيد المحسوب بعد الحركة:{' '}
+                  {(Number(ledgerModal.balanceBeforeTons || 0) + Number(ledgerModal.quantityTons || 0)).toFixed(3)} طن
+                </span>
+                <span>
+                  القيمة المالية:{' '}
+                  {Math.round(Math.abs(Number(ledgerModal.quantityTons || 0)) * Number(ledgerModal.tonPrice || 0)).toLocaleString('ar-EG')} ج.م
+                </span>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setLedgerModal(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  data-testid="ledger-form-submit"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 text-white font-black cursor-pointer"
+                >
+                  {ledgerModal.mode === 'add' ? 'إضافة الحركة وحفظها' : 'حفظ التعديلات'}
                 </button>
               </div>
             </form>
