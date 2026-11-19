@@ -1910,7 +1910,16 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                 {FUEL_TYPES.map((ft) => {
                   const recs = state.petroleumVillageCirculation.filter((r) => r.fuelType === ft);
                   const totalLiters = recs.reduce((s, r) => s + r.disbursedLiters, 0);
-                  const totalPop = recs.reduce((s, r) => s + r.population, 0);
+                  const popByUnit = new Map<string, number>();
+                  recs.forEach((r) => {
+                    const uKey = String(r.localUnit || r.village || 'عام').trim();
+                    const p = Number(r.population) || 0;
+                    if (p > (popByUnit.get(uKey) || 0)) popByUnit.set(uKey, p);
+                  });
+                  let totalPop = 0;
+                  popByUnit.forEach((v) => {
+                    totalPop += v;
+                  });
                   const avgPerCapita = totalPop > 0 ? (totalLiters / totalPop).toFixed(2) : '0.00';
                   return (
                     <button

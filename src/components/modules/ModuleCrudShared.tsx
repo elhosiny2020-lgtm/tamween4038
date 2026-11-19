@@ -816,6 +816,8 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
 
   useEffect(() => {
     if (!isOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -823,7 +825,10 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, [isOpen, onClose]);
 
   const normalizedSections: RecordProfileSection[] = useMemo(() => {
@@ -858,7 +863,7 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
 
   const modalNode = (
     <div
-      className="fixed inset-0 z-[9985] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-[9985] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
       dir="rtl"
       role="dialog"
       aria-modal="true"
@@ -869,7 +874,7 @@ export const ModuleRecordProfileModal: React.FC<ModuleRecordProfileModalProps> =
       }}
     >
       <div
-        className="bg-white rounded-2xl border-2 border-[#0A1628] shadow-2xl w-full max-w-3xl overflow-hidden my-auto"
+        className="bg-white rounded-2xl border-2 border-[#0A1628] shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0D9488] text-white px-5 py-3.5 flex items-center justify-between gap-2 border-b border-[#D4AF37]/40">

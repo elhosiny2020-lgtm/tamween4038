@@ -1844,7 +1844,15 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                   byVillage.set(vilKey, vilEntry);
                 });
 
-                const renderGroupMetricCell = (colKey: string, idx: number, groupList: Bakery[], labelText: string, luName: string, vilName?: string) => {
+                const renderGroupMetricCell = (
+                  colKey: string,
+                  idx: number,
+                  groupList: Bakery[],
+                  labelText: string,
+                  luName: string,
+                  vilName?: string,
+                  isLocalUnitSubtotal = false
+                ) => {
                   if (idx === 0) return labelText;
                   switch (colKey) {
                     case 'bakeryOwnerName':
@@ -1878,12 +1886,26 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                           0
                         )
                       );
+                    case 'villagePopulation':
                     case 'beneficiaries2023':
-                      return safeFormatNum(groupList.reduce((s, x) => s + (Number(x.beneficiaries2023) || 0), 0));
                     case 'beneficiaries2024':
-                      return safeFormatNum(groupList.reduce((s, x) => s + (Number(x.beneficiaries2024) || 0), 0));
-                    case 'beneficiaries2025':
-                      return safeFormatNum(groupList.reduce((s, x) => s + (Number(x.beneficiaries2025) || 0), 0));
+                    case 'beneficiaries2025': {
+                      // لا يُجمع عدد السكان ولا عدد المستفيدين داخل نفس الوحدة المحلية نهائياً
+                      if (isLocalUnitSubtotal) return '—';
+                      const byUnitMax = new Map<string, number>();
+                      for (const x of groupList) {
+                        const uKey = String(x.localUnit || 'غير محدد').trim() || 'غير محدد';
+                        const val = Number((x as any)[colKey]) || 0;
+                        if (val > (byUnitMax.get(uKey) || 0)) {
+                          byUnitMax.set(uKey, val);
+                        }
+                      }
+                      let totalUnique = 0;
+                      byUnitMax.forEach((v) => {
+                        totalUnique += v;
+                      });
+                      return safeFormatNum(totalUnique, 0);
+                    }
                     case 'remainingDebt':
                       return safeFormatNum(groupList.reduce((s, x) => s + (bakeryDebtMap[x.id] || 0), 0));
                     default:
@@ -1905,7 +1927,15 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                               col.align === 'right' ? 'text-right' : 'text-center'
                             } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
                           >
-                            {renderGroupMetricCell(col.key, idx, luBakeries, `إجمالي الوحدة المحلية: ${luName}`, luName)}
+                            {renderGroupMetricCell(
+                              col.key,
+                              idx,
+                              luBakeries,
+                              `إجمالي الوحدة المحلية: ${luName}`,
+                              luName,
+                              undefined,
+                              true
+                            )}
                           </td>
                         ))}
                         {onSelectBakeryDetails && (
@@ -1935,7 +1965,8 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                                 vilData.list,
                                 `إجمالي القرية: ${vilName}`,
                                 vilData.localUnit,
-                                vilName
+                                vilName,
+                                false
                               )}
                             </td>
                           ))}

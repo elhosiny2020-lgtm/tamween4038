@@ -1413,7 +1413,7 @@ export function calculateBakeriesColumnTotals(
   let allUnitsUnifiedBen25 = unitGroups.size > 0;
 
   unitGroups.forEach((unitBakeries) => {
-    // Check whether population and beneficiaries are unified (identical) within this local unit
+    // Never sum population or beneficiaries across rows within the same local unit
     const resolveUnitDemographic = (getter: (b: Bakery) => number) => {
       const nonZeroVals: number[] = [];
       for (const b of unitBakeries) {
@@ -1421,11 +1421,8 @@ export function calculateBakeriesColumnTotals(
         if (v > 0) nonZeroVals.push(v);
       }
       const uniqueVals = Array.from(new Set(nonZeroVals));
-      const isUnified = uniqueVals.length <= 1;
-      const effectiveValue = isUnified
-        ? uniqueVals[0] ?? 0
-        : nonZeroVals.reduce((acc, v) => acc + v, 0);
-      return { isUnified, effectiveValue };
+      const effectiveValue = uniqueVals.length === 0 ? 0 : Math.max(...uniqueVals);
+      return { isUnified: true, effectiveValue };
     };
 
     const popRes = resolveUnitDemographic((b) => b.villagePopulation);

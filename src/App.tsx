@@ -41,6 +41,8 @@ import {
   saveBranchAuthVault,
   sanitizeBranchUsers,
 } from './services/branchAuthVault';
+import { BranchesManagerModal } from './components/BranchesManagerModal';
+import { VaultSecurityGateModal } from './components/VaultSecurityGateModal';
 import {
   DEFAULT_SYSTEM_CONFIG,
   DEFAULT_VILLAGES_HIERARCHY,
@@ -238,14 +240,6 @@ const BakeryDetailsModal = lazy(() =>
 );
 const GoogleWorkspaceModal = lazy(() =>
   import('./components/GoogleWorkspaceModal').then((m) => ({ default: m.GoogleWorkspaceModal }))
-);
-const BranchesManagerModal = lazy(() =>
-  import('./components/BranchesManagerModal').then((m) => ({ default: m.BranchesManagerModal }))
-);
-const VaultSecurityGateModal = lazy(() =>
-  import('./components/VaultSecurityGateModal').then((m) => ({
-    default: m.VaultSecurityGateModal,
-  }))
 );
 const InteractiveDashboardPage = lazy(() =>
   import('./components/InteractiveDashboardPage').then((m) => ({
@@ -4869,29 +4863,12 @@ export default function App() {
                   <span>سجل المديونيات ({appState.debts.length})</span>
                 </button>
               )}
-              {canUserAccessTab(appState.currentUser, 'commodities') && (
-                <button
-                  type="button"
-                  data-testid="nav-commodities-tab"
-                  onClick={() =>
-                    handleSelectSidebarNav('commodities-dashboard', '6. قسم السلع التموينية', 'لوحة مؤشرات السلع التموينية')
-                  }
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === 'commodities'
-                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
-                      : 'text-[#0A1628] hover:bg-white'
-                  }`}
-                >
-                  <ShoppingBasket className="w-3.5 h-3.5 text-[#0D9488]" />
-                  <span>السلع التموينية</span>
-                </button>
-              )}
               {canUserAccessTab(appState.currentUser, 'internal-trade') && (
                 <button
                   type="button"
                   data-testid="nav-internal-trade-tab"
                   onClick={() =>
-                    handleSelectSidebarNav('internal-trade-dashboard', '7. قسم التجارة الداخلية', 'لوحة تحكم التجارة الداخلية')
+                    handleSelectSidebarNav('internal-trade-dashboard', '3. قسم التجارة الداخلية', 'لوحة تحكم التجارة الداخلية')
                   }
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'internal-trade'
@@ -4903,12 +4880,29 @@ export default function App() {
                   <span>التجارة الداخلية</span>
                 </button>
               )}
+              {canUserAccessTab(appState.currentUser, 'commodities') && (
+                <button
+                  type="button"
+                  data-testid="nav-commodities-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav('commodities-dashboard', '4. قسم السلع التموينية', 'لوحة مؤشرات السلع التموينية')
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'commodities'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <ShoppingBasket className="w-3.5 h-3.5 text-[#0D9488]" />
+                  <span>السلع التموينية</span>
+                </button>
+              )}
               {canUserAccessTab(appState.currentUser, 'grain-maintenance') && (
                 <button
                   type="button"
                   data-testid="nav-grain-maintenance-tab"
                   onClick={() =>
-                    handleSelectSidebarNav('grain-dashboard', '8. قسم صيانة الحبوب والصوامع', 'لوحة الصيانة ومؤشرات OEE')
+                    handleSelectSidebarNav('grain-dashboard', '5. قسم صيانة الحبوب', 'لوحة الصيانة ومؤشرات OEE')
                   }
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'grain-maintenance'
@@ -4925,7 +4919,7 @@ export default function App() {
                   type="button"
                   data-testid="nav-hr-personnel-tab"
                   onClick={() =>
-                    handleSelectSidebarNav('hr-dashboard', '9. الموارد البشرية وشؤون العاملين', 'لوحة تحكم الموارد البشرية')
+                    handleSelectSidebarNav('hr-dashboard', '6. قسم الموارد البشرية', 'لوحة تحكم الموارد البشرية')
                   }
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'hr-personnel'
@@ -6836,17 +6830,17 @@ export default function App() {
                               )}
                               {showDemographicsCols && (
                                 <>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title={uGroup.isUnifiedPopulation ? 'رقم موحد للوحدة المحلية — يُجمع في إجمالي القرية فقط' : undefined}>
-                                    {uGroup.isUnifiedPopulation ? '—' : uGroup.villagePopulation?.toLocaleString()}
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title="لا يُجمع عدد السكان داخل نفس الوحدة المحلية — يُجمع في إجمالي القرية فقط">
+                                    —
                                   </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title={uGroup.isUnifiedBeneficiaries2023 ? 'رقم موحد للوحدة المحلية — يُجمع في إجمالي القرية فقط' : undefined}>
-                                    {uGroup.isUnifiedBeneficiaries2023 ? '—' : uGroup.beneficiaries2023?.toLocaleString()}
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title="لا يُجمع عدد المستفيدين داخل نفس الوحدة المحلية — يُجمع في إجمالي القرية فقط">
+                                    —
                                   </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title={uGroup.isUnifiedBeneficiaries2024 ? 'رقم موحد للوحدة المحلية — يُجمع في إجمالي القرية فقط' : undefined}>
-                                    {uGroup.isUnifiedBeneficiaries2024 ? '—' : uGroup.beneficiaries2024?.toLocaleString()}
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title="لا يُجمع عدد المستفيدين داخل نفس الوحدة المحلية — يُجمع في إجمالي القرية فقط">
+                                    —
                                   </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title={uGroup.isUnifiedBeneficiaries2025 ? 'رقم موحد للوحدة المحلية — يُجمع في إجمالي القرية فقط' : undefined}>
-                                    {uGroup.isUnifiedBeneficiaries2025 ? '—' : uGroup.beneficiaries2025?.toLocaleString()}
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title="لا يُجمع عدد المستفيدين داخل نفس الوحدة المحلية — يُجمع في إجمالي القرية فقط">
+                                    —
                                   </td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{uGroup.avg2023}</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{uGroup.avg2024}</td>
@@ -8755,13 +8749,74 @@ export default function App() {
           if (!created.success || !created.newBranch) return;
           const deduplicatedNext = deduplicateSupplyBranches(created.branches);
           saveBranchesList(deduplicatedNext);
+          await resetBranchModulesBundleForBranch(
+            created.newBranch.id,
+            created.newBranch.name,
+            []
+          ).catch(() => {});
           await saveRowToDb({
             table: 'branches',
             branchId: created.newBranch.id,
             row: created.newBranch,
             operation: 'INSERT',
           });
-          handleSwitchBranch(created.newBranch.id, deduplicatedNext);
+          setAppState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  branches: deduplicatedNext,
+                }
+              : prev
+          );
+          setSaveToast({
+            id: Date.now(),
+            message: `تمت إضافة "${created.newBranch.name}" بكامل الأقسام مع تصفير المخابز والمديونيات بنجاح`,
+            timestamp: getArabicTimestamp(),
+            variant: 'success',
+          });
+        }}
+        onFactoryResetBranch={async (targetBranchId) => {
+          if (!isSuperAdmin(appState.currentUser)) {
+            return { success: false, error: 'صلاحية مدير النظام مطلوبة لتصفير بيانات الإدارة.' };
+          }
+          const targetBranch = cleanBranchesList.find((b) => b.id === targetBranchId);
+          const targetName = targetBranch?.name || 'الإدارة التموينية';
+          const isCurrentActive = targetBranchId === (appState.activeBranchId || DEFAULT_BRANCH_ID);
+          const res = await clearSupabaseDatabaseData(targetBranchId);
+          await factoryResetBranch(targetBranchId);
+          const emptyMod = await resetBranchModulesBundleForBranch(
+            targetBranchId,
+            targetName,
+            isCurrentActive ? appState.villages || [] : []
+          );
+          if (isCurrentActive) {
+            latestModulesBundleRef.current = emptyMod;
+            setModulesBundle(emptyMod);
+            setHighDebtNotifications([]);
+            setAppState((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    bakeries: [],
+                    debts: [],
+                    dailyTasks: [],
+                    inboxMessages: [],
+                  }
+                : prev
+            );
+          }
+          const nowAr = getArabicTimestamp();
+          setSaveTimestamp(nowAr);
+          setSaveToast({
+            id: Date.now(),
+            message: `تمت استعادة ضبط المصنع للبيانات داخل «${targetName}» فقط بنجاح`,
+            timestamp: nowAr,
+            variant: 'success',
+          });
+          return {
+            success: true,
+            message: `تم تنفيذ استعادة ضبط المصنع للبيانات داخل «${targetName}» فقط (المخابز = 0، المديونيات = 0، كافة بيانات الأقسام = 0) دون التأثير على الإدارات الأخرى.`,
+          };
         }}
         onRenameBranch={async (branchId, name, directorate, governorate, description) => {
           if (!isSuperAdmin(appState.currentUser)) return;

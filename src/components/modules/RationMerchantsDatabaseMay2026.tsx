@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Store,
@@ -105,6 +105,23 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   const [showAddOrEditModal, setShowAddOrEditModal] = useState(false);
   const [editingMerchant, setEditingMerchant] = useState<RationMerchant | null>(null);
   const [deleteConfirmMerchant, setDeleteConfirmMerchant] = useState<RationMerchant | null>(null);
+
+  useEffect(() => {
+    if (!selectedMerchantId && !showAddOrEditModal) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selectedMerchantId) setSelectedMerchantId(null);
+        else if (showAddOrEditModal) setShowAddOrEditModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedMerchantId, showAddOrEditModal]);
 
   const [selectedReportId, setSelectedReportId] = useState<ReportTypeId>('RPT_ALL');
   const [pageSize, setPageSize] = useState<number>(25);

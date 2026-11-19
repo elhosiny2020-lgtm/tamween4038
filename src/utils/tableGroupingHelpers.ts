@@ -35,7 +35,9 @@ export function roundMetric2(val: number): number {
 }
 
 export function isPopulationOrBeneficiariesFieldKey(key: string): boolean {
-  return /population|سكان|مستفيد|beneficiar|أفراد|فراد/i.test(String(key || '').trim());
+  return /population|سكان|مستفيد|beneficiar|أفراد|فراد|eligibleCount|totalMembers|individualsCount/i.test(
+    String(key || '').trim()
+  );
 }
 
 export const isPopulationFieldKey = isPopulationOrBeneficiariesFieldKey;
@@ -44,9 +46,9 @@ export const isPopulationFieldKey = isPopulationOrBeneficiariesFieldKey;
  * دالة نقية لتجميع السجلات حسب الوحدة المحلية وحساب صف «إجمالي الوحدة المحلية» لكل وحدة،
  * ثم حساب صف «الإجمالي العام للقرية TOTAL» بجمع صفوف إجمالي الوحدات المحلية فقط.
  *
- * قاعدة عدد السكان والمستفيدين الموحد للوحدة المحلية:
- * - إذا كان عدد السكان أو عدد المستفيدين موحداً للوحدة المحلية (نفس الرقم) لا يتم جمعه في صف إجماليات الوحدة المحلية،
- *   وإنما يتم اعتباره قيمة موحدة وعرضه '—' في الإجمالي الفرعي، وتجميعه فقط في صف إجماليات القرية بأكملها بناءً على إجمالي صف الوحدات المحلية.
+ * قاعدة عدد السكان والمستفيدين للوحدة المحلية:
+ * - لا يتم جمع عدد السكان ولا عدد المستفيدين داخل نفس الوحدة المحلية نهائياً في صف إجماليات الوحدة المحلية (يُعرض '—')،
+ *   ويتم احتساب قيمة واحدة غير مكررة للوحدة المحلية وتجميعها فقط في صف الإجمالي العام / القرية بناءً على الوحدات المحلية.
  */
 export function groupRecordsByLocalUnit<T>(params: {
   rows: T[];
@@ -95,30 +97,20 @@ export function groupRecordsByLocalUnit<T>(params: {
     for (const nf of numericFields) {
       if (isPopulationOrBeneficiariesFieldKey(nf.key)) {
         const popValues: number[] = [];
-        let sum = 0;
         for (const r of groupRows) {
           const val = Number(nf.getValue(r));
           if (Number.isFinite(val) && val > 0) {
             popValues.push(val);
-            sum += val;
           }
         }
         const uniquePop = Array.from(new Set(popValues));
-        const isUnified = uniquePop.length <= 1;
-        if (isUnified) {
-          groupHasUnifiedPopulation = true;
-          const singlePop = uniquePop[0] ?? 0;
-          // يستخدم الرقم الموحد لحساب المعدلات دون مضاعفة وللتجميع في إجمالي القرية فقط
-          rawSums[nf.key] = roundMetric2(singlePop);
-          grandContribution[nf.key] = roundMetric2(singlePop);
-          // عدم عمل تجميع لعدد السكان أو المستفيدين الموحد في صف إجماليات الوحدة المحلية
-          displaySubtotals[nf.key] = '—';
-        } else {
-          const totalPop = roundMetric2(sum);
-          rawSums[nf.key] = totalPop;
-          grandContribution[nf.key] = totalPop;
-          displaySubtotals[nf.key] = totalPop;
-        }
+        groupHasUnifiedPopulation = true;
+        // قيمة الوحدة المحلية دون تكرار (الرقم الموحد أو أعلى قيمة مسجلة للوحدة بدون جمع مكرر داخل نفس الوحدة)
+        const unitEffectiveVal = uniquePop.length === 0 ? 0 : Math.max(...uniquePop);
+        rawSums[nf.key] = roundMetric2(unitEffectiveVal);
+        grandContribution[nf.key] = roundMetric2(unitEffectiveVal);
+        // لا يُجمع عدد السكان ولا عدد المستفيدين داخل نفس الوحدة المحلية أبداً
+        displaySubtotals[nf.key] = '—';
       } else {
         let sum = 0;
         for (const r of groupRows) {

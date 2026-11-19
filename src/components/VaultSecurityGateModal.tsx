@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Lock,
   KeyRound,
@@ -226,9 +227,9 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
     }
   };
 
-  return (
+  const modalNode = (
     <div
-      className="fixed inset-0 z-[200] bg-[#0A1628]/85 backdrop-blur-xl flex items-center justify-center p-4 overflow-y-auto"
+      className="fixed inset-0 z-[9998] bg-[#0A1628]/85 backdrop-blur-xl flex items-center justify-center p-4 overflow-y-auto"
       dir="rtl"
     >
       <div
@@ -608,4 +609,9 @@ export const VaultSecurityGateModal: React.FC<VaultSecurityGateModalProps> = ({
       </div>
     </div>
   );
+
+  if (typeof document !== 'undefined' && document.body) {
+    return createPortal(modalNode, document.body);
+  }
+  return modalNode;
 };

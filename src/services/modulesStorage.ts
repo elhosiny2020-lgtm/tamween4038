@@ -2296,15 +2296,10 @@ export function computeReportSubtotalsByLocalUnitAndVillage(
       if (popOrBenCols[idx]) {
         const vals = data.popColValues[idx];
         const uniqueVals = Array.from(new Set(vals));
-        if (uniqueVals.length <= 1) {
-          const singleVal = uniqueVals[0] ?? 0;
-          grandSums[idx] += singleVal;
-          // عدم تجميع السكان أو المستفيدين الموحدين في صف إجمالي الوحدة المحلية
-          return '—';
-        }
-        const total = Math.round(vals.reduce((a, b) => a + b, 0) * 100) / 100;
-        grandSums[idx] += total;
-        return total;
+        const unitVal = uniqueVals.length === 0 ? 0 : Math.max(...uniqueVals);
+        grandSums[idx] += unitVal;
+        // لا يُجمع عدد السكان ولا عدد المستفيدين داخل نفس الوحدة المحلية أبداً
+        return '—';
       }
       const rounded = Math.round(data.sums[idx] * 100) / 100;
       grandSums[idx] += rounded;
@@ -2326,11 +2321,7 @@ export function computeReportSubtotalsByLocalUnitAndVillage(
         data.unitKeysSeen.forEach((colArrays) => {
           const vals = colArrays[idx];
           const uniqueVals = Array.from(new Set(vals));
-          if (uniqueVals.length <= 1) {
-            villagePopTotal += uniqueVals[0] ?? 0;
-          } else {
-            villagePopTotal += vals.reduce((a, b) => a + b, 0);
-          }
+          villagePopTotal += uniqueVals.length === 0 ? 0 : Math.max(...uniqueVals);
         });
         return Math.round(villagePopTotal * 100) / 100;
       }

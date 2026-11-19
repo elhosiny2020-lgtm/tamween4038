@@ -3888,7 +3888,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
                       recordCount={grp.count}
                       labelColSpan={5}
                       metricCells={[
-                        { content: `${grp.subtotals.eligibleCount} / ${grp.subtotals.totalMembers}`, mono: true },
+                        { content: '—', mono: true },
                         { colSpan: 2, content: '' },
                       ]}
                     />
