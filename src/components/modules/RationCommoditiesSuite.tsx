@@ -102,6 +102,8 @@ import {
   DepartmentAlertsPanel,
   SmartTableSearchBar,
   TablePaginationBar,
+  ReportToolbar,
+  ErrorBoundary,
   type CrudFieldDefinition,
   type RecordProfileSection,
 } from './ModuleCrudShared';
@@ -3043,24 +3045,45 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           </div>
         </div>
 
-        {/* Clean Executive Info Strip */}
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-[#0A1931] font-black">
-              إجمالي المنافذ والتجار: {kpis.totalMerchants} ({kpis.activeMerchants} نشط)
-            </span>
-            <span className="text-slate-300">|</span>
-            <span>السلع التموينية: {kpis.totalCommodities} صنف</span>
-            <span className="text-slate-300">|</span>
-            <span>البطاقات التموينية: {state.cards.length} بطاقة</span>
-            <span className="text-slate-300">|</span>
-            <span className="text-teal-800 font-black">
-              دعم الفرد: {state.settings.supportPerBeneficiary} ج.م
-              {state.settings.additionalGrantEnabled && ` + منحة إضافية: ${state.settings.additionalGrantPerCard2026} ج.م`}
-            </span>
+        {/* Unified Top Responsive KPI Cards Grid matching InternalTradeSuite */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" dir="rtl">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">إجمالي المنافذ والتجار</div>
+            <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">
+              {kpis.totalMerchants.toLocaleString('en-US')}
+            </div>
+            <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
+              {kpis.activeMerchants.toLocaleString('en-US')} منفذ نشط
+            </div>
           </div>
-          <div className="text-[11px] font-black text-[#0A1931]">
-            نسبة تنفيذ الحصص الشهرية: {kpis.monthlyQuotaExecutionPct}% • شهر الاستحقاق: {state.settings.activeMonth}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">الأصناف والبطاقات التموينية</div>
+            <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">
+              {kpis.totalCommodities.toLocaleString('en-US')} صنف
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5 font-mono tabular-nums">
+              {state.cards.length.toLocaleString('en-US')} بطاقة • {kpis.totalEligible.toLocaleString('en-US')} مستفيد
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">دعم الفرد والمنحة الإضافية</div>
+            <div className="text-lg font-black text-teal-800 font-mono tabular-nums mt-0.5">
+              {state.settings.supportPerBeneficiary} ج.م
+            </div>
+            <div className="text-[10px] font-bold text-teal-700 mt-0.5">
+              {state.settings.additionalGrantEnabled
+                ? `منحة إضافية: ${state.settings.additionalGrantPerCard2026} ج.م/بطاقة`
+                : 'بدون منحة إضافية'}
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">تنفيذ الحصص الشهرية</div>
+            <div className="text-lg font-black text-amber-800 font-mono tabular-nums mt-0.5">
+              {kpis.monthlyQuotaExecutionPct}%
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5">
+              شهر الاستحقاق: {state.settings.activeMonth}
+            </div>
           </div>
         </div>
 
@@ -3127,6 +3150,65 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
         </div>
       )}
 
+      {/* Unified ReportToolbar above active table sub-views */}
+      {subView !== 'dashboard' && (
+        <ReportToolbar
+          title={activeReportData.title}
+          subtitle={`قسم السلع التموينية (${branchName}) — ${state.settings.decisionNumber}`}
+          count={activeReportData.rows.length}
+          testIdPrefix={`ration-${subView}`}
+          onExportExcel={
+            permissions.canExport
+              ? () =>
+                  exportRowsToArabicCsv(
+                    `السلع_التموينية_${branchName}`,
+                    activeReportData.headers,
+                    activeReportData.rows
+                  )
+              : undefined
+          }
+          onPrint={
+            permissions.canPrint
+              ? () =>
+                  printModuleReportA4({
+                    title: activeReportData.title,
+                    subtitle: `${state.settings.decisionNumber} • شهر ${state.settings.activeMonth}`,
+                    branchName,
+                    headers: activeReportData.headers,
+                    rows: activeReportData.rows,
+                    summaryItems: [
+                      { label: 'إجمالي السلع المسجلة', value: String(kpis.totalCommodities) },
+                      { label: 'قيمة المخزون الحالي', value: `${kpis.stockValuation.toLocaleString()} ج.م` },
+                      { label: 'التجار والمنافذ النشطة', value: `${kpis.activeMerchants} / ${kpis.totalMerchants}` },
+                      { label: 'نسبة تنفيذ الحصص الشهرية', value: `${kpis.monthlyQuotaExecutionPct}%` },
+                    ],
+                    preparedBy: currentUser?.fullName,
+                  })
+              : undefined
+          }
+          onExportPdf={
+            permissions.canPrint
+              ? () =>
+                  printModuleReportA4({
+                    title: activeReportData.title,
+                    subtitle: `${state.settings.decisionNumber} • شهر ${state.settings.activeMonth}`,
+                    branchName,
+                    headers: activeReportData.headers,
+                    rows: activeReportData.rows,
+                    summaryItems: [
+                      { label: 'إجمالي السلع المسجلة', value: String(kpis.totalCommodities) },
+                      { label: 'قيمة المخزون الحالي', value: `${kpis.stockValuation.toLocaleString()} ج.م` },
+                      { label: 'التجار والمنافذ النشطة', value: `${kpis.activeMerchants} / ${kpis.totalMerchants}` },
+                      { label: 'نسبة تنفيذ الحصص الشهرية', value: `${kpis.monthlyQuotaExecutionPct}%` },
+                    ],
+                    preparedBy: currentUser?.fullName,
+                  })
+              : undefined
+          }
+        />
+      )}
+
+      <ErrorBoundary key={subView} fallbackTitle="تعذر عرض جدول قسم السلع التموينية مؤقتاً دون تأثر باقي المنظومة">
       {/* SubView 1: Main Dashboard (10 KPIs + Unified Bakeries & Commodities Overview + Charts) */}
       {subView === 'dashboard' && (
         <div className="space-y-4">
@@ -6479,6 +6561,7 @@ export const RationCommoditiesSuite: React.FC<RationCommoditiesSuiteProps> = ({
           </div>
         </div>
       )}
+      </ErrorBoundary>
 
       {/* Unified Add / Edit Modal */}
       {activeModal && (

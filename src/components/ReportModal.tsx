@@ -4,6 +4,7 @@ import {
   exportElementToPdf,
   printHtmlElementA4,
 } from '../utils/pdfHelper';
+import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
 import {
   formatDateDDMMYYYY,
   calculateAnnualWeightedAveragesReport,
@@ -935,8 +936,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 p-0.5 rounded-xl bg-white border border-amber-400 shadow-md flex items-center justify-center shrink-0">
               <img
-                src={systemConfig.logoBase64}
-                alt="شعار التموين"
+                src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
+                alt="شعار وزارة التموين والتجارة الداخلية"
                 className="w-full h-full object-contain"
               />
             </div>
@@ -1467,8 +1468,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                   <div className="text-center">
                     <div className="w-14 h-14 mx-auto p-1 border border-amber-600 rounded-full bg-white flex items-center justify-center">
                       <img
-                        src={systemConfig.logoBase64}
-                        alt="شعار وزارة التموين"
+                        src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
+                        alt="شعار وزارة التموين والتجارة الداخلية"
                         className="w-full h-full object-contain"
                       />
                     </div>

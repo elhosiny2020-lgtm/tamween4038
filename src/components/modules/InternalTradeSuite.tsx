@@ -113,6 +113,7 @@ import {
   SmartTableSearchBar,
   TablePaginationBar,
   VillageGrandTotalRow,
+  ErrorBoundary,
   type RecordProfileSection,
 } from './ModuleCrudShared';
 
@@ -1502,6 +1503,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
         </div>
       </div>
 
+      <ErrorBoundary key={subView} fallbackTitle="تعذر عرض جدول قسم التجارة الداخلية مؤقتاً دون تأثر باقي المنظومة">
       {/* =====================================================================
           VIEW 1: UNIFIED CONTROL CENTER DASHBOARD (14 Interactive KPIs + Charts + Alerts)
          ===================================================================== */}
@@ -7051,7 +7053,10 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                                 if (idx === 0) val = `إجمالي الوحدة المحلية: ${lu.localUnit}`;
                                 else if (idx === grouped.localUnitColIdx) val = lu.localUnit;
                                 else if (idx === 1 && lu.columnSums[1] === null) val = `${lu.count} سجل`;
-                                else if (lu.columnSums[idx] !== null) val = lu.columnSums[idx]!.toLocaleString('ar-EG');
+                                else if (lu.columnSums[idx] !== null) {
+                                  const raw = lu.columnSums[idx];
+                                  val = typeof raw === 'string' ? raw : raw!.toLocaleString('ar-EG');
+                                }
                                 return (
                                   <td key={idx} className="py-1.5 px-2 border border-sky-200 text-center">
                                     {val}
@@ -7069,7 +7074,8 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                                 else if (idx === grouped.localUnitColIdx) val = v.localUnit;
                                 else if (idx === grouped.villageColIdx) val = v.village;
                                 else if (idx === 1 && v.columnSums[1] === null) val = `${v.count} سجل`;
-                                else if (luOrVal(v.columnSums[idx])) val = v.columnSums[idx]!.toLocaleString('ar-EG');
+                                else if (typeof v.columnSums[idx] === 'string') val = v.columnSums[idx] as string;
+                                else if (luOrVal(v.columnSums[idx])) val = (v.columnSums[idx] as number).toLocaleString('ar-EG');
                                 return (
                                   <td key={idx} className="py-1.5 px-2 border border-amber-200 text-center">
                                     {val}
@@ -7089,7 +7095,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
                     </table>
                   </div>
                 );
-                function luOrVal(n: number | null | undefined): n is number {
+                function luOrVal(n: string | number | null | undefined): n is number {
                   return typeof n === 'number' && Number.isFinite(n);
                 }
               })()}
@@ -9531,6 +9537,7 @@ export const InternalTradeSuite: React.FC<InternalTradeSuiteProps> = ({
           </form>
         </div>
       )}
+      </ErrorBoundary>
 
       {/* =====================================================================
           GLOBAL MAGIC EYE PROFILE MODAL & DELETE CONFIRMATION MODAL

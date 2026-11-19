@@ -38,6 +38,7 @@ import {
   Briefcase,
   Wrench,
   TrendingUp,
+  History,
 } from 'lucide-react';
 import { CloudConnectionStatus } from '../lib/supabase';
 import type { AppUser } from '../types';
@@ -73,6 +74,7 @@ export type SidebarNavId =
   | 'alerts-scheduled-audio'
   // 2. قسم التعديلات
   | 'data-edit-bakery'
+  | 'bakery-change-history'
   | 'data-edit-master'
   | 'settings-view-mode'
   | 'settings-display'
@@ -521,6 +523,13 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           id: 'data-edit-bakery',
           label: 'تعديل بيانات مخبز محدد',
           icon: <Edit3 className="w-3.5 h-3.5" />,
+        },
+        {
+          id: 'bakery-change-history',
+          label: 'سجل التغييرات التاريخي للمخابز',
+          icon: <History className="w-3.5 h-3.5 text-amber-400" />,
+          badge: 'بحث',
+          badgeVariant: 'gold',
         },
         {
           id: 'data-edit-master',

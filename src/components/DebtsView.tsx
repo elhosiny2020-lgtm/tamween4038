@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bakery, DebtRecord, VillageHierarchy, SystemConfig, AppUser } from '../types';
 import { PAYMENT_METHODS } from '../defaultData';
+import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
+import { ErrorBoundary } from './ErrorBoundary';
 import {
   FileSpreadsheet,
   Printer,
@@ -1575,11 +1577,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               <h4 className="text-xs font-black text-[#0F2342]">{systemConfig.directorateTitle}</h4>
               <h4 className="text-xs font-black text-[#0F2342]">{systemConfig.administrationTitle}</h4>
             </div>
-            {systemConfig.logoBase64 && (
-              <div className="w-14 h-14">
-                <img src={systemConfig.logoBase64} alt="شعار" className="w-full h-full object-contain" />
-              </div>
-            )}
+            <div className="w-14 h-14 p-1 rounded-xl bg-white border border-slate-300 flex items-center justify-center">
+              <img
+                src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
+                alt="شعار وزارة التموين والتجارة الداخلية"
+                className="w-full h-full object-contain"
+              />
+            </div>
             <div className="text-left font-mono text-[10px] font-bold space-y-0.5">
               <p className="font-black">تقرير سجل مديونيات المخابز وجدولة السداد</p>
               <p>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</p>
@@ -1593,7 +1597,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
         {/* Debts Database Table (Enlarged +1 step to text-sm with bold fonts) */}
         <div className="bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-md">
-          <div className="overflow-x-auto relative custom-scrollbar">
+          <ErrorBoundary fallbackTitle="تعذر عرض جدول سجل المديونيات مؤقتاً دون تأثر باقي المنظومة">
+          <div dir="rtl" className="overflow-x-auto relative custom-scrollbar">
             <table className="w-full text-center border-collapse text-sm font-extrabold">
               {/* Super Headers */}
               <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-black shadow-md text-xs sm:text-sm">
@@ -2369,6 +2374,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               )}
             </table>
           </div>
+        </ErrorBoundary>
 
           {/* Enterprise Pagination Bar */}
           {filteredDebts.length > debtsPageSize && (

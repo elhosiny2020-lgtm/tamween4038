@@ -239,6 +239,9 @@ export interface DailyAlertConfig {
   includeSystemSupervisors?: boolean; // include supervisor/admin users with gmailEmail
   lastDebtEmailAlertDate?: string; // YYYY-MM-DD
   debtEmailHistory?: DailyDebtEmailLogEntry[];
+  // In-App PUSH Alerts to Managers for Low Daily Flour Quota (in sacks / شكائر)
+  lowFlourQuotaAlertEnabled?: boolean;
+  lowFlourQuotaMinSacks?: number;
 }
 
 export interface CustomJobRole {

@@ -123,6 +123,16 @@ import type { InternalTradeSubView } from './components/modules/InternalTradeSui
 import type { GrainSubView } from './components/modules/GrainMaintenanceSuite';
 import type { HrSubView } from './components/modules/HrPersonnelSuite';
 import type { BranchModulesBundle } from './types/modules';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { Button } from './components/common/Button';
+import { ReportToolbar } from './components/common/ReportToolbar';
+import { LowFlourQuotaPushBanner } from './components/LowFlourQuotaPushBanner';
+import { BakeryChangeHistoryDrawer } from './components/BakeryChangeHistoryDrawer';
+import {
+  buildBakeryChangeDiffSummary,
+  createBakeryActivityLogItem,
+  findLowFlourQuotaBakeries,
+} from './utils/bakeryAlertsAndHistory';
 
 const HeaderCustomizerModal = lazy(() =>
   import('./components/HeaderCustomizerModal').then((m) => ({ default: m.HeaderCustomizerModal }))
@@ -526,6 +536,8 @@ export default function App() {
   const [showAdvancedSearchPanel, setShowAdvancedSearchPanel] = useState<boolean>(true);
   const [searchFocusMode, setSearchFocusMode] = useState<'ALL' | 'NAME' | 'MACHINE'>('ALL');
   const [detailsBakery, setDetailsBakery] = useState<Bakery | null>(null);
+  const [isBakeryHistoryDrawerOpen, setIsBakeryHistoryDrawerOpen] = useState<boolean>(false);
+  const [bakeryHistoryInitialOwner, setBakeryHistoryInitialOwner] = useState<string>('');
   const [isActionLocked, setIsActionLocked] = useState<boolean>(false);
   const [isVaultUnlocked, setIsVaultUnlocked] = useState<boolean>(false);
   const [vaultGateModal, setVaultGateModal] = useState<{
@@ -2421,6 +2433,20 @@ export default function App() {
     return calculateAnnualWeightedAveragesReport(filteredBakeries.length > 0 ? filteredBakeries : appState.bakeries);
   }, [appState?.bakeries, filteredBakeries]);
 
+  // Low Daily Flour Quota Alerts (in sacks / شكائر) for immediate in-app manager PUSH notifications
+  const lowFlourQuotaMinSacks = appState?.systemConfig?.dailyAlertConfig?.lowFlourQuotaMinSacks ?? 10;
+  const lowFlourQuotaAlertEnabled = appState?.systemConfig?.dailyAlertConfig?.lowFlourQuotaAlertEnabled ?? true;
+  const isCurrentUserManager = Boolean(
+    appState?.currentUser?.isSuperAdmin ||
+      appState?.currentUser?.role === 'super_admin' ||
+      appState?.currentUser?.role === 'admin' ||
+      appState?.currentUser?.role === 'supervisor'
+  );
+  const lowFlourQuotaAlerts = useMemo(
+    () => findLowFlourQuotaBakeries(appState?.bakeries || [], lowFlourQuotaMinSacks),
+    [appState?.bakeries, lowFlourQuotaMinSacks]
+  );
+
   // Keep fresh ref of appState for 10-min pre-logout autosave
   const appStateRef = React.useRef(appState);
   useEffect(() => {
@@ -3072,12 +3098,27 @@ export default function App() {
         ? (existingBakery as any).version
         : undefined;
 
+    const changeSummary = buildBakeryChangeDiffSummary(existingBakery, bakery);
+    const newLogItem = createBakeryActivityLogItem({
+      action: existingIndex >= 0 ? 'تعديل بيانات مخبز' : 'إضافة مخبز جديد',
+      details: changeSummary,
+      user: appState.currentUser,
+    });
+    const mergedActivityLog = [
+      newLogItem,
+      ...(Array.isArray(bakery.activityLog)
+        ? bakery.activityLog
+        : Array.isArray(existingBakery?.activityLog)
+        ? existingBakery.activityLog
+        : []),
+    ].slice(0, 100);
+
     let updated: Bakery[];
     if (existingIndex >= 0) {
       updated = [...appState.bakeries];
-      updated[existingIndex] = { ...existingBakery, ...bakery };
+      updated[existingIndex] = { ...existingBakery, ...bakery, activityLog: mergedActivityLog };
     } else {
-      updated = [bakery, ...appState.bakeries];
+      updated = [{ ...bakery, activityLog: mergedActivityLog }, ...appState.bakeries];
     }
     const unifiedUpdated = syncLocalUnitDemographicsAcrossBakeries(
       updated,
@@ -3535,6 +3576,10 @@ export default function App() {
           setMasterEditorInitialCategory('ALL');
           setIsMasterEditorModalOpen(true);
         }
+        break;
+      case 'bakery-change-history':
+        setBakeryHistoryInitialOwner('');
+        setIsBakeryHistoryDrawerOpen(true);
         break;
       case 'data-edit-master':
         setMasterEditorInitialCategory('ALL');
@@ -4798,6 +4843,22 @@ export default function App() {
             </div>
           </div>
 
+          {/* 3.1B Immediate In-App Manager PUSH Alert for Low Daily Flour Quota (in sacks) */}
+          <LowFlourQuotaPushBanner
+            alerts={lowFlourQuotaAlerts}
+            minThresholdSacks={lowFlourQuotaMinSacks}
+            isManager={isCurrentUserManager}
+            enabled={lowFlourQuotaAlertEnabled}
+            onInspectBakery={(bakeryId) => {
+              const target = appState.bakeries.find((b) => b.id === bakeryId);
+              if (target) {
+                setSelectedBakeryRowId(target.id);
+                setDetailsBakery(target);
+              }
+            }}
+            onOpenSettings={() => setIsDailySettingsModalOpen(true)}
+          />
+
           {/* 3.2 Unified Command Toolbar */}
           <div className="bg-white border border-[#D4AF37]/30 rounded-2xl px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2 no-print">
             <div className="flex items-center flex-wrap gap-2">
@@ -5952,9 +6013,36 @@ export default function App() {
                 )}
               </div>
 
+              {/* Unified ReportToolbar directly above the Bakeries table */}
+              <ReportToolbar
+                title="سجل وقاعدة بيانات المخابز البلدية والمدعمة"
+                subtitle="إدارة الحصص التأمينية والفعلية، متوسطات السكان والمستفيدين، والتراخيص والمديونيات"
+                count={sortedBakeries.length}
+                countLabel="مخبز"
+                testIdPrefix="bakeries-main"
+                onOpenHistory={() => {
+                  setBakeryHistoryInitialOwner('');
+                  setIsBakeryHistoryDrawerOpen(true);
+                }}
+                historyLabel="سجل التغييرات التاريخي"
+                onExportPdf={() => setIsReportModalOpen(true)}
+                onPrint={() => setIsReportModalOpen(true)}
+                onAdd={
+                  hasDepartmentPermission(appState.currentUser, 'bakeries', 'insert')
+                    ? () =>
+                        runGuardedAction(() => {
+                          setBakeryToEdit(null);
+                          setIsBakeryModalOpen(true);
+                        })
+                    : undefined
+                }
+                addLabel="إضافة مخبز جديد"
+              />
+
               {/* Main Bakeries Data Table (Pure White & Light Gray with Sticky Navy Headers) */}
+              <ErrorBoundary fallbackTitle="تعذر عرض جدول المخابز مؤقتاً دون تأثر باقي المنظومة">
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-                <div className="overflow-x-auto relative custom-scrollbar">
+                <div dir="rtl" className="overflow-x-auto relative custom-scrollbar">
                   <table className="w-full text-center border-collapse text-xs">
                     {/* Grouped Super Headers */}
                     <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-bold shadow-xs">
@@ -6517,46 +6605,51 @@ export default function App() {
                                   </>
                                 )}
 
-                                <td className="py-2 px-2 no-print text-center">
+                                <td className="py-2 px-2 no-print text-center" onClick={(e) => e.stopPropagation()}>
                                   <div className="flex items-center justify-center gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDetailsBakery(b);
-                                      }}
-                                      className="p-1.5 text-[#1E40AF] hover:bg-blue-100 rounded-lg transition cursor-pointer"
+                                    <Button
+                                      variant="view"
+                                      size="xs"
+                                      onClick={() => setDetailsBakery(b)}
+                                      className="!px-2 !py-1"
                                       title="عرض تفصيلي لبيانات ومعادلات المخبز"
-                                    >
-                                      <Eye className="w-4 h-4" />
-                                    </button>
+                                      icon={<Eye className="w-3.5 h-3.5" />}
+                                    />
+
+                                    <Button
+                                      variant="amber"
+                                      size="xs"
+                                      onClick={() => {
+                                        setBakeryHistoryInitialOwner(b.bakeryOwnerName);
+                                        setIsBakeryHistoryDrawerOpen(true);
+                                      }}
+                                      className="!px-2 !py-1"
+                                      title={`عرض سجل التغييرات التاريخي لمخبز ${b.bakeryOwnerName}`}
+                                      icon={<Clock className="w-3.5 h-3.5" />}
+                                    />
 
                                     {hasDepartmentPermission(appState.currentUser, 'bakeries', 'update') && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
+                                      <Button
+                                        variant="edit"
+                                        size="xs"
+                                        onClick={() => {
                                           setBakeryToEdit(b);
                                           setIsBakeryModalOpen(true);
                                         }}
-                                        className="p-1.5 text-slate-700 hover:text-[#0F2342] hover:bg-slate-200 rounded-lg transition cursor-pointer"
+                                        className="!px-2 !py-1"
                                         title="تعديل بيانات المخبز"
-                                      >
-                                        <Edit2 className="w-4 h-4" />
-                                      </button>
+                                        icon={<Edit2 className="w-3.5 h-3.5" />}
+                                      />
                                     )}
                                     {hasDepartmentPermission(appState.currentUser, 'bakeries', 'delete') && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteBakery(b.id, b.bakeryOwnerName);
-                                        }}
-                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                                      <Button
+                                        variant="delete"
+                                        size="xs"
+                                        onClick={() => handleDeleteBakery(b.id, b.bakeryOwnerName)}
+                                        className="!px-2 !py-1"
                                         title="حذف المخبز"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
+                                        icon={<Trash2 className="w-3.5 h-3.5" />}
+                                      />
                                     )}
                                   </div>
                                 </td>
@@ -6606,10 +6699,18 @@ export default function App() {
                               )}
                               {showDemographicsCols && (
                                 <>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{uGroup.villagePopulation?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{uGroup.beneficiaries2023?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{uGroup.beneficiaries2024?.toLocaleString()}</td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{uGroup.beneficiaries2025?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title={uGroup.isUnifiedPopulation ? 'رقم موحد للوحدة المحلية — يُجمع في إجمالي القرية فقط' : undefined}>
+                                    {uGroup.isUnifiedPopulation ? '—' : uGroup.villagePopulation?.toLocaleString()}
+                                  </td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title={uGroup.isUnifiedBeneficiaries2023 ? 'رقم موحد للوحدة المحلية — يُجمع في إجمالي القرية فقط' : undefined}>
+                                    {uGroup.isUnifiedBeneficiaries2023 ? '—' : uGroup.beneficiaries2023?.toLocaleString()}
+                                  </td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title={uGroup.isUnifiedBeneficiaries2024 ? 'رقم موحد للوحدة المحلية — يُجمع في إجمالي القرية فقط' : undefined}>
+                                    {uGroup.isUnifiedBeneficiaries2024 ? '—' : uGroup.beneficiaries2024?.toLocaleString()}
+                                  </td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title={uGroup.isUnifiedBeneficiaries2025 ? 'رقم موحد للوحدة المحلية — يُجمع في إجمالي القرية فقط' : undefined}>
+                                    {uGroup.isUnifiedBeneficiaries2025 ? '—' : uGroup.beneficiaries2025?.toLocaleString()}
+                                  </td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{uGroup.avg2023}</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{uGroup.avg2024}</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{uGroup.avg2025}</td>
@@ -6870,6 +6971,7 @@ export default function App() {
                   </div>
                 )}
               </div>
+              </ErrorBoundary>
             </div>
           )}
           </div>
@@ -7941,6 +8043,8 @@ export default function App() {
                 ? [appState.systemConfig.gmailEmail]
                 : [],
               includeSystemSupervisors: true,
+              lowFlourQuotaAlertEnabled: true,
+              lowFlourQuotaMinSacks: 10,
             }
           }
           bakeries={appState.bakeries}
@@ -7966,6 +8070,18 @@ export default function App() {
           }
         />
       )}
+
+      {/* 12A. Bakery Historical Change Log Slide-Over Drawer (سجل التغييرات التاريخي للمخابز) */}
+      <BakeryChangeHistoryDrawer
+        isOpen={isBakeryHistoryDrawerOpen}
+        onClose={() => setIsBakeryHistoryDrawerOpen(false)}
+        bakeries={appState.bakeries}
+        initialOwnerQuery={bakeryHistoryInitialOwner}
+        onSelectBakery={(bakery) => {
+          setSelectedBakeryRowId(bakery.id);
+          setDetailsBakery(bakery);
+        }}
+      />
 
       {/* 12B. Daily Critical Debt Email Delivery History Modal (سجل إرسال التنبيهات البريدية اليومية) */}
       {isDebtEmailHistoryOpen && (

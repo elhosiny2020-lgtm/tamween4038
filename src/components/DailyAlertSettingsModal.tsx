@@ -31,6 +31,7 @@ import {
   isValidEmailAddress,
   resolveSupervisorEmailRecipients,
 } from '../utils/criticalDebtEmailAlerts';
+import { findLowFlourQuotaBakeries } from '../utils/bakeryAlertsAndHistory';
 import {
   getGoogleWorkspaceConnectionInfo,
   signInWithGoogleWorkspace,
@@ -90,7 +91,11 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
   onOpenDebtEmailHistory,
   onSendCriticalDebtEmailNow,
 }) => {
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'supervisor';
+  const isAdmin =
+    Boolean(currentUser?.isSuperAdmin) ||
+    currentUser?.role === 'super_admin' ||
+    currentUser?.role === 'admin' ||
+    currentUser?.role === 'supervisor';
 
   const [enabled, setEnabled] = useState(config?.enabled ?? true);
   const [alertTime, setAlertTime] = useState(config?.alertTime || '09:00');
@@ -130,6 +135,14 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
   const [isConfirmSendEmailOpen, setIsConfirmSendEmailOpen] = useState(false);
   const [isSendingDebtEmail, setIsSendingDebtEmail] = useState(false);
 
+  // Low Daily Flour Quota In-App PUSH Alerts (in sacks / شكائر)
+  const [lowFlourQuotaAlertEnabled, setLowFlourQuotaAlertEnabled] = useState<boolean>(
+    config?.lowFlourQuotaAlertEnabled ?? true
+  );
+  const [lowFlourQuotaMinSacks, setLowFlourQuotaMinSacks] = useState<number>(
+    config?.lowFlourQuotaMinSacks ?? 10
+  );
+
   useEffect(() => {
     if (isOpen && config) {
       setEnabled(config.enabled ?? true);
@@ -153,6 +166,8 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
       setGmailVerifyResult(null);
       setEmailInputError('');
       setIsConfirmSendEmailOpen(false);
+      setLowFlourQuotaAlertEnabled(config.lowFlourQuotaAlertEnabled ?? true);
+      setLowFlourQuotaMinSacks(config.lowFlourQuotaMinSacks ?? 10);
     }
   }, [isOpen, config, defaultDebtThreshold, systemGmailEmail]);
 
@@ -217,6 +232,11 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
   const criticalDebtBakeries = useMemo(
     () => collectCriticalDebtBakeries(bakeries, debts, debtEmailCriticalThreshold),
     [bakeries, debts, debtEmailCriticalThreshold]
+  );
+
+  const lowFlourQuotaBakeries = useMemo(
+    () => findLowFlourQuotaBakeries(bakeries, lowFlourQuotaMinSacks),
+    [bakeries, lowFlourQuotaMinSacks]
   );
 
   const resolvedRecipients = useMemo(
@@ -340,6 +360,8 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
       includeSystemSupervisors,
       lastDebtEmailAlertDate: config?.lastDebtEmailAlertDate || '',
       debtEmailHistory: Array.isArray(config?.debtEmailHistory) ? config.debtEmailHistory : [],
+      lowFlourQuotaAlertEnabled,
+      lowFlourQuotaMinSacks: Math.max(1, Number(lowFlourQuotaMinSacks) || 10),
     };
 
     onSaveConfig(updated);
@@ -1170,6 +1192,110 @@ export const DailyAlertSettingsModal: React.FC<DailyAlertSettingsModalProps> = (
             </div>
             );
             })()}
+          </div>
+
+          {/* Section 7: In-App PUSH Alert for Low Daily Flour Quota (in Sacks) */}
+          <div
+            data-testid="low-flour-quota-settings-section"
+            className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-950 border-2 border-amber-500/50 rounded-xl p-4 shadow-xl space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-500/30 pb-3">
+              <div>
+                <h4 className="text-sm font-black text-white flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400" />
+                  <span>تنبيه PUSH فوري للمدراء — الحد الأدنى لرصيد حصة الدقيق اليومي (بالشكائر)</span>
+                </h4>
+                <p className="text-[11px] text-slate-300 mt-1">
+                  يظهر إشعار PUSH فوري داخل واجهة المنظومة للمدراء والمشرفين عند انخفاض الحصة الفعلية اليومية لأي مخبز نشط عن الحد الأدنى المحدد بالشكائر.
+                </p>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  data-testid="toggle-low-flour-quota-enabled"
+                  checked={lowFlourQuotaAlertEnabled}
+                  disabled={!isAdmin}
+                  onChange={(e) => setLowFlourQuotaAlertEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-13 h-7 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[3px] after:left-[4px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-amber-500 peer-checked:to-rose-500"></div>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+              <div className="bg-black/50 border border-slate-800 rounded-xl p-3 space-y-2">
+                <label className="text-xs font-black text-amber-200 flex items-center justify-between">
+                  <span>الحد الأدنى لرصيد حصة الدقيق اليومي (شيكارة):</span>
+                  <span className="font-mono tabular-nums text-amber-300">
+                    {lowFlourQuotaMinSacks} شيكارة
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  step={1}
+                  data-testid="low-flour-quota-threshold-input"
+                  value={lowFlourQuotaMinSacks}
+                  disabled={!isAdmin || !lowFlourQuotaAlertEnabled}
+                  onChange={(e) =>
+                    setLowFlourQuotaMinSacks(Math.max(1, parseInt(e.target.value, 10) || 1))
+                  }
+                  className="w-full px-3 py-2 bg-slate-950 border border-amber-500/40 rounded-lg font-mono tabular-nums text-sm font-black text-white text-center focus:outline-none focus:border-amber-400"
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {[5, 10, 15, 20].map((sacks) => (
+                    <button
+                      key={sacks}
+                      type="button"
+                      disabled={!isAdmin || !lowFlourQuotaAlertEnabled}
+                      onClick={() => setLowFlourQuotaMinSacks(sacks)}
+                      className={`px-2.5 py-0.5 rounded text-[10px] font-mono tabular-nums font-black border cursor-pointer transition ${
+                        lowFlourQuotaMinSacks === sacks
+                          ? 'bg-amber-500 text-slate-950 border-amber-300'
+                          : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800'
+                      }`}
+                    >
+                      {sacks} شكائر
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-black/50 border border-slate-800 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-white">المخابز النشطة تحت الحد حالياً:</span>
+                  <span className="px-2.5 py-0.5 rounded-full font-mono tabular-nums font-black text-xs bg-rose-500 text-white">
+                    {lowFlourQuotaBakeries.length} مخبز
+                  </span>
+                </div>
+                {lowFlourQuotaBakeries.length > 0 ? (
+                  <div className="max-h-24 overflow-y-auto space-y-1 text-[11px]">
+                    {lowFlourQuotaBakeries.slice(0, 4).map((b) => (
+                      <div
+                        key={b.bakeryId}
+                        className="flex items-center justify-between bg-slate-950/90 px-2 py-1 rounded border border-slate-800"
+                      >
+                        <span className="font-bold text-slate-100 truncate">{b.bakeryOwnerName}</span>
+                        <span className="font-mono tabular-nums text-rose-300 font-black shrink-0">
+                          {b.actualQuota} شيكارة
+                        </span>
+                      </div>
+                    ))}
+                    {lowFlourQuotaBakeries.length > 4 && (
+                      <div className="text-[10px] text-amber-300 text-center font-bold">
+                        +{lowFlourQuotaBakeries.length - 4} مخابز أخرى...
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] font-bold text-emerald-300">
+                    جميع المخابز النشطة تمتلك حصة يومية تساوي أو تفوق {lowFlourQuotaMinSacks} شكائر.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Form Actions Footer */}

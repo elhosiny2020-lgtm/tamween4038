@@ -63,6 +63,8 @@ import {
   SmartTableSearchBar,
   TablePaginationBar,
   AuditLogAdminToolbar,
+  ReportToolbar,
+  ErrorBoundary,
   type CrudFieldDefinition,
   type ProfileFieldItem,
 } from './ModuleCrudShared';
@@ -1166,25 +1168,43 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           </div>
         </div>
 
-        {/* Clean Executive Info Strip */}
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-[#0A1931] font-black">
-              الشون التموينية: {(state.shunas || []).length} شونة
-            </span>
-            <span className="text-slate-300">|</span>
-            <span>محاضر استلام القمح: {(state.wheatReceipts || []).length} محضر</span>
-            <span className="text-slate-300">|</span>
-            <span>المطاحن التموينية: {(state.mills || []).length} مطحن</span>
-            <span className="text-slate-300">|</span>
-            <span>الثلاجات: {(state.refrigerators || []).length} ثلاجة</span>
-            <span className="text-slate-300">|</span>
-            <span className="text-teal-800 font-black">
-              حصص الدقيق للمخابز: {(state.flourQuotaMaster || []).length} مخبز
-            </span>
+        {/* Unified Top Responsive KPI Cards Grid matching InternalTradeSuite */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" dir="rtl">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">الشون التموينية ومحاضر القمح</div>
+            <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">
+              {(state.shunas || []).length.toLocaleString('en-US')} شونة
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5 font-mono tabular-nums">
+              {(state.wheatReceipts || []).length.toLocaleString('en-US')} محضر استلام قمح
+            </div>
           </div>
-          <div className="text-[11px] font-black text-[#0A1931]">
-            أوامر الصيانة: {(state.orders || []).length} • التنبيهات النشطة: {smartAlerts.length}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">المطاحن والثلاجات التموينية</div>
+            <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">
+              {(state.mills || []).length.toLocaleString('en-US')} مطحن
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5 font-mono tabular-nums">
+              {(state.refrigerators || []).length.toLocaleString('en-US')} ثلاجة ومخزن تبريد
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">حصص الدقيق للمخابز</div>
+            <div className="text-lg font-black text-teal-800 font-mono tabular-nums mt-0.5">
+              {(state.flourQuotaMaster || []).length.toLocaleString('en-US')} مخبز
+            </div>
+            <div className="text-[10px] font-bold text-teal-700 mt-0.5">
+              ربط حي بالحصص والاستخراج
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">أوامر الصيانة والتنبيهات</div>
+            <div className="text-lg font-black text-amber-800 font-mono tabular-nums mt-0.5">
+              {(state.orders || []).length.toLocaleString('en-US')} أمر صيانة
+            </div>
+            <div className="text-[10px] font-bold text-rose-700 mt-0.5 font-mono tabular-nums">
+              {smartAlerts.length.toLocaleString('en-US')} تنبيه هندسي ورقابي نشط
+            </div>
           </div>
         </div>
 
@@ -1253,6 +1273,83 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
         </div>
       )}
 
+      {/* Unified ReportToolbar above active Grain Maintenance tables */}
+      <ReportToolbar
+        title="قسم صيانة الحبوب — الجداول التشغيلية والتقارير الرسمية"
+        subtitle={`الشون • القمح • الثلاجات • المطاحن • حصص الدقيق (${branchName})`}
+        count={
+          (state.shunas || []).length +
+          (state.mills || []).length +
+          (state.refrigerators || []).length +
+          (state.flourQuotaMaster || []).length
+        }
+        countLabel="سجل"
+        testIdPrefix={`grain-${subView}`}
+        onExportExcel={
+          permissions.canExport
+            ? () =>
+                exportRowsToArabicCsv(
+                  `صيانة_الحبوب_${branchName}`,
+                  ['الكود', 'اسم الشونة', 'الوحدة المحلية', 'القرية', 'السعة (طن)', 'الرصيد الدفتري (طن)'],
+                  (state.shunas || []).map((sh) => {
+                    const bal = computeShunaBookBalanceAndValuation({
+                      shuna: sh,
+                      wheatReceipts: state.wheatReceipts || [],
+                      wheatIssues: state.wheatIssues || [],
+                    });
+                    return [
+                      sh.shunaCode || sh.id,
+                      sh.shunaName,
+                      sh.localUnit || 'غير محدد',
+                      sh.village || 'غير محدد',
+                      sh.storageCapacityTons || 0,
+                      bal.currentBookBalanceTons || 0,
+                    ];
+                  })
+                )
+            : undefined
+        }
+        onPrint={
+          permissions.canPrint
+            ? () =>
+                printModuleReportA4({
+                  title: `التقرير الرسمي الموحد لقسم صيانة الحبوب (${branchName})`,
+                  subtitle: 'الشون التموينية والمطاحن والثلاجات وحصص الدقيق',
+                  branchName,
+                  headers: ['الكود', 'اسم الشونة', 'الوحدة المحلية', 'القرية', 'السعة التخزينية (طن)', 'الرصيد الدفتري (طن)'],
+                  rows: (state.shunas || []).map((sh) => {
+                    const bal = computeShunaBookBalanceAndValuation({
+                      shuna: sh,
+                      wheatReceipts: state.wheatReceipts || [],
+                      wheatIssues: state.wheatIssues || [],
+                    });
+                    return [
+                      sh.shunaCode || sh.id,
+                      sh.shunaName,
+                      sh.localUnit || 'غير محدد',
+                      sh.village || 'غير محدد',
+                      sh.storageCapacityTons || 0,
+                      bal.currentBookBalanceTons || 0,
+                    ];
+                  }),
+                  summaryItems: [
+                    { label: 'عدد الشون التموينية', value: String((state.shunas || []).length) },
+                    { label: 'محاضر استلام القمح', value: String((state.wheatReceipts || []).length) },
+                    { label: 'المطاحن التموينية', value: String((state.mills || []).length) },
+                    { label: 'حصص الدقيق للمخابز', value: String((state.flourQuotaMaster || []).length) },
+                  ],
+                  preparedBy: currentUser?.fullName,
+                })
+            : undefined
+        }
+        onExportPdf={
+          permissions.canPrint
+            ? () => setSubView('reports')
+            : undefined
+        }
+      />
+
+      <ErrorBoundary key={subView} fallbackTitle="تعذر عرض جدول قسم صيانة الحبوب مؤقتاً دون تأثر باقي المنظومة">
       {subView === 'shunas' && (
         <ShunasAndWheatReceiptsView
           state={state}
@@ -2462,6 +2559,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       )}
 
       {/* Magic Eye View Profile Modal */}
+      </ErrorBoundary>
+
       {profileModalState && (
         <ModuleRecordProfileModal
           isOpen={profileModalState.isOpen}

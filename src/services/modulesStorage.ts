@@ -1924,13 +1924,13 @@ export interface GroupedSubtotalSummary {
   localUnitTotals: Array<{
     localUnit: string;
     count: number;
-    columnSums: (number | null)[];
+    columnSums: (number | string | null)[];
   }>;
   villageTotals: Array<{
     village: string;
     localUnit: string;
     count: number;
-    columnSums: (number | null)[];
+    columnSums: (number | string | null)[];
   }>;
   grandTotalRow: (string | number)[];
 }
@@ -1976,9 +1976,20 @@ export function computeReportSubtotalsByLocalUnitAndVillage(
     return numericCount > 0 && numericCount >= Math.ceil(rows.length * 0.3);
   });
 
-  const localUnitMap = new Map<string, { count: number; sums: number[] }>();
-  const villageMap = new Map<string, { localUnit: string; count: number; sums: number[] }>();
-  const grandSums = headers.map(() => 0);
+  const isPopOrBeneficiariesHeader = (h: string) =>
+    /population|سكان|مستفيد|beneficiar|أفراد|فراد/i.test(String(h || ''));
+
+  const popOrBenCols = headers.map((h) => isPopOrBeneficiariesHeader(h));
+
+  // Track raw row values per Local Unit so unified population/beneficiaries are NOT summed in Local Unit subtotal rows
+  const localUnitMap = new Map<
+    string,
+    { count: number; sums: number[]; popColValues: number[][] }
+  >();
+  const villageMap = new Map<
+    string,
+    { localUnit: string; count: number; sums: number[]; unitKeysSeen: Map<string, number[][]> }
+  >();
 
   for (const r of rows) {
     const lu =
@@ -1991,41 +2002,104 @@ export function computeReportSubtotalsByLocalUnitAndVillage(
         : lu;
 
     if (!localUnitMap.has(lu)) {
-      localUnitMap.set(lu, { count: 0, sums: headers.map(() => 0) });
+      localUnitMap.set(lu, {
+        count: 0,
+        sums: headers.map(() => 0),
+        popColValues: headers.map(() => []),
+      });
     }
     const luEntry = localUnitMap.get(lu)!;
     luEntry.count += 1;
 
     const vilKey = `${lu}__${vil}`;
     if (!villageMap.has(vilKey)) {
-      villageMap.set(vilKey, { localUnit: lu, count: 0, sums: headers.map(() => 0) });
+      villageMap.set(vilKey, {
+        localUnit: lu,
+        count: 0,
+        sums: headers.map(() => 0),
+        unitKeysSeen: new Map(),
+      });
     }
     const vilEntry = villageMap.get(vilKey)!;
     vilEntry.count += 1;
+    if (!vilEntry.unitKeysSeen.has(lu)) {
+      vilEntry.unitKeysSeen.set(lu, headers.map(() => []));
+    }
+    const vilUnitVals = vilEntry.unitKeysSeen.get(lu)!;
 
     headers.forEach((_, colIdx) => {
       if (!numericCols[colIdx]) return;
       const n = parseNumericCell(r[colIdx], colIdx);
       if (n !== null) {
-        luEntry.sums[colIdx] += n;
-        vilEntry.sums[colIdx] += n;
-        grandSums[colIdx] += n;
+        if (popOrBenCols[colIdx]) {
+          if (n > 0) {
+            luEntry.popColValues[colIdx].push(n);
+            vilUnitVals[colIdx].push(n);
+          }
+        } else {
+          luEntry.sums[colIdx] += n;
+          vilEntry.sums[colIdx] += n;
+        }
       }
     });
   }
 
-  const localUnitTotals = Array.from(localUnitMap.entries()).map(([localUnit, data]) => ({
-    localUnit,
-    count: data.count,
-    columnSums: data.sums.map((s, idx) => (numericCols[idx] ? Math.round(s * 100) / 100 : null)),
-  }));
+  const grandSums = headers.map(() => 0);
 
-  const villageTotals = Array.from(villageMap.entries()).map(([key, data]) => ({
-    village: key.split('__')[1] || 'غير محدد',
-    localUnit: data.localUnit,
-    count: data.count,
-    columnSums: data.sums.map((s, idx) => (numericCols[idx] ? Math.round(s * 100) / 100 : null)),
-  }));
+  const localUnitTotals = Array.from(localUnitMap.entries()).map(([localUnit, data]) => {
+    const columnSums: (number | string | null)[] = headers.map((_, idx) => {
+      if (!numericCols[idx]) return null;
+      if (popOrBenCols[idx]) {
+        const vals = data.popColValues[idx];
+        const uniqueVals = Array.from(new Set(vals));
+        if (uniqueVals.length <= 1) {
+          const singleVal = uniqueVals[0] ?? 0;
+          grandSums[idx] += singleVal;
+          // عدم تجميع السكان أو المستفيدين الموحدين في صف إجمالي الوحدة المحلية
+          return '—';
+        }
+        const total = Math.round(vals.reduce((a, b) => a + b, 0) * 100) / 100;
+        grandSums[idx] += total;
+        return total;
+      }
+      const rounded = Math.round(data.sums[idx] * 100) / 100;
+      grandSums[idx] += rounded;
+      return rounded;
+    });
+
+    return {
+      localUnit,
+      count: data.count,
+      columnSums,
+    };
+  });
+
+  const villageTotals = Array.from(villageMap.entries()).map(([key, data]) => {
+    const columnSums: (number | string | null)[] = headers.map((_, idx) => {
+      if (!numericCols[idx]) return null;
+      if (popOrBenCols[idx]) {
+        let villagePopTotal = 0;
+        data.unitKeysSeen.forEach((colArrays) => {
+          const vals = colArrays[idx];
+          const uniqueVals = Array.from(new Set(vals));
+          if (uniqueVals.length <= 1) {
+            villagePopTotal += uniqueVals[0] ?? 0;
+          } else {
+            villagePopTotal += vals.reduce((a, b) => a + b, 0);
+          }
+        });
+        return Math.round(villagePopTotal * 100) / 100;
+      }
+      return Math.round(data.sums[idx] * 100) / 100;
+    });
+
+    return {
+      village: key.split('__')[1] || 'غير محدد',
+      localUnit: data.localUnit,
+      count: data.count,
+      columnSums,
+    };
+  });
 
   const grandTotalRow: (string | number)[] = headers.map((_, idx) => {
     if (idx === 0) return 'الإجمالي العام';
@@ -2115,7 +2189,9 @@ export function printModuleReportA4(options: {
               if (idx === 0) return `إجمالي الوحدة المحلية: ${lu.localUnit}`;
               if (idx === grouped.localUnitColIdx) return lu.localUnit;
               if (idx === 1 && lu.columnSums[1] === null) return `${lu.count} سجل`;
-              if (lu.columnSums[idx] !== null) return lu.columnSums[idx]!.toLocaleString('ar-EG');
+              const cellVal = lu.columnSums[idx];
+              if (typeof cellVal === 'number') return cellVal.toLocaleString('ar-EG');
+              if (typeof cellVal === 'string') return cellVal;
               return '—';
             });
             return `<tr style="background:#e0f2fe;color:#0c4a6e;font-weight:800;">${cells
@@ -2139,7 +2215,9 @@ export function printModuleReportA4(options: {
               if (idx === grouped.localUnitColIdx) return v.localUnit;
               if (idx === grouped.villageColIdx) return v.village;
               if (idx === 1 && v.columnSums[1] === null) return `${v.count} سجل`;
-              if (v.columnSums[idx] !== null) return v.columnSums[idx]!.toLocaleString('ar-EG');
+              const cellVal = v.columnSums[idx];
+              if (typeof cellVal === 'number') return cellVal.toLocaleString('ar-EG');
+              if (typeof cellVal === 'string') return cellVal;
               return '—';
             });
             return `<tr style="background:#fef3c7;color:#78350f;font-weight:800;">${cells

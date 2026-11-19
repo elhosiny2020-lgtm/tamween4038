@@ -65,6 +65,8 @@ import {
   SmartTableSearchBar,
   TablePaginationBar,
   VillageGrandTotalRow,
+  ReportToolbar,
+  ErrorBoundary,
   type CrudFieldDefinition,
 } from './ModuleCrudShared';
 import {
@@ -1480,23 +1482,43 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
           </div>
         </div>
 
-        {/* Clean Executive Info Strip */}
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-[#0A1931] font-black">
-              إجمالي العاملين: {state.employees.length} موظف
-            </span>
-            <span className="text-slate-300">|</span>
-            <span>الخدمة العامة: {publicServiceCount}</span>
-            <span className="text-slate-300">|</span>
-            <span>الاستعانة: {assistanceCount}</span>
-            <span className="text-slate-300">|</span>
-            <span className="text-teal-800 font-black">
-              صافي مسير الرواتب الشهري: {payrollSummary.netTotal.toLocaleString()} ج.م
-            </span>
+        {/* Unified Top Responsive KPI Cards Grid matching InternalTradeSuite */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" dir="rtl">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">إجمالي العاملين بالمنظومة</div>
+            <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">
+              {state.employees.length.toLocaleString('en-US')} موظف
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5 font-mono tabular-nums">
+              {state.departments.length.toLocaleString('en-US')} قسم إداري
+            </div>
           </div>
-          <div className="text-[11px] font-black text-[#0A1931]">
-            الأقسام الإدارية: {state.departments.length} • التنبيهات والعقود: {hrAlertsList.length}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">الخدمة العامة والاستعانة</div>
+            <div className="text-lg font-black text-indigo-900 font-mono tabular-nums mt-0.5">
+              {(publicServiceCount + assistanceCount).toLocaleString('en-US')} متعاقد
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5 font-mono tabular-nums">
+              خدمة عامة: {publicServiceCount} • استعانة: {assistanceCount}
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">صافي مسير الرواتب الشهري</div>
+            <div className="text-lg font-black text-teal-800 font-mono tabular-nums mt-0.5">
+              {payrollSummary.netTotal.toLocaleString('en-US')} ج.م
+            </div>
+            <div className="text-[10px] font-bold text-teal-700 mt-0.5">
+              شهر المسير: {activeRun?.monthKey || payrollMonth}
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">تنبيهات العقود والموارد البشرية</div>
+            <div className="text-lg font-black text-amber-800 font-mono tabular-nums mt-0.5">
+              {hrAlertsList.length.toLocaleString('en-US')} تنبيه
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5">
+              متابعة فورية قبل الانتهاء بـ 30 يوماً
+            </div>
           </div>
         </div>
 
@@ -1559,6 +1581,95 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
         </div>
       )}
 
+      {/* Unified ReportToolbar above active HR tables */}
+      <ReportToolbar
+        title="قسم الموارد البشرية — كشوف العاملين ومسيرات الرواتب"
+        subtitle={`${state.policySettings.lawDecisionReference} (${branchName})`}
+        count={state.employees.length}
+        countLabel="موظف"
+        testIdPrefix={`hr-${subView}`}
+        onExportExcel={
+          permissions.canExport
+            ? () =>
+                exportRowsToArabicCsv(
+                  `مسير_رواتب_${branchName}`,
+                  ['الكود', 'الاسم', 'القسم', 'الأجر الوظيفي', 'المكمل', 'العلاوات', 'الحوافز', 'الإجمالي', 'التأمين', 'الضريبة', 'السلف', 'الصافي'],
+                  (activeRun?.lines || []).map((l) => [
+                    l.employeeCode,
+                    l.employeeName,
+                    l.departmentName,
+                    l.functionalWage,
+                    l.complementaryWage,
+                    l.allowancesAndRaises,
+                    l.incentivesAndRewards,
+                    l.grossEarnings,
+                    l.employeeInsurance,
+                    l.monthlyIncomeTax,
+                    l.loanInstallmentDeduction,
+                    l.netSalary,
+                  ])
+                )
+            : undefined
+        }
+        onPrint={
+          permissions.canPrint
+            ? () =>
+                printModuleReportA4({
+                  title: `كشف استحقاقات ومرتبات العاملين — شهر ${activeRun?.monthKey || payrollMonth}`,
+                  subtitle: `${state.policySettings.lawDecisionReference}`,
+                  branchName,
+                  headers: ['الكود', 'اسم الموظف', 'القسم', 'الإجمالي', 'التأمينات', 'الضريبة', 'أقساط السلف', 'الصافي المنصرف'],
+                  rows: (activeRun?.lines || []).map((l) => [
+                    l.employeeCode,
+                    l.employeeName,
+                    l.departmentName,
+                    `${l.grossEarnings.toLocaleString()} ج.م`,
+                    `${l.employeeInsurance.toLocaleString()} ج.م`,
+                    `${l.monthlyIncomeTax.toLocaleString()} ج.م`,
+                    `${l.loanInstallmentDeduction.toLocaleString()} ج.م`,
+                    `${l.netSalary.toLocaleString()} ج.م`,
+                  ]),
+                  summaryItems: [
+                    { label: 'عدد الموظفين', value: String(state.employees.length) },
+                    { label: 'إجمالي الاستحقاقات', value: `${payrollSummary.grossTotal.toLocaleString()} ج.م` },
+                    { label: 'إجمالي التأمين والضريبة', value: `${(payrollSummary.insuranceTotal + payrollSummary.taxTotal).toLocaleString()} ج.م` },
+                    { label: 'صافي المنصرف', value: `${payrollSummary.netTotal.toLocaleString()} ج.م` },
+                  ],
+                  preparedBy: currentUser?.fullName,
+                })
+            : undefined
+        }
+        onExportPdf={
+          permissions.canPrint
+            ? () =>
+                printModuleReportA4({
+                  title: `كشف استحقاقات ومرتبات العاملين — شهر ${activeRun?.monthKey || payrollMonth}`,
+                  subtitle: `${state.policySettings.lawDecisionReference}`,
+                  branchName,
+                  headers: ['الكود', 'اسم الموظف', 'القسم', 'الإجمالي', 'التأمينات', 'الضريبة', 'أقساط السلف', 'الصافي المنصرف'],
+                  rows: (activeRun?.lines || []).map((l) => [
+                    l.employeeCode,
+                    l.employeeName,
+                    l.departmentName,
+                    `${l.grossEarnings.toLocaleString()} ج.م`,
+                    `${l.employeeInsurance.toLocaleString()} ج.م`,
+                    `${l.monthlyIncomeTax.toLocaleString()} ج.م`,
+                    `${l.loanInstallmentDeduction.toLocaleString()} ج.م`,
+                    `${l.netSalary.toLocaleString()} ج.م`,
+                  ]),
+                  summaryItems: [
+                    { label: 'عدد الموظفين', value: String(state.employees.length) },
+                    { label: 'إجمالي الاستحقاقات', value: `${payrollSummary.grossTotal.toLocaleString()} ج.م` },
+                    { label: 'إجمالي التأمين والضريبة', value: `${(payrollSummary.insuranceTotal + payrollSummary.taxTotal).toLocaleString()} ج.م` },
+                    { label: 'صافي المنصرف', value: `${payrollSummary.netTotal.toLocaleString()} ج.م` },
+                  ],
+                  preparedBy: currentUser?.fullName,
+                })
+            : undefined
+        }
+      />
+
+      <ErrorBoundary key={subView} fallbackTitle="تعذر عرض جدول قسم الموارد البشرية مؤقتاً دون تأثر باقي المنظومة">
       {subView === 'dashboard' && (
         <div className="space-y-4">
           {expiringContracts.length > 0 && (
@@ -3617,6 +3728,7 @@ export const HrPersonnelSuite: React.FC<HrPersonnelSuiteProps> = ({
           </div>
         </div>
       )}
+      </ErrorBoundary>
 
       {/* Unified Add/Edit Modal */}
       {formModalState && (
