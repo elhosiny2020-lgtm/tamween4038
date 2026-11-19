@@ -15,7 +15,6 @@ import {
   Pencil,
   Check,
   Lock,
-  RotateCcw,
 } from 'lucide-react';
 
 interface BranchesManagerModalProps {
@@ -28,7 +27,6 @@ interface BranchesManagerModalProps {
   onCreateBranch: (name: string, directorate: string, governorate: string, description: string) => void;
   onRenameBranch: (branchId: string, name: string, directorate: string, governorate: string, description: string) => void;
   onDeleteBranch: (branchId: string) => void;
-  onResetNonMahallaBranches?: () => Promise<{ success: boolean; resetCount?: number; error?: string }>;
   isVaultUnlocked: boolean;
   onRequireVaultUnlock: (label: string, onUnlocked: () => void) => void;
 }
@@ -43,21 +41,15 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   onCreateBranch,
   onRenameBranch,
   onDeleteBranch,
-  onResetNonMahallaBranches,
   isVaultUnlocked,
   onRequireVaultUnlock,
 }) => {
   const canManageBranches = isSuperAdmin(currentUser);
-  const nonMahallaBranches = branches.filter(
-    (b) => b.id !== DEFAULT_BRANCH_ID && !b.isDefault
-  );
   const [newName, setNewName] = useState('');
   const [newDirectorate, setNewDirectorate] = useState('مديرية التموين والتجارة الداخلية بالغربية');
   const [newGovernorate, setNewGovernorate] = useState('محافظة الغربية');
   const [newDescription, setNewDescription] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [confirmResetNonMahalla, setConfirmResetNonMahalla] = useState(false);
-  const [isResettingBranches, setIsResettingBranches] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -225,28 +217,6 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
     executeDelete();
   };
 
-  const handleExecuteResetNonMahalla = async () => {
-    if (!canManageBranches || !onResetNonMahallaBranches) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    setIsResettingBranches(true);
-    try {
-      const res = await onResetNonMahallaBranches();
-      setConfirmResetNonMahalla(false);
-      if (res?.success) {
-        setSuccessMsg(
-          `تم تصفير الإدارات غير الرئيسية بنجاح (${res.resetCount ?? 0} إدارة) مع الاحتفاظ الكامل ببيانات «إدارة تموين مركز المحلة الكبرى».`
-        );
-      } else {
-        setErrorMsg(res?.error || 'تعذر تنفيذ التصفير الانتقائي للإدارات.');
-      }
-    } catch (err: any) {
-      setErrorMsg(err?.message || 'حدث خطأ أثناء التصفير الانتقائي للإدارات.');
-    } finally {
-      setIsResettingBranches(false);
-    }
-  };
-
   return (
     <div
       className="fixed inset-0 z-[120] bg-[#0A1628]/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto"
@@ -327,19 +297,30 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                   >
                     <div>
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2.5">
+                        <button
+                          type="button"
+                          data-testid={`branch-name-trigger-${branch.id}`}
+                          onClick={() => {
+                            onSelectBranch(branch.id);
+                            onClose();
+                          }}
+                          className="flex items-center gap-2.5 text-right flex-1 min-w-0 group cursor-pointer focus:outline-none"
+                          title={`الضغط للدخول الفوري إلى واجهة ${branch.name} بجميع القوائم والأقسام`}
+                        >
                           <div
-                            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black ${
+                            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black transition-colors ${
                               isActive
                                 ? 'bg-[#0A1628] text-[#D4AF37] shadow-md border border-[#D4AF37]/40'
-                                : 'bg-[#F1F5F9] text-[#0A1628]'
+                                : 'bg-[#F1F5F9] text-[#0A1628] group-hover:bg-[#0D9488] group-hover:text-white'
                             }`}
                           >
                             <Building2 className="w-5 h-5" />
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <h4 className="font-black text-[#0A1628] text-sm">{branch.name}</h4>
+                              <h4 className="font-black text-[#0A1628] group-hover:text-[#0D9488] text-sm transition-colors">
+                                {branch.name}
+                              </h4>
                               {isActive && (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-[#10B981] text-white shadow-xs">
                                   <CheckCircle2 className="w-3 h-3" />
@@ -348,16 +329,16 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                               )}
                             </div>
                             <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1 mt-0.5">
-                              <MapPin className="w-3 h-3 text-[#0D9488]" />
+                              <MapPin className="w-3 h-3 text-[#0D9488] shrink-0" />
                               {branch.governorateTitle || branch.governorate || 'محافظة الغربية'} -{' '}
                               {branch.directorateTitle ||
                                 branch.directorate ||
                                 'مديرية التموين والتجارة الداخلية بالغربية'}
                             </p>
                           </div>
-                        </div>
+                        </button>
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 shrink-0">
                           {(branch.id === DEFAULT_BRANCH_ID || branch.isDefault) && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-black">
                               <ShieldCheck className="w-3 h-3 text-emerald-600" />
@@ -368,7 +349,10 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                           {canManageBranches && (
                             <button
                               type="button"
-                              onClick={() => handleStartEditBranch(branch)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartEditBranch(branch);
+                              }}
                               data-testid={`rename-branch-btn-${branch.id}`}
                               className="text-slate-500 hover:text-[#0D9488] p-1.5 rounded-lg hover:bg-[#0D9488]/10 transition-colors cursor-pointer"
                               title="تعديل اسم الفرع (يتطلب Username & Password)"
@@ -383,7 +367,10 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                             !branch.isDefault && (
                               <button
                                 type="button"
-                                onClick={() => handleRequestDelete(branch)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRequestDelete(branch);
+                                }}
                                 data-testid={`delete-branch-btn-${branch.id}`}
                                 className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
                                 title="حذف الفرع (يتطلب Username & Password)"
@@ -516,69 +503,6 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
               })}
             </div>
           </div>
-
-          {/* Selective Non-Mahalla Reset Card (Super Admin only) */}
-          {canManageBranches && onResetNonMahallaBranches && (
-            <div className="bg-amber-50/90 border-2 border-amber-300 rounded-2xl p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-black text-amber-950 flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                    تصفير الإدارات غير الرئيسية مع حماية إدارة تموين مركز المحلة الكبرى
-                  </h3>
-                  <p className="text-xs font-bold text-amber-900 mt-0.5">
-                    يتم أخذ نسخة احتياطية فورية ثم مسح/تصفير الإدارات الفرعية الإضافية ({nonMahallaBranches.length} إدارة) مع الإبقاء التام على كافة بيانات «إدارة تموين مركز المحلة الكبرى» دون مساس.
-                  </p>
-                </div>
-
-                {!confirmResetNonMahalla && (
-                  <button
-                    type="button"
-                    data-testid="branches-reset-non-mahalla-btn"
-                    onClick={() => setConfirmResetNonMahalla(true)}
-                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer transition shrink-0"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    <span>تصفير الإدارات غير الرئيسية</span>
-                  </button>
-                )}
-              </div>
-
-              {confirmResetNonMahalla && (
-                <div className="p-3 bg-white rounded-xl border border-amber-400 flex flex-wrap items-center justify-between gap-3">
-                  <span className="text-xs font-black text-rose-800">
-                    تأكيد التصفير الانتقائي: ستبقى «إدارة تموين مركز المحلة الكبرى» سليمة 100% وسيتم مسح وتصفير باقي الإدارات الفرعية فقط.
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmResetNonMahalla(false)}
-                      className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
-                    >
-                      إلغاء
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isResettingBranches}
-                      data-testid="confirm-branches-reset-non-mahalla-btn"
-                      onClick={() => {
-                        if (!isVaultUnlocked) {
-                          onRequireVaultUnlock('تصفير الإدارات غير الرئيسية', () => {
-                            void handleExecuteResetNonMahalla();
-                          });
-                          return;
-                        }
-                        void handleExecuteResetNonMahalla();
-                      }}
-                      className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-black cursor-pointer disabled:opacity-50"
-                    >
-                      {isResettingBranches ? 'جاري النسخ والتصفير...' : 'نعم، تصفير الإدارات غير الرئيسية'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Add New Branch Form (Super Admin only) */}
           {canManageBranches ? (

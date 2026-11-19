@@ -1435,7 +1435,11 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
               }
             }
 
-            // Also rescue preSyncLocalPartition if PostgreSQL had 0 bakeries/debts while local browser had unmigrated data
+            // Only rescue unmigrated pre-init local data on the default branch BEFORE first initialization;
+            // NEVER resurrect records that were intentionally deleted on Postgres!
+            const alreadyInitialized =
+              typeof localStorage !== 'undefined' &&
+              localStorage.getItem(scopedKeys.INITIALIZED) === 'true';
             const pgEmptyBakeries = !Array.isArray(bootJson.bakeries) || bootJson.bakeries.length === 0;
             const localHasBakeries =
               Array.isArray(preSyncLocalPartition.bakeries) && preSyncLocalPartition.bakeries.length > 0;
@@ -1443,7 +1447,12 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
             const localHasDebts =
               Array.isArray(preSyncLocalPartition.debts) && preSyncLocalPartition.debts.length > 0;
 
-            if ((pgEmptyBakeries && localHasBakeries) || (pgEmptyDebts && localHasDebts)) {
+            if (
+              !alreadyInitialized &&
+              isDefaultBranch &&
+              !bootJson.hasAnyRows &&
+              ((pgEmptyBakeries && localHasBakeries) || (pgEmptyDebts && localHasDebts))
+            ) {
               const rescueResp = await fetch(
                 `${window.location.protocol}//${window.location.host}/api/db/batch`,
                 {
@@ -1548,7 +1557,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       pgAuthoritativeData?.dropdownLists?.paymentMethods ?? localPartition.paymentMethods;
     let dailyTasks = pgAuthoritativeData ? pgAuthoritativeData.dailyTasks : localPartition.dailyTasks;
     let inboxMessages =
-      pgAuthoritativeData && Array.isArray(pgAuthoritativeData.inboxMessages) && pgAuthoritativeData.inboxMessages.length > 0
+      pgAuthoritativeData && Array.isArray(pgAuthoritativeData.inboxMessages)
         ? pgAuthoritativeData.inboxMessages
         : localPartition.inboxMessages;
     let columnTitles =

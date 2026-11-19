@@ -281,6 +281,8 @@ import {
   saveBranchModulesBundleDebounced,
   subscribeBranchModulesRealtime,
   resetBranchModulesBundleForBranch,
+  createEmptyBranchModulesBundle,
+  readLocalBranchModulesBundle,
 } from './services/modulesStorage';
 import {
   canUserAccessTab,
@@ -1027,35 +1029,66 @@ export default function App() {
             ? incomingData
             : null);
 
-        const rawBakeries = Array.isArray(directBranchData?.bakeries)
-          ? directBranchData!.bakeries!
-          : Array.isArray(syncedPartition.bakeries)
-          ? syncedPartition.bakeries
-          : current.bakeries;
-        const rawDebts = Array.isArray(directBranchData?.debts)
-          ? directBranchData!.debts!
-          : Array.isArray(syncedPartition.debts)
-          ? syncedPartition.debts
-          : current.debts;
+        const pruneDeletedTombstones = <T extends { id?: string }>(
+          tableKey: string,
+          list: T[]
+        ): T[] => {
+          const map = recentlyDeletedIdsRef.current;
+          if (!map || map.size === 0 || !Array.isArray(list)) return list;
+          const now = Date.now();
+          let hasActiveForTable = false;
+          for (const [k, exp] of map.entries()) {
+            if (exp <= now) {
+              map.delete(k);
+            } else if (k.startsWith(`${tableKey}:`)) {
+              hasActiveForTable = true;
+            }
+          }
+          if (!hasActiveForTable) return list;
+          return list.filter((item) => !map.has(`${tableKey}:${String(item?.id ?? '')}`));
+        };
+
+        const rawBakeries = pruneDeletedTombstones(
+          'bakeries',
+          Array.isArray(directBranchData?.bakeries)
+            ? directBranchData!.bakeries!
+            : Array.isArray(syncedPartition.bakeries)
+            ? syncedPartition.bakeries
+            : current.bakeries
+        );
+        const rawDebts = pruneDeletedTombstones(
+          'debts',
+          Array.isArray(directBranchData?.debts)
+            ? directBranchData!.debts!
+            : Array.isArray(syncedPartition.debts)
+            ? syncedPartition.debts
+            : current.debts
+        );
 
         const syncedMemory = synchronizeBakeryAndDebts(rawBakeries, rawDebts);
         const nextBakeries = syncedMemory.bakeries;
         const nextDebts = syncedMemory.debts;
 
-        const nextUsers =
+        const nextUsers = pruneDeletedTombstones(
+          'app_users',
           Array.isArray(directBranchData?.users) && directBranchData!.users!.length > 0
             ? directBranchData!.users!
             : Array.isArray(syncedPartition.users) && syncedPartition.users.length > 0
             ? syncedPartition.users
-            : current.users;
+            : current.users
+        );
         const nextVillages =
           (Array.isArray(directBranchData?.villages) && directBranchData!.villages!.length > 0
             ? directBranchData!.villages
             : syncedPartition.villages) || current.villages;
-        const nextTasks =
-          directBranchData?.dailyTasks || syncedPartition.dailyTasks || current.dailyTasks;
-        const nextMessages =
-          directBranchData?.inboxMessages || syncedPartition.inboxMessages || current.inboxMessages;
+        const nextTasks = pruneDeletedTombstones(
+          'daily_tasks',
+          directBranchData?.dailyTasks || syncedPartition.dailyTasks || current.dailyTasks || []
+        );
+        const nextMessages = pruneDeletedTombstones(
+          'inbox_messages',
+          directBranchData?.inboxMessages || syncedPartition.inboxMessages || current.inboxMessages || []
+        );
         const nextConfig: SystemConfig = {
           ...current.systemConfig,
           ...(syncedPartition.systemConfig || {}),
@@ -1249,14 +1282,21 @@ export default function App() {
         if (typeof window === 'undefined' || typeof navigator === 'undefined' || navigator.onLine === false) {
           return;
         }
-        // Skip polling while a local mutation is actively being committed
+        // Skip polling while a local mutation is actively being committed or within the settle window
+        if (
+          inFlightMutationsCountRef.current > 0 ||
+          Date.now() - lastLocalMutationAtRef.current < 4500
+        ) {
+          return;
+        }
         const current = latestAppStateRef.current;
         if (!current || !current.currentUser) return;
         const activeBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+        const pollStartedAt = Date.now();
         const resp = await fetch(
           `${window.location.protocol}//${window.location.host}/api/db/bootstrap?branchId=${encodeURIComponent(
             activeBranchId
-          )}&_t=${Date.now()}`,
+          )}&_t=${pollStartedAt}`,
           {
             method: 'GET',
             cache: 'no-store',
@@ -1267,6 +1307,16 @@ export default function App() {
         if (!resp || !resp.ok) return;
         const bootJson = await resp.json().catch(() => null);
         if (!bootJson?.success || bootJson.authenticated === false) return;
+
+        // Discard stale poll response if a local delete/edit occurred or branch switched while fetch was in flight
+        if (
+          inFlightMutationsCountRef.current > 0 ||
+          lastLocalMutationAtRef.current >= pollStartedAt ||
+          Date.now() - lastLocalMutationAtRef.current < 4500 ||
+          (latestAppStateRef.current?.activeBranchId || DEFAULT_BRANCH_ID) !== activeBranchId
+        ) {
+          return;
+        }
 
         const bootPayload: any = {
           activeBranchId,
@@ -1324,29 +1374,46 @@ export default function App() {
   const activeBranchNameForModules =
     appState?.systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى';
 
+  const latestModulesBundleRef = React.useRef<BranchModulesBundle | null>(null);
   useEffect(() => {
-    if (!isAppStateReady || !appState || !isAuthenticatedUser) return;
+    latestModulesBundleRef.current = modulesBundle;
+  }, [modulesBundle]);
+
+  useEffect(() => {
+    if (!isAppStateReady || !isAuthenticatedUser) return;
     let cancelled = false;
+    const branchTitle =
+      latestAppStateRef.current?.systemConfig?.administrationTitle ||
+      activeBranchNameForModules;
+    const branchVillages =
+      latestAppStateRef.current?.villages ||
+      (activeBranchIdForModules === DEFAULT_BRANCH_ID ? DEFAULT_VILLAGES_HIERARCHY : []);
     loadBranchModulesBundle(
       activeBranchIdForModules,
-      activeBranchNameForModules,
-      appState.villages || DEFAULT_VILLAGES_HIERARCHY
+      branchTitle,
+      branchVillages
     )
       .then((bundle) => {
-        if (!cancelled) setModulesBundle(bundle);
+        if (!cancelled) {
+          latestModulesBundleRef.current = bundle;
+          setModulesBundle(bundle);
+        }
       })
       .catch(() => {});
     const unsubSupaRt = subscribeBranchModulesRealtime(
       activeBranchIdForModules,
       (incoming) => {
-        if (!cancelled) setModulesBundle(incoming);
+        if (!cancelled) {
+          latestModulesBundleRef.current = incoming;
+          setModulesBundle(incoming);
+        }
       }
     );
     return () => {
       cancelled = true;
       unsubSupaRt();
     };
-  }, [isAppStateReady, isAuthenticatedUser, activeBranchIdForModules, activeBranchNameForModules]);
+  }, [isAppStateReady, isAuthenticatedUser, activeBranchIdForModules]);
 
   useEffect(() => {
     const unsubWs = addSharedWebSocketListener((msg) => {
@@ -1359,12 +1426,16 @@ export default function App() {
         const incoming = msg.payload as BranchModulesBundle;
         if (incoming.ration && incoming.grainMaintenance && incoming.hr) {
           setModulesBundle((prev) => {
-            if (!prev) return incoming;
+            if (!prev) {
+              latestModulesBundleRef.current = incoming;
+              return incoming;
+            }
             const prevMs = Date.parse(prev.updatedAt || '');
             const incMs = Date.parse(incoming.updatedAt || '');
-            if (Number.isFinite(prevMs) && Number.isFinite(incMs) && incMs < prevMs) {
+            if (Number.isFinite(prevMs) && Number.isFinite(incMs) && incMs <= prevMs) {
               return prev;
             }
+            latestModulesBundleRef.current = incoming;
             return incoming;
           });
         }
@@ -1380,17 +1451,20 @@ export default function App() {
         latestAppStateRef.current?.currentUser?.fullName ||
         latestAppStateRef.current?.currentUser?.username ||
         'مستخدم المنظومة';
-      setModulesBundle((prev) => {
-        if (!prev) return prev;
-        const nextRaw = updater(prev);
-        const next: BranchModulesBundle = {
-          ...nextRaw,
-          updatedAt: new Date().toISOString(),
-        };
-        // Persist synchronously to localStorage + dispatch server/Supabase save immediately so deletes & edits NEVER revert on reload
-        void saveBranchModulesBundle(currentBranchId, next, currentUserLabel);
-        return next;
-      });
+      const base = latestModulesBundleRef.current;
+      if (!base) return;
+      const nextRaw = updater(base);
+      const next: BranchModulesBundle = {
+        ...nextRaw,
+        branchId: currentBranchId,
+        updatedAt: new Date(
+          Math.max(Date.now(), (Date.parse(base.updatedAt || '') || 0) + 1)
+        ).toISOString(),
+      };
+      latestModulesBundleRef.current = next;
+      setModulesBundle(next);
+      // Persist synchronously to localStorage + dispatch server/Supabase save immediately ONCE so deletes & edits NEVER revert on reload
+      void saveBranchModulesBundle(currentBranchId, next, currentUserLabel);
       if (toastMsg) {
         setSaveToast({
           id: Date.now(),
@@ -1416,6 +1490,14 @@ export default function App() {
 
   // Async Optimistic Save with Row-Level PostgreSQL/Supabase confirmation & conflict/error rollback
   const saveLockRef = React.useRef<Promise<void>>(Promise.resolve());
+  const inFlightMutationsCountRef = React.useRef<number>(0);
+  const lastLocalMutationAtRef = React.useRef<number>(0);
+  const recentlyDeletedIdsRef = React.useRef<Map<string, number>>(new Map());
+
+  const markRecentlyDeleted = useCallback((table: string, id: string) => {
+    recentlyDeletedIdsRef.current.set(`${table}:${String(id)}`, Date.now() + 20_000);
+    lastLocalMutationAtRef.current = Date.now();
+  }, []);
 
   const commitRowMutation = useCallback(
     (params: {
@@ -1427,9 +1509,13 @@ export default function App() {
       patchReturnedRow?: (current: AppState, savedRow: any) => AppState;
     }): Promise<DbMutationResult> => {
       const previousState = latestAppStateRef.current;
+      inFlightMutationsCountRef.current += 1;
+      lastLocalMutationAtRef.current = Date.now();
       latestAppStateRef.current = params.nextState;
       setAppState(params.nextState);
       setIsSavingPulse(true);
+      // Immediately persist optimistic state to localStorage so rapid reload never sees stale pre-delete rows
+      void persistFullState(params.nextState, { skipCloudSync: true }).catch(() => {});
       const ts = getArabicTimestamp();
       const diskInfo = getActiveDiskBackupInfo();
       const diskSuffix = diskInfo.hasHandle
@@ -1444,6 +1530,7 @@ export default function App() {
         .then(async (): Promise<DbMutationResult> => {
           const res = await params.executeDb();
           if (res.success) {
+            lastLocalMutationAtRef.current = Date.now();
             let confirmedState = latestAppStateRef.current || params.nextState;
             if (res.row && params.patchReturnedRow) {
               confirmedState = params.patchReturnedRow(confirmedState, res.row);
@@ -1505,6 +1592,8 @@ export default function App() {
           return res;
         })
         .finally(() => {
+          inFlightMutationsCountRef.current = Math.max(0, inFlightMutationsCountRef.current - 1);
+          lastLocalMutationAtRef.current = Date.now();
           setTimeout(() => setIsSavingPulse(false), 600);
         });
 
@@ -2565,9 +2654,20 @@ export default function App() {
       }
       const branchObj = branchesToUse.find((b) => b.id === targetBranchId);
 
-      // 1. Immediately apply local branch partition & isolated branch auth vault (0ms UI response)
+      // 1. Immediately apply local branch partition, isolated modules bundle (empty for non-default), & branch auth vault (0ms UI response)
       const immediatePartition = readBranchPartitionFromLocal(targetBranchId);
       const immediateVault = loadBranchAuthVault(targetBranchId, branchObj?.name);
+      const immediateLocalModules =
+        readLocalBranchModulesBundle(targetBranchId) ||
+        (targetBranchId === DEFAULT_BRANCH_ID
+          ? null
+          : createEmptyBranchModulesBundle(
+              targetBranchId,
+              branchObj?.name || 'إدارة تموين فرعية',
+              immediatePartition.villages || []
+            ));
+      latestModulesBundleRef.current = immediateLocalModules;
+      setModulesBundle(immediateLocalModules);
 
       setAppState((prev) => {
         if (!prev) return prev;
@@ -3062,10 +3162,12 @@ export default function App() {
   };
 
   const handleDeleteInboxMessage = (msgId: string) => {
-    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
-    const updatedMessages = inboxMessages.filter((m) => m.id !== msgId);
+    const current = latestAppStateRef.current || appState;
+    const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+    markRecentlyDeleted('inbox_messages', msgId);
+    const updatedMessages = (current.inboxMessages || []).filter((m) => String(m.id) !== String(msgId));
     commitRowMutation({
-      nextState: { ...appState, inboxMessages: updatedMessages },
+      nextState: { ...current, inboxMessages: updatedMessages },
       table: 'inbox_messages',
       branchId,
       toastMessage: 'تم حذف الرسالة من قاعدة البيانات ومزامنة صندوق الوارد',
@@ -3254,17 +3356,23 @@ export default function App() {
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
-    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     setPendingConfirm({
       title: 'تأكيد حذف المخبز نهائياً',
       message: `هل أنت متأكد من حذف المخبز الخاص بـ "${ownerName}" نهائياً من المنظومة؟`,
       confirmLabel: 'حذف المخبز نهائياً',
       variant: 'danger',
       onConfirm: () => {
-        const updatedBakeries = appState.bakeries.filter((b) => String(b.id) !== String(bakeryId));
-        const updatedDebts = appState.debts.filter((d) => String(d.bakeryId) !== String(bakeryId));
+        const current = latestAppStateRef.current || appState;
+        const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+        markRecentlyDeleted('bakeries', bakeryId);
+        const removedDebts = (current.debts || []).filter((d) => String(d.bakeryId) === String(bakeryId));
+        for (const d of removedDebts) {
+          markRecentlyDeleted('debts', d.id);
+        }
+        const updatedBakeries = (current.bakeries || []).filter((b) => String(b.id) !== String(bakeryId));
+        const updatedDebts = (current.debts || []).filter((d) => String(d.bakeryId) !== String(bakeryId));
         commitRowMutation({
-          nextState: { ...appState, bakeries: updatedBakeries, debts: updatedDebts },
+          nextState: { ...current, bakeries: updatedBakeries, debts: updatedDebts },
           table: 'bakeries',
           branchId,
           toastMessage: `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات وجميع الأجهزة بنجاح`,
@@ -3350,11 +3458,13 @@ export default function App() {
   };
 
   const handleDeleteDebt = (debtId: string) => {
-    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
-    const updated = appState.debts.filter((d) => String(d.id) !== String(debtId));
-    const synced = synchronizeBakeryAndDebts(appState.bakeries, updated);
+    const current = latestAppStateRef.current || appState;
+    const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
+    markRecentlyDeleted('debts', debtId);
+    const updated = (current.debts || []).filter((d) => String(d.id) !== String(debtId));
+    const synced = synchronizeBakeryAndDebts(current.bakeries || [], updated);
     commitRowMutation({
-      nextState: { ...appState, bakeries: synced.bakeries, debts: synced.debts },
+      nextState: { ...current, bakeries: synced.bakeries, debts: synced.debts },
       table: 'debts',
       branchId,
       toastMessage: 'تم حذف قيد المديونية وتحديث الأرصدة وجميع الأجهزة بنجاح',
@@ -8633,7 +8743,6 @@ export default function App() {
         activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
         currentUser={appState.currentUser}
         isVaultUnlocked={isVaultUnlocked}
-        onResetNonMahallaBranches={handleResetNonMahallaBranches}
         onRequireVaultUnlock={(label, onUnlocked) => {
           requireVaultAccess('branches', label, onUnlocked);
         }}

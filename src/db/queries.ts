@@ -1811,17 +1811,25 @@ export async function syncFullBranchStateToPostgres(
       }
     }
 
-    if (options?.pruneRemoved && hasDebtsArray && incomingDebtIds.length > 0) {
-      await client.query(`DELETE FROM public.debts WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
-        effectiveBranchId,
-        incomingDebtIds,
-      ]);
+    if (options?.pruneRemoved && hasDebtsArray) {
+      if (incomingDebtIds.length === 0) {
+        await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [effectiveBranchId]);
+      } else {
+        await client.query(`DELETE FROM public.debts WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+          effectiveBranchId,
+          incomingDebtIds,
+        ]);
+      }
     }
-    if (options?.pruneRemoved && hasBakeriesArray && incomingBakeryIds.length > 0) {
-      await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
-        effectiveBranchId,
-        incomingBakeryIds,
-      ]);
+    if (options?.pruneRemoved && hasBakeriesArray) {
+      if (incomingBakeryIds.length === 0) {
+        await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1`, [effectiveBranchId]);
+      } else {
+        await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+          effectiveBranchId,
+          incomingBakeryIds,
+        ]);
+      }
     }
 
     // 5. Users

@@ -127,7 +127,7 @@ let memoryStore: FallbackStoreData | null = null;
 
 function createEmptyStore(): FallbackStoreData {
   return {
-    branches: [{ ...DEFAULT_BRANCH }, { ...SAMANOUD_BRANCH }],
+    branches: CANONICAL_DEFAULT_BRANCHES.map((b) => ({ ...b, version: 1 })),
     deleted_branch_keys: [],
     villages: [],
     bakeries: [],
@@ -826,12 +826,12 @@ export function fallbackSyncFullBranchState(
     }
   }
 
-  if (options?.pruneRemoved && Array.isArray(stateData?.debts) && incomingDebtIds.size > 0) {
+  if (options?.pruneRemoved && Array.isArray(stateData?.debts)) {
     store.debts = store.debts.filter(
       (d) => d.branchId !== effectiveBranchId || incomingDebtIds.has(String(d.id))
     );
   }
-  if (options?.pruneRemoved && Array.isArray(stateData?.bakeries) && incomingBakeryIds.size > 0) {
+  if (options?.pruneRemoved && Array.isArray(stateData?.bakeries)) {
     store.bakeries = store.bakeries.filter(
       (b) => b.branchId !== effectiveBranchId || incomingBakeryIds.has(String(b.id))
     );
