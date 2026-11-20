@@ -83,7 +83,6 @@ import {
   listCentralDepartmentsInDb,
   listRolesInDb,
   listUsersScopedInDb,
-  registerSelfUserInDb,
   resetUserPasswordInDb,
   transferUserBranchInDb,
   updateBranchDepartmentsGovernanceInDb,
@@ -1300,60 +1299,128 @@ async function startServer() {
 
   app.post('/api/auth/register', async (req, res) => {
     try {
-      await Promise.race([
-        startupBootstrapPromise,
-        new Promise((resolve) => setTimeout(resolve, 2500)),
-      ]);
       const body = req.body || {};
-      const actor = await resolveAuthenticatedActor(req);
-      const isPrivilegedCaller = Boolean(actor.authenticated && actor.user && isUserSuperAdmin(actor.user));
+      const branchId = String(body.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const username = normalizeDigits(String(body.username || '')).trim();
+      const fullName = String(body.fullName || '').trim();
+      const password = String(body.password || '');
+      const requestedRole = String(body.role || 'viewer').trim() || 'viewer';
+      const jobTitle = String(body.jobTitle || '').trim();
+      const department = String(body.department || '').trim();
+      const phone = String(body.phone || '').trim();
+      const applyToAllBranches = Boolean(body.applyToAllBranches);
 
-      const regResult = await registerSelfUserInDb({
-        branchId: String(body.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
-        username: String(body.username || ''),
-        fullName: String(body.fullName || ''),
-        password: String(body.password || ''),
-        role: String(body.role || 'employee'),
-        jobTitle: String(body.jobTitle || ''),
-        department: String(body.department || ''),
-        phone: String(body.phone || ''),
-        applyToAllBranches: Boolean(body.applyToAllBranches),
-        isPrivilegedCaller,
-        actorUsername: actor.user?.username,
-        ipAddress: getClientIp(req),
-      });
-
-      if (!regResult.success || !regResult.user) {
-        res.status(regResult.status || 400).json({
+      if (!username || username.length < 3 || !fullName || !password) {
+        res.status(400).json({
           success: false,
-          error: regResult.error || 'تعذر إنشاء الحساب الجديد.',
+          error: 'يرجى إدخال الاسم الكامل واسم المستخدم (3 أحرف فأكثر) وكلمة المرور.',
         });
         return;
       }
 
-      const createdUser = regResult.user;
-      const resolvedBranchId = regResult.resolvedBranchId || createdUser.branchId || DEFAULT_BRANCH_ID;
+      const complexity = validatePasswordComplexity(password);
+      if (!complexity.valid) {
+        res.status(400).json({
+          success: false,
+          error: complexity.error || 'كلمة المرور يجب أن تتكون من 8 أحرف وتشمل حروفاً وأرقاماً.',
+        });
+        return;
+      }
 
-      liveRevision += 1;
-      await refreshCachedSnapshotFromPostgres(resolvedBranchId, {
-        clientId: createdUser.username,
-        sqlOperation: 'INSERT',
-        affectedTable: 'app_users',
-      }).catch(() => {});
-      broadcastWs({
-        type: 'row_change',
-        table: 'app_users',
-        eventType: 'INSERT',
-        branchId: resolvedBranchId,
-        newRow: createdUser,
-        revision: liveRevision,
-        timestamp: new Date().toISOString(),
+      const actor = await resolveAuthenticatedActor(req);
+      const isPrivilegedCaller = Boolean(actor.authenticated && actor.user && isUserSuperAdmin(actor.user));
+
+      if ((requestedRole === 'super_admin' || requestedRole === 'admin') && !isPrivilegedCaller) {
+        await recordAuditLog(
+          username,
+          'PRIVILEGED_REGISTRATION_BLOCKED',
+          `محاولة غير مصرح بها للتسجيل بصلاحية (${requestedRole}) دون جلسة مدير عام`,
+          getClientIp(req),
+          branchId,
+          { username, department: 'auth', operation: 'REGISTER', result: 'DENIED' }
+        ).catch(() => {});
+        res.status(403).json({
+          success: false,
+          error: 'إنشاء حساب بصلاحية مدير عام (Super Admin) أو مدير نظام مقتصر على مدير النظام المعتمد فقط.',
+        });
+        return;
+      }
+
+      const allowedSelfRoles = new Set([
+        'reader',
+        'viewer',
+        'data_entry',
+        'inspector',
+        'auditor',
+        'supervisor',
+      ]);
+      const finalRole = isPrivilegedCaller
+        ? requestedRole
+        : allowedSelfRoles.has(requestedRole)
+        ? requestedRole
+        : 'viewer';
+
+      const existing = await queryTablePaginated('app_users', {
+        branchId,
+        page: 1,
+        pageSize: 500,
       });
+      const dup = existing.rows.find(
+        (u: any) => String(u.username || '').trim().toLowerCase() === username.toLowerCase()
+      );
+      if (dup) {
+        res.status(409).json({
+          success: false,
+          error: 'اسم المستخدم مسجل بالفعل داخل هذا الفرع. يرجى اختيار اسم مستخدم آخر.',
+        });
+        return;
+      }
+
+      const newUserId = `u-${branchId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const isSuper = finalRole === 'super_admin' || (finalRole === 'admin' && isPrivilegedCaller && Boolean(body.isSuperAdmin));
+      const newUserPayload: Partial<AppUser> = {
+        id: newUserId,
+        branchId,
+        username,
+        fullName,
+        password,
+        role: finalRole,
+        isSuperAdmin: isSuper,
+        jobTitle: jobTitle || (finalRole === 'reader' ? 'قارئ فقط' : finalRole === 'viewer' ? 'مشاهد' : 'مستخدم منظومة'),
+        department: department || 'التموين والتجارة الداخلية',
+        phone,
+        isActive: true,
+        applyToAllBranches: isPrivilegedCaller ? applyToAllBranches : false,
+        allowedDepartments: isSuper ? ['all'] : ['bakeries', 'debts', 'commodities', 'internal_trade', 'grain_maintenance', 'hr', 'reports'],
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+
+      const saved = await upsertRowInPostgres('app_users', branchId, newUserPayload);
+      if (!saved.success || !saved.row) {
+        res.status(400).json({ success: false, error: saved.error || 'تعذر إنشاء الحساب.' });
+        return;
+      }
+
+      const createdUser = saved.row as AppUser;
+      await recordAuditLog(
+        createdUser.username,
+        'USER_REGISTERED',
+        `تسجيل حساب جديد (${createdUser.fullName} — ${createdUser.username}) بدور (${finalRole}) في الفرع (${branchId})`,
+        getClientIp(req),
+        branchId,
+        {
+          username: createdUser.username,
+          department: 'auth',
+          operation: 'REGISTER',
+          recordId: createdUser.id,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
 
       const issuedToken = !actor.authenticated
         ? createSessionToken({
             userId: createdUser.id,
-            branchId: resolvedBranchId,
+            branchId: createdUser.branchId || branchId,
             username: createdUser.username,
             role: createdUser.role,
             isSuperAdmin: isUserSuperAdmin(createdUser),
@@ -1373,12 +1440,11 @@ async function startServer() {
         });
       }
 
-      res.status(201).json({
+      res.json({
         success: true,
         token: issuedToken,
         user: createdUser,
-        resolvedBranchId,
-        message: 'تم إنشاء الحساب وحفظه في قاعدة البيانات بنجاح.',
+        message: 'تم إنشاء الحساب وتفعيله بنجاح في قاعدة البيانات.',
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'فشل إنشاء الحساب الجديد.' });

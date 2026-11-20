@@ -145,44 +145,25 @@ export async function ensureGovernanceSchemaAndSeeds(): Promise<void> {
       }
     }
 
-    // Seed Mahalla default users whenever the database has zero users (both dev & prod)
-    const hasAnyUser = Array.isArray(store.app_users) && store.app_users.length > 0;
-    const envAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
-    if (!hasAnyUser) {
+    // Seed Mahalla default users if store has zero users in dev
+    const hasAnyMahallaUser = (store.app_users || []).some((u) => u.branchId === DEFAULT_BRANCH_ID);
+    const isProd = process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+    if (!hasAnyMahallaUser && !isProd) {
       for (const seed of INITIAL_USERS) {
         const isRoot = seed.role === 'admin' && seed.username === 'admin';
-        const resolvedPass = isRoot && envAdminPass ? envAdminPass : seed.password || '123';
         store.app_users.push({
           ...seed,
           branchId: DEFAULT_BRANCH_ID,
           administrationId: resolveDefaultAdministrationIdForBranch(DEFAULT_BRANCH_ID),
-          password: hashPasswordScrypt(resolvedPass),
+          password: hashPasswordScrypt(seed.password || '123'),
           isSuperAdmin: isRoot,
           isCentral: isRoot,
-          applyToAllBranches: isRoot,
           isActive: seed.isActive !== false,
           createdAt: seed.createdAt || new Date().toISOString(),
           version: 1,
         });
       }
       dirty = true;
-    } else {
-      // Ensure existing root admin account is marked central & super_admin so it works across all branches
-      for (const u of store.app_users) {
-        if (
-          String(u.username || '').trim().toLowerCase() === 'admin' &&
-          (u.role === 'admin' || u.role === 'super_admin' || u.isSuperAdmin)
-        ) {
-          if (!u.isSuperAdmin) {
-            u.isSuperAdmin = true;
-            dirty = true;
-          }
-          if (!u.isCentral) {
-            u.isCentral = true;
-            dirty = true;
-          }
-        }
-      }
     }
 
     if (dirty) {
@@ -334,50 +315,6 @@ export async function ensureGovernanceSchemaAndSeeds(): Promise<void> {
           [`rp_${role.code}_${permCode}`, role.code, permCode]
         );
       }
-    }
-
-    // Ensure default initial users exist in PostgreSQL whenever app_users is completely empty (prevents lockout in fresh dev/prod DBs)
-    const userCountRes = await pool
-      .query(`SELECT COUNT(*)::int AS cnt FROM public.app_users`)
-      .catch(() => ({ rows: [{ cnt: 0 }] }));
-    if (Number(userCountRes.rows[0]?.cnt || 0) === 0) {
-      const envAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
-      for (const seed of INITIAL_USERS) {
-        const isRoot = seed.role === 'admin' && seed.username === 'admin';
-        const resolvedPass = isRoot && envAdminPass ? envAdminPass : seed.password || '123';
-        await pool
-          .query(
-            `INSERT INTO public.app_users (
-              id, branch_id, administration_id, username, full_name, password_hash, role,
-              job_title, department, custom_permissions, is_active, is_super_admin, is_central
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]'::jsonb,$10,$11,$12)
-            ON CONFLICT (id) DO NOTHING`,
-            [
-              seed.id,
-              DEFAULT_BRANCH_ID,
-              resolveDefaultAdministrationIdForBranch(DEFAULT_BRANCH_ID),
-              seed.username,
-              seed.fullName,
-              hashPasswordScrypt(resolvedPass),
-              seed.role,
-              seed.jobTitle || (isRoot ? 'مدير عام النظام' : ''),
-              seed.department || 'إدارة تموين مركز المحلة الكبرى',
-              seed.isActive !== false,
-              isRoot,
-              isRoot,
-            ]
-          )
-          .catch(() => {});
-      }
-    } else {
-      // Ensure existing root admin has is_central = TRUE so root admin can sign in across all branches
-      await pool
-        .query(
-          `UPDATE public.app_users
-           SET is_central = TRUE, is_super_admin = TRUE
-           WHERE LOWER(TRIM(username)) = 'admin' AND (role IN ('admin', 'super_admin') OR is_super_admin = TRUE) AND is_central = FALSE`
-        )
-        .catch(() => {});
     }
 
     governanceSchemaReady = true;
@@ -643,51 +580,13 @@ export async function listAdministrationsWithBranchesInDb(): Promise<{
  * المصادقة الموحدة (تسجيل الدخول) مع رسائل خطأ عربية دقيقة لكل حالة من الحالات الـ 9
  * ودعم المستخدمين المركزيين والمستخدمين المربوطين بفرع محدد وتحديث آخر دخول في قاعدة البيانات
  */
-function normalizeLoginIdentifier(input: string): string {
-  return normalizeDigits(String(input || ''))
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
-}
-
-function normalizeArabicIdentifier(input: string): string {
-  return normalizeLoginIdentifier(input)
-    .replace(/[\u0640\u064B-\u065F\u0670]/g, '')
-    .replace(/[أإآٱ]/g, 'ا')
-    .replace(/ة/g, 'ه')
-    .replace(/ى/g, 'ي');
-}
-
-function matchesUserLoginIdentifier(
-  candidate: { username?: string; fullName?: string; gmailEmail?: string; full_name?: string; gmail_email?: string },
-  cleanTarget: string,
-  arabicTarget: string,
-  exactOnly: boolean
-): boolean {
-  const fields = [
-    candidate.username || '',
-    candidate.fullName || candidate.full_name || '',
-    candidate.gmailEmail || candidate.gmail_email || '',
-  ];
-  for (const field of fields) {
-    if (!field) continue;
-    if (exactOnly) {
-      if (normalizeLoginIdentifier(field) === cleanTarget) return true;
-    } else {
-      if (normalizeArabicIdentifier(field) === arabicTarget) return true;
-    }
-  }
-  return false;
-}
-
 export async function authenticateUserUnified(
   requestedBranchId: string,
   usernameOrName: string,
   password: string
 ): Promise<UnifiedAuthResult> {
   await ensureGovernanceSchemaAndSeeds();
-  const cleanTarget = normalizeLoginIdentifier(usernameOrName);
-  const arabicTarget = normalizeArabicIdentifier(usernameOrName);
+  const cleanTarget = normalizeDigits(String(usernameOrName || '')).trim().toLowerCase();
   const cleanPass = String(password || '');
   const targetBranchId = String(requestedBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
 
@@ -715,35 +614,23 @@ export async function authenticateUserUnified(
 
   if (isPgFallbackMode()) {
     const store = getRawFallbackStore();
-    if (!Array.isArray(store.app_users) || store.app_users.length === 0) {
-      governanceSchemaReady = false;
-      await ensureGovernanceSchemaAndSeeds();
-    }
-    const allUsers = getRawFallbackStore().app_users || [];
+    const allUsers = store.app_users || [];
 
-    // 1. Try exact match in requested branch first, then normalized Arabic match in requested branch
-    let matched =
-      allUsers.find(
-        (u) =>
-          u.branchId === targetBranchId &&
-          matchesUserLoginIdentifier(u, cleanTarget, arabicTarget, true)
-      ) ||
-      allUsers.find(
-        (u) =>
-          u.branchId === targetBranchId &&
-          matchesUserLoginIdentifier(u, cleanTarget, arabicTarget, false)
-      );
+    // 1. Try matching in requested branch first
+    let matched = allUsers.find(
+      (u) =>
+        u.branchId === targetBranchId &&
+        (String(u.username || '').trim().toLowerCase() === cleanTarget ||
+          String(u.fullName || '').trim().toLowerCase() === cleanTarget)
+    );
 
     // 2. If not found in requested branch, check globally (for central users OR to detect wrong-branch attempt)
     if (!matched) {
-      let globalMatches = allUsers.filter((u) =>
-        matchesUserLoginIdentifier(u, cleanTarget, arabicTarget, true)
+      const globalMatches = allUsers.filter(
+        (u) =>
+          String(u.username || '').trim().toLowerCase() === cleanTarget ||
+          String(u.fullName || '').trim().toLowerCase() === cleanTarget
       );
-      if (globalMatches.length === 0) {
-        globalMatches = allUsers.filter((u) =>
-          matchesUserLoginIdentifier(u, cleanTarget, arabicTarget, false)
-        );
-      }
       if (globalMatches.length === 0) {
         return {
           ok: false,
@@ -858,41 +745,10 @@ export async function authenticateUserUnified(
 
   // PostgreSQL mode
   try {
-    let branchUsersRes = await pool.query(
-      `SELECT * FROM public.app_users
-       WHERE LOWER(TRIM(username)) = $1
-          OR LOWER(TRIM(full_name)) = $1
-          OR LOWER(TRIM(COALESCE(gmail_email, ''))) = $1`,
+    const branchUsersRes = await pool.query(
+      `SELECT * FROM public.app_users WHERE LOWER(TRIM(username)) = $1 OR LOWER(TRIM(full_name)) = $1`,
       [cleanTarget]
     );
-    if (branchUsersRes.rows.length === 0) {
-      // Secondary normalized match (handles Arabic digits, extra whitespace, hamza/teh marbuta variations, and empty-table re-seed)
-      const allUsersRes = await pool.query(`SELECT * FROM public.app_users`);
-      if (allUsersRes.rows.length === 0) {
-        governanceSchemaReady = false;
-        await ensureGovernanceSchemaAndSeeds();
-        const seededRes = await pool.query(`SELECT * FROM public.app_users`);
-        branchUsersRes = {
-          ...seededRes,
-          rows: seededRes.rows.filter(
-            (r) =>
-              matchesUserLoginIdentifier(r, cleanTarget, arabicTarget, true) ||
-              matchesUserLoginIdentifier(r, cleanTarget, arabicTarget, false)
-          ),
-        };
-      } else {
-        const exactMatches = allUsersRes.rows.filter((r) =>
-          matchesUserLoginIdentifier(r, cleanTarget, arabicTarget, true)
-        );
-        const normalizedMatches =
-          exactMatches.length > 0
-            ? exactMatches
-            : allUsersRes.rows.filter((r) =>
-                matchesUserLoginIdentifier(r, cleanTarget, arabicTarget, false)
-              );
-        branchUsersRes = { ...allUsersRes, rows: normalizedMatches };
-      }
-    }
     if (branchUsersRes.rows.length === 0) {
       return {
         ok: false,
@@ -2578,364 +2434,4 @@ export async function getGovernanceOverviewInDb(actor: AppUser) {
     permissions: GRANULAR_PERMISSIONS_CATALOG,
     totalUsers: users.length,
   };
-}
-
-/**
- * تسجيل مستخدم جديد من بوابة الدخول (Self-Registration) مع التحقق الفعلي من الحفظ في قاعدة البيانات
- * وربطه بالفرع والإدارة والدور وجداول الصلاحيات (بدون السماح بتصعيد الصلاحيات)
- */
-export async function registerSelfUserInDb(params: {
-  branchId?: string;
-  username: string;
-  fullName: string;
-  password: string;
-  role?: string;
-  jobTitle?: string;
-  department?: string;
-  phone?: string;
-  applyToAllBranches?: boolean;
-  isPrivilegedCaller?: boolean;
-  actorUsername?: string;
-  ipAddress?: string;
-}): Promise<{ success: boolean; status?: number; user?: AppUser; resolvedBranchId?: string; error?: string }> {
-  await ensureGovernanceSchemaAndSeeds();
-  const [rolesList, { branches }] = await Promise.all([
-    listRolesInDb(),
-    listAdministrationsWithBranchesInDb(),
-  ]);
-
-  const username = normalizeDigits(String(params.username || '')).trim();
-  const fullName = String(params.fullName || '').trim();
-  const rawPassword = String(params.password || '').trim();
-  const requestedRole = String(params.role || 'employee').trim() || 'employee';
-
-  if (!username || username.length < 3 || !fullName || !rawPassword) {
-    return {
-      success: false,
-      status: 400,
-      error: 'يرجى إدخال الاسم الكامل واسم المستخدم (3 أحرف فأكثر) وكلمة المرور.',
-    };
-  }
-
-  const complexity = validatePasswordComplexity(rawPassword);
-  if (!complexity.valid) {
-    return {
-      success: false,
-      status: 400,
-      error: complexity.error || 'كلمة المرور يجب أن تتكون من 8 أحرف على الأقل وتشمل حروفاً وأرقاماً.',
-    };
-  }
-
-  const privilegedRoles = new Set([
-    'super_admin',
-    'admin',
-    'main_admin_manager',
-    'supply_admin_manager',
-    'branch_manager',
-    'deputy_branch_manager',
-    'system_officer',
-  ]);
-
-  if (privilegedRoles.has(requestedRole.toLowerCase()) && !params.isPrivilegedCaller) {
-    return {
-      success: false,
-      status: 403,
-      error: 'إنشاء حساب بصلاحية إدارية عليا مقتصر على مدير النظام أو مدير الفرع المعتمد من لوحة إدارة المستخدمين.',
-    };
-  }
-
-  const allowedSelfRoles = new Set([
-    'employee',
-    'reader',
-    'viewer',
-    'data_entry',
-    'inspector',
-    'auditor',
-    'supervisor',
-    'department_officer',
-    'custom_user',
-  ]);
-  const finalRole = params.isPrivilegedCaller
-    ? requestedRole
-    : allowedSelfRoles.has(requestedRole)
-    ? requestedRole
-    : 'employee';
-
-  const requestedBranchId = String(params.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const targetBranch =
-    branches.find((b) => b.id === requestedBranchId) ||
-    branches.find((b) => b.id === DEFAULT_BRANCH_ID) ||
-    branches[0];
-  const resolvedBranchId = targetBranch?.id || DEFAULT_BRANCH_ID;
-  const administrationId =
-    targetBranch?.administrationId || resolveDefaultAdministrationIdForBranch(resolvedBranchId);
-
-  const roleRecord = rolesList.find((r) => r.code === finalRole);
-  const isSuper = Boolean(params.isPrivilegedCaller && (finalRole === 'super_admin' || finalRole === 'admin'));
-  const isCentral = Boolean(params.isPrivilegedCaller && (params.applyToAllBranches || isSuper));
-  const cleanUserLower = normalizeLoginIdentifier(username);
-
-  const matrix = resolveUserDepartmentMatrix({
-    id: 'tmp-register',
-    username,
-    fullName,
-    role: finalRole,
-    isSuperAdmin: isSuper,
-    allowedDepartments: isSuper ? ['all'] : SYSTEM_DEPARTMENT_KEYS,
-  });
-  const allowedDepartments = isSuper
-    ? (['all'] as any)
-    : SYSTEM_DEPARTMENT_KEYS.filter((k) => Boolean(matrix[k]?.view));
-
-  const newUserId = `u-${resolvedBranchId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  const hashedPassword = hashPasswordScrypt(rawPassword);
-  const nowIso = new Date().toISOString();
-  const resolvedJobTitle =
-    String(params.jobTitle || '').trim() ||
-    roleRecord?.nameAr ||
-    (finalRole === 'reader' ? 'قارئ فقط' : finalRole === 'viewer' ? 'مشاهد' : 'موظف منظومة');
-  const resolvedDepartment =
-    String(params.department || '').trim() ||
-    targetBranch?.name ||
-    'إدارة تموين مركز المحلة الكبرى';
-
-  if (isPgFallbackMode()) {
-    const store = getRawFallbackStore();
-    const dup = (store.app_users || []).find(
-      (u) =>
-        normalizeLoginIdentifier(u.username) === cleanUserLower &&
-        (u.branchId === resolvedBranchId || isCentral || isCentralUser(u))
-    );
-    if (dup) {
-      return {
-        success: false,
-        status: 409,
-        error: 'اسم المستخدم مسجل بالفعل. يرجى اختيار اسم مستخدم آخر.',
-      };
-    }
-
-    const row: AppUser & { branchId: string; version: number } = {
-      id: newUserId,
-      branchId: resolvedBranchId,
-      administrationId,
-      username,
-      fullName,
-      password: hashedPassword,
-      role: finalRole,
-      isSuperAdmin: isSuper,
-      isCentral,
-      applyToAllBranches: isCentral,
-      jobTitle: resolvedJobTitle,
-      department: resolvedDepartment,
-      phone: String(params.phone || '').trim(),
-      gmailEmail: '',
-      googleDriveAutoSync: false,
-      customPermissions: [],
-      allowedDepartments,
-      departmentPermissions: matrix,
-      isActive: true,
-      notes: '',
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      updatedBy: params.actorUsername || username,
-      version: 1,
-    };
-
-    store.app_users.push(row);
-    saveRawFallbackStore(store);
-
-    const verified = getRawFallbackStore().app_users.find((u) => u.id === newUserId);
-    if (!verified) {
-      return {
-        success: false,
-        status: 500,
-        error: 'تعذر تأكيد حفظ المستخدم الجديد في قاعدة البيانات.',
-      };
-    }
-
-    await recordAuditLog(
-      params.actorUsername || username,
-      'USER_REGISTERED',
-      `تسجيل حساب جديد (${fullName} — ${username}) بدور (${resolvedJobTitle}) في فرع (${targetBranch?.name || resolvedBranchId})`,
-      params.ipAddress || '127.0.0.1',
-      resolvedBranchId,
-      { username, department: 'auth', operation: 'REGISTER', recordId: newUserId, result: 'SUCCESS' }
-    ).catch(() => {});
-
-    return {
-      success: true,
-      user: enrichUserMeta(verified, branches, rolesList),
-      resolvedBranchId,
-    };
-  }
-
-  // PostgreSQL mode
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    // Ensure branch exists in public.branches to satisfy FK
-    await client
-      .query(
-        `INSERT INTO public.branches (id, name, governorate_title, directorate_title, administration_id, is_active)
-         VALUES ($1, $2, $3, $4, $5, TRUE) ON CONFLICT (id) DO NOTHING`,
-        [
-          resolvedBranchId,
-          targetBranch?.name || resolvedDepartment,
-          targetBranch?.governorateTitle || 'محافظة الغربية',
-          targetBranch?.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-          administrationId,
-        ]
-      )
-      .catch(() => {});
-
-    const dupRes = await client.query(
-      `SELECT id, branch_id, is_central FROM public.app_users WHERE LOWER(TRIM(username)) = $1`,
-      [cleanUserLower]
-    );
-    const hasConflict = dupRes.rows.some(
-      (r) => String(r.branch_id) === resolvedBranchId || isCentral || Boolean(r.is_central)
-    );
-    if (hasConflict) {
-      await client.query('ROLLBACK');
-      return {
-        success: false,
-        status: 409,
-        error: 'اسم المستخدم مسجل بالفعل. يرجى اختيار اسم مستخدم آخر.',
-      };
-    }
-
-    const encodedPerms: string[] = [
-      ...allowedDepartments.map((d: string) => `__dept:${d}`),
-      ...(isCentral ? ['__all_branches'] : []),
-    ];
-
-    const insertRes = await client.query(
-      `INSERT INTO public.app_users (
-        id, branch_id, administration_id, username, full_name, password_hash, role,
-        job_title, department, phone, gmail_email, google_drive_auto_sync,
-        custom_permissions, is_active, is_super_admin, is_central, notes,
-        department_permissions, updated_by
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, '', FALSE,
-        $11::jsonb, TRUE, $12, $13, '',
-        $14::jsonb, $15
-      ) RETURNING *`,
-      [
-        newUserId,
-        resolvedBranchId,
-        administrationId,
-        username,
-        fullName,
-        hashedPassword,
-        finalRole,
-        resolvedJobTitle,
-        resolvedDepartment,
-        String(params.phone || '').trim(),
-        JSON.stringify(encodedPerms),
-        isSuper,
-        isCentral,
-        JSON.stringify(matrix),
-        params.actorUsername || username,
-      ]
-    );
-
-    if (insertRes.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return {
-        success: false,
-        status: 500,
-        error: 'تعذر تأكيد حفظ المستخدم الجديد في قاعدة البيانات.',
-      };
-    }
-
-    await client
-      .query(
-        `INSERT INTO public.user_roles (id, user_id, role_code, branch_id, assigned_by)
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, role_code) DO UPDATE SET branch_id = EXCLUDED.branch_id`,
-        [`ur_${newUserId}_${finalRole}`, newUserId, finalRole, resolvedBranchId, params.actorUsername || username]
-      )
-      .catch(() => {});
-
-    await client
-      .query(
-        `INSERT INTO public.user_branches (id, user_id, branch_id, is_primary, assigned_by)
-         VALUES ($1, $2, $3, TRUE, $4) ON CONFLICT (user_id, branch_id) DO NOTHING`,
-        [`ub_${newUserId}_${resolvedBranchId}`, newUserId, resolvedBranchId, params.actorUsername || username]
-      )
-      .catch(() => {});
-
-    for (const deptId of SYSTEM_DEPARTMENT_KEYS) {
-      const f = matrix[deptId];
-      await client
-        .query(
-          `INSERT INTO public.user_department_permissions (
-            id, user_id, branch_id, department_id,
-            can_view, can_enter, can_hide, can_insert, can_update, can_delete,
-            can_approve, can_print, can_export, can_manage_users, can_assign_permissions, can_department_settings, updated_at
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
-          ON CONFLICT (user_id, department_id) DO UPDATE SET
-            branch_id = EXCLUDED.branch_id,
-            can_view = EXCLUDED.can_view,
-            can_enter = EXCLUDED.can_enter,
-            can_hide = EXCLUDED.can_hide,
-            can_insert = EXCLUDED.can_insert,
-            can_update = EXCLUDED.can_update,
-            can_delete = EXCLUDED.can_delete,
-            can_approve = EXCLUDED.can_approve,
-            can_print = EXCLUDED.can_print,
-            can_export = EXCLUDED.can_export,
-            can_manage_users = EXCLUDED.can_manage_users,
-            can_assign_permissions = EXCLUDED.can_assign_permissions,
-            can_department_settings = EXCLUDED.can_department_settings,
-            updated_at = NOW()`,
-          [
-            `udp_${newUserId}_${deptId}`,
-            newUserId,
-            resolvedBranchId,
-            deptId,
-            Boolean(f?.view),
-            Boolean(f?.enter ?? f?.view),
-            Boolean(f?.hide),
-            Boolean(f?.insert),
-            Boolean(f?.update),
-            Boolean(f?.delete),
-            Boolean(f?.approve),
-            Boolean(f?.print),
-            Boolean(f?.export),
-            Boolean(f?.manageUsers),
-            Boolean(f?.assignPermissions),
-            Boolean(f?.departmentSettings),
-          ]
-        )
-        .catch(() => {});
-    }
-
-    await client.query('COMMIT');
-
-    await recordAuditLog(
-      params.actorUsername || username,
-      'USER_REGISTERED',
-      `تسجيل حساب جديد (${fullName} — ${username}) بدور (${resolvedJobTitle}) في فرع (${targetBranch?.name || resolvedBranchId})`,
-      params.ipAddress || '127.0.0.1',
-      resolvedBranchId,
-      { username, department: 'auth', operation: 'REGISTER', recordId: newUserId, result: 'SUCCESS' }
-    ).catch(() => {});
-
-    return {
-      success: true,
-      user: enrichUserMeta(mapDbUserToApp(insertRes.rows[0]), branches, rolesList),
-      resolvedBranchId,
-    };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    if (isPostgresUnavailableError(err)) {
-      setPgFallbackMode(true);
-      return registerSelfUserInDb(params);
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
 }

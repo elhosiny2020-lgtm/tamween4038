@@ -942,7 +942,11 @@ export function fallbackSyncFullBranchState(
         }
       }
     }
-    // Never prune app_users during bulk state sync so newly registered or concurrently added users are never accidentally deleted.
+    if (options?.pruneRemoved && syncedIds.size > 0) {
+      store.app_users = store.app_users.filter(
+        (u) => u.branchId !== effectiveBranchId || syncedIds.has(String(u.id))
+      );
+    }
   }
 
   if (Array.isArray(stateData?.dailyTasks)) {
@@ -1062,23 +1066,41 @@ export function fallbackAuthenticateUser(
   const isProd =
     process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
 
-  // Seed initial users into branch store if the store has no users yet
-  if (branchUsers.length === 0 && store.app_users.length === 0) {
+  // Seed initial users into branch store if none exist yet
+  if (branchUsers.length === 0) {
     const envAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
-    for (const seed of INITIAL_USERS) {
-      const isRoot = seed.role === 'admin' && seed.username === 'admin';
-      const resolvedSeedPass = isRoot && envAdminPass ? envAdminPass : seed.password;
-      upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
-        ...seed,
-        id: effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`,
-        branchId: effectiveBranchId,
-        password: resolvedSeedPass,
-        isSuperAdmin: isRoot,
-        isCentral: isRoot,
-        isActive: seed.isActive !== false,
-      });
+    if (isProd) {
+      if (envAdminPass) {
+        const adminSeed = INITIAL_USERS.find((u) => u.role === 'admin');
+        if (adminSeed) {
+          upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
+            ...adminSeed,
+            id: effectiveBranchId === DEFAULT_BRANCH_ID ? adminSeed.id : `${adminSeed.id}__${effectiveBranchId}`,
+            branchId: effectiveBranchId,
+            password: envAdminPass,
+            isSuperAdmin: true,
+            isActive: true,
+          });
+          persistStore(store);
+        }
+      } else {
+        console.warn('[SECURITY NOTICE] Production branch has no users and INITIAL_ADMIN_PASSWORD is not set; skipping default user seeding.');
+      }
+    } else {
+      for (const seed of INITIAL_USERS) {
+        const resolvedSeedPass =
+          seed.role === 'admin' && envAdminPass ? envAdminPass : seed.password;
+        upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
+          ...seed,
+          id: effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`,
+          branchId: effectiveBranchId,
+          password: resolvedSeedPass,
+          isSuperAdmin: seed.role === 'admin',
+          isActive: seed.isActive !== false,
+        });
+      }
+      persistStore(store);
     }
-    persistStore(store);
   }
 
   const target = usernameOrName.trim().toLowerCase();

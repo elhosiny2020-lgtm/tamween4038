@@ -92,73 +92,55 @@ const ROLE_DEFINITIONS: {
 }[] = [
   {
     role: 'super_admin',
-    title: '👑 مدير النظام الرئيسي (super_admin)',
+    title: '👑 مدير عام النظام (Super Admin)',
     badgeColor: 'bg-amber-200 text-amber-950 border-amber-500',
-    summary: 'صلاحية مطلقة على كافة الإدارات والفروع والأقسام وإدارة المستخدمين وسجل التدقيق.',
+    summary: 'صلاحية مطلقة على كافة الأقسام السبعة، إدارة المستخدمين، وسجل المراقبة والأمان.',
   },
   {
-    role: 'main_admin_manager',
-    title: '🏛️ مدير الإدارة الرئيسية (main_admin_manager)',
+    role: 'admin',
+    title: '🏛️ مدير إدارة / رئيس قسم',
     badgeColor: 'bg-amber-100 text-amber-950 border-amber-400',
-    summary: 'إدارة مركزية للإدارة الرئيسية والفروع التابعة لها ومراجعة التقارير والأقسام.',
+    summary: 'صلاحية إدارية متقدمة حسب مصفوفة الأقسام والعمليات المحددة للحساب.',
   },
   {
-    role: 'supply_admin_manager',
-    title: '🏢 مدير إدارة التموين (supply_admin_manager)',
-    badgeColor: 'bg-teal-100 text-teal-950 border-teal-400',
-    summary: 'إدارة شاملة لإدارة التموين والفروع والأقسام التموينية والاعتمادات.',
-  },
-  {
-    role: 'branch_manager',
-    title: '📌 مدير الفرع (branch_manager)',
+    role: 'supervisor',
+    title: '🛡️ مشرف عام رقابة ومخابز',
     badgeColor: 'bg-indigo-100 text-indigo-950 border-indigo-400',
-    summary: 'إدارة كاملة للفرع، إظهار وإخفاء الأقسام، وإدارة مستخدمي الفرع وصلاحياتهم.',
-  },
-  {
-    role: 'deputy_branch_manager',
-    title: '📋 نائب مدير الفرع (deputy_branch_manager)',
-    badgeColor: 'bg-blue-100 text-blue-950 border-blue-400',
-    summary: 'معاونة مدير الفرع في المتابعة والاعتماد والإشراف على الأقسام والبيانات.',
-  },
-  {
-    role: 'system_officer',
-    title: '🛠️ مسؤول النظام (system_officer)',
-    badgeColor: 'bg-cyan-100 text-cyan-950 border-cyan-400',
-    summary: 'ضبط إعدادات الأقسام والدعم الفني وإدارة المستخدمين ضمن الفرع المصرح به.',
-  },
-  {
-    role: 'department_manager',
-    title: '📂 مدير القسم (department_manager)',
-    badgeColor: 'bg-emerald-100 text-emerald-950 border-emerald-400',
-    summary: 'إدارة كاملة للقسم التابع له واعتماد السجلات والطباعة والتصدير.',
-  },
-  {
-    role: 'department_head',
-    title: '📑 رئيس قسم (department_head)',
-    badgeColor: 'bg-emerald-50 text-emerald-950 border-emerald-300',
-    summary: 'الإشراف اليومي على عمليات القسم والمراجعة والتعديل والطباعة.',
-  },
-  {
-    role: 'department_officer',
-    title: '🗂️ مسؤول القسم (department_officer)',
-    badgeColor: 'bg-purple-100 text-purple-950 border-purple-400',
-    summary: 'تنفيذ أعمال القسم اليومية (إدخال وتحديث وطباعة وتصدير).',
-  },
-  {
-    role: 'employee',
-    title: '👤 موظف (employee)',
-    badgeColor: 'bg-slate-100 text-slate-900 border-slate-400',
-    summary: 'إدخال وعرض البيانات اليومية ضمن الأقسام المحددة له فقط.',
+    summary: 'إشراف كامل على المخابز والمديونيات والتقارير وفق الأقسام المصرح بها.',
   },
   {
     role: 'auditor',
-    title: '🔍 مراقب ومراجع (auditor)',
+    title: '💰 مراجع حسابات ومديونيات',
     badgeColor: 'bg-emerald-100 text-emerald-950 border-emerald-400',
-    summary: 'مراجعة وتدقيق الحسابات والمديونيات والسجلات والتقارير بدون حذف.',
+    summary: 'إدارة قيود المديونيات والسداد وحاسبة الغرامات وتدقيق المعادلات والطباعة.',
   },
   {
-    role: 'custom_user',
-    title: '⚙️ مستخدم بصلاحيات مخصصة (custom_user)',
+    role: 'inspector',
+    title: '🔍 مفتش رقابة وتموين',
+    badgeColor: 'bg-purple-100 text-purple-950 border-purple-400',
+    summary: 'إضافة وتعديل السجلات وتسجيل المخالفات الميدانية واستخدام حاسبة الغرامات.',
+  },
+  {
+    role: 'data_entry',
+    title: '⌨️ مسئول إدخال وتحديث بيانات',
+    badgeColor: 'bg-cyan-100 text-cyan-950 border-cyan-400',
+    summary: 'إدخال وتحديث السجلات وعرض التقارير دون صلاحية الحذف النهائي.',
+  },
+  {
+    role: 'viewer',
+    title: '👁️ مشاهد (استعراض وطباعة فقط)',
+    badgeColor: 'bg-blue-100 text-blue-950 border-blue-400',
+    summary: 'عرض وتصفح كافة الجداول والرسوم البيانية وطباعتها دون أي تعديل أو حذف.',
+  },
+  {
+    role: 'reader',
+    title: '📖 قارئ فقط — Reader (عرض فقط بدون تعديل)',
+    badgeColor: 'bg-slate-100 text-slate-900 border-slate-400',
+    summary: 'قراءة وتصفح البيانات فقط دون تعديل أو إضافة أو حذف أو تصدير.',
+  },
+  {
+    role: 'custom_role',
+    title: '⚙️ دور مخصص (Custom Role)',
     badgeColor: 'bg-violet-100 text-violet-950 border-violet-400',
     summary: 'صلاحيات مخصصة تُحدد يدوياً عبر مصفوفة الأقسام والعمليات التفصيلية.',
   },
@@ -476,7 +458,7 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       allowedDepartments: ['bakeries'],
     })
   );
-  const [applyToAllBranches, setApplyToAllBranches] = useState<boolean>(false);
+  const [applyToAllBranches, setApplyToAllBranches] = useState<boolean>(true);
   const [customPermissions, setCustomPermissions] = useState<string[]>(
     getDefaultPermissionsForRole('inspector')
   );
@@ -755,23 +737,6 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
 
     if (!cleanUser || !cleanName || !cleanPass) {
       setError('جميع الحقول الأساسية (الاسم بالكامل، اسم المستخدم، كلمة المرور) مطلوبة');
-      return;
-    }
-
-    if (cleanUser.length < 3) {
-      setError('اسم المستخدم يجب أن يتكون من 3 أحرف على الأقل.');
-      return;
-    }
-
-    const normalizedPass = cleanPass
-      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
-      .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
-    if (
-      normalizedPass.length < 8 ||
-      !/[a-zA-Z\u0600-\u06FF]/.test(normalizedPass) ||
-      !/\d/.test(normalizedPass)
-    ) {
-      setError('كلمة المرور يجب أن تتكون من 8 أحرف على الأقل وتشمل حروفاً وأرقاماً (مثال: User2026).');
       return;
     }
 
@@ -1604,9 +1569,6 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                         )}
                       </button>
                     </div>
-                    <p className="text-[10px] font-bold text-slate-500 mt-1">
-                      8 أحرف على الأقل تشمل حروفاً وأرقاماً (مثال: User2026)
-                    </p>
                   </div>
 
                   <div>
@@ -1759,20 +1721,6 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                         );
                       })}
                     </div>
-                  </div>
-                )}
-
-                {error && (
-                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-black flex items-center gap-2">
-                    <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
-                    <span>{error}</span>
-                  </div>
-                )}
-
-                {successMsg && (
-                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-black flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>{successMsg}</span>
                   </div>
                 )}
 

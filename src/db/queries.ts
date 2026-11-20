@@ -292,21 +292,25 @@ export async function ensurePostgresSchema(): Promise<void> {
         }
       }
 
+      const isProd =
+        process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
       const initialAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
-      const hashedAdminPass = hashPasswordScrypt(initialAdminPass || 'admin');
-      await pool
-        .query(
-          `INSERT INTO public.app_users (
-            id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions, is_active, is_super_admin
+      if (!isProd || initialAdminPass) {
+        const hashedAdminPass = hashPasswordScrypt(initialAdminPass || 'admin');
+        await pool
+          .query(
+            `INSERT INTO public.app_users (
+              id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions, is_active, is_super_admin
+            )
+            SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', $1, 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb, TRUE, TRUE
+            WHERE NOT EXISTS (
+              SELECT 1 FROM public.app_users WHERE branch_id = 'branch-mahalla' AND lower(username) = 'admin'
+            )
+            ON CONFLICT (id) DO NOTHING`,
+            [hashedAdminPass]
           )
-          SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', $1, 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb, TRUE, TRUE
-          WHERE NOT EXISTS (
-            SELECT 1 FROM public.app_users WHERE lower(username) = 'admin'
-          )
-          ON CONFLICT (id) DO NOTHING`,
-          [hashedAdminPass]
-        )
-        .catch(() => {});
+          .catch(() => {});
+      }
       // Auto-upgrade any legacy plaintext passwords stored in app_users to scrypt
       const legacyUsersRes = await pool
         .query(`SELECT id, password_hash FROM public.app_users`)
@@ -1445,20 +1449,6 @@ export async function upsertRowWithClient(
           )
           .catch(() => {});
       }
-      await client
-        .query(
-          `INSERT INTO public.user_roles (id, user_id, role_code, branch_id, assigned_by)
-           VALUES ($1, $2, $3, $4, 'system') ON CONFLICT (user_id, role_code) DO UPDATE SET branch_id = EXCLUDED.branch_id`,
-          [`ur_${effectiveUserId}_${resolvedRole}`, effectiveUserId, resolvedRole, effectiveBranchId]
-        )
-        .catch(() => {});
-      await client
-        .query(
-          `INSERT INTO public.user_branches (id, user_id, branch_id, is_primary, assigned_by)
-           VALUES ($1, $2, $3, TRUE, 'system') ON CONFLICT (user_id, branch_id) DO NOTHING`,
-          [`ub_${effectiveUserId}_${effectiveBranchId}`, effectiveUserId, effectiveBranchId]
-        )
-        .catch(() => {});
       resultRow = mapDbRowByTable('app_users', res.rows[0]);
       break;
     }
@@ -1980,7 +1970,12 @@ export async function syncFullBranchStateToPostgres(
         }
       }
     }
-    // Never prune app_users during bulk state sync so newly registered or concurrently added users are never accidentally deleted.
+    if (options?.pruneRemoved && hasUsersArray && syncedUserIds.length > 0) {
+      await client.query(`DELETE FROM public.app_users WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+        effectiveBranchId,
+        syncedUserIds,
+      ]);
+    }
 
     // 6. Daily Tasks
     const hasTasksArray = Array.isArray(stateData?.dailyTasks);
