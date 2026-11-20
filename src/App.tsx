@@ -141,6 +141,7 @@ import {
 import {
   computeBranchSidebarCounts,
   computeDepartmentRecordCounts,
+  normalizeBranchDepartments,
   resolveCustomTableTitle,
   SidebarCountsSummary,
   wipeSectionFromModulesBundle,
@@ -9267,6 +9268,83 @@ export default function App() {
             timestamp: getArabicTimestamp(),
             variant: 'success',
           });
+        }}
+        onCopyDepartmentsToAllBranches={async () => {
+          const canManageDepts =
+            isSuperAdmin(appState.currentUser) ||
+            hasPermission(appState.currentUser, 'MANAGE_DEPARTMENTS', appState.systemConfig);
+          if (!canManageDepts) {
+            return { success: false, error: 'نسخ الأقسام لجميع الفروع مقصور على مدير النظام فقط.' };
+          }
+          const isHttpOrigin =
+            typeof window !== 'undefined' &&
+            (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+          let syncedDepartments = normalizeBranchDepartments(
+            appState.systemConfig?.branchDepartments
+          );
+          let updatedIds = cleanBranchesList.map((b) => b.id);
+          let serverMsg: string | undefined;
+
+          if (isHttpOrigin && navigator.onLine !== false) {
+            const resp = await fetch('/api/branches/sync-all-departments', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: getSecurityShieldHeaders(true),
+              body: JSON.stringify({
+                sourceBranchId: DEFAULT_BRANCH_ID,
+              }),
+            });
+            const json = await resp.json().catch(() => null);
+            if (!resp.ok || json?.success === false) {
+              return {
+                success: false,
+                error: json?.error || 'تعذر نسخ الأقسام إلى جميع الفروع على الخادم.',
+              };
+            }
+            if (Array.isArray(json?.departments) && json.departments.length > 0) {
+              syncedDepartments = json.departments;
+            }
+            if (Array.isArray(json?.updatedBranchIds) && json.updatedBranchIds.length > 0) {
+              updatedIds = json.updatedBranchIds;
+            }
+            if (json?.message) serverMsg = String(json.message);
+          }
+
+          for (const bId of updatedIds) {
+            const existingPart = readBranchPartitionFromLocal(bId);
+            if (existingPart) {
+              writeBranchPartitionToLocal(bId, {
+                ...existingPart,
+                systemConfig: {
+                  ...(existingPart.systemConfig || appState.systemConfig),
+                  branchDepartments: syncedDepartments,
+                },
+              });
+            }
+          }
+          setAppState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  systemConfig: {
+                    ...prev.systemConfig,
+                    branchDepartments: syncedDepartments,
+                  },
+                }
+              : prev
+          );
+          const nowAr = getArabicTimestamp();
+          setSaveTimestamp(nowAr);
+          const finalMsg =
+            serverMsg ||
+            `تم نسخ جميع الأقسام (${syncedDepartments.length} أقسام) داخل كافة الفروع (${updatedIds.length} فرع) بنجاح دون المساس بالبيانات.`;
+          setSaveToast({
+            id: Date.now(),
+            message: finalMsg,
+            timestamp: nowAr,
+            variant: 'success',
+          });
+          return { success: true, updatedCount: updatedIds.length, message: finalMsg };
         }}
         onFactoryResetBranch={async (targetBranchId) => {
           const canResetBranch =

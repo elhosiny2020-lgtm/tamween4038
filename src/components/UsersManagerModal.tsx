@@ -98,9 +98,9 @@ const ROLE_DEFINITIONS: {
   },
   {
     role: 'admin',
-    title: '🏛️ مدير إدارة / رئيس قسم',
+    title: '🏛️ مدير النظام / مدير إدارة',
     badgeColor: 'bg-amber-100 text-amber-950 border-amber-400',
-    summary: 'صلاحية إدارية متقدمة حسب مصفوفة الأقسام والعمليات المحددة للحساب.',
+    summary: 'صلاحية إدارية كاملة داخل الفرع وفق مصفوفة الأقسام والعمليات المحددة للحساب.',
   },
   {
     role: 'supervisor',

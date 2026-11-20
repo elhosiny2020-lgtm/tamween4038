@@ -29,6 +29,7 @@ import {
   resetNonMahallaBranchesInPostgres,
   syncFullBranchStateToPostgres,
   syncHighDebtAlertsToPostgres,
+  copyAllDepartmentsToAllBranchesInPostgres,
   updateBranchDepartmentsInPostgres,
   upsertRowInPostgres,
   upsertStorageFileInPostgres,
@@ -1258,7 +1259,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/auth/register', async (req, res) => {
+  app.post('/api/auth/register', loginLimiter, async (req, res) => {
     try {
       const body = req.body || {};
       const branchId = String(body.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
@@ -1270,6 +1271,8 @@ async function startServer() {
       const department = String(body.department || '').trim();
       const phone = String(body.phone || '').trim();
       const applyToAllBranches = Boolean(body.applyToAllBranches);
+      const adminAuthUsername = normalizeDigits(String(body.adminAuthUsername || '')).trim();
+      const adminAuthPassword = String(body.adminAuthPassword || '').trim();
 
       if (!username || username.length < 3 || !fullName || !password) {
         res.status(400).json({
@@ -1289,20 +1292,62 @@ async function startServer() {
       }
 
       const actor = await resolveAuthenticatedActor(req);
-      const isPrivilegedCaller = Boolean(actor.authenticated && actor.user && isUserSuperAdmin(actor.user));
+      let isPrivilegedCaller = Boolean(actor.authenticated && actor.user && isUserSuperAdmin(actor.user));
+      let authorizedByLabel = actor.user?.username || '';
+
+      if ((requestedRole === 'super_admin' || requestedRole === 'admin') && !isPrivilegedCaller) {
+        // Verify server-side authorization via existing Super Admin account OR Vault passcode
+        if (adminAuthUsername && adminAuthPassword) {
+          let verifiedByAdminOrVault = false;
+          const mainAdminCheck = await authenticateUserInPostgres(
+            DEFAULT_BRANCH_ID,
+            adminAuthUsername,
+            adminAuthPassword
+          );
+          if (mainAdminCheck.ok && mainAdminCheck.user && isUserSuperAdmin(mainAdminCheck.user)) {
+            verifiedByAdminOrVault = true;
+            authorizedByLabel = mainAdminCheck.user.username;
+          } else if (branchId !== DEFAULT_BRANCH_ID) {
+            const branchAdminCheck = await authenticateUserInPostgres(
+              branchId,
+              adminAuthUsername,
+              adminAuthPassword
+            );
+            if (branchAdminCheck.ok && branchAdminCheck.user && isUserSuperAdmin(branchAdminCheck.user)) {
+              verifiedByAdminOrVault = true;
+              authorizedByLabel = branchAdminCheck.user.username;
+            }
+          }
+          if (!verifiedByAdminOrVault) {
+            const vaultOk = await verifyVaultCredentialsInPostgres({
+              branchId,
+              enteredUsername: adminAuthUsername,
+              enteredPassword: adminAuthPassword,
+            });
+            if (vaultOk) {
+              verifiedByAdminOrVault = true;
+              authorizedByLabel = `vault:${adminAuthUsername}`;
+            }
+          }
+          if (verifiedByAdminOrVault) {
+            isPrivilegedCaller = true;
+          }
+        }
+      }
 
       if ((requestedRole === 'super_admin' || requestedRole === 'admin') && !isPrivilegedCaller) {
         await recordAuditLog(
           username,
           'PRIVILEGED_REGISTRATION_BLOCKED',
-          `محاولة غير مصرح بها للتسجيل بصلاحية (${requestedRole}) دون جلسة مدير عام`,
+          `محاولة غير مصرح بها للتسجيل بصلاحية (${requestedRole}) دون اعتماد مدير النظام أو بوابة الحماية السرية`,
           getClientIp(req),
           branchId,
           { username, department: 'auth', operation: 'REGISTER', result: 'DENIED' }
         ).catch(() => {});
         res.status(403).json({
           success: false,
-          error: 'إنشاء حساب بصلاحية مدير عام (Super Admin) أو مدير نظام مقتصر على مدير النظام المعتمد فقط.',
+          error:
+            'لإنشاء حساب بصلاحية مدير النظام أو مدير عام النظام، يرجى إدخال اسم المستخدم وكلمة المرور المعتمدة لمدير النظام الحالي أو بوابة الحماية السرية.',
         });
         return;
       }
@@ -1338,7 +1383,9 @@ async function startServer() {
       }
 
       const newUserId = `u-${branchId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      const isSuper = finalRole === 'super_admin' || (finalRole === 'admin' && isPrivilegedCaller && Boolean(body.isSuperAdmin));
+      const isSuper =
+        finalRole === 'super_admin' ||
+        (finalRole === 'admin' && isPrivilegedCaller && Boolean(body.isSuperAdmin));
       const newUserPayload: Partial<AppUser> = {
         id: newUserId,
         branchId,
@@ -1347,16 +1394,32 @@ async function startServer() {
         password,
         role: finalRole,
         isSuperAdmin: isSuper,
-        jobTitle: jobTitle || (finalRole === 'reader' ? 'قارئ فقط' : finalRole === 'viewer' ? 'مشاهد' : 'مستخدم منظومة'),
+        jobTitle:
+          jobTitle ||
+          (finalRole === 'super_admin'
+            ? 'مدير عام النظام'
+            : finalRole === 'admin'
+            ? 'مدير النظام'
+            : finalRole === 'reader'
+            ? 'قارئ فقط'
+            : finalRole === 'viewer'
+            ? 'مشاهد'
+            : 'مستخدم منظومة'),
         department: department || 'التموين والتجارة الداخلية',
         phone,
         isActive: true,
-        applyToAllBranches: isPrivilegedCaller ? applyToAllBranches : false,
-        allowedDepartments: isSuper ? ['all'] : ['bakeries', 'debts', 'commodities', 'internal_trade', 'grain_maintenance', 'hr', 'reports'],
+        applyToAllBranches: isPrivilegedCaller
+          ? applyToAllBranches || finalRole === 'super_admin'
+          : false,
+        allowedDepartments:
+          isSuper || finalRole === 'admin'
+            ? ['all']
+            : ['bakeries', 'debts', 'commodities', 'internal_trade', 'grain_maintenance', 'hr', 'reports'],
         createdAt: new Date().toISOString().split('T')[0],
       };
 
       const saved = await upsertRowInPostgres('app_users', branchId, newUserPayload);
+      void authorizedByLabel;
       if (!saved.success || !saved.row) {
         res.status(400).json({ success: false, error: saved.error || 'تعذر إنشاء الحساب.' });
         return;
@@ -2636,6 +2699,60 @@ async function startServer() {
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'فشل تحديث أقسام الفرع.' });
+    }
+  });
+
+  app.post('/api/branches/sync-all-departments', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      const canManageDepts = Boolean(
+        actor.authenticated &&
+          actor.user &&
+          (isUserSuperAdmin(actor.user) || hasPermission(actor.user, 'MANAGE_DEPARTMENTS'))
+      );
+      if (!actor.authenticated || !actor.user || !canManageDepts) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'branches',
+          'COPY_ALL_DEPARTMENTS_TO_ALL_BRANCHES',
+          'نسخ وتعميم الأقسام على كافة الفروع مقصور على مدير النظام فقط.'
+        );
+        return;
+      }
+      const sourceBranchId =
+        String(req.body?.sourceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const result = await copyAllDepartmentsToAllBranchesInPostgres(
+        sourceBranchId,
+        actor.user.username
+      );
+      liveRevision += 1;
+      for (const targetBranchId of result.updatedBranchIds) {
+        broadcastWs({
+          type: 'branch_departments_updated',
+          branchId: targetBranchId,
+          departments: result.departments,
+          revision: liveRevision,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      res.json({
+        success: true,
+        updatedBranchIds: result.updatedBranchIds,
+        updatedCount: result.updatedBranchIds.length,
+        departmentsCount: result.departmentsCount,
+        subItemsCount: result.subItemsCount,
+        departments: result.departments,
+        revision: liveRevision,
+        message: `تم نسخ جميع الأقسام (${result.departmentsCount} أقسام رئيسية / ${result.subItemsCount} شاشة فرعية) داخل كافة الفروع (${result.updatedBranchIds.length} فرع) بنجاح دون المساس ببيانات أي فرع.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: err?.message || 'فشل نسخ الأقسام إلى جميع الفروع.',
+      });
     }
   });
 

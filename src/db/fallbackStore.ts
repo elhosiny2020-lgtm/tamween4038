@@ -1498,6 +1498,100 @@ export function fallbackUpdateBranchDepartments(
   return cloned;
 }
 
+export function fallbackCopyAllDepartmentsToAllBranches(
+  sourceBranchId = DEFAULT_BRANCH_ID,
+  actorUsername = 'admin'
+): {
+  updatedBranchIds: string[];
+  departmentsCount: number;
+  subItemsCount: number;
+  departments: BranchDepartmentConfigItem[];
+} {
+  const store = loadStore();
+  const effectiveSourceId = (sourceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const sourceCfg = store.system_config.find((c) => c.branchId === effectiveSourceId)?.systemConfig
+    ?.branchDepartments;
+  const defaultTemplate = cloneDefaultBranchDepartmentsStructure();
+  const sourceCloned =
+    Array.isArray(sourceCfg) && sourceCfg.length > 0
+      ? cloneDefaultBranchDepartmentsStructure(sourceCfg)
+      : defaultTemplate;
+  // Ensure every canonical default department exists in the copied master set
+  const existingIds = new Set(sourceCloned.map((d) => d.id));
+  const mergedMaster: BranchDepartmentConfigItem[] = [
+    ...sourceCloned.map((d) => ({ ...d, visible: true, enabled: true })),
+    ...defaultTemplate
+      .filter((d) => !existingIds.has(d.id))
+      .map((d) => ({ ...d, visible: true, enabled: true })),
+  ].map((d, idx) => ({
+    ...d,
+    order: idx + 1,
+    subItems: (d.subItems || []).map((s, sIdx) => ({
+      ...s,
+      visible: true,
+      enabled: true,
+      order: sIdx + 1,
+    })),
+  }));
+
+  const branches = deduplicateSupplyBranches(store.branches);
+  const updatedBranchIds: string[] = [];
+  for (const br of branches) {
+    const branchClone = cloneDefaultBranchDepartmentsStructure(mergedMaster);
+    const idx = store.system_config.findIndex((c) => c.branchId === br.id);
+    if (idx >= 0) {
+      store.system_config[idx] = {
+        ...store.system_config[idx],
+        systemConfig: {
+          ...store.system_config[idx].systemConfig,
+          branchDepartments: branchClone,
+        },
+        version: Number(store.system_config[idx].version || 1) + 1,
+      };
+    } else {
+      store.system_config.push({
+        branchId: br.id,
+        systemConfig: {
+          governorateTitle: br.governorateTitle || 'محافظة الغربية',
+          directorateTitle: br.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+          administrationTitle: br.name,
+          englishSubtitle: '',
+          logoBase64: '',
+          branchDepartments: branchClone,
+        },
+        columnTitles: {},
+        activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى'],
+        version: 1,
+      });
+    }
+    updatedBranchIds.push(br.id);
+  }
+
+  const subItemsCount = mergedMaster.reduce((sum, d) => sum + (d.subItems?.length || 0), 0);
+  store.audit_logs.unshift({
+    id: `aud-sync-all-depts-${Date.now()}`,
+    branchId: effectiveSourceId,
+    userEmail: actorUsername,
+    username: actorUsername,
+    department: 'branches',
+    operation: 'COPY_ALL_DEPARTMENTS_TO_ALL_BRANCHES',
+    recordId: effectiveSourceId,
+    result: 'SUCCESS',
+    action: 'COPY_ALL_DEPARTMENTS_TO_ALL_BRANCHES',
+    details: `نسخ وتعميم كافة الأقسام (${mergedMaster.length} قسم / ${subItemsCount} شاشة فرعية) إلى جميع الفروع (${updatedBranchIds.length} فرع) دون المساس بالبيانات التشغيلية.`,
+    ipAddress: '127.0.0.1',
+    createdAt: new Date().toISOString(),
+  });
+  persistStore(store);
+
+  return {
+    updatedBranchIds,
+    departmentsCount: mergedMaster.length,
+    subItemsCount,
+    departments: mergedMaster,
+  };
+}
+
 export function fallbackResetBranchSection(params: {
   branchId: string;
   sectionKey: ResettableSectionKey;

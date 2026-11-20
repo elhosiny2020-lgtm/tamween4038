@@ -34,6 +34,7 @@ interface BranchesManagerModalProps {
   onDeleteBranch: (branchId: string) => Promise<void> | void;
   onFactoryResetBranch?: (branchId: string) => Promise<{ success: boolean; message?: string; error?: string }> | void;
   onManageDepartments?: (branch: SupplyBranch) => void;
+  onCopyDepartmentsToAllBranches?: () => Promise<{ success: boolean; updatedCount?: number; message?: string; error?: string }> | void;
   isVaultUnlocked: boolean;
   onRequireVaultUnlock: (label: string, onUnlocked: () => void) => void;
 }
@@ -50,6 +51,7 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   onDeleteBranch,
   onFactoryResetBranch,
   onManageDepartments,
+  onCopyDepartmentsToAllBranches,
   isVaultUnlocked,
   onRequireVaultUnlock,
 }) => {
@@ -64,6 +66,7 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   const [confirmResetChecked, setConfirmResetChecked] = useState<boolean>(false);
   const [confirmResetPhrase, setConfirmResetPhrase] = useState<string>('');
   const [isResettingId, setIsResettingId] = useState<string | null>(null);
+  const [isSyncingAllDepts, setIsSyncingAllDepts] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -479,9 +482,56 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                   </p>
                 </div>
               </div>
-              <span className="text-xs font-black text-[#0A1628] bg-[#FAF8F5] border border-slate-200 px-2.5 py-1 rounded-lg tabular-nums">
-                {addedPresetsCount} / {CANONICAL_DEFAULT_BRANCHES.length} مضافة
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {canManageBranches && onCopyDepartmentsToAllBranches && (
+                  <button
+                    type="button"
+                    data-testid="copy-all-departments-to-all-branches-btn"
+                    disabled={isSyncingAllDepts}
+                    onClick={() => {
+                      const runSync = async () => {
+                        setErrorMsg(null);
+                        setSuccessMsg(null);
+                        setIsSyncingAllDepts(true);
+                        try {
+                          const res = await onCopyDepartmentsToAllBranches();
+                          if (res && res.success === false) {
+                            setErrorMsg(res.error || 'تعذر نسخ الأقسام إلى جميع الفروع.');
+                          } else {
+                            setSuccessMsg(
+                              res?.message ||
+                                `تم نسخ وتعميم جميع الأقسام الـ 9 (77 شاشة فرعية) داخل كافة الفروع (${branches.length} فرع) بنجاح دون المساس بالبيانات.`
+                            );
+                          }
+                        } catch (err: any) {
+                          setErrorMsg(err?.message || 'حدث خطأ أثناء نسخ الأقسام إلى جميع الفروع.');
+                        } finally {
+                          setIsSyncingAllDepts(false);
+                        }
+                      };
+                      if (!isVaultUnlocked) {
+                        onRequireVaultUnlock('نسخ جميع الأقسام داخل كافة الفروع', () => {
+                          void runSync();
+                        });
+                        return;
+                      }
+                      void runSync();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-60 text-white text-xs font-black shadow-xs cursor-pointer"
+                    title="نسخ وتعميم كافة الأقسام التسعة وشاشاتها الفرعية داخل كل الفروع المسجلة بدون حذف أي بيانات"
+                  >
+                    <FolderKanban className="w-3.5 h-3.5" />
+                    <span>
+                      {isSyncingAllDepts
+                        ? 'جاري نسخ الأقسام لجميع الفروع...'
+                        : 'نسخ جميع الأقسام داخل جميع الفروع'}
+                    </span>
+                  </button>
+                )}
+                <span className="text-xs font-black text-[#0A1628] bg-[#FAF8F5] border border-slate-200 px-2.5 py-1 rounded-lg tabular-nums">
+                  {addedPresetsCount} / {CANONICAL_DEFAULT_BRANCHES.length} مضافة
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">

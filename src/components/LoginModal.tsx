@@ -48,6 +48,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [registerRole, setRegisterRole] = useState<UserRoleType>('viewer');
+  const [adminAuthUsername, setAdminAuthUsername] = useState('');
+  const [adminAuthPassword, setAdminAuthPassword] = useState('');
+  const [showAdminAuthPassword, setShowAdminAuthPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -79,8 +82,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         return;
       }
 
-      const safeRegisterRole: UserRoleType =
-        registerRole === 'super_admin' || registerRole === 'admin' ? 'viewer' : registerRole;
+      const isPrivilegedRole = registerRole === 'super_admin' || registerRole === 'admin';
+      if (isPrivilegedRole && (!adminAuthUsername.trim() || !adminAuthPassword.trim())) {
+        setError(
+          'لإنشاء حساب بصلاحية «مدير النظام» أو «مدير عام النظام»، يرجى إدخال اسم المستخدم وكلمة المرور المعتمدة لمدير النظام الحالي أو بوابة الحماية السرية.'
+        );
+        return;
+      }
 
       const isHttpOriginReg =
         typeof window !== 'undefined' &&
@@ -98,7 +106,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               username: username.trim(),
               fullName: fullName.trim(),
               password: trimmedPass,
-              role: safeRegisterRole,
+              role: registerRole,
+              isSuperAdmin: registerRole === 'super_admin',
+              applyToAllBranches: registerRole === 'super_admin',
+              adminAuthUsername: isPrivilegedRole ? adminAuthUsername.trim() : undefined,
+              adminAuthPassword: isPrivilegedRole ? adminAuthPassword.trim() : undefined,
               department:
                 activeBranch?.name ||
                 systemConfig?.administrationTitle ||
@@ -110,14 +122,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             setPassword('');
             setFullName('');
             setUsername('');
+            setAdminAuthUsername('');
+            setAdminAuthPassword('');
             setShowPassword(false);
+            setShowAdminAuthPassword(false);
             if (onRegisterUser) {
               await onRegisterUser({
                 ...data.user,
                 password: '',
               });
             }
-            setSuccessMsg('تم إنشاء الحساب بنجاح وحفظه في قاعدة البيانات! يمكنك تسجيل الدخول الآن.');
+            setSuccessMsg(
+              isPrivilegedRole
+                ? 'تم إنشاء حساب مدير النظام وتفعيله بنجاح في قاعدة البيانات! يمكنك تسجيل الدخول الآن.'
+                : 'تم إنشاء الحساب بنجاح وحفظه في قاعدة البيانات! يمكنك تسجيل الدخول الآن.'
+            );
             setMode('login');
             setIsSubmitting(false);
             return;
@@ -140,12 +159,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setError('اسم المستخدم مسجل بالفعل، اختر اسماً آخر.');
         return;
       }
+      const safeOfflineRole: UserRoleType = isPrivilegedRole ? 'viewer' : registerRole;
       const newUser: AppUser = {
         id: `user-${Date.now()}`,
         username: username.trim(),
         password: trimmedPass,
         fullName: fullName.trim(),
-        role: safeRegisterRole,
+        role: safeOfflineRole,
         department:
           activeBranch?.name ||
           systemConfig?.administrationTitle ||
@@ -159,7 +179,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       setPassword('');
       setFullName('');
       setUsername('');
+      setAdminAuthUsername('');
+      setAdminAuthPassword('');
       setShowPassword(false);
+      setShowAdminAuthPassword(false);
       setSuccessMsg('تم إنشاء الحساب بنجاح! يمكنك تسجيل الدخول الآن.');
       setMode('login');
       return;
@@ -455,16 +478,64 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                     onChange={(e) => setRegisterRole(e.target.value as UserRoleType)}
                     className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-black text-xs focus:outline-none focus:ring-2 focus:ring-[#0D9488] cursor-pointer"
                   >
-                    <option value="reader">قارئ فقط — Reader (عرض بدون تعديل)</option>
-                    <option value="viewer">مشاهد — Viewer (استعراض وطباعة فقط)</option>
-                    <option value="data_entry">مسئول إدخال بيانات — Data Entry</option>
-                    <option value="inspector">مفتش رقابة وتموين — Inspector</option>
-                    <option value="auditor">مراجع حسابات ومديونيات — Auditor</option>
+                    <option value="admin">مدير النظام — Admin (صلاحيات إدارية كاملة للفرع)</option>
+                    <option value="super_admin">مدير عام النظام — Super Admin (صلاحية مطلقة على كافة الفروع)</option>
                     <option value="supervisor">مشرف عام — Supervisor</option>
+                    <option value="auditor">مراجع حسابات ومديونيات — Auditor</option>
+                    <option value="inspector">مفتش رقابة وتموين — Inspector</option>
+                    <option value="data_entry">مسئول إدخال بيانات — Data Entry</option>
+                    <option value="viewer">مشاهد — Viewer (استعراض وطباعة فقط)</option>
+                    <option value="reader">قارئ فقط — Reader (عرض بدون تعديل)</option>
                   </select>
-                  <p className="text-[10px] font-bold text-slate-500 mt-1">
-                    صلاحيات مدير النظام (Admin / Super Admin) يتم منحها من داخل لوحة المستخدمين بواسطة مدير عام النظام فقط.
-                  </p>
+
+                  {(registerRole === 'admin' || registerRole === 'super_admin') && (
+                    <div
+                      data-testid="register-admin-auth-box"
+                      className="mt-2.5 p-3 rounded-2xl bg-amber-50 border border-amber-300 space-y-2"
+                    >
+                      <div className="flex items-center gap-1.5 text-[11px] font-black text-amber-950">
+                        <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0" />
+                        <span>اعتماد مدير النظام (مطلوب لإنشاء حساب مدير النظام)</span>
+                      </div>
+                      <p className="text-[10px] font-bold text-amber-900 leading-relaxed">
+                        أدخل اسم المستخدم وكلمة المرور لمدير النظام الحالي أو لبوابة الحماية السرية للتحقق الفوري على الخادم:
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          data-testid="register-admin-auth-username"
+                          value={adminAuthUsername}
+                          onChange={(e) => setAdminAuthUsername(e.target.value)}
+                          placeholder="اسم مستخدم المدير المعتمد (مثل: admin)"
+                          autoComplete="off"
+                          className="w-full px-3 py-2 rounded-xl bg-white border border-amber-300 text-xs font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                        <div className="relative">
+                          <input
+                            type={showAdminAuthPassword ? 'text' : 'password'}
+                            data-testid="register-admin-auth-password"
+                            value={adminAuthPassword}
+                            onChange={(e) => setAdminAuthPassword(e.target.value)}
+                            placeholder="كلمة مرور المدير / بوابة الحماية"
+                            autoComplete="new-password"
+                            className="w-full pr-3 pl-9 py-2 rounded-xl bg-white border border-amber-300 text-xs font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowAdminAuthPassword((p) => !p)}
+                            className="absolute left-2 top-1/2 -translate-y-1/2 text-amber-700 hover:text-amber-950 p-1 cursor-pointer"
+                            title={showAdminAuthPassword ? 'إخفاء' : 'إظهار'}
+                          >
+                            {showAdminAuthPassword ? (
+                              <EyeOff className="w-3.5 h-3.5" />
+                            ) : (
+                              <Eye className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

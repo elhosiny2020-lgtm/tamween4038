@@ -106,6 +106,7 @@ import {
   fallbackPurgeAll,
   fallbackQueryTablePaginated,
   fallbackRecordAuditDeletionSecurityLog,
+  fallbackCopyAllDepartmentsToAllBranches,
   fallbackResetBranchSection,
   fallbackUpdateBranchDepartments,
   fallbackResetNonMahallaBranches,
@@ -3085,6 +3086,126 @@ export async function updateBranchDepartmentsInPostgres(
     if (isPostgresUnavailableError(err)) {
       pgFallbackMode = true;
       return fallbackUpdateBranchDepartments(effectiveBranchId, departments, actorUsername);
+    }
+    throw err;
+  }
+}
+
+export async function copyAllDepartmentsToAllBranchesInPostgres(
+  sourceBranchId = DEFAULT_BRANCH_ID,
+  actorUsername = 'admin'
+): Promise<{
+  updatedBranchIds: string[];
+  departmentsCount: number;
+  subItemsCount: number;
+  departments: BranchDepartmentConfigItem[];
+}> {
+  await ensurePostgresSchema();
+  const effectiveSourceId = (sourceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  if (pgFallbackMode) {
+    return fallbackCopyAllDepartmentsToAllBranches(effectiveSourceId, actorUsername);
+  }
+  try {
+    const [branchesRes, sourceCfgRes] = await Promise.all([
+      pool.query(
+        `SELECT id, name, governorate_title, directorate_title FROM public.branches ORDER BY is_default DESC, created_at ASC`
+      ),
+      pool.query(
+        `SELECT daily_alert_config FROM public.system_config WHERE branch_id = $1`,
+        [effectiveSourceId]
+      ),
+    ]);
+
+    const rawSourceDepts = sourceCfgRes.rows[0]?.daily_alert_config?.branchDepartments;
+    const defaultTemplate = cloneDefaultBranchDepartmentsStructure();
+    const sourceCloned =
+      Array.isArray(rawSourceDepts) && rawSourceDepts.length > 0
+        ? cloneDefaultBranchDepartmentsStructure(rawSourceDepts)
+        : defaultTemplate;
+    const existingIds = new Set(sourceCloned.map((d) => d.id));
+    const mergedMaster: BranchDepartmentConfigItem[] = [
+      ...sourceCloned.map((d) => ({ ...d, visible: true, enabled: true })),
+      ...defaultTemplate
+        .filter((d) => !existingIds.has(d.id))
+        .map((d) => ({ ...d, visible: true, enabled: true })),
+    ].map((d, idx) => ({
+      ...d,
+      order: idx + 1,
+      subItems: (d.subItems || []).map((s, sIdx) => ({
+        ...s,
+        visible: true,
+        enabled: true,
+        order: sIdx + 1,
+      })),
+    }));
+
+    const existingBranchIdsInDb = new Set(branchesRes.rows.map((r: any) => String(r.id)));
+    const allDeduplicatedBranches = deduplicateSupplyBranches(
+      branchesRes.rows.map(mapDbBranchToApp)
+    );
+
+    const updatedBranchIds: string[] = [];
+    for (const br of allDeduplicatedBranches) {
+      const targetId = String(br.id);
+      if (!existingBranchIdsInDb.has(targetId)) {
+        await upsertRowInPostgres('branches', targetId, {
+          id: targetId,
+          name: br.name,
+          governorateTitle: br.governorateTitle || 'محافظة الغربية',
+          directorateTitle:
+            br.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+          description: br.description || '',
+          isDefault: Boolean(br.isDefault),
+        });
+      }
+      const branchClone = cloneDefaultBranchDepartmentsStructure(mergedMaster);
+      const prevCfgRes = await pool.query(
+        `SELECT governorate_title, directorate_title, administration_title
+         FROM public.system_config WHERE branch_id = $1`,
+        [targetId]
+      );
+      const prevRow = prevCfgRes.rows[0];
+      await upsertRowInPostgres('system_config', targetId, {
+        branchId: targetId,
+        systemConfig: {
+          governorateTitle: prevRow?.governorate_title || br.governorateTitle || 'محافظة الغربية',
+          directorateTitle:
+            prevRow?.directorate_title ||
+            br.directorateTitle ||
+            'مديرية التموين والتجارة الداخلية بالغربية',
+          administrationTitle: prevRow?.administration_title || br.name || targetId,
+          branchDepartments: branchClone,
+        },
+      });
+      updatedBranchIds.push(targetId);
+    }
+
+    const subItemsCount = mergedMaster.reduce((sum, d) => sum + (d.subItems?.length || 0), 0);
+    await recordAuditLog(
+      actorUsername,
+      'COPY_ALL_DEPARTMENTS_TO_ALL_BRANCHES',
+      `نسخ وتعميم كافة الأقسام (${mergedMaster.length} قسم / ${subItemsCount} شاشة فرعية) إلى جميع الفروع (${updatedBranchIds.length} فرع) دون المساس بالبيانات التشغيلية.`,
+      '127.0.0.1',
+      effectiveSourceId,
+      {
+        username: actorUsername,
+        department: 'branches',
+        operation: 'COPY_ALL_DEPARTMENTS',
+        recordId: effectiveSourceId,
+        result: 'SUCCESS',
+      }
+    ).catch(() => {});
+
+    return {
+      updatedBranchIds,
+      departmentsCount: mergedMaster.length,
+      subItemsCount,
+      departments: mergedMaster,
+    };
+  } catch (err) {
+    if (isPostgresUnavailableError(err)) {
+      pgFallbackMode = true;
+      return fallbackCopyAllDepartmentsToAllBranches(effectiveSourceId, actorUsername);
     }
     throw err;
   }
