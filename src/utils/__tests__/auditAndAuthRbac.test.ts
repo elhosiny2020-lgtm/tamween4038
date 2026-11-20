@@ -258,17 +258,11 @@ test('departmentRbac enforces fail-closed 7x6 matrix, view dependency, reports t
   for (const dept of SYSTEM_DEPARTMENT_KEYS) {
     assert.deepEqual(emptyMatrix[dept], {
       view: false,
-      enter: false,
-      hide: false,
       insert: false,
       update: false,
       delete: false,
-      approve: false,
       print: false,
       export: false,
-      manageUsers: false,
-      assignPermissions: false,
-      departmentSettings: false,
     });
   }
   assert.equal(canUserAccessTab(emptyRestrictedUser, 'bakeries'), false);
