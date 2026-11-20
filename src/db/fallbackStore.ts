@@ -137,8 +137,9 @@ let memoryStore: FallbackStoreData | null = null;
 let memoryStorePath: string | null = null;
 
 function createEmptyStore(): FallbackStoreData {
+  const defaultBranches = CANONICAL_DEFAULT_BRANCHES.map((b) => ({ ...b, version: 1 }));
   return {
-    branches: CANONICAL_DEFAULT_BRANCHES.map((b) => ({ ...b, version: 1 })),
+    branches: defaultBranches,
     deleted_branch_keys: [],
     villages: [],
     bakeries: [],
@@ -147,7 +148,20 @@ function createEmptyStore(): FallbackStoreData {
     daily_tasks: [],
     inbox_messages: [],
     high_debt_alerts: [],
-    system_config: [],
+    system_config: defaultBranches.map((b) => ({
+      branchId: b.id,
+      systemConfig: {
+        governorateTitle: b.governorateTitle || 'محافظة الغربية',
+        directorateTitle: b.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+        administrationTitle: b.name,
+        englishSubtitle: '',
+        logoBase64: '',
+        branchDepartments: cloneDefaultBranchDepartmentsStructure(),
+      },
+      columnTitles: {},
+      activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى'],
+      version: 1,
+    })),
     dropdown_lists: [],
     audit_logs: [],
     audit_deletion_security_log: [],
@@ -268,6 +282,25 @@ export function fallbackGetBootstrap(requestedBranchId = DEFAULT_BRANCH_ID): Pos
     }
   }
   const cfg = store.system_config.find((c) => c.branchId === branchId) || null;
+  const branchMeta = store.branches.find((b) => b.id === branchId);
+  const resolvedSystemConfig: SystemConfig | null = cfg?.systemConfig
+    ? {
+        ...cfg.systemConfig,
+        branchDepartments:
+          Array.isArray(cfg.systemConfig.branchDepartments) && cfg.systemConfig.branchDepartments.length > 0
+            ? cfg.systemConfig.branchDepartments
+            : cloneDefaultBranchDepartmentsStructure(),
+      }
+    : branchMeta
+    ? {
+        governorateTitle: branchMeta.governorateTitle || 'محافظة الغربية',
+        directorateTitle: branchMeta.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+        administrationTitle: branchMeta.name,
+        englishSubtitle: '',
+        logoBase64: '',
+        branchDepartments: cloneDefaultBranchDepartmentsStructure(),
+      }
+    : null;
   const totalRows =
     store.bakeries.length +
     store.debts.length +
@@ -288,7 +321,7 @@ export function fallbackGetBootstrap(requestedBranchId = DEFAULT_BRANCH_ID): Pos
     dailyTasks: store.daily_tasks.filter((t) => t.branchId === branchId),
     inboxMessages: store.inbox_messages.filter((m) => m.branchId === branchId),
     highDebtAlerts: store.high_debt_alerts.filter((a) => a.branchId === branchId).slice(0, 250),
-    systemConfig: cfg?.systemConfig ? sanitizeSystemConfigForClient(cfg.systemConfig) : null,
+    systemConfig: resolvedSystemConfig ? sanitizeSystemConfigForClient(resolvedSystemConfig) : null,
     columnTitles: cfg?.columnTitles || null,
     activityStatuses: cfg?.activityStatuses || [],
     dropdownLists,

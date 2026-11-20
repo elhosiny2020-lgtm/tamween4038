@@ -714,12 +714,33 @@ export async function getBootstrapFromPostgres(requestedBranchId = DEFAULT_BRANC
       }
     }
 
+    const branchesList = deduplicateSupplyBranches(branchesRes.rows.map(mapDbBranchToApp));
     const cfgRow = cfgRes.rows[0];
     const mappedCfg = cfgRow ? mapDbRowByTable('system_config', cfgRow) : null;
+    const branchMeta = branchesList.find((b) => b.id === branchId);
+    const resolvedSystemConfig: SystemConfig | null = mappedCfg?.systemConfig
+      ? {
+          ...mappedCfg.systemConfig,
+          branchDepartments:
+            Array.isArray(mappedCfg.systemConfig.branchDepartments) &&
+            mappedCfg.systemConfig.branchDepartments.length > 0
+              ? mappedCfg.systemConfig.branchDepartments
+              : cloneDefaultBranchDepartmentsStructure(),
+        }
+      : branchMeta
+      ? sanitizeSystemConfigForClient({
+          governorateTitle: branchMeta.governorateTitle || 'محافظة الغربية',
+          directorateTitle: branchMeta.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
+          administrationTitle: branchMeta.name,
+          englishSubtitle: '',
+          logoBase64: '',
+          branchDepartments: cloneDefaultBranchDepartmentsStructure(),
+        } as SystemConfig)
+      : null;
 
     return {
       branchId,
-      branches: deduplicateSupplyBranches(branchesRes.rows.map(mapDbBranchToApp)),
+      branches: branchesList,
       villages: villagesRes.rows.map((r) => ({
         village: String(r.village),
         localUnits: Array.isArray(r.local_units) ? r.local_units : [],
@@ -730,7 +751,7 @@ export async function getBootstrapFromPostgres(requestedBranchId = DEFAULT_BRANC
       dailyTasks: tasksRes.rows.map(mapDbTaskToApp),
       inboxMessages: inboxRes.rows.map(mapDbInboxToApp),
       highDebtAlerts: alertsRes.rows.map(mapDbAlertToApp),
-      systemConfig: mappedCfg?.systemConfig || null,
+      systemConfig: resolvedSystemConfig,
       columnTitles: mappedCfg?.columnTitles || null,
       activityStatuses: mappedCfg?.activityStatuses || [],
       dropdownLists,
