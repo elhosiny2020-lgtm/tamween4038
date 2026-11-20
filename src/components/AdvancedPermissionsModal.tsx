@@ -26,6 +26,7 @@ import {
   getDefaultRolePermissionsMap,
   UserAction,
 } from '../permissions';
+import { canAssignSuperAdmin } from '../utils/departmentRbac';
 
 interface AdvancedPermissionsModalProps {
   isOpen: boolean;
@@ -181,12 +182,14 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     setRoleTabs([...DEFAULT_ROLE_TABS, ...customList]);
   }, [systemConfig.administrationTitle, systemConfig.rolePermissions, systemConfig.customRoles]);
 
-  // Add New User state
+  const actorCanGrantSuperAdmin = canAssignSuperAdmin(currentUser ?? null);
+
+  // Add New User state (Role is mandatory — starts empty so admin must choose explicitly)
   const [newFullName, setNewFullName] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
-  const [newUserRole, setNewUserRole] = useState<UserRoleType>('inspector');
+  const [newUserRole, setNewUserRole] = useState<UserRoleType | ''>('');
   const [newJobTitle, setNewJobTitle] = useState('مفتش تموين أول');
 
   // Inline Edit User state
@@ -310,12 +313,20 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
       setErrorNotice('يرجى إدخال الاسم بالكامل واسم المستخدم (اليوزر) وكلمة المرور (الباسورد)');
       return;
     }
+    if (!newUserRole) {
+      setErrorNotice('اختيار الدور الوظيفي إجباري قبل إضافة المستخدم الجديد.');
+      return;
+    }
+    if (newUserRole === 'super_admin' && !actorCanGrantSuperAdmin) {
+      setErrorNotice('لا يُمنح دور Super Admin تلقائياً؛ يمنحه فقط مدير عام النظام المخوّل.');
+      return;
+    }
     if (users.some((u) => u.username.toLowerCase() === cleanUser.toLowerCase())) {
       setErrorNotice('اسم المستخدم (اليوزر) مسجل بالفعل لمستخدم آخر');
       return;
     }
 
-    const isSuper = newUserRole === 'super_admin' || newUserRole === 'admin';
+    const isSuper = newUserRole === 'super_admin' && actorCanGrantSuperAdmin;
     const createdUser: AppUser = {
       id: `u-${Date.now()}`,
       fullName: cleanName,
@@ -336,6 +347,7 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
     setNewFullName('');
     setNewUsername('');
     setNewPassword('');
+    setNewUserRole('');
     showNotice(`تم إضافة المستخدم الجديد (${cleanName}) - اليوزر: (${cleanUser}) بنجاح!`);
   };
 
@@ -358,12 +370,20 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
       setErrorNotice('الاسم بالكامل واليوزر حقول أساسية لا يمكن تركها فارغة');
       return;
     }
+    if (editUserRole === 'super_admin' && !actorCanGrantSuperAdmin && u.role !== 'super_admin') {
+      setErrorNotice('منح صلاحية Super Admin مقتصر على مدير عام النظام المخوّل فقط.');
+      return;
+    }
+    const nextIsSuper =
+      editUserRole === 'super_admin'
+        ? actorCanGrantSuperAdmin || u.role === 'super_admin'
+        : false;
     const updatedUser: AppUser = {
       ...u,
       fullName: cleanName,
       username: cleanUser,
       role: editUserRole,
-      isSuperAdmin: editUserRole === 'super_admin' ? true : editUserRole === 'admin' ? u.isSuperAdmin : false,
+      isSuperAdmin: nextIsSuper,
       jobTitle: editJobTitle.trim() || u.jobTitle,
       customPermissions:
         rolePermissions[editUserRole] || getDefaultPermissionsForRole(editUserRole),
@@ -587,16 +607,27 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
                     </div>
                     <div>
                       <label className="block text-[11px] font-black text-slate-800 mb-1">
-                        الدور الوظيفي *
+                        الدور الوظيفي (إجباري) *
                       </label>
                       <select
+                        required
                         value={newUserRole}
-                        onChange={(e) => setNewUserRole(e.target.value)}
-                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900"
+                        onChange={(e) => setNewUserRole(e.target.value as UserRoleType | '')}
+                        className={`w-full px-3 py-2 bg-white border-2 rounded-xl text-xs font-black text-slate-900 ${
+                          !newUserRole ? 'border-amber-400 bg-amber-50/40' : 'border-slate-300'
+                        }`}
                       >
+                        <option value="">-- اختر الدور الوظيفي (إجباري) --</option>
                         {roleTabs.map((rt) => (
-                          <option key={rt.role} value={rt.role}>
+                          <option
+                            key={rt.role}
+                            value={rt.role}
+                            disabled={rt.role === 'super_admin' && !actorCanGrantSuperAdmin}
+                          >
                             {rt.shortTitle}
+                            {rt.role === 'super_admin' && !actorCanGrantSuperAdmin
+                              ? ' (مخوّل لـ Super Admin فقط)'
+                              : ''}
                           </option>
                         ))}
                       </select>
@@ -711,11 +742,16 @@ export const AdvancedPermissionsModal: React.FC<AdvancedPermissionsModalProps> =
                             {isEditing ? (
                               <select
                                 value={editUserRole}
+                                required
                                 onChange={(e) => setEditUserRole(e.target.value)}
                                 className="w-full px-2 py-1.5 bg-white border-2 border-amber-500 rounded-lg text-xs font-black"
                               >
                                 {roleTabs.map((rt) => (
-                                  <option key={rt.role} value={rt.role}>
+                                  <option
+                                    key={rt.role}
+                                    value={rt.role}
+                                    disabled={rt.role === 'super_admin' && !actorCanGrantSuperAdmin && u.role !== 'super_admin'}
+                                  >
                                     {rt.shortTitle}
                                   </option>
                                 ))}

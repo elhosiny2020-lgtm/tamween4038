@@ -27,6 +27,7 @@ interface BranchDepartmentsManagerModalProps {
   onClose: () => void;
   branch: SupplyBranch | null;
   initialDepartments?: BranchDepartmentConfigItem[];
+  departmentRecordCounts?: Record<string, number>;
   onSaveDepartments: (
     branchId: string,
     nextDepartments: BranchDepartmentConfigItem[]
@@ -38,6 +39,7 @@ export const BranchDepartmentsManagerModal: React.FC<BranchDepartmentsManagerMod
   onClose,
   branch,
   initialDepartments,
+  departmentRecordCounts,
   onSaveDepartments,
 }) => {
   const [departments, setDepartments] = useState<BranchDepartmentConfigItem[]>(() =>
@@ -339,6 +341,9 @@ export const BranchDepartmentsManagerModal: React.FC<BranchDepartmentsManagerMod
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-sm font-black text-[#0A1628]">{dept.label}</span>
+                            <span className="px-2 py-0.5 rounded-md bg-white text-[#0A1628] border border-[#0A1628]/25 text-[10px] font-black font-mono tabular-nums">
+                              {departmentRecordCounts?.[dept.key] ?? 0} سجل مرتبط
+                            </span>
                             {!dept.visible && (
                               <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black">
                                 مخفي من القائمة
@@ -491,10 +496,20 @@ export const BranchDepartmentsManagerModal: React.FC<BranchDepartmentsManagerMod
                   </div>
 
                   {confirmDeleteDeptId === dept.id && (
-                    <div className="px-4 py-3 bg-rose-50 border-t border-rose-200 flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-black text-rose-900">
-                        هل تريد حذف القسم «{dept.label}» من هذا الفرع؟ (تبقى السجلات المخزنة محفوظة ولا تتأثر الفروع الأخرى)
-                      </span>
+                    <div
+                      data-testid={`dept-delete-warning-${dept.id}`}
+                      className="px-4 py-3 bg-rose-50 border-t border-rose-200 flex flex-wrap items-center justify-between gap-2"
+                    >
+                      <div className="space-y-1 text-xs font-black text-rose-900">
+                        <div>
+                          تأكيد حذف القسم «{dept.label}» من فرع {branch.name}:
+                        </div>
+                        <div className="text-[11px] font-bold text-rose-800">
+                          {(departmentRecordCounts?.[dept.key] ?? 0) > 0
+                            ? `تنبيه بالبيانات المرتبطة: يوجد حالياً (${departmentRecordCounts?.[dept.key] ?? 0}) سجل بيانات مرتبط بهذا القسم داخل هذا الفرع. سيؤدي الحذف إلى إزالة القسم من القائمة فقط مع بقاء البيانات المؤرشفة آمنة دون مساس بالفروع الأخرى.`
+                            : 'لا توجد سجلات بيانات مرتبطة حالياً (0 سجل). يمكنك الحذف بأمان أو استخدام زر «تعطيل» للاحتفاظ بالقسم معطلاً.'}
+                        </div>
+                      </div>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"

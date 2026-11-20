@@ -43,7 +43,10 @@ import {
 } from 'lucide-react';
 import { CloudConnectionStatus } from '../lib/supabase.ts';
 import type { AppUser, BranchDepartmentConfigItem } from '../types';
-import type { SidebarCountsSummary } from '../utils/branchOperations';
+import {
+  ARABIC_MONTH_NAMES,
+  type SidebarCountsSummary,
+} from '../utils/branchOperations';
 import {
   canUserAccessDepartment,
   canUserAccessTab,
@@ -171,7 +174,7 @@ interface SidebarSubItem {
   label: string;
   icon: React.ReactNode;
   badge?: number | string;
-  badgeVariant?: 'info' | 'warning' | 'danger' | 'gold' | 'teal';
+  badgeVariant?: 'info' | 'warning' | 'danger' | 'gold' | 'teal' | 'navyWhite';
 }
 
 interface SidebarGroup {
@@ -180,6 +183,7 @@ interface SidebarGroup {
   subtitle: string;
   accentGradient: string;
   icon: React.ReactNode;
+  headerBadge?: number | string;
   requiresVaultSecret?: boolean;
   items: SidebarSubItem[];
 }
@@ -194,6 +198,9 @@ interface RightSidebarProps {
   pendingTasksCount?: number;
   largeDebtsCount: number;
   sidebarCounts?: SidebarCountsSummary;
+  periodMonth?: number | 'ALL';
+  periodYear?: number | 'ALL';
+  onChangePeriod?: (month: number | 'ALL', year: number | 'ALL') => void;
   branchDepartments?: BranchDepartmentConfigItem[];
   onOpenBranchDepartments?: () => void;
   logoBase64?: string;
@@ -219,6 +226,9 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   pendingTasksCount = 0,
   largeDebtsCount,
   sidebarCounts,
+  periodMonth = 'ALL',
+  periodYear = 'ALL',
+  onChangePeriod,
   branchDepartments,
   onOpenBranchDepartments,
   logoBase64,
@@ -254,6 +264,15 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
     setExpandedGroups((prev) => ({ ...prev, [group.id]: !prev[group.id] }));
   };
 
+  const effectiveBakeriesCount = sidebarCounts?.bakeriesCount ?? bakeriesCount ?? 0;
+  const effectiveCodesCount = sidebarCounts?.codesCount ?? 0;
+  const effectivePhonesCount = sidebarCounts?.phonesCount ?? 0;
+  const effectiveDebtsCount = sidebarCounts?.debtsCount ?? debtsCount ?? 0;
+  const effectiveLargeDebtsCount = sidebarCounts?.largeDebtsCount ?? largeDebtsCount ?? 0;
+  const effectiveCommoditiesBadge =
+    sidebarCounts?.commoditiesBadgeLabel ||
+    `${sidebarCounts?.merchantsCount ?? 0} تاجر`;
+
   const groups: SidebarGroup[] = [
     {
       id: 'group-1',
@@ -261,6 +280,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       subtitle: 'البيانات والحصص والمعادلات',
       accentGradient: 'from-[#0D9488] to-[#0F766E]',
       icon: <Store className="w-4 h-4" />,
+      headerBadge: sidebarCounts?.bakeriesGroupTotal ?? effectiveBakeriesCount,
       items: [
         {
           id: 'user-guide',
@@ -273,8 +293,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           id: 'bakeries-all',
           label: 'سجل بيانات المخابز',
           icon: <Store className="w-3.5 h-3.5" />,
-          badge: bakeriesCount,
-          badgeVariant: 'teal',
+          badge: effectiveBakeriesCount,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'data-add-bakery',
@@ -302,8 +322,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           id: 'settings-alerts',
           label: 'التراخيص والعقود المنتهية',
           icon: <AlertTriangle className="w-3.5 h-3.5" />,
-          badge: alertsCount > 0 ? alertsCount : undefined,
-          badgeVariant: 'warning',
+          badge: alertsCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'alerts-scheduled-audio',
@@ -324,13 +344,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       subtitle: 'المخالفات والسداد والجدولة',
       accentGradient: 'from-[#10B981] to-[#0D9488]',
       icon: <Scale className="w-4 h-4" />,
+      headerBadge: sidebarCounts?.debtsGroupTotal ?? effectiveDebtsCount,
       items: [
         {
           id: 'debts-records',
           label: 'جدول سجل المديونيات',
           icon: <Scale className="w-3.5 h-3.5" />,
-          badge: debtsCount,
-          badgeVariant: 'teal',
+          badge: effectiveDebtsCount,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'debts-add-schedule',
@@ -346,8 +367,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           id: 'debts-installments',
           label: 'الدفعات الأسبوعية (> 20 ألف)',
           icon: <AlertTriangle className="w-3.5 h-3.5" />,
-          badge: largeDebtsCount > 0 ? largeDebtsCount : undefined,
-          badgeVariant: 'danger',
+          badge: effectiveLargeDebtsCount,
+          badgeVariant: 'navyWhite',
         },
       ],
     },
@@ -357,6 +378,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       subtitle: 'المركز الرقابي الموحد والبوتاجاز والوقود',
       accentGradient: 'from-[#0A1931] to-blue-900',
       icon: <Building2 className="w-4 h-4" />,
+      headerBadge: sidebarCounts?.internalTradeGroupTotal ?? 0,
       items: [
         {
           id: 'internal-trade-dashboard',
@@ -369,8 +391,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           id: 'internal-trade-establishments',
           label: '1. قاعدة بيانات المحلات والمنشآت التجارية',
           icon: <Store className="w-3.5 h-3.5" />,
-          badge: sidebarCounts ? sidebarCounts.establishmentsCount : undefined,
-          badgeVariant: 'teal',
+          badge: sidebarCounts?.establishmentsCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'internal-trade-activities',
@@ -386,15 +408,15 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           id: 'internal-trade-campaigns',
           label: '4. الحملات التموينية ومؤشر الأداء ∑',
           icon: <CheckSquare className="w-3.5 h-3.5" />,
-          badge: sidebarCounts ? sidebarCounts.campaignsCount : undefined,
-          badgeVariant: 'info',
+          badge: sidebarCounts?.campaignsCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'internal-trade-violations',
           label: '5-11. المخالفات والمحاضر والتصالحات',
           icon: <Scale className="w-3.5 h-3.5" />,
-          badge: sidebarCounts ? sidebarCounts.violationsCount : undefined,
-          badgeVariant: 'warning',
+          badge: sidebarCounts?.violationsCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'internal-trade-seizures',
@@ -459,36 +481,37 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       subtitle: 'السلع والتجار والحصص والمخازن',
       accentGradient: 'from-[#0D9488] to-cyan-700',
       icon: <ShoppingBasket className="w-4 h-4" />,
+      headerBadge: effectiveCommoditiesBadge,
       items: [
         { id: 'commodities-dashboard', label: 'لوحة التحكم الرئيسية للسلع', icon: <BarChart3 className="w-3.5 h-3.5" /> },
         {
           id: 'commodities-catalog',
           label: 'قاعدة بيانات السلع التموينية',
           icon: <FileText className="w-3.5 h-3.5" />,
-          badge: sidebarCounts ? sidebarCounts.commoditiesCount : undefined,
-          badgeVariant: 'teal',
+          badge: sidebarCounts?.commoditiesCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'commodities-merchants',
           label: 'قاعدة بيانات التجار التموينيين',
           icon: <Store className="w-3.5 h-3.5" />,
-          badge: `${sidebarCounts?.merchantsCount ?? 0} تاجر`,
-          badgeVariant: 'gold',
+          badge: effectiveCommoditiesBadge,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'commodities-quotas',
           label: 'إدارة الحصص التموينية الشهرية',
           icon: <Calendar className="w-3.5 h-3.5" />,
-          badge: sidebarCounts ? sidebarCounts.quotasCount : undefined,
-          badgeVariant: 'info',
+          badge: sidebarCounts?.quotasCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         { id: 'commodities-warehouses', label: 'حركة المخازن والمشتريات', icon: <Database className="w-3.5 h-3.5" /> },
         {
           id: 'commodities-cards',
           label: 'متابعة البطاقات والمستفيدين',
           icon: <Users className="w-3.5 h-3.5" />,
-          badge: sidebarCounts ? sidebarCounts.cardsCount : undefined,
-          badgeVariant: 'teal',
+          badge: sidebarCounts?.cardsCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         { id: 'commodities-disbursements', label: 'سجل عمليات صرف المواطنين', icon: <CheckSquare className="w-3.5 h-3.5" /> },
         { id: 'commodities-inspections', label: 'نظام التنبيهات الذكي والرقابة', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
@@ -502,13 +525,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       subtitle: 'الشون والثلاجات والمطاحن وحصص الدقيق',
       accentGradient: 'from-amber-600 to-orange-700',
       icon: <Wrench className="w-4 h-4" />,
+      headerBadge: sidebarCounts?.grainGroupTotal ?? 0,
       items: [
         { id: 'grain-dashboard', label: 'لوحة تحكم صيانة الحبوب الشاملة', icon: <BarChart3 className="w-3.5 h-3.5" /> },
-        { id: 'grain-shunas', label: '1. قاعدة بيانات الشون وتقييم الأصول', icon: <Building2 className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.shunasCount : 0, badgeVariant: 'gold' },
-        { id: 'grain-wheat-receipts', label: 'دفتر استلام القمح اليومي الرسمي', icon: <Scale className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.wheatReceiptsCount : 0, badgeVariant: 'teal' },
-        { id: 'grain-refrigerators', label: '2. قاعدة بيانات الثلاجات ومخازن التبريد', icon: <Database className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.refrigeratorsCount : 0, badgeVariant: 'info' },
-        { id: 'grain-mills', label: '3. قاعدة بيانات المطاحن والاستخراج', icon: <Calculator className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.millsCount : 0, badgeVariant: 'gold' },
-        { id: 'grain-flour-quotas', label: '4. قاعدة بيانات حصص الدقيق للمخابز', icon: <ShoppingBasket className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.flourQuotasCount : 0, badgeVariant: 'teal' },
+        { id: 'grain-shunas', label: '1. قاعدة بيانات الشون وتقييم الأصول', icon: <Building2 className="w-3.5 h-3.5" />, badge: sidebarCounts?.shunasCount ?? 0, badgeVariant: 'navyWhite' },
+        { id: 'grain-wheat-receipts', label: 'دفتر استلام القمح اليومي الرسمي', icon: <Scale className="w-3.5 h-3.5" />, badge: sidebarCounts?.wheatReceiptsCount ?? 0, badgeVariant: 'navyWhite' },
+        { id: 'grain-refrigerators', label: '2. قاعدة بيانات الثلاجات ومخازن التبريد', icon: <Database className="w-3.5 h-3.5" />, badge: sidebarCounts?.refrigeratorsCount ?? 0, badgeVariant: 'navyWhite' },
+        { id: 'grain-mills', label: '3. قاعدة بيانات المطاحن والاستخراج', icon: <Calculator className="w-3.5 h-3.5" />, badge: sidebarCounts?.millsCount ?? 0, badgeVariant: 'navyWhite' },
+        { id: 'grain-flour-quotas', label: '4. قاعدة بيانات حصص الدقيق للمخابز', icon: <ShoppingBasket className="w-3.5 h-3.5" />, badge: sidebarCounts?.flourQuotasCount ?? 0, badgeVariant: 'navyWhite' },
         { id: 'grain-financials', label: '5. الحسابات المالية الموحدة للقسم', icon: <TrendingUp className="w-3.5 h-3.5" /> },
         { id: 'grain-reports', label: '6. مركز التقارير والطباعة (A4 & Excel)', icon: <Printer className="w-3.5 h-3.5" /> },
         { id: 'grain-assets', label: 'الأصول الهندسية والمعدات', icon: <Building2 className="w-3.5 h-3.5" /> },
@@ -524,11 +548,12 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       subtitle: 'الموظفون والحضور والمرتبات',
       accentGradient: 'from-emerald-600 to-teal-800',
       icon: <Briefcase className="w-4 h-4" />,
+      headerBadge: sidebarCounts?.hrGroupTotal ?? 0,
       items: [
         { id: 'hr-dashboard', label: 'لوحة تحكم الموارد البشرية', icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
-        { id: 'hr-employees', label: 'ملف العاملين والرقم القومي والهاتف', icon: <Users className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.employeesCount : 0, badgeVariant: 'teal' },
-        { id: 'hr-public-service', label: 'قسم موظفو الخدمة العامة', icon: <Award className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.publicServiceCount : 0, badgeVariant: 'teal' },
-        { id: 'hr-external-assistance', label: 'قسم موظفو الاستعانة', icon: <Award className="w-3.5 h-3.5" />, badge: sidebarCounts ? sidebarCounts.externalAssistanceCount : 0, badgeVariant: 'gold' },
+        { id: 'hr-employees', label: 'ملف العاملين والرقم القومي والهاتف', icon: <Users className="w-3.5 h-3.5" />, badge: sidebarCounts?.employeesCount ?? 0, badgeVariant: 'navyWhite' },
+        { id: 'hr-public-service', label: 'قسم موظفو الخدمة العامة', icon: <Award className="w-3.5 h-3.5" />, badge: sidebarCounts?.publicServiceCount ?? 0, badgeVariant: 'navyWhite' },
+        { id: 'hr-external-assistance', label: 'قسم موظفو الاستعانة', icon: <Award className="w-3.5 h-3.5" />, badge: sidebarCounts?.externalAssistanceCount ?? 0, badgeVariant: 'navyWhite' },
         { id: 'hr-attendance', label: 'سجلات الحضور والتأخيرات', icon: <Clock className="w-3.5 h-3.5" /> },
         { id: 'hr-leaves', label: 'الإجازات والأرصدة المستقلة', icon: <Calendar className="w-3.5 h-3.5" /> },
         { id: 'hr-payroll', label: 'مسيرات المرتبات والضرائب والتأمينات', icon: <Scale className="w-3.5 h-3.5" /> },
@@ -546,10 +571,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       items: [
         {
           id: 'branches-manage',
-          label: 'قسم الفروع والإدارات التموينية',
-          icon: <Building2 className="w-3.5 h-3.5 text-[#D4AF37]" />,
-          badge: 'تبديل',
-          badgeVariant: 'gold',
+          label: 'قسم الفروع وتبديل الفروع (حماية سرية)',
+          icon: !isVaultUnlocked ? (
+            <Lock className="w-3.5 h-3.5 text-rose-400" />
+          ) : (
+            <Building2 className="w-3.5 h-3.5 text-[#D4AF37]" />
+          ),
+          badge: !isVaultUnlocked ? 'مغلق 🔒' : 'مفتوح',
+          badgeVariant: !isVaultUnlocked ? 'danger' : 'gold',
         },
         {
           id: 'data-edit-bakery',
@@ -586,6 +615,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
       subtitle: 'الطباعة والصلاحيات والخروج',
       accentGradient: 'from-[#F43F5E] to-rose-700',
       icon: <Printer className="w-4 h-4" />,
+      headerBadge: sidebarCounts?.reportsSecurityGroupTotal ?? (pendingTasksCount + unreadInboxCount),
       items: [
         {
           id: 'reports-center',
@@ -601,15 +631,15 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
           id: 'settings-daily-tasks',
           label: 'المهام اليومية للموظفين',
           icon: <CheckSquare className="w-3.5 h-3.5" />,
-          badge: pendingTasksCount > 0 ? pendingTasksCount : undefined,
-          badgeVariant: 'warning',
+          badge: sidebarCounts?.pendingTasksCount ?? pendingTasksCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'settings-logs',
           label: 'صندوق الوارد والتعليمات',
           icon: <FileText className="w-3.5 h-3.5" />,
-          badge: unreadInboxCount > 0 ? unreadInboxCount : undefined,
-          badgeVariant: 'danger',
+          badge: sidebarCounts?.unreadInboxCount ?? unreadInboxCount ?? 0,
+          badgeVariant: 'navyWhite',
         },
         {
           id: 'settings-logout',
@@ -730,6 +760,8 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
   const getBadgeClasses = (variant?: SidebarSubItem['badgeVariant']) => {
     switch (variant) {
+      case 'navyWhite':
+        return 'bg-white text-[#0A1628] border border-[#0A1628]/30 font-black shadow-2xs';
       case 'danger':
         return 'bg-[#F43F5E] text-white font-black badge-animated-coral animate-pulse';
       case 'warning':
@@ -920,6 +952,57 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
               )}
             </button>
           )}
+          {/* Period (Month/Year) Selector for Live Department Badges */}
+          {!isCollapsed && onChangePeriod && (
+            <div
+              data-testid="sidebar-period-selector"
+              className="mt-2 p-2 rounded-xl bg-[#060E1A] border border-white/15 space-y-1.5"
+            >
+              <div className="flex items-center justify-between text-[10px] font-black text-slate-300">
+                <span className="inline-flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-[#D4AF37]" />
+                  <span>فترة عدادات الأقسام</span>
+                </span>
+                <span className="px-1.5 py-0.5 rounded bg-white text-[#0A1628] font-black text-[9.5px]">
+                  {sidebarCounts?.periodLabelAr || 'كل الفترات'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <select
+                  aria-label="تصفية عدادات الأقسام بالشهر"
+                  value={periodMonth === 'ALL' ? 'ALL' : String(periodMonth)}
+                  onChange={(e) => {
+                    const val = e.target.value === 'ALL' ? 'ALL' : Number(e.target.value);
+                    onChangePeriod(val, periodYear);
+                  }}
+                  className="px-2 py-1 rounded-lg bg-white text-[#0A1628] text-[10.5px] font-black border border-slate-300 cursor-pointer"
+                >
+                  <option value="ALL">كل الشهور</option>
+                  {Object.entries(ARABIC_MONTH_NAMES).map(([mNum, mName]) => (
+                    <option key={mNum} value={mNum}>
+                      {mName}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="تصفية عدادات الأقسام بالسنة"
+                  value={periodYear === 'ALL' ? 'ALL' : String(periodYear)}
+                  onChange={(e) => {
+                    const val = e.target.value === 'ALL' ? 'ALL' : Number(e.target.value);
+                    onChangePeriod(periodMonth, val);
+                  }}
+                  className="px-2 py-1 rounded-lg bg-white text-[#0A1628] text-[10.5px] font-black border border-slate-300 cursor-pointer font-mono tabular-nums"
+                >
+                  <option value="ALL">كل السنوات</option>
+                  {[2024, 2025, 2026, 2027].map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -948,14 +1031,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                   isCollapsed ? 'justify-center px-1.5' : 'justify-between px-2.5'
                 } py-2 text-right transition-colors cursor-pointer hover:bg-white/[0.04]`}
               >
-                <div className="flex items-center gap-2 min-w-0">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
                   <span
                     className={`w-7 h-7 rounded-lg bg-gradient-to-br ${group.accentGradient} flex items-center justify-center text-white shadow-sm shrink-0`}
                   >
                     {group.icon}
                   </span>
                   {!isCollapsed && (
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-[11.5px] font-black text-white truncate flex items-center gap-1">
                         <span className="truncate">{group.title}</span>
                         {group.requiresVaultSecret && !isVaultUnlocked && (
@@ -971,17 +1054,54 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                   )}
                 </div>
                 {!isCollapsed && (
-                  <ChevronDown
-                    className={`w-3.5 h-3.5 text-[#D4AF37] shrink-0 transition-transform duration-200 ${
-                      isExpanded ? 'rotate-180' : ''
-                    }`}
-                  />
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {group.headerBadge !== undefined && (
+                      <span
+                        data-testid={`sidebar-${group.id}-badge`}
+                        className="px-2 py-0.5 rounded-full text-[10px] font-black font-mono tabular-nums bg-white text-[#0A1628] border border-[#0A1628]/25 shadow-2xs max-w-[115px] truncate"
+                        title={String(group.headerBadge)}
+                      >
+                        {group.headerBadge}
+                      </span>
+                    )}
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-[#D4AF37] shrink-0 transition-transform duration-200 ${
+                        isExpanded ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </div>
                 )}
               </button>
 
               {/* Group Sub-Items */}
               {isExpanded && (!group.requiresVaultSecret || isVaultUnlocked) && (
                 <div className="px-2 pb-2 pt-1 space-y-1">
+                  {/* Live Sub-Counters Strip for Bakeries: Bakeries / Codes / Phones (White & Navy) */}
+                  {!isCollapsed && group.id === 'group-1' && (
+                    <div
+                      data-testid="sidebar-bakeries-live-badges"
+                      className="grid grid-cols-3 gap-1 px-1 pb-1.5"
+                    >
+                      <div className="flex flex-col items-center justify-center rounded-lg bg-white text-[#0A1628] border border-[#0A1628]/25 py-1 px-1 shadow-2xs">
+                        <span className="text-[9px] font-black text-[#0A1628]/75">المخابز</span>
+                        <span className="text-[11px] font-black font-mono tabular-nums">
+                          {effectiveBakeriesCount}
+                        </span>
+                      </div>
+                      <div className="flex flex-col items-center justify-center rounded-lg bg-white text-[#0A1628] border border-[#0A1628]/25 py-1 px-1 shadow-2xs">
+                        <span className="text-[9px] font-black text-[#0A1628]/75">الأكواد</span>
+                        <span className="text-[11px] font-black font-mono tabular-nums">
+                          {effectiveCodesCount}
+                        </span>
+                      </div>
+                      <div className="flex flex-col items-center justify-center rounded-lg bg-white text-[#0A1628] border border-[#0A1628]/25 py-1 px-1 shadow-2xs">
+                        <span className="text-[9px] font-black text-[#0A1628]/75">التليفونات</span>
+                        <span className="text-[11px] font-black font-mono tabular-nums">
+                          {effectivePhonesCount}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   {group.items.map((item) => {
                     const isActive = activeNavId === item.id;
                     return (

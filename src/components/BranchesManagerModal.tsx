@@ -60,6 +60,9 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
   const [newDescription, setNewDescription] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmResetId, setConfirmResetId] = useState<string | null>(null);
+  const [confirmResetStep, setConfirmResetStep] = useState<1 | 2>(1);
+  const [confirmResetChecked, setConfirmResetChecked] = useState<boolean>(false);
+  const [confirmResetPhrase, setConfirmResetPhrase] = useState<string>('');
   const [isResettingId, setIsResettingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -102,14 +105,34 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
     Boolean(findRegisteredPresetBranch(p))
   ).length;
 
+  const handleProtectedSelectBranch = (targetBranchId: string, targetBranchName: string) => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    if (targetBranchId === activeBranchId) {
+      onClose();
+      return;
+    }
+    if (!isVaultUnlocked) {
+      onRequireVaultUnlock(
+        `تبديل الفرع إلى (${targetBranchName}) — محمي بصلاحيات الحماية السرية`,
+        () => {
+          onSelectBranch(targetBranchId);
+          onClose();
+        }
+      );
+      return;
+    }
+    onSelectBranch(targetBranchId);
+    onClose();
+  };
+
   const handleQuickAddPresetBranch = (preset: SupplyBranch) => {
     setErrorMsg(null);
     setSuccessMsg(null);
 
     const existing = findRegisteredPresetBranch(preset);
     if (existing) {
-      onSelectBranch(existing.id);
-      onClose();
+      handleProtectedSelectBranch(existing.id, existing.name);
       return;
     }
 
@@ -321,10 +344,13 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
       setEditingBranchId(null);
       setConfirmDeleteId(null);
       setConfirmResetId(branch.id);
+      setConfirmResetStep(1);
+      setConfirmResetChecked(false);
+      setConfirmResetPhrase('');
     };
 
     if (!isVaultUnlocked) {
-      onRequireVaultUnlock(`استعادة ضبط المصنع للبيانات داخل (${branch.name})`, askConfirm);
+      onRequireVaultUnlock(`تصفير جميع بيانات فرع (${branch.name})`, askConfirm);
       return;
     }
 
@@ -333,6 +359,10 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
 
   const handleConfirmFactoryReset = (branch: SupplyBranch) => {
     if (!canManageBranches || !onFactoryResetBranch) return;
+    if (confirmResetStep !== 2 || !confirmResetChecked || confirmResetPhrase.trim() !== 'تصفير') {
+      setErrorMsg('يلزم إتمام التأكيد المزدوج (تفعيل مربع الإقرار وكتابة كلمة «تصفير») قبل تنفيذ تصفير بيانات الفرع.');
+      return;
+    }
 
     const executeReset = async () => {
       setIsResettingId(branch.id);
@@ -341,12 +371,15 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
       try {
         const result = await onFactoryResetBranch(branch.id);
         setConfirmResetId(null);
+        setConfirmResetStep(1);
+        setConfirmResetChecked(false);
+        setConfirmResetPhrase('');
         if (result && result.success === false) {
-          setErrorMsg(result.error || 'تعذر تنفيذ استعادة ضبط المصنع لبيانات هذه الإدارة.');
+          setErrorMsg(result.error || 'تعذر تنفيذ تصفير بيانات هذه الإدارة.');
         } else {
           setSuccessMsg(
             result?.message ||
-              `تم تنفيذ استعادة ضبط المصنع للبيانات داخل "${branch.name}" فقط (تصفير المخابز والمديونيات وكافة السجلات مع الإبقاء على كامل الأقسام والإدارات الأخرى دون تأثر).`
+              `تم تنفيذ تصفير جميع البيانات التشغيلية داخل "${branch.name}" فقط (المخابز والمديونيات وكافة السجلات = 0) مع الإبقاء التام على الأقسام والمستخدمين والإعدادات وباقي الإدارات دون تأثر.`
           );
         }
       } catch (err: any) {
@@ -357,7 +390,7 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
     };
 
     if (!isVaultUnlocked) {
-      onRequireVaultUnlock(`تأكيد استعادة ضبط المصنع للبيانات داخل (${branch.name})`, () => {
+      onRequireVaultUnlock(`تأكيد تصفير جميع بيانات (${branch.name})`, () => {
         void executeReset();
       });
       return;
@@ -515,9 +548,11 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
               </h3>
               <span className="text-[11px] font-bold text-[#0D9488] bg-[#0D9488]/10 px-3 py-1 rounded-xl border border-[#0D9488]/20 flex items-center gap-1.5">
                 <Lock className="w-3.5 h-3.5 text-[#D4AF37]" />
-                {canManageBranches
-                  ? 'صلاحية مدير النظام: الإضافة والتعديل والحذف وتصفير البيانات مفعلة'
-                  : 'وضع العرض والتنقل فقط — الإدارة مقصورة على مدير النظام'}
+                {isVaultUnlocked
+                  ? canManageBranches
+                    ? 'الحماية السرية مفتوحة: تبديل وإدارة وتصفير الفروع مفعّل'
+                    : 'الحماية السرية مفتوحة: تبديل الفروع مفعّل (الإدارة لمدير النظام فقط)'
+                  : 'قسم تبديل الفروع مغلق داخل صلاحيات الحماية السرية — يلزم فك القفل للتبديل أو الإدارة'}
               </span>
             </div>
 
@@ -541,12 +576,9 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                         <button
                           type="button"
                           data-testid={`branch-name-trigger-${branch.id}`}
-                          onClick={() => {
-                            onSelectBranch(branch.id);
-                            onClose();
-                          }}
+                          onClick={() => handleProtectedSelectBranch(branch.id, branch.name)}
                           className="flex items-center gap-2.5 text-right flex-1 min-w-0 group cursor-pointer focus:outline-none"
-                          title={`الضغط للدخول الفوري إلى واجهة ${branch.name} بجميع القوائم والأقسام`}
+                          title={`الدخول إلى واجهة ${branch.name} (محمي بصلاحيات الحماية السرية)`}
                         >
                           <div
                             className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black transition-colors ${
@@ -620,10 +652,10 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                               }}
                               data-testid={`factory-reset-branch-btn-${branch.id}`}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-black transition-colors cursor-pointer whitespace-nowrap"
-                              title={`استعادة ضبط المصنع للبيانات فقط داخل ${branch.name} دون التأثير على باقي الإدارات أو هيكل الأقسام`}
+                              title={`تصفير جميع بيانات فرع ${branch.name} بتأكيد مزدوج مع بقاء الأقسام والمستخدمين والإعدادات`}
                             >
                               <RotateCcw className="w-3 h-3" />
-                              <span>ضبط مصنع للبيانات</span>
+                              <span>تصفير جميع بيانات الفرع</span>
                             </button>
                           )}
 
@@ -663,32 +695,100 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                       </div>
 
                       {confirmResetId === branch.id && (
-                        <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
-                          <p className="text-xs font-black text-amber-950 flex items-start gap-1.5 leading-relaxed">
-                            <RotateCcw className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                            <span>
-                              تأكيد استعادة ضبط المصنع للبيانات داخل «{branch.name}» فقط؟ سيتم مسح بيانات المخابز والمديونيات والتجار وكافة السجلات داخل هذه الإدارة فقط مع الإبقاء على كامل الأقسام وباقي الإدارات دون أي مساس.
-                            </span>
-                          </p>
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setConfirmResetId(null)}
-                              disabled={isResettingId === branch.id}
-                              className="px-3 py-1 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 cursor-pointer"
-                            >
-                              إلغاء
-                            </button>
-                            <button
-                              type="button"
-                              data-testid={`confirm-factory-reset-branch-btn-${branch.id}`}
-                              onClick={() => handleConfirmFactoryReset(branch)}
-                              disabled={isResettingId === branch.id}
-                              className="px-3.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-xs cursor-pointer disabled:opacity-60"
-                            >
-                              {isResettingId === branch.id ? 'جاري التصفير...' : 'تأكيد تصفير بيانات الإدارة فقط'}
-                            </button>
+                        <div
+                          data-testid={`double-confirm-reset-panel-${branch.id}`}
+                          className="mt-3 p-3.5 rounded-xl bg-rose-50 border-2 border-rose-300 space-y-2.5"
+                        >
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
+                            <div className="text-xs font-black text-rose-950 leading-relaxed space-y-1">
+                              <div>
+                                تحذير صارم ({confirmResetStep === 1 ? 'التأكيد الأول 1/2' : 'التأكيد المزدوج النهائي 2/2'}): تصفير جميع البيانات التشغيلية لفرع «{branch.name}»
+                              </div>
+                              <p className="text-[11px] font-bold text-rose-800">
+                                سيتم مسح كافة البيانات التشغيلية داخل هذا الفرع فقط (المخابز، المديونيات، التجار، الأكواد، التليفونات، الأرصدة، الشون، الموظفين) مع الإبقاء التام على هيكل الأقسام والمستخدمين والإعدادات، ولا يتأثر أي فرع آخر.
+                              </p>
+                            </div>
                           </div>
+
+                          {confirmResetStep === 1 ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConfirmResetId(null);
+                                  setConfirmResetStep(1);
+                                }}
+                                className="px-3 py-1 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 cursor-pointer"
+                              >
+                                إلغاء
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`proceed-double-reset-btn-${branch.id}`}
+                                onClick={() => setConfirmResetStep(2)}
+                                className="px-3.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-xs cursor-pointer"
+                              >
+                                متابعة للتأكيد المزدوج (الخطوة 2)
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2 pt-1 border-t border-rose-200">
+                              <label className="flex items-center gap-2 text-[11px] font-black text-rose-900 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  data-testid={`double-reset-checkbox-${branch.id}`}
+                                  checked={confirmResetChecked}
+                                  onChange={(e) => setConfirmResetChecked(e.target.checked)}
+                                  className="rounded border-rose-400 text-rose-600 focus:ring-rose-500"
+                                />
+                                <span>أؤكد مسؤوليتي عن تصفير جميع البيانات التشغيلية لفرع «{branch.name}» نهائياً</span>
+                              </label>
+                              <div>
+                                <label className="block text-[11px] font-black text-rose-900 mb-1">
+                                  اكتب كلمة <span className="px-1.5 py-0.5 rounded bg-white border border-rose-300 text-rose-700">تصفير</span> للتأكيد النهائي:
+                                </label>
+                                <input
+                                  type="text"
+                                  data-testid={`double-reset-phrase-input-${branch.id}`}
+                                  value={confirmResetPhrase}
+                                  onChange={(e) => setConfirmResetPhrase(e.target.value)}
+                                  placeholder="اكتب كلمة: تصفير"
+                                  className="w-full px-3 py-1.5 rounded-lg border border-rose-300 bg-white text-xs font-black text-rose-950 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                                />
+                              </div>
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setConfirmResetId(null);
+                                    setConfirmResetStep(1);
+                                    setConfirmResetChecked(false);
+                                    setConfirmResetPhrase('');
+                                  }}
+                                  disabled={isResettingId === branch.id}
+                                  className="px-3 py-1 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 cursor-pointer"
+                                >
+                                  إلغاء
+                                </button>
+                                <button
+                                  type="button"
+                                  data-testid={`confirm-factory-reset-branch-btn-${branch.id}`}
+                                  onClick={() => handleConfirmFactoryReset(branch)}
+                                  disabled={
+                                    isResettingId === branch.id ||
+                                    !confirmResetChecked ||
+                                    confirmResetPhrase.trim() !== 'تصفير'
+                                  }
+                                  className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-xs cursor-pointer disabled:opacity-50"
+                                >
+                                  {isResettingId === branch.id
+                                    ? 'جاري التصفير الشامل...'
+                                    : 'تأكيد نهائي — تصفير جميع بيانات الفرع'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -798,14 +898,19 @@ export const BranchesManagerModal: React.FC<BranchesManagerModalProps> = ({
                         <button
                           type="button"
                           data-testid={`switch-to-branch-${branch.id}`}
-                          onClick={() => {
-                            onSelectBranch(branch.id);
-                            onClose();
-                          }}
+                          onClick={() => handleProtectedSelectBranch(branch.id, branch.name)}
                           className="px-3.5 py-1.5 rounded-xl bg-[#0A1628] hover:bg-[#0D9488] text-white text-xs font-black shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
                         >
-                          <ArrowLeftRight className="w-3.5 h-3.5 text-[#D4AF37]" />
-                          الدخول على واجهة هذه الإدارة
+                          {isVaultUnlocked ? (
+                            <ArrowLeftRight className="w-3.5 h-3.5 text-[#D4AF37]" />
+                          ) : (
+                            <Lock className="w-3.5 h-3.5 text-amber-400" />
+                          )}
+                          <span>
+                            {isVaultUnlocked
+                              ? 'الدخول على واجهة هذه الإدارة'
+                              : 'فتح الحماية للتبديل لهذه الإدارة'}
+                          </span>
                         </button>
                       )}
                     </div>

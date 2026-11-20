@@ -69,22 +69,11 @@ export function resolveModuleCrudPermissions(
       isReadOnly: false,
     };
   }
-  if (currentUser.role === 'viewer') {
-    return {
-      canView: true,
-      canAdd: false,
-      canEdit: false,
-      canDelete: false,
-      canPrint: true,
-      canExport: true,
-      isReadOnly: true,
-    };
-  }
   if (department) {
     const canView = hasDepartmentPermission(currentUser, department, 'view');
     const canAdd = hasDepartmentPermission(currentUser, department, 'insert');
     const canEdit = hasDepartmentPermission(currentUser, department, 'update');
-    const canDelete = hasDepartmentPermission(currentUser, department, 'delete') || canEdit;
+    const canDelete = hasDepartmentPermission(currentUser, department, 'delete');
     const canPrint = hasDepartmentPermission(currentUser, department, 'print');
     const canExport = hasDepartmentPermission(currentUser, department, 'export');
     return {
@@ -95,6 +84,17 @@ export function resolveModuleCrudPermissions(
       canPrint,
       canExport,
       isReadOnly: !canAdd && !canEdit && !canDelete,
+    };
+  }
+  if (currentUser.role === 'viewer' || currentUser.role === 'reader') {
+    return {
+      canView: true,
+      canAdd: false,
+      canEdit: false,
+      canDelete: false,
+      canPrint: currentUser.role === 'viewer',
+      canExport: currentUser.role === 'viewer',
+      isReadOnly: true,
     };
   }
   const custom = currentUser.customPermissions;

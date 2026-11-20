@@ -140,7 +140,9 @@ import {
 } from './utils/bakeryAlertsAndHistory';
 import {
   computeBranchSidebarCounts,
+  computeDepartmentRecordCounts,
   resolveCustomTableTitle,
+  SidebarCountsSummary,
   wipeSectionFromModulesBundle,
   wipeVillageFromModulesBundle,
 } from './utils/branchOperations';
@@ -547,6 +549,12 @@ export default function App() {
   const [bakeryHistoryInitialOwner, setBakeryHistoryInitialOwner] = useState<string>('');
   const [isActionLocked, setIsActionLocked] = useState<boolean>(false);
   const [isVaultUnlocked, setIsVaultUnlocked] = useState<boolean>(false);
+  const [sidebarPeriodMonth, setSidebarPeriodMonth] = useState<number | 'ALL'>('ALL');
+  const [sidebarPeriodYear, setSidebarPeriodYear] = useState<number | 'ALL'>(2026);
+  const [serverSidebarCounts, setServerSidebarCounts] = useState<{
+    key: string;
+    counts: SidebarCountsSummary;
+  } | null>(null);
   const [vaultGateModal, setVaultGateModal] = useState<{
     isOpen: boolean;
     section: 'backup' | 'branches' | 'both';
@@ -2965,11 +2973,56 @@ export default function App() {
     []
   );
 
+  const activeCountsBranchId = appState?.activeBranchId || DEFAULT_BRANCH_ID;
+  const activeCountsKey = `${activeCountsBranchId}|${sidebarPeriodMonth}|${sidebarPeriodYear}`;
+
+  useEffect(() => {
+    if (!appState?.currentUser) return;
+    const isHttpOrigin =
+      typeof window !== 'undefined' &&
+      (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+    if (!isHttpOrigin || navigator.onLine === false) return;
+    let cancelled = false;
+    const params = new URLSearchParams({
+      branchId: activeCountsBranchId,
+      month: String(sidebarPeriodMonth),
+      year: String(sidebarPeriodYear),
+    });
+    fetch(`/api/db/counts?${params.toString()}`, {
+      credentials: 'same-origin',
+      headers: getSecurityShieldHeaders(false),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (!cancelled && json?.success && json.counts) {
+          setServerSidebarCounts({
+            key: activeCountsKey,
+            counts: json.counts as SidebarCountsSummary,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    appState?.currentUser,
+    activeCountsBranchId,
+    activeCountsKey,
+    sidebarPeriodMonth,
+    sidebarPeriodYear,
+    appState?.bakeries?.length,
+    appState?.debts?.length,
+    appState?.dailyTasks?.length,
+    appState?.inboxMessages?.length,
+    modulesBundle,
+  ]);
+
   const sidebarCounts = useMemo(() => {
     const msgs = appState?.inboxMessages || INITIAL_INBOX_MESSAGES;
     const uname = appState?.currentUser?.username || 'admin';
     const unreadCount = msgs.filter((m) => !m.readBy || !m.readBy.includes(uname)).length;
-    return computeBranchSidebarCounts({
+    const localCounts = computeBranchSidebarCounts({
       bakeries: appState?.bakeries || [],
       debts: appState?.debts || [],
       alertsCount: alertsList.length,
@@ -2977,7 +3030,20 @@ export default function App() {
       unreadInboxCount: unreadCount,
       pendingTasksCount: (appState?.dailyTasks || []).filter((t) => t.status !== 'completed').length,
       modulesBundle,
+      periodMonth: sidebarPeriodMonth,
+      periodYear: sidebarPeriodYear,
     });
+    if (serverSidebarCounts && serverSidebarCounts.key === activeCountsKey) {
+      return {
+        ...serverSidebarCounts.counts,
+        alertsCount: localCounts.alertsCount,
+        largeDebtsCount: localCounts.largeDebtsCount,
+        unreadInboxCount: localCounts.unreadInboxCount,
+        pendingTasksCount: localCounts.pendingTasksCount,
+        reportsSecurityGroupTotal: localCounts.reportsSecurityGroupTotal,
+      };
+    }
+    return localCounts;
   }, [
     appState?.inboxMessages,
     appState?.currentUser?.username,
@@ -2987,6 +3053,10 @@ export default function App() {
     alertsList.length,
     largeDebtsList.length,
     modulesBundle,
+    sidebarPeriodMonth,
+    sidebarPeriodYear,
+    serverSidebarCounts,
+    activeCountsKey,
   ]);
 
   if (!appState) {
@@ -3665,8 +3735,15 @@ export default function App() {
     nextDepartments: BranchDepartmentConfigItem[]
   ): Promise<{ success?: boolean; error?: string }> => {
     const current = latestAppStateRef.current;
-    if (!current || !isSuperAdmin(current.currentUser)) {
-      return { success: false, error: 'صلاحية مدير النظام مطلوبة لتعديل أقسام الفرع.' };
+    if (!current) {
+      return { success: false, error: 'تعذر قراءة حالة المنظومة الحالية.' };
+    }
+    const canManageDepts =
+      Boolean(current.currentUser) &&
+      (isSuperAdmin(current.currentUser) ||
+        hasPermission(current.currentUser, 'MANAGE_DEPARTMENTS', current.systemConfig));
+    if (!canManageDepts) {
+      return { success: false, error: 'صلاحية إدارة الأقسام أو مدير النظام مطلوبة لتعديل أقسام الفرع.' };
     }
     let savedDepartments = nextDepartments;
     const isHttpOrigin =
@@ -3747,7 +3824,12 @@ export default function App() {
     villageName?: string
   ) => {
     const current = latestAppStateRef.current;
-    if (!current || !isSuperAdmin(current.currentUser)) return;
+    if (!current) return;
+    const canResetSection =
+      Boolean(current.currentUser) &&
+      (isSuperAdmin(current.currentUser) ||
+        hasPermission(current.currentUser, 'FACTORY_RESET_SECTION', current.systemConfig));
+    if (!canResetSection) return;
     const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
     const actor = current.currentUser?.fullName || current.currentUser?.username || 'admin';
     const isHttpOrigin =
@@ -4819,13 +4901,13 @@ export default function App() {
                   setSaveToast({
                     id: Date.now(),
                     message:
-                      'تم قفل الحماية السرية بنجاح: تعديل/إضافة/حذف الفروع وقسم الحفظ والنسخ مقفلان الآن، والتنقل بين الفروع متاح',
+                      'تم قفل الحماية السرية بنجاح: تبديل وإضافة وتعديل وحذف الفروع وقسم الحفظ والنسخ مقفلة الآن بكلمة المرور السرية',
                     timestamp: getArabicTimestamp(),
                     variant: 'success',
                   });
                 }}
                 className="px-2.5 py-1 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white transition cursor-pointer flex items-center gap-1 shadow-xs"
-                title="قفل فوري للحماية السرية (يقفل قسم الحفظ والنسخ وإضافة/تعديل/حذف الفروع)"
+                title="قفل فوري للحماية السرية (يقفل قسم الحفظ والنسخ وتبديل/إدارة الفروع)"
               >
                 <Lock className="w-3 h-3" />
                 <span>اقفل</span>
@@ -5000,6 +5082,12 @@ export default function App() {
           scheduledAlertsCount={alertsList.length + largeDebtsList.length}
           currentUser={appState.currentUser}
           sidebarCounts={sidebarCounts}
+          periodMonth={sidebarPeriodMonth}
+          periodYear={sidebarPeriodYear}
+          onChangePeriod={(nextMonth, nextYear) => {
+            setSidebarPeriodMonth(nextMonth);
+            setSidebarPeriodYear(nextYear);
+          }}
           branchDepartments={appState.systemConfig?.branchDepartments}
           onOpenBranchDepartments={() => {
             const activeBranchObj =
@@ -7152,30 +7240,47 @@ export default function App() {
                                       <span>
                                         إجمالي الوحدة المحلية ({uGroup.localUnit}) — قرية {uGroup.village}
                                       </span>
-                                      <button
-                                        type="button"
-                                        data-testid="quick-jump-unit-btn"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          const targetEl = document.getElementById(unitAnchorId);
-                                          if (targetEl) {
-                                            targetEl.scrollIntoView({
-                                              behavior: 'smooth',
-                                              block: 'center',
-                                            });
-                                            setHighlightedUnitAnchorId(unitAnchorId);
-                                            setTimeout(() => {
-                                              setHighlightedUnitAnchorId((curr) =>
-                                                curr === unitAnchorId ? null : curr
-                                              );
-                                            }, 1800);
-                                          }
-                                        }}
-                                        className="px-2 py-0.5 rounded-lg bg-[#0F2342] hover:bg-[#1E3A8A] text-amber-300 text-[10px] font-black inline-flex items-center gap-1 shadow-xs transition cursor-pointer no-print"
-                                        title={`انتقال سريع لأول مخبز تابع للوحدة المحلية (${uGroup.localUnit})`}
-                                      >
-                                        <span>القفز للمخابز ↑</span>
-                                      </button>
+                                      <div className="flex flex-wrap items-center gap-1.5 no-print">
+                                        <button
+                                          type="button"
+                                          data-testid="quick-jump-unit-btn"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const targetEl = document.getElementById(unitAnchorId);
+                                            if (targetEl) {
+                                              targetEl.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'center',
+                                              });
+                                              setHighlightedUnitAnchorId(unitAnchorId);
+                                              setTimeout(() => {
+                                                setHighlightedUnitAnchorId((curr) =>
+                                                  curr === unitAnchorId ? null : curr
+                                                );
+                                              }, 1800);
+                                            }
+                                          }}
+                                          className="px-2 py-0.5 rounded-lg bg-[#0F2342] hover:bg-[#1E3A8A] text-amber-300 text-[10px] font-black inline-flex items-center gap-1 shadow-xs transition cursor-pointer"
+                                          title={`انتقال سريع لأول مخبز تابع للوحدة المحلية (${uGroup.localUnit})`}
+                                        >
+                                          <span>القفز للمخابز ↑</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          data-testid="filter-local-unit-bakeries-btn"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedUnit(uGroup.localUnit);
+                                            setSelectedVillage('ALL');
+                                            setCurrentPage(1);
+                                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                                          }}
+                                          className="px-2 py-0.5 rounded-lg bg-white hover:bg-sky-50 text-[#0F2342] border border-sky-500 text-[10px] font-black inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                                          title={`تصفية الجدول لعرض مخابز الوحدة المحلية (${uGroup.localUnit}) فقط`}
+                                        >
+                                          <span>مخابز الوحدة ({uGroup.bakeryCount})</span>
+                                        </button>
+                                      </div>
                                     </div>
                                   </td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged text-[#1E3A8A]">
@@ -9127,7 +9232,9 @@ export default function App() {
           });
         }}
         onSelectBranch={(branchId) => {
-          handleSwitchBranch(branchId, cleanBranchesList);
+          requireVaultAccess('branches', 'تبديل الفرع / الإدارة التموينية', () => {
+            handleSwitchBranch(branchId, cleanBranchesList);
+          });
         }}
         onCreateBranch={async (name, directorate, governorate, description) => {
           if (!isSuperAdmin(appState.currentUser)) return;
@@ -9162,13 +9269,45 @@ export default function App() {
           });
         }}
         onFactoryResetBranch={async (targetBranchId) => {
-          if (!isSuperAdmin(appState.currentUser)) {
-            return { success: false, error: 'صلاحية مدير النظام مطلوبة لتصفير بيانات الإدارة.' };
+          const canResetBranch =
+            isSuperAdmin(appState.currentUser) ||
+            hasPermission(appState.currentUser, 'FACTORY_RESET_BRANCH', appState.systemConfig);
+          if (!canResetBranch) {
+            return { success: false, error: 'صلاحية تصفير بيانات الفرع أو مدير النظام مطلوبة.' };
           }
           const targetBranch = cleanBranchesList.find((b) => b.id === targetBranchId);
           const targetName = targetBranch?.name || 'الإدارة التموينية';
           const isCurrentActive = targetBranchId === (appState.activeBranchId || DEFAULT_BRANCH_ID);
-          const res = await clearSupabaseDatabaseData(targetBranchId);
+          const isHttpOrigin =
+            typeof window !== 'undefined' &&
+            (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+          if (isHttpOrigin && navigator.onLine !== false) {
+            try {
+              const resp = await fetch(
+                `/api/branches/${encodeURIComponent(targetBranchId)}/reset-branch`,
+                {
+                  method: 'POST',
+                  credentials: 'same-origin',
+                  headers: getSecurityShieldHeaders(true),
+                  body: JSON.stringify({
+                    confirmReset: true,
+                    confirmDouble: true,
+                  }),
+                }
+              );
+              const json = await resp.json().catch(() => null);
+              if (!resp.ok || json?.success === false) {
+                return {
+                  success: false,
+                  error: json?.error || 'تعذر تنفيذ تصفير بيانات الفرع على الخادم.',
+                };
+              }
+            } catch {
+              await clearSupabaseDatabaseData(targetBranchId);
+            }
+          } else {
+            await clearSupabaseDatabaseData(targetBranchId);
+          }
           await factoryResetBranch(targetBranchId);
           const emptyMod = await resetBranchModulesBundleForBranch(
             targetBranchId,
@@ -9195,13 +9334,13 @@ export default function App() {
           setSaveTimestamp(nowAr);
           setSaveToast({
             id: Date.now(),
-            message: `تمت استعادة ضبط المصنع للبيانات داخل «${targetName}» فقط بنجاح`,
+            message: `تمت استعادة ضبط المصنع وتصفير جميع بيانات «${targetName}» فقط بنجاح مع بقاء الأقسام والمستخدمين والإعدادات`,
             timestamp: nowAr,
             variant: 'success',
           });
           return {
             success: true,
-            message: `تم تنفيذ استعادة ضبط المصنع للبيانات داخل «${targetName}» فقط (المخابز = 0، المديونيات = 0، كافة بيانات الأقسام = 0) دون التأثير على الإدارات الأخرى.`,
+            message: `تم تنفيذ تصفير جميع البيانات التشغيلية داخل «${targetName}» فقط (المخابز = 0، المديونيات = 0، كافة الأقسام = 0) مع بقاء الأقسام والمستخدمين والإعدادات دون التأثير على أي فرع آخر.`,
           };
         }}
         onRenameBranch={async (branchId, name, directorate, governorate, description) => {
@@ -9297,6 +9436,11 @@ export default function App() {
               ? appState.systemConfig?.branchDepartments
               : readBranchPartitionFromLocal(branchDepartmentsTarget.id)?.systemConfig
                   ?.branchDepartments
+          }
+          departmentRecordCounts={
+            branchDepartmentsTarget.id === (appState.activeBranchId || DEFAULT_BRANCH_ID)
+              ? computeDepartmentRecordCounts(sidebarCounts)
+              : undefined
           }
           onSaveDepartments={handleSaveBranchDepartments}
         />

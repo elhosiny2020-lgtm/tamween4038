@@ -16,8 +16,33 @@ export type ResettableSectionKey =
   | 'hr'
   | 'village';
 
+export const ARABIC_MONTH_NAMES: Record<number, string> = {
+  1: 'يناير',
+  2: 'فبراير',
+  3: 'مارس',
+  4: 'أبريل',
+  5: 'مايو',
+  6: 'يونيو',
+  7: 'يوليو',
+  8: 'أغسطس',
+  9: 'سبتمبر',
+  10: 'أكتوبر',
+  11: 'نوفمبر',
+  12: 'ديسمبر',
+};
+
+export function formatArabicMonthYear(month: number | 'ALL' | null | undefined, year: number | 'ALL' | null | undefined): string {
+  if (!month || month === 'ALL') {
+    return year && year !== 'ALL' ? `عام ${year}` : 'كل الفترات';
+  }
+  const mName = ARABIC_MONTH_NAMES[Number(month)] || `شهر ${month}`;
+  return year && year !== 'ALL' ? `${mName} ${year}` : mName;
+}
+
 export interface SidebarCountsSummary {
   bakeriesCount: number;
+  codesCount: number;
+  phonesCount: number;
   debtsCount: number;
   alertsCount: number;
   largeDebtsCount: number;
@@ -38,6 +63,19 @@ export interface SidebarCountsSummary {
   employeesCount: number;
   publicServiceCount: number;
   externalAssistanceCount: number;
+  // إجماليات الأقسام الرئيسية بدون تكرار (Deduplicated Parent Totals)
+  bakeriesGroupTotal: number;
+  debtsGroupTotal: number;
+  internalTradeGroupTotal: number;
+  commoditiesGroupTotal: number;
+  grainGroupTotal: number;
+  hrGroupTotal: number;
+  reportsSecurityGroupTotal: number;
+  // فترة العرض (الشهر / السنة)
+  periodMonth: number | 'ALL';
+  periodYear: number | 'ALL';
+  periodLabelAr: string;
+  commoditiesBadgeLabel: string;
 }
 
 export interface UniversalColumnDescriptor {
@@ -441,6 +479,54 @@ export function applyBranchDepartmentMutation(
   }
 }
 
+function isActiveNonDeletedRecord(rec: any): boolean {
+  if (!rec || typeof rec !== 'object') return false;
+  if (
+    rec.isDeleted === true ||
+    rec.deleted === true ||
+    rec.isActive === false ||
+    Boolean(rec.deletedAt) ||
+    Boolean(rec.deleted_at)
+  ) {
+    return false;
+  }
+  const statusVal = String(rec.activityStatus || rec.status || '').trim();
+  if (
+    statusVal === 'محذوف' ||
+    statusVal === 'ملغى نهائياً' ||
+    statusVal === 'غير نشط' ||
+    statusVal === 'موقوف نهائياً'
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function matchesPeriodFilter(
+  rawDate: string | undefined | null,
+  periodMonth: number | 'ALL',
+  periodYear: number | 'ALL'
+): boolean {
+  if (periodMonth === 'ALL' && periodYear === 'ALL') return true;
+  const cleaned = String(rawDate || '').trim();
+  if (!cleaned) return true; // Records without an explicit date remain visible in period totals unless clearly outside
+  const isoMatch = cleaned.match(/(\d{4})[-/](\d{1,2})/);
+  const dmyMatch = cleaned.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  let recYear: number | null = null;
+  let recMonth: number | null = null;
+  if (isoMatch) {
+    recYear = Number(isoMatch[1]);
+    recMonth = Number(isoMatch[2]);
+  } else if (dmyMatch) {
+    recMonth = Number(dmyMatch[2]);
+    recYear = Number(dmyMatch[3]);
+  }
+  if (!recYear) return true;
+  if (periodYear !== 'ALL' && recYear !== periodYear) return false;
+  if (periodMonth !== 'ALL' && recMonth && recMonth !== periodMonth) return false;
+  return true;
+}
+
 export function computeBranchSidebarCounts(params: {
   bakeries: Bakery[];
   debts: DebtRecord[];
@@ -449,36 +535,162 @@ export function computeBranchSidebarCounts(params: {
   unreadInboxCount: number;
   pendingTasksCount: number;
   modulesBundle: BranchModulesBundle | null | undefined;
+  periodMonth?: number | 'ALL';
+  periodYear?: number | 'ALL';
 }): SidebarCountsSummary {
-  const { bakeries, debts, alertsCount, largeDebtsCount, unreadInboxCount, pendingTasksCount, modulesBundle } = params;
-  const rc = modulesBundle?.ration;
-  const it = modulesBundle?.internalTrade;
-  const gm = modulesBundle?.grainMaintenance;
-  const hr = modulesBundle?.hr;
-  const employees = hr?.employees || [];
-
-  return {
-    bakeriesCount: bakeries.length,
-    debtsCount: debts.length,
+  const {
+    bakeries,
+    debts,
     alertsCount,
     largeDebtsCount,
     unreadInboxCount,
     pendingTasksCount,
-    merchantsCount: rc?.merchants?.length ?? 0,
-    commoditiesCount: rc?.commodities?.length ?? 0,
-    quotasCount: rc?.requisitions?.length ?? 0,
-    cardsCount: rc?.cards?.length ?? 0,
-    establishmentsCount: it?.establishments?.length ?? 0,
-    campaignsCount: it?.campaigns?.length ?? 0,
-    violationsCount: it?.violations?.length ?? 0,
-    shunasCount: gm?.shunas?.length ?? 0,
-    wheatReceiptsCount: gm?.wheatReceipts?.length ?? 0,
-    refrigeratorsCount: gm?.refrigerators?.length ?? 0,
-    millsCount: gm?.mills?.length ?? 0,
-    flourQuotasCount: gm?.flourQuotaMaster?.length ?? 0,
-    employeesCount: employees.length,
-    publicServiceCount: employees.filter((e) => e.employeeType === 'خدمة عامة').length,
-    externalAssistanceCount: employees.filter((e) => e.employeeType === 'استعانة').length,
+    modulesBundle,
+  } = params;
+  const periodMonth: number | 'ALL' = params.periodMonth ?? 'ALL';
+  const periodYear: number | 'ALL' = params.periodYear ?? 'ALL';
+  const periodLabelAr = formatArabicMonthYear(periodMonth, periodYear);
+
+  const activeBakeries = (bakeries || []).filter(isActiveNonDeletedRecord);
+  const uniqueCodes = new Set<string>();
+  const uniquePhones = new Set<string>();
+  for (const b of activeBakeries) {
+    const code = String(b.machineNumber || '').trim();
+    if (code) uniqueCodes.add(code);
+    const phone = String(b.phone || '').replace(/\D/g, '');
+    if (phone.length >= 8) uniquePhones.add(phone);
+  }
+
+  const activeDebts = (debts || []).filter(
+    (d) =>
+      isActiveNonDeletedRecord(d) &&
+      matchesPeriodFilter(d.violationDate, periodMonth, periodYear)
+  );
+  const filteredLargeDebtsCount =
+    periodMonth === 'ALL' && periodYear === 'ALL'
+      ? largeDebtsCount
+      : activeDebts.filter((d) => (Number(d.netRemainingDebt) || 0) > 20000).length;
+
+  const rc = modulesBundle?.ration;
+  const it = modulesBundle?.internalTrade;
+  const gm = modulesBundle?.grainMaintenance;
+  const hr = modulesBundle?.hr;
+
+  const activeMerchants = (rc?.merchants || []).filter(isActiveNonDeletedRecord);
+  for (const m of activeMerchants as any[]) {
+    const tCode = String(m.traderCode || m.posMachineNumber || '').trim();
+    if (tCode) uniqueCodes.add(`m:${tCode}`);
+    const mPhone = String(m.phone || '').replace(/\D/g, '');
+    if (mPhone.length >= 8) uniquePhones.add(mPhone);
+  }
+
+  const activeCommodities = (rc?.commodities || []).filter(isActiveNonDeletedRecord);
+  const activeQuotas = (rc?.requisitions || []).filter(
+    (q: any) =>
+      isActiveNonDeletedRecord(q) &&
+      matchesPeriodFilter(q.month || q.date || q.createdAt, periodMonth, periodYear)
+  );
+  const activeCards = (rc?.cards || []).filter(isActiveNonDeletedRecord);
+
+  const activeEstablishments = (it?.establishments || []).filter(isActiveNonDeletedRecord);
+  const activeCampaigns = (it?.campaigns || []).filter(
+    (c: any) => isActiveNonDeletedRecord(c) && matchesPeriodFilter(c.date, periodMonth, periodYear)
+  );
+  const activeViolations = (it?.violations || []).filter(
+    (v: any) => isActiveNonDeletedRecord(v) && matchesPeriodFilter(v.date, periodMonth, periodYear)
+  );
+
+  const activeShunas = (gm?.shunas || []).filter(isActiveNonDeletedRecord);
+  const activeWheatReceipts = (gm?.wheatReceipts || []).filter(
+    (w: any) => isActiveNonDeletedRecord(w) && matchesPeriodFilter(w.date || w.receiptDate, periodMonth, periodYear)
+  );
+  const activeRefrigerators = (gm?.refrigerators || []).filter(isActiveNonDeletedRecord);
+  const activeMills = (gm?.mills || []).filter(isActiveNonDeletedRecord);
+  const activeFlourQuotas = (gm?.flourQuotaMaster || []).filter(isActiveNonDeletedRecord);
+
+  const activeEmployees = (hr?.employees || []).filter(isActiveNonDeletedRecord);
+  const publicServiceCount = activeEmployees.filter((e) => e.employeeType === 'خدمة عامة').length;
+  const externalAssistanceCount = activeEmployees.filter((e) => e.employeeType === 'استعانة').length;
+
+  // إجماليات الأقسام الرئيسية بدون تكرار (Deduplicated Parent Totals)
+  const bakeriesGroupTotal = activeBakeries.length;
+  const debtsGroupTotal = activeDebts.length;
+  const internalTradeGroupTotal =
+    activeEstablishments.length + activeCampaigns.length + activeViolations.length;
+  const commoditiesGroupTotal = activeMerchants.length;
+  const grainGroupTotal =
+    activeShunas.length +
+    activeWheatReceipts.length +
+    activeRefrigerators.length +
+    activeMills.length +
+    activeFlourQuotas.length;
+  const hrGroupTotal = activeEmployees.length; // بدون تكرار لأن الخدمة العامة والاستعانة جزء من العاملين
+  const reportsSecurityGroupTotal = unreadInboxCount + pendingTasksCount;
+
+  const commoditiesBadgeLabel =
+    periodMonth !== 'ALL' || periodYear !== 'ALL'
+      ? `${activeMerchants.length} تاجر – ${periodLabelAr}`
+      : `${activeMerchants.length} تاجر`;
+
+  return {
+    bakeriesCount: activeBakeries.length,
+    codesCount: uniqueCodes.size,
+    phonesCount: uniquePhones.size,
+    debtsCount: activeDebts.length,
+    alertsCount,
+    largeDebtsCount: filteredLargeDebtsCount,
+    unreadInboxCount,
+    pendingTasksCount,
+    merchantsCount: activeMerchants.length,
+    commoditiesCount: activeCommodities.length,
+    quotasCount: activeQuotas.length,
+    cardsCount: activeCards.length,
+    establishmentsCount: activeEstablishments.length,
+    campaignsCount: activeCampaigns.length,
+    violationsCount: activeViolations.length,
+    shunasCount: activeShunas.length,
+    wheatReceiptsCount: activeWheatReceipts.length,
+    refrigeratorsCount: activeRefrigerators.length,
+    millsCount: activeMills.length,
+    flourQuotasCount: activeFlourQuotas.length,
+    employeesCount: activeEmployees.length,
+    publicServiceCount,
+    externalAssistanceCount,
+    bakeriesGroupTotal,
+    debtsGroupTotal,
+    internalTradeGroupTotal,
+    commoditiesGroupTotal,
+    grainGroupTotal,
+    hrGroupTotal,
+    reportsSecurityGroupTotal,
+    periodMonth,
+    periodYear,
+    periodLabelAr,
+    commoditiesBadgeLabel,
+  };
+}
+
+export function computeDepartmentRecordCounts(
+  counts: SidebarCountsSummary | null | undefined
+): Record<string, number> {
+  if (!counts) return {};
+  const commoditiesTotal =
+    counts.merchantsCount + counts.commoditiesCount + counts.quotasCount + counts.cardsCount;
+  return {
+    bakeries: counts.bakeriesCount,
+    debts: counts.debtsCount,
+    commodities: commoditiesTotal,
+    internal_trade: counts.internalTradeGroupTotal,
+    grain_maintenance: counts.grainGroupTotal,
+    hr: counts.employeesCount,
+    reports: counts.reportsSecurityGroupTotal,
+    'group-1': counts.bakeriesCount,
+    'group-3': counts.debtsCount,
+    'group-6': counts.merchantsCount,
+    'group-7': counts.internalTradeGroupTotal,
+    'group-8': counts.grainGroupTotal,
+    'group-9': counts.employeesCount,
+    'group-5': counts.reportsSecurityGroupTotal,
   };
 }
 

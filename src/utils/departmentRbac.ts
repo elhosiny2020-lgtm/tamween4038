@@ -28,11 +28,18 @@ export const EMPTY_DEPARTMENT_FLAGS: DepartmentPermissionFlags = {
 
 /**
  * تحديد ما إذا كان المستخدم مديراً عاماً للنظام (Super Admin)
+ * قاعدة أمنية صارمة: لا يُمنح Super Admin تلقائياً لأي مستخدم جديد بدور admin،
+ * وإنما يُمنح صراحةً عبر super_admin أو isSuperAdmin=true بواسطة مدير النظام المخوّل فقط
+ * (مع الإبقاء على التوافق الخلفي للحساب الجذري الافتراضي admin).
  */
 export function isSuperAdmin(user: AppUser | null | undefined): boolean {
   if (!user || user.isActive === false) return false;
   if (user.isSuperAdmin === true || user.role === 'super_admin') return true;
-  if (user.role === 'admin' && user.isSuperAdmin !== false) {
+  const isLegacyRootAdmin =
+    user.role === 'admin' &&
+    user.isSuperAdmin !== false &&
+    String(user.username || '').trim().toLowerCase() === 'admin';
+  if (isLegacyRootAdmin) {
     const hasRestrictedScope =
       Array.isArray(user.allowedDepartments) &&
       user.allowedDepartments.length > 0 &&
@@ -46,6 +53,13 @@ export function isSuperAdmin(user: AppUser | null | undefined): boolean {
     return !hasRestrictedScope && !hasCustomDeptMatrix;
   }
   return false;
+}
+
+/**
+ * التحقق مما إذا كان المستخدم الحالي مخوّلاً بمنح صلاحية Super Admin لمستخدم آخر
+ */
+export function canAssignSuperAdmin(actor: AppUser | null | undefined): boolean {
+  return isSuperAdmin(actor);
 }
 
 /**

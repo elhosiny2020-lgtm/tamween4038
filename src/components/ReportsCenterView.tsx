@@ -34,7 +34,9 @@ import {
   ArrowUp,
   ArrowDown,
   History,
+  PieChart as PieChartIcon,
 } from 'lucide-react';
+import { LocalUnitsDebtsPieChart } from './LocalUnitsDebtsPieChart';
 
 export type ReportTemplateId =
   | 'bak-all'
@@ -60,7 +62,8 @@ export type ReportTemplateId =
   | 'comp-diffs'
   | 'comp-totals'
   | 'comp-review'
-  | 'comp-master';
+  | 'comp-master'
+  | 'debts-local-units-pie';
 
 interface ReportDefinition {
   id: ReportTemplateId;
@@ -574,6 +577,21 @@ export const OFFICIAL_REPORTS_CATALOG: ReportDefinition[] = [
       'avg2025',
       'perCapitaAverage',
       'avgDiff',
+      'remainingDebt',
+    ],
+  },
+  {
+    id: 'debts-local-units-pie',
+    groupId: 5,
+    groupTitle: '5. التقارير المقارنة والإجمالية',
+    title: 'توزيع المديونيات حسب الوحدات المحلية (Pie Chart)',
+    subtitle: 'عرض بياني دائري تفاعلي (Recharts) لتوزيع ونسب صافي المديونيات عبر الوحدات المحلية التابعة للمركز',
+    defaultColumns: [
+      'index',
+      'localUnit',
+      'village',
+      'bakeryOwnerName',
+      'machineNumber',
       'remainingDebt',
     ],
   },
@@ -1284,6 +1302,28 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
             </button>
           )}
 
+          <button
+            type="button"
+            data-testid="reports-open-local-units-pie-btn"
+            onClick={() => {
+              const pieReport = OFFICIAL_REPORTS_CATALOG.find((r) => r.id === 'debts-local-units-pie');
+              if (pieReport) {
+                handleSelectReport(pieReport);
+              } else {
+                setSelectedReportId('debts-local-units-pie');
+              }
+            }}
+            className={`px-3.5 py-2.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer border shadow-xs ${
+              selectedReportId === 'debts-local-units-pie'
+                ? 'bg-[#D4AF37] text-[#0A1628] border-[#FDE68A]'
+                : 'bg-teal-600 hover:bg-teal-500 text-white border-teal-400/50'
+            }`}
+            title="عرض التوزيع البياني للمديونيات حسب الوحدات المحلية (Pie Chart)"
+          >
+            <PieChartIcon className="w-4 h-4" />
+            <span>توزيع المديونيات بالوحدات المحلية (Pie Chart)</span>
+          </button>
+
           {onOpenDebtEmailHistory && (
             <button
               type="button"
@@ -1753,6 +1793,17 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
               </span>
             </div>
           </div>
+
+          {/* 4.2.5 Interactive Local Units Debt Distribution Pie Chart (Recharts) */}
+          {selectedReportId === 'debts-local-units-pie' && (
+            <LocalUnitsDebtsPieChart
+              debts={debts}
+              bakeries={bakeries}
+              administrationTitle={
+                systemConfig.administrationTitle || 'إدارة تموين مركز المحلة الكبرى'
+              }
+            />
+          )}
 
           {/* 4.3 Official Report Data Table (Deep Navy Header + White Bold Text + Alternating Rows) */}
           <div className="overflow-x-auto">

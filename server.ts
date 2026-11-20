@@ -38,7 +38,11 @@ import {
   updateVaultCredentialsInPostgres,
   type NormalizedTableName,
 } from './src/db/queries.ts';
-import type { ResettableSectionKey } from './src/utils/branchOperations.ts';
+import {
+  computeBranchSidebarCounts,
+  type ResettableSectionKey,
+} from './src/utils/branchOperations.ts';
+import { hasPermission } from './src/permissions.ts';
 import {
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
@@ -2575,7 +2579,12 @@ async function startServer() {
   app.put('/api/branches/:id/departments', async (req, res) => {
     try {
       const actor = await resolveAuthenticatedActor(req);
-      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      const canManageDepts = Boolean(
+        actor.authenticated &&
+          actor.user &&
+          (isUserSuperAdmin(actor.user) || hasPermission(actor.user, 'MANAGE_DEPARTMENTS'))
+      );
+      if (!actor.authenticated || !actor.user || !canManageDepts) {
         await denyUnauthorizedAndAudit(
           req,
           res,
@@ -2583,11 +2592,23 @@ async function startServer() {
           actor.authenticated ? 403 : 401,
           'branches',
           'UPDATE_BRANCH_DEPARTMENTS',
-          'إدارة الأقسام داخل الفرع مقتصرة على مدير عام النظام (Super Admin) فقط.'
+          'إدارة الأقسام داخل الفرع مقصورة على مدير عام النظام أو المخوّل بصلاحية إدارة الأقسام فقط.'
         );
         return;
       }
       const branchId = String(req.params.id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'UPDATE_BRANCH_DEPARTMENTS_CROSS_BRANCH',
+          `غير مصرح بتعديل أقسام فرع آخر (${branchId}).`
+        );
+        return;
+      }
       const departments = req.body?.departments;
       if (!Array.isArray(departments)) {
         res.status(400).json({ success: false, error: 'قائمة الأقسام (departments) غير صالحة.' });
@@ -2621,7 +2642,12 @@ async function startServer() {
   app.post('/api/branches/:id/reset-section', async (req, res) => {
     try {
       const actor = await resolveAuthenticatedActor(req);
-      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      const canResetSection = Boolean(
+        actor.authenticated &&
+          actor.user &&
+          (isUserSuperAdmin(actor.user) || hasPermission(actor.user, 'FACTORY_RESET_SECTION'))
+      );
+      if (!actor.authenticated || !actor.user || !canResetSection) {
         await denyUnauthorizedAndAudit(
           req,
           res,
@@ -2629,7 +2655,7 @@ async function startServer() {
           actor.authenticated ? 403 : 401,
           'branches',
           'SECTION_FACTORY_RESET',
-          'استعادة ضبط المصنع لبيانات القسم أو القرية مقتصرة على مدير عام النظام (Super Admin) فقط.'
+          'استعادة ضبط المصنع لبيانات القسم أو القرية مقصورة على مدير عام النظام أو المخوّل بصلاحية إعادة الضبط فقط.'
         );
         return;
       }
@@ -2641,6 +2667,18 @@ async function startServer() {
         return;
       }
       const branchId = String(req.params.id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'SECTION_FACTORY_RESET_CROSS_BRANCH',
+          `غير مصرح بإعادة ضبط قسم داخل فرع آخر (${branchId}).`
+        );
+        return;
+      }
       const sectionKey = String(req.body?.sectionKey || '') as ResettableSectionKey;
       const allowedSections = new Set<ResettableSectionKey>([
         'bakeries',
@@ -2691,6 +2729,170 @@ async function startServer() {
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'فشل تنفيذ استعادة ضبط المصنع للقسم.' });
+    }
+  });
+
+  // تصفير جميع بيانات الفرع التشغيلية بتأكيد مزدوج مع الإبقاء التام على الأقسام والمستخدمين والإعدادات
+  app.post('/api/branches/:id/reset-branch', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      const canResetBranch = Boolean(
+        actor.authenticated &&
+          actor.user &&
+          (isUserSuperAdmin(actor.user) || hasPermission(actor.user, 'FACTORY_RESET_BRANCH'))
+      );
+      if (!actor.authenticated || !actor.user || !canResetBranch) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'branches',
+          'BRANCH_FACTORY_RESET',
+          'تصفير جميع بيانات الفرع مقصور على مدير عام النظام أو المخوّل بصلاحية تصفير الفرع فقط.'
+        );
+        return;
+      }
+      if (req.body?.confirmReset !== true || req.body?.confirmDouble !== true) {
+        res.status(400).json({
+          success: false,
+          error: 'يلزم إرسال التأكيد المزدوج (confirmReset: true و confirmDouble: true) لتصفير جميع بيانات الفرع.',
+        });
+        return;
+      }
+      const branchId = String(req.params.id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'BRANCH_FACTORY_RESET_CROSS_BRANCH',
+          `غير مصرح بتصفير بيانات فرع آخر (${branchId}).`
+        );
+        return;
+      }
+
+      // تصفير جميع الأقسام التشغيلية داخل الفرع مع الإبقاء التام على هيكل الأقسام والمستخدمين والإعدادات
+      const sectionsToReset: ResettableSectionKey[] = [
+        'bakeries',
+        'debts',
+        'commodities',
+        'internal_trade',
+        'grain_maintenance',
+        'hr',
+      ];
+      const aggregatedDeleted: Record<string, number> = { bakeries: 0, debts: 0 };
+      for (const sec of sectionsToReset) {
+        const secRes = await resetBranchSectionInPostgres({
+          branchId,
+          sectionKey: sec,
+          actorUsername: actor.user.username,
+        });
+        if (secRes?.deletedCounts) {
+          aggregatedDeleted.bakeries += Number(secRes.deletedCounts.bakeries || 0);
+          aggregatedDeleted.debts += Number(secRes.deletedCounts.debts || 0);
+        }
+      }
+      cachedBranchModules.delete(`${branchId}::all_modules`);
+      await recordAuditLog(
+        actor.user.username,
+        'BRANCH_FACTORY_RESET',
+        `تصفير جميع البيانات التشغيلية للفرع (${branchId}) بتأكيد مزدوج مع الإبقاء التام على الأقسام والمستخدمين والإعدادات.`,
+        getClientIp(req),
+        branchId,
+        {
+          username: actor.user.username,
+          department: 'branches',
+          operation: 'BRANCH_FACTORY_RESET',
+          recordId: branchId,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+
+      liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(branchId, {
+        clientId: actor.user.username,
+        sqlOperation: 'BRANCH_FACTORY_RESET',
+        affectedTable: 'branches',
+      });
+      broadcastWs({
+        type: 'branch_factory_reset',
+        branchId,
+        deletedCounts: aggregatedDeleted,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({
+        success: true,
+        branchId,
+        deletedCounts: aggregatedDeleted,
+        revision: liveRevision,
+        message: 'تم تصفير جميع البيانات التشغيلية للفرع بنجاح مع الإبقاء التام على الأقسام والمستخدمين والإعدادات.',
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل تصفير بيانات الفرع.' });
+    }
+  });
+
+  // استعلامات COUNT المحسّنة لشارات الأقسام في القائمة الجانبية (مستقلة لكل فرع وتستبعد المحذوف وغير النشط مع فترة شهر/سنة)
+  app.get('/api/db/counts', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(401).json({ success: false, error: 'المصادقة مطلوبة لجلب عدادات الأقسام.' });
+        return;
+      }
+      const branchId = String(req.query?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        res.status(403).json({ success: false, error: 'غير مصرح بالوصول لعدادات هذا الفرع.' });
+        return;
+      }
+      const rawMonth = String(req.query?.month || 'ALL').trim();
+      const rawYear = String(req.query?.year || 'ALL').trim();
+      const periodMonth: number | 'ALL' =
+        rawMonth !== 'ALL' && Number.isFinite(Number(rawMonth)) && Number(rawMonth) >= 1 && Number(rawMonth) <= 12
+          ? Number(rawMonth)
+          : 'ALL';
+      const periodYear: number | 'ALL' =
+        rawYear !== 'ALL' && Number.isFinite(Number(rawYear)) && Number(rawYear) >= 2000 && Number(rawYear) <= 2100
+          ? Number(rawYear)
+          : 'ALL';
+
+      const [pgBoot, modState] = await Promise.all([
+        getBootstrapFromPostgres(branchId),
+        getBranchModuleStateFromPostgres(branchId, 'all_modules').catch(() => ({ exists: false, payload: null })),
+      ]);
+
+      const uname = actor.user.username || 'admin';
+      const unreadInboxCount = (pgBoot.inboxMessages || []).filter(
+        (m: any) => !m.readBy || !m.readBy.includes(uname)
+      ).length;
+      const pendingTasksCount = (pgBoot.dailyTasks || []).filter((t: any) => t.status !== 'completed').length;
+      const largeDebtsCount = (pgBoot.debts || []).filter((d: any) => (Number(d.netRemainingDebt) || 0) > 20000).length;
+
+      const counts = computeBranchSidebarCounts({
+        bakeries: pgBoot.bakeries || [],
+        debts: pgBoot.debts || [],
+        alertsCount: (pgBoot.highDebtAlerts || []).filter((a: any) => !a.isRead).length,
+        largeDebtsCount,
+        unreadInboxCount,
+        pendingTasksCount,
+        modulesBundle: modState.exists ? (modState.payload as any) : null,
+        periodMonth,
+        periodYear,
+      });
+
+      res.json({
+        success: true,
+        branchId,
+        counts,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر حساب عدادات الأقسام.' });
     }
   });
 
@@ -3089,16 +3291,33 @@ async function startServer() {
         );
         return;
       }
-      if (
-        table === 'app_users' &&
-        typeof rowPayload?.password === 'string' &&
-        rowPayload.password.trim() &&
-        rowPayload.password.trim() !== '••••••••'
-      ) {
-        const complexity = validatePasswordComplexity(rowPayload.password);
-        if (!complexity.valid) {
-          res.status(400).json({ success: false, error: complexity.error });
+      if (table === 'app_users') {
+        const targetIsSuper =
+          String(rowPayload?.role || '') === 'super_admin' ||
+          rowPayload?.isSuperAdmin === true ||
+          rowPayload?.is_super_admin === true;
+        if (targetIsSuper && !isUserSuperAdmin(actor.user)) {
+          await denyUnauthorizedAndAudit(
+            req,
+            res,
+            actor.user,
+            403,
+            'app_users',
+            'GRANT_SUPER_ADMIN_DENIED',
+            `محاولة إنشاء حساب بصلاحية مدير عام النظام (Super Admin) بدون تفويض بواسطة (${actor.user.username}).`
+          );
           return;
+        }
+        if (
+          typeof rowPayload?.password === 'string' &&
+          rowPayload.password.trim() &&
+          rowPayload.password.trim() !== '••••••••'
+        ) {
+          const complexity = validatePasswordComplexity(rowPayload.password);
+          if (!complexity.valid) {
+            res.status(400).json({ success: false, error: complexity.error });
+            return;
+          }
         }
       }
       const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
@@ -3240,16 +3459,29 @@ async function startServer() {
         );
         return;
       }
-      if (
-        table === 'app_users' &&
-        typeof rowPayload?.password === 'string' &&
-        rowPayload.password.trim() &&
-        rowPayload.password.trim() !== '••••••••'
-      ) {
-        const complexity = validatePasswordComplexity(rowPayload.password);
-        if (!complexity.valid) {
-          res.status(400).json({ success: false, error: complexity.error });
+      if (table === 'app_users') {
+        if ((rowPayload?.role === 'super_admin' || rowPayload?.isSuperAdmin === true) && !isUserSuperAdmin(actor.user)) {
+          await denyUnauthorizedAndAudit(
+            req,
+            res,
+            actor.user,
+            403,
+            'users',
+            'GRANT_SUPER_ADMIN',
+            'لا يُسمح بمنح صلاحية Super Admin إلا بواسطة مدير عام النظام المخوّل فقط.'
+          );
           return;
+        }
+        if (
+          typeof rowPayload?.password === 'string' &&
+          rowPayload.password.trim() &&
+          rowPayload.password.trim() !== '••••••••'
+        ) {
+          const complexity = validatePasswordComplexity(rowPayload.password);
+          if (!complexity.valid) {
+            res.status(400).json({ success: false, error: complexity.error });
+            return;
+          }
         }
       }
       const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
@@ -3341,6 +3573,14 @@ async function startServer() {
       const table = req.params.table as NormalizedTableName;
       if (!ALLOWED_DB_TABLES.has(table)) {
         res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
+        return;
+      }
+      if (table === 'audit_logs') {
+        res.status(403).json({
+          success: false,
+          blocked: true,
+          error: 'سجل المراجعة محمي بشكل صارم ضد التعديل والحذف (Immutable Audit Log).',
+        });
         return;
       }
       const actor = await resolveAuthenticatedActor(req);
