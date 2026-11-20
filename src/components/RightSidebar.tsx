@@ -41,7 +41,7 @@ import {
   History,
   FolderKanban,
 } from 'lucide-react';
-import { CloudConnectionStatus } from '../lib/supabase';
+import { CloudConnectionStatus } from '../lib/supabase.ts';
 import type { AppUser, BranchDepartmentConfigItem } from '../types';
 import type { SidebarCountsSummary } from '../utils/branchOperations';
 import {

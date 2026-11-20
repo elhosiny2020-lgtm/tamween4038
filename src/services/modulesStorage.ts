@@ -30,7 +30,7 @@ import type {
   SparePartItem,
 } from '../types/modules';
 import type { VillageHierarchy } from '../types';
-import { getAuthSessionToken, getSecurityShieldHeaders, getSupabaseClient, SESSION_CLIENT_ID } from '../lib/supabase';
+import { getAuthSessionToken, getSecurityShieldHeaders, getSupabaseClient, SESSION_CLIENT_ID } from '../lib/supabase.ts';
 import {
   computeAttendanceMetrics,
   computeEmployeePayrollLine,

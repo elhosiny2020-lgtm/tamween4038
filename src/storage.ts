@@ -45,7 +45,7 @@ import {
   SESSION_CLIENT_ID,
   CLEAN_START_RESET_EPOCH,
   clearPermanentSafetyVault,
-} from './lib/supabase';
+} from './lib/supabase.ts';
 import { cloneDefaultBranchDepartmentsStructure } from './utils/branchOperations';
 import {
   BranchAuthVaultRecord,

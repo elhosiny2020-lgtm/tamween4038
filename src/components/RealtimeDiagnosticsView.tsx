@@ -44,7 +44,7 @@ import {
   SUPABASE_TABLE_ARABIC_LABELS,
   SupabaseRealtimeTableName,
   triggerSecurityShieldTest,
-} from '../lib/supabase';
+} from '../lib/supabase.ts';
 import type { AppState } from '../storage';
 
 interface RealtimeDiagnosticsViewProps {

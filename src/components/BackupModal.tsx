@@ -61,7 +61,7 @@ import {
   readTamweenFileFromStorage,
   deleteTamweenFileFromStorage,
   UnifiedStorageFileInfo,
-} from '../lib/supabase';
+} from '../lib/supabase.ts';
 import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import {

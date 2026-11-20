@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { AppUser, SupplyBranch, SystemConfig, UserRoleType } from '../types';
 import { INITIAL_USERS } from '../defaultData';
 import { normalizePasscodeInput } from '../utils/branchVaultUtils';
-import { getSecurityShieldHeaders, setAuthSessionToken } from '../lib/supabase';
+import { getSecurityShieldHeaders, setAuthSessionToken } from '../lib/supabase.ts';
 import {
   ShieldCheck,
   Lock,

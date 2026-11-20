@@ -24,7 +24,7 @@ import {
   isSuperAdmin as checkIsSuperAdmin,
   resolveUserDepartmentMatrix,
 } from '../utils/departmentRbac';
-import { getSecurityShieldHeaders } from '../lib/supabase';
+import { getSecurityShieldHeaders } from '../lib/supabase.ts';
 import { sanitizePhoneInput, validateExactPhone } from '../utils/fieldValidation';
 import {
   Users,

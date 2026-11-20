@@ -761,7 +761,6 @@ export function wipeSectionFromModulesBundle(
       shunas: [],
       wheatReceipts: [],
       refrigerators: [],
-      refrigeratorBatches: [],
       refrigeratorRentals: [],
       mills: [],
       millingBatches: [],
@@ -788,13 +787,12 @@ export function wipeSectionFromModulesBundle(
           afterSummary: 'تصفير الشون والقمح والثلاجات والمطاحن وحصص الدقيق مع الإبقاء على هيكل القسم.',
         },
       ],
-    };
+    } as any;
   } else if (sectionKey === 'hr') {
     next.hr = {
       ...bundle.hr,
       employees: [],
       attendance: [],
-      leaves: [],
       leaveBalances: [],
       payrolls: [],
       loans: [],
@@ -814,7 +812,7 @@ export function wipeSectionFromModulesBundle(
           afterSummary: 'تصفير كافة بيانات العاملين والحضور والمرتبات مع الإبقاء على اللائحة وهيكل القسم.',
         },
       ],
-    };
+    } as any;
   }
 
   return next;
@@ -884,7 +882,7 @@ export function wipeVillageFromModulesBundle(
           afterSummary: `تصفير تجار وأكواد وبطاقات وماكينات قرية (${villageName}) مع الإبقاء على هيكل القسم.`,
         },
         ...(bundle.ration?.auditLogs || []),
-      ].slice(0, 300),
+      ].slice(0, 300) as any,
     },
     internalTrade: bundle.internalTrade
       ? {

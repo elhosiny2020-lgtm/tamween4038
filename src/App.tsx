@@ -105,7 +105,7 @@ import {
   getAuthSessionToken,
   setAuthSessionToken,
   getSecurityShieldHeaders,
-} from './lib/supabase';
+} from './lib/supabase.ts';
 import {
   applyGranularRowChangeToState,
   batchSyncToDb,
@@ -6477,7 +6477,7 @@ export default function App() {
                         className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/35 text-amber-200 border border-amber-400/50 rounded-xl text-xs font-black inline-flex items-center gap-1.5 transition cursor-pointer"
                         title="مسح شامل للبيانات المدخلة داخل قرية محددة (المخابز، التجار، الأكواد، الماكينات، المنشآت، الري/الشون) بدون مسح الأقسام"
                       >
-                        <RotateCcw className="w-3.5 h-3.5" />
+                        <RefreshCw className="w-3.5 h-3.5" />
                         <span>
                           {selectedVillage !== 'ALL'
                             ? `تصفير قرية: ${selectedVillage}`
@@ -6502,7 +6502,7 @@ export default function App() {
                         className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black inline-flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                         title="استعادة ضبط المصنع لبيانات المخابز في هذا الفرع مع بقاء الأقسام"
                       >
-                        <RotateCcw className="w-3.5 h-3.5" />
+                        <RefreshCw className="w-3.5 h-3.5" />
                         <span>استعادة ضبط المصنع</span>
                       </button>
                     </>

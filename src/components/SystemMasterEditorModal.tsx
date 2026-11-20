@@ -240,7 +240,7 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
         base[k] = { ...srcCustom[k] };
       }
       base.bakeries_main = {
-        ...((appState.columnTitles || {}) as Record<string, string>),
+        ...((appState.columnTitles || {}) as unknown as Record<string, string>),
         ...(base.bakeries_main || {}),
       };
       setColumnTitlesDraft(base);
