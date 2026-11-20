@@ -1,4 +1,4 @@
-import type { Bakery, DebtRecord, HighDebtAlertNotification, SystemConfig, SupplyBranch } from '../types.ts';
+import { Bakery, DebtRecord, HighDebtAlertNotification, SystemConfig, SupplyBranch } from '../types';
 
 export const FIRESTORE_DIRECTORY_DOC_ID = 'tamween_directory';
 export const FIRESTORE_ALERTS_DOC_ID = 'alerts_log';

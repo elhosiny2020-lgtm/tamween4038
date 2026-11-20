@@ -4,12 +4,6 @@ dist/
 coverage/
 .DS_Store
 *.log
-*.bak
 .env*
 !.env.example
 .vercel
-.tamween_*.json
-supabase_config.json
-tamween_latest_backup.json
-tamween_pg_fallback_store.json
-/tmp/tamween_*

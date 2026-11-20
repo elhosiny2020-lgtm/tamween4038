@@ -6,20 +6,14 @@
 export interface LocalUnitGroup<T> {
   localUnit: string;
   rows: T[];
-  items: T[];
-  records: T[];
   count: number;
-  subtotals: Record<string, any>;
-  derivedMetrics: Record<string, any>;
-  isUnifiedPopulation?: boolean;
+  subtotals: Record<string, number>;
 }
 
 export interface LocalUnitGroupingResult<T> {
   groups: LocalUnitGroup<T>[];
   grandTotalCount: number;
-  grandTotals: Record<string, any>;
-  derivedGrandMetrics: Record<string, any>;
-  grandTotal: { count: number; totals: Record<string, any> };
+  grandTotals: Record<string, number>;
 }
 
 const DEFAULT_UNASSIGNED_UNIT = 'غير محدد / عام';
@@ -34,27 +28,20 @@ export function roundMetric2(val: number): number {
   return Math.round((val + Number.EPSILON) * 100) / 100;
 }
 
-export function isPopulationOrBeneficiariesFieldKey(key: string): boolean {
-  return /population|سكان|مستفيد|beneficiar|أفراد|فراد|eligibleCount|totalMembers|individualsCount/i.test(
-    String(key || '').trim()
-  );
-}
-
-export const isPopulationFieldKey = isPopulationOrBeneficiariesFieldKey;
-
 /**
  * دالة نقية لتجميع السجلات حسب الوحدة المحلية وحساب صف «إجمالي الوحدة المحلية» لكل وحدة،
  * ثم حساب صف «الإجمالي العام للقرية TOTAL» بجمع صفوف إجمالي الوحدات المحلية فقط.
  *
- * قاعدة عدد السكان والمستفيدين للوحدة المحلية:
- * - لا يتم جمع عدد السكان ولا عدد المستفيدين داخل نفس الوحدة المحلية نهائياً في صف إجماليات الوحدة المحلية (يُعرض '—')،
- *   ويتم احتساب قيمة واحدة غير مكررة للوحدة المحلية وتجميعها فقط في صف الإجمالي العام / القرية بناءً على الوحدات المحلية.
+ * ملاحظة رقابية:
+ * - لا يُجمع سوى الحقول الرقمية المصرح بها في numericKeys أو عبر aggregateGroup.
+ * - لا يُعد صف الإجمالي كسجل ولا يُخزن في قاعدة البيانات.
+ * - عند تمرير deriveMetrics تُعاد حساب النسب/المتوسطات بناءً على المجاميع وليس بجمع النسب المئوية.
  */
 export function groupRecordsByLocalUnit<T>(params: {
   rows: T[];
   getLocalUnit: (row: T) => string | undefined | null;
   numericFields?: { key: string; getValue: (row: T) => number | undefined | null }[];
-  deriveMetrics?: (totals: Record<string, number>, rowCount: number) => Record<string, any>;
+  deriveMetrics?: (totals: Record<string, number>, rowCount: number) => Record<string, number>;
   sortUnitsAlphabetically?: boolean;
 }): LocalUnitGroupingResult<T> {
   const {
@@ -86,73 +73,36 @@ export function groupRecordsByLocalUnit<T>(params: {
     });
   }
 
-  const unitEffectiveGrandContribution = new Map<string, Record<string, number>>();
-
   const groups: LocalUnitGroup<T>[] = entries.map(([localUnit, groupRows]) => {
     const rawSums: Record<string, number> = {};
-    const displaySubtotals: Record<string, any> = {};
-    const grandContribution: Record<string, number> = {};
-    let groupHasUnifiedPopulation = false;
-
     for (const nf of numericFields) {
-      if (isPopulationOrBeneficiariesFieldKey(nf.key)) {
-        const popValues: number[] = [];
-        for (const r of groupRows) {
-          const val = Number(nf.getValue(r));
-          if (Number.isFinite(val) && val > 0) {
-            popValues.push(val);
-          }
+      let sum = 0;
+      for (const r of groupRows) {
+        const val = Number(nf.getValue(r));
+        if (Number.isFinite(val)) {
+          sum += val;
         }
-        const uniquePop = Array.from(new Set(popValues));
-        groupHasUnifiedPopulation = true;
-        // قيمة الوحدة المحلية دون تكرار (الرقم الموحد أو أعلى قيمة مسجلة للوحدة بدون جمع مكرر داخل نفس الوحدة)
-        const unitEffectiveVal = uniquePop.length === 0 ? 0 : Math.max(...uniquePop);
-        rawSums[nf.key] = roundMetric2(unitEffectiveVal);
-        grandContribution[nf.key] = roundMetric2(unitEffectiveVal);
-        // لا يُجمع عدد السكان ولا عدد المستفيدين داخل نفس الوحدة المحلية أبداً
-        displaySubtotals[nf.key] = '—';
-      } else {
-        let sum = 0;
-        for (const r of groupRows) {
-          const val = Number(nf.getValue(r));
-          if (Number.isFinite(val)) {
-            sum += val;
-          }
-        }
-        const rounded = roundMetric2(sum);
-        rawSums[nf.key] = rounded;
-        grandContribution[nf.key] = rounded;
-        displaySubtotals[nf.key] = rounded;
       }
+      rawSums[nf.key] = roundMetric2(sum);
     }
-
-    unitEffectiveGrandContribution.set(localUnit, grandContribution);
     const derived = deriveMetrics ? deriveMetrics(rawSums, groupRows.length) : {};
     return {
       localUnit,
       rows: groupRows,
-      items: groupRows,
-      records: groupRows,
       count: groupRows.length,
-      isUnifiedPopulation: groupHasUnifiedPopulation,
       subtotals: {
         ...rawSums,
-        ...displaySubtotals,
         ...derived,
       },
-      derivedMetrics: derived,
     };
   });
 
-  // الإجمالي العام للقرية TOTAL: يُجمع عدد السكان في صف إجماليات القرية بأكملها فقط
+  // الإجمالي العام للقرية TOTAL: يُجمع من صفوف إجمالي الوحدات المحلية فقط
   const grandTotalCount = groups.reduce((acc, g) => acc + g.count, 0);
   const baseGrandSums: Record<string, number> = {};
   for (const nf of numericFields) {
-    const sumFromUnits = groups.reduce((acc, g) => {
-      const contrib = unitEffectiveGrandContribution.get(g.localUnit);
-      return acc + (Number(contrib ? contrib[nf.key] : g.subtotals[nf.key]) || 0);
-    }, 0);
-    baseGrandSums[nf.key] = roundMetric2(sumFromUnits);
+    const sumFromSubtotals = groups.reduce((acc, g) => acc + (Number(g.subtotals[nf.key]) || 0), 0);
+    baseGrandSums[nf.key] = roundMetric2(sumFromSubtotals);
   }
   const derivedGrand = deriveMetrics ? deriveMetrics(baseGrandSums, grandTotalCount) : {};
 
@@ -162,14 +112,6 @@ export function groupRecordsByLocalUnit<T>(params: {
     grandTotals: {
       ...baseGrandSums,
       ...derivedGrand,
-    },
-    derivedGrandMetrics: derivedGrand,
-    grandTotal: {
-      count: grandTotalCount,
-      totals: {
-        ...baseGrandSums,
-        ...derivedGrand,
-      },
     },
   };
 }

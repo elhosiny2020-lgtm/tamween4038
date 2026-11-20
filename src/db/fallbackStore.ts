@@ -34,25 +34,13 @@ import type {
 import {
   hashPasswordScrypt,
   isScryptHash,
-  normalizeDigits,
-  sanitizeSystemConfigForClient,
   sanitizeUserForClient,
   sanitizeUsersForClient,
   verifyPasswordScrypt,
 } from '../utils/serverAuth.ts';
 import { INITIAL_USERS } from '../defaultData.ts';
-import {
-  cloneDefaultBranchDepartmentsStructure,
-  wipeSectionFromModulesBundle,
-  wipeVillageFromModulesBundle,
-  type ResettableSectionKey,
-} from '../utils/branchOperations.ts';
-import { createEmptyBranchModulesBundle } from '../services/modulesStorage.ts';
-import type { BranchDepartmentConfigItem } from '../types.ts';
 
-function getFallbackStorePath(): string {
-  return process.env.TAMWEEN_FALLBACK_STORE_PATH || '/tmp/tamween_pg_fallback_store.json';
-}
+const FALLBACK_STORE_PATH = '/tmp/tamween_pg_fallback_store.json';
 const DEFAULT_BRANCH_ID = 'branch-mahalla';
 
 const DEFAULT_BRANCH: SupplyBranch & { version?: number } = {
@@ -134,12 +122,10 @@ interface FallbackStoreData {
 }
 
 let memoryStore: FallbackStoreData | null = null;
-let memoryStorePath: string | null = null;
 
 function createEmptyStore(): FallbackStoreData {
-  const defaultBranches = CANONICAL_DEFAULT_BRANCHES.map((b) => ({ ...b, version: 1 }));
   return {
-    branches: defaultBranches,
+    branches: [{ ...DEFAULT_BRANCH }, { ...SAMANOUD_BRANCH }],
     deleted_branch_keys: [],
     villages: [],
     bakeries: [],
@@ -148,20 +134,7 @@ function createEmptyStore(): FallbackStoreData {
     daily_tasks: [],
     inbox_messages: [],
     high_debt_alerts: [],
-    system_config: defaultBranches.map((b) => ({
-      branchId: b.id,
-      systemConfig: {
-        governorateTitle: b.governorateTitle || 'محافظة الغربية',
-        directorateTitle: b.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-        administrationTitle: b.name,
-        englishSubtitle: '',
-        logoBase64: '',
-        branchDepartments: cloneDefaultBranchDepartmentsStructure(),
-      },
-      columnTitles: {},
-      activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى'],
-      version: 1,
-    })),
+    system_config: [],
     dropdown_lists: [],
     audit_logs: [],
     audit_deletion_security_log: [],
@@ -171,11 +144,10 @@ function createEmptyStore(): FallbackStoreData {
 }
 
 function loadStore(): FallbackStoreData {
-  const storePath = getFallbackStorePath();
-  if (memoryStore && memoryStorePath === storePath) return memoryStore;
+  if (memoryStore) return memoryStore;
   try {
-    if (fs.existsSync(storePath)) {
-      const raw = fs.readFileSync(storePath, 'utf-8');
+    if (fs.existsSync(FALLBACK_STORE_PATH)) {
+      const raw = fs.readFileSync(FALLBACK_STORE_PATH, 'utf-8');
       if (raw && raw.trim()) {
         const parsed = JSON.parse(raw) as Partial<FallbackStoreData>;
         if (Array.isArray(parsed.deleted_branch_keys)) {
@@ -186,7 +158,6 @@ function loadStore(): FallbackStoreData {
           }
         }
         const base = createEmptyStore();
-        memoryStorePath = storePath;
         memoryStore = {
           ...base,
           ...parsed,
@@ -207,22 +178,19 @@ function loadStore(): FallbackStoreData {
   } catch {
     // Fall back to fresh empty store if file is unreadable
   }
-  memoryStorePath = storePath;
   memoryStore = createEmptyStore();
   return memoryStore;
 }
 
 function persistStore(store: FallbackStoreData): void {
-  const storePath = getFallbackStorePath();
   store.deleted_branch_keys = Array.from(getDeletedBranchKeys());
-  memoryStorePath = storePath;
   memoryStore = store;
   try {
-    const dir = path.dirname(storePath);
+    const dir = path.dirname(FALLBACK_STORE_PATH);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(storePath, JSON.stringify(store), { encoding: 'utf-8', mode: 0o600 });
+    fs.writeFileSync(FALLBACK_STORE_PATH, JSON.stringify(store), { encoding: 'utf-8', mode: 0o600 });
   } catch {
     // Keep in-memory store authoritative even if /tmp write fails
   }
@@ -249,11 +217,7 @@ function ensureFallbackBranch(store: FallbackStoreData, branchId: string, branch
 export function isPostgresUnavailableError(err: any): boolean {
   if (!err) return false;
   const code = String(err.code || '');
-  if (code === '42703') return false;
   const msg = String(err.message || '').toLowerCase();
-  const isRelationOrDbMissing =
-    (msg.includes('relation') && msg.includes('does not exist')) ||
-    (msg.includes('database') && msg.includes('does not exist'));
   return (
     code === '42501' || // insufficient_privilege / permission denied
     code === '42P01' || // undefined_table
@@ -263,9 +227,9 @@ export function isPostgresUnavailableError(err: any): boolean {
     code === 'ENOTFOUND' ||
     code === 'ETIMEDOUT' ||
     code === 'ECONNRESET' ||
-    isRelationOrDbMissing ||
     msg.includes('permission denied') ||
     msg.includes('econnrefused') ||
+    msg.includes('does not exist') ||
     msg.includes('password authentication failed') ||
     msg.includes('connect') ||
     msg.includes('connection terminated')
@@ -282,25 +246,6 @@ export function fallbackGetBootstrap(requestedBranchId = DEFAULT_BRANCH_ID): Pos
     }
   }
   const cfg = store.system_config.find((c) => c.branchId === branchId) || null;
-  const branchMeta = store.branches.find((b) => b.id === branchId);
-  const resolvedSystemConfig: SystemConfig | null = cfg?.systemConfig
-    ? {
-        ...cfg.systemConfig,
-        branchDepartments:
-          Array.isArray(cfg.systemConfig.branchDepartments) && cfg.systemConfig.branchDepartments.length > 0
-            ? cfg.systemConfig.branchDepartments
-            : cloneDefaultBranchDepartmentsStructure(),
-      }
-    : branchMeta
-    ? {
-        governorateTitle: branchMeta.governorateTitle || 'محافظة الغربية',
-        directorateTitle: branchMeta.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-        administrationTitle: branchMeta.name,
-        englishSubtitle: '',
-        logoBase64: '',
-        branchDepartments: cloneDefaultBranchDepartmentsStructure(),
-      }
-    : null;
   const totalRows =
     store.bakeries.length +
     store.debts.length +
@@ -321,7 +266,7 @@ export function fallbackGetBootstrap(requestedBranchId = DEFAULT_BRANCH_ID): Pos
     dailyTasks: store.daily_tasks.filter((t) => t.branchId === branchId),
     inboxMessages: store.inbox_messages.filter((m) => m.branchId === branchId),
     highDebtAlerts: store.high_debt_alerts.filter((a) => a.branchId === branchId).slice(0, 250),
-    systemConfig: resolvedSystemConfig ? sanitizeSystemConfigForClient(resolvedSystemConfig) : null,
+    systemConfig: cfg?.systemConfig || null,
     columnTitles: cfg?.columnTitles || null,
     activityStatuses: cfg?.activityStatuses || [],
     dropdownLists,
@@ -479,26 +424,6 @@ function upsertInStoreInternal(
       };
       if (idx >= 0) store.branches[idx] = nextRow;
       else store.branches.push(nextRow);
-      // Automatically provision full cloned department hierarchy for new branches with ZERO operational records
-      const hasCfg = store.system_config.some((c) => c.branchId === finalId);
-      if (!hasCfg) {
-        const mahallaDepts = store.system_config.find((c) => c.branchId === DEFAULT_BRANCH_ID)?.systemConfig
-          ?.branchDepartments;
-        store.system_config.push({
-          branchId: finalId,
-          systemConfig: {
-            governorateTitle: nextRow.governorateTitle,
-            directorateTitle: nextRow.directorateTitle,
-            administrationTitle: nextRow.name,
-            englishSubtitle: '',
-            logoBase64: '',
-            branchDepartments: cloneDefaultBranchDepartmentsStructure(mahallaDepts),
-          },
-          columnTitles: {},
-          activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى'],
-          version: 1,
-        });
-      }
       return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
     }
 
@@ -653,55 +578,26 @@ function upsertInStoreInternal(
       const idx = store.system_config.findIndex((c) => c.branchId === effectiveBranchId);
       const existing = idx >= 0 ? store.system_config[idx] : null;
       const cfg = (payload.systemConfig || payload) as SystemConfig;
-
-      const hashVaultPassIfPlain = (candidate: string | undefined, fallbackStored: string): string => {
-        const raw = String(candidate || '').trim();
-        if (!raw || raw === '••••••••') return fallbackStored;
-        return isScryptHash(raw) ? raw : hashPasswordScrypt(raw);
-      };
-
-      const existingPass =
-        existing?.systemConfig?.vaultPasscode || hashPasswordScrypt(DEFAULT_VAULT_PASSCODE);
-      const resolvedVaultPass = hashVaultPassIfPlain(cfg.vaultPasscode, existingPass);
-
-      const rawCredMap =
-        cfg.branchVaultCredentials && typeof cfg.branchVaultCredentials === 'object'
-          ? cfg.branchVaultCredentials
-          : existing?.systemConfig?.branchVaultCredentials;
-      let resolvedCredMap: Record<string, any> | undefined = undefined;
-      if (rawCredMap && typeof rawCredMap === 'object') {
-        resolvedCredMap = {};
-        for (const [bKey, cred] of Object.entries(rawCredMap)) {
-          if (!cred || typeof cred !== 'object') continue;
-          const prevCred = existing?.systemConfig?.branchVaultCredentials?.[bKey];
-          const prevCredPass = prevCred?.password || resolvedVaultPass;
-          resolvedCredMap[bKey] = {
-            ...cred,
-            username: normalizeDigits(String((cred as any).username || prevCred?.username || DEFAULT_VAULT_USERNAME)),
-            password: hashVaultPassIfPlain((cred as any).password, prevCredPass),
-          };
-        }
-      }
-
-      const resolvedVaultUser = String(
-        cfg.vaultUsername ?? existing?.systemConfig?.vaultUsername ?? DEFAULT_VAULT_USERNAME
-      );
-
       const mergedDailyAlertConfig = {
         ...(existing?.systemConfig?.dailyAlertConfig || {}),
         ...(cfg.dailyAlertConfig || {}),
-        vaultUsername: resolvedVaultUser,
-        vaultPasscode: resolvedVaultPass,
-        branchVaultCredentials: resolvedCredMap,
+        vaultUsername: String(
+          cfg.vaultUsername ?? existing?.systemConfig?.vaultUsername ?? DEFAULT_VAULT_USERNAME
+        ),
+        vaultPasscode: String(
+          cfg.vaultPasscode ?? existing?.systemConfig?.vaultPasscode ?? DEFAULT_VAULT_PASSCODE
+        ),
+        branchVaultCredentials:
+          cfg.branchVaultCredentials ?? existing?.systemConfig?.branchVaultCredentials ?? undefined,
       };
       const nextRow = {
         branchId: effectiveBranchId,
         systemConfig: {
           ...(existing?.systemConfig || {}),
           ...cfg,
-          vaultUsername: resolvedVaultUser,
-          vaultPasscode: resolvedVaultPass,
-          branchVaultCredentials: resolvedCredMap,
+          vaultUsername: mergedDailyAlertConfig.vaultUsername,
+          vaultPasscode: mergedDailyAlertConfig.vaultPasscode,
+          branchVaultCredentials: mergedDailyAlertConfig.branchVaultCredentials,
           dailyAlertConfig: mergedDailyAlertConfig,
         } as SystemConfig,
         columnTitles: payload.columnTitles || existing?.columnTitles || {},
@@ -712,14 +608,7 @@ function upsertInStoreInternal(
       };
       if (idx >= 0) store.system_config[idx] = nextRow;
       else store.system_config.push(nextRow);
-      return {
-        success: true,
-        operation: idx >= 0 ? 'UPDATE' : 'INSERT',
-        row: {
-          ...nextRow,
-          systemConfig: sanitizeSystemConfigForClient(nextRow.systemConfig),
-        },
-      };
+      return { success: true, operation: idx >= 0 ? 'UPDATE' : 'INSERT', row: nextRow };
     }
 
     case 'dropdown_lists': {
@@ -899,12 +788,12 @@ export function fallbackSyncFullBranchState(
     }
   }
 
-  if (options?.pruneRemoved && Array.isArray(stateData?.debts)) {
+  if (options?.pruneRemoved && Array.isArray(stateData?.debts) && incomingDebtIds.size > 0) {
     store.debts = store.debts.filter(
       (d) => d.branchId !== effectiveBranchId || incomingDebtIds.has(String(d.id))
     );
   }
-  if (options?.pruneRemoved && Array.isArray(stateData?.bakeries)) {
+  if (options?.pruneRemoved && Array.isArray(stateData?.bakeries) && incomingBakeryIds.size > 0) {
     store.bakeries = store.bakeries.filter(
       (b) => b.branchId !== effectiveBranchId || incomingBakeryIds.has(String(b.id))
     );
@@ -1042,44 +931,19 @@ export function fallbackAuthenticateUser(
   const store = loadStore();
   const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
   const branchUsers = store.app_users.filter((u) => u.branchId === effectiveBranchId);
-  const isProd =
-    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
 
   // Seed initial users into branch store if none exist yet
   if (branchUsers.length === 0) {
-    const envAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
-    if (isProd) {
-      if (envAdminPass) {
-        const adminSeed = INITIAL_USERS.find((u) => u.role === 'admin');
-        if (adminSeed) {
-          upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
-            ...adminSeed,
-            id: effectiveBranchId === DEFAULT_BRANCH_ID ? adminSeed.id : `${adminSeed.id}__${effectiveBranchId}`,
-            branchId: effectiveBranchId,
-            password: envAdminPass,
-            isSuperAdmin: true,
-            isActive: true,
-          });
-          persistStore(store);
-        }
-      } else {
-        console.warn('[SECURITY NOTICE] Production branch has no users and INITIAL_ADMIN_PASSWORD is not set; skipping default user seeding.');
-      }
-    } else {
-      for (const seed of INITIAL_USERS) {
-        const resolvedSeedPass =
-          seed.role === 'admin' && envAdminPass ? envAdminPass : seed.password;
-        upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
-          ...seed,
-          id: effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`,
-          branchId: effectiveBranchId,
-          password: resolvedSeedPass,
-          isSuperAdmin: seed.role === 'admin',
-          isActive: seed.isActive !== false,
-        });
-      }
-      persistStore(store);
+    for (const seed of INITIAL_USERS) {
+      upsertInStoreInternal(store, 'app_users', effectiveBranchId, {
+        ...seed,
+        id: effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`,
+        branchId: effectiveBranchId,
+        isSuperAdmin: seed.role === 'admin',
+        isActive: seed.isActive !== false,
+      });
     }
+    persistStore(store);
   }
 
   const target = usernameOrName.trim().toLowerCase();
@@ -1091,20 +955,14 @@ export function fallbackAuthenticateUser(
   if (!matched) {
     return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
   }
-  const seedUser = isProd
-    ? null
-    : INITIAL_USERS.find(
-        (u) => (u.username || '').toLowerCase() === target || (u.fullName || '').toLowerCase() === target
-      );
-  const effectiveStoredPassword = matched.password || (seedUser ? seedUser.password : '');
-  if (!verifyPasswordScrypt(password, effectiveStoredPassword)) {
+  if (!verifyPasswordScrypt(password, matched.password)) {
     return { ok: false, status: 401, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' };
   }
   if (matched.isActive === false) {
     return { ok: false, status: 403, error: 'هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.' };
   }
-  // Auto-upgrade legacy un-hashed or missing password to scrypt upon successful verification
-  if (!matched.password || !isScryptHash(matched.password)) {
+  // Auto-upgrade legacy un-hashed password to scrypt upon successful verification
+  if (matched.password && !isScryptHash(matched.password)) {
     matched.password = hashPasswordScrypt(password);
     persistStore(store);
   }
@@ -1378,314 +1236,3 @@ export function fallbackDeleteAuditLogs(params: {
   persistStore(store);
   return { deletedCount, securityEntry };
 }
-
-export function fallbackVerifyVaultCredentials(params: {
-  branchId: string;
-  enteredUsername?: string;
-  enteredPassword: string;
-}): boolean {
-  const store = loadStore();
-  const effectiveBranchId = params.branchId || DEFAULT_BRANCH_ID;
-  const cfg =
-    store.system_config.find((c) => c.branchId === effectiveBranchId)?.systemConfig ||
-    store.system_config.find((c) => c.branchId === DEFAULT_BRANCH_ID)?.systemConfig;
-  const cred = cfg?.branchVaultCredentials?.[effectiveBranchId];
-  const targetUser = normalizeDigits(
-    String(cred?.username || cfg?.vaultUsername || DEFAULT_VAULT_USERNAME)
-  ).toLowerCase();
-  const isProd =
-    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
-  const defaultVaultPass = isProd
-    ? String(process.env.INITIAL_VAULT_PASSCODE || '').trim()
-    : DEFAULT_VAULT_PASSCODE;
-  const targetPass = String(cred?.password || cfg?.vaultPasscode || defaultVaultPass);
-  if (!targetPass) return false;
-  if (!verifyPasswordScrypt(params.enteredPassword, targetPass)) return false;
-
-  const cleanUser = normalizeDigits(String(params.enteredUsername || '')).toLowerCase();
-  if (cleanUser) return cleanUser === targetUser;
-  return targetUser === DEFAULT_VAULT_USERNAME.toLowerCase();
-}
-
-export function fallbackUpdateVaultCredentials(params: {
-  targetScope: 'all' | string;
-  newUsername: string;
-  newPassword: string;
-}): { updatedBranches: string[] } {
-  const store = loadStore();
-  const cleanUser = normalizeDigits(params.newUsername) || DEFAULT_VAULT_USERNAME;
-  const hashedPass = hashPasswordScrypt(params.newPassword);
-  const targetIds =
-    params.targetScope === 'all' || params.targetScope === 'ALL'
-      ? deduplicateSupplyBranches(store.branches).map((b) => b.id)
-      : [params.targetScope];
-  const nowIso = new Date().toISOString();
-
-  for (const bId of targetIds) {
-    const existing = store.system_config.find((c) => c.branchId === bId)?.systemConfig || ({} as SystemConfig);
-    const existingMap = { ...(existing.branchVaultCredentials || {}) };
-    existingMap[bId] = {
-      branchId: bId,
-      username: cleanUser,
-      password: hashedPass,
-      updatedAt: nowIso,
-    };
-    upsertInStoreInternal(store, 'system_config', bId, {
-      branchId: bId,
-      systemConfig: {
-        ...existing,
-        vaultUsername: cleanUser,
-        vaultPasscode: hashedPass,
-        branchVaultCredentials: existingMap,
-      },
-    });
-  }
-  persistStore(store);
-  return { updatedBranches: targetIds };
-}
-
-export function fallbackUpdateBranchDepartments(
-  branchId: string,
-  departments: BranchDepartmentConfigItem[],
-  actorUsername = 'admin'
-): BranchDepartmentConfigItem[] {
-  const store = loadStore();
-  const effectiveBranchId = branchId || DEFAULT_BRANCH_ID;
-  ensureFallbackBranch(store, effectiveBranchId);
-  const idx = store.system_config.findIndex((c) => c.branchId === effectiveBranchId);
-  const cloned = cloneDefaultBranchDepartmentsStructure(departments);
-  if (idx >= 0) {
-    store.system_config[idx] = {
-      ...store.system_config[idx],
-      systemConfig: {
-        ...store.system_config[idx].systemConfig,
-        branchDepartments: cloned,
-      },
-      version: Number(store.system_config[idx].version || 1) + 1,
-    };
-  } else {
-    const branchRow = store.branches.find((b) => b.id === effectiveBranchId);
-    store.system_config.push({
-      branchId: effectiveBranchId,
-      systemConfig: {
-        governorateTitle: branchRow?.governorateTitle || 'محافظة الغربية',
-        directorateTitle: branchRow?.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-        administrationTitle: branchRow?.name || effectiveBranchId,
-        englishSubtitle: '',
-        logoBase64: '',
-        branchDepartments: cloned,
-      },
-      columnTitles: {},
-      activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى'],
-      version: 1,
-    });
-  }
-  store.audit_logs.unshift({
-    id: `aud-depts-${Date.now()}`,
-    branchId: effectiveBranchId,
-    userEmail: actorUsername,
-    username: actorUsername,
-    department: 'branches',
-    operation: 'UPDATE_BRANCH_DEPARTMENTS',
-    recordId: effectiveBranchId,
-    result: 'SUCCESS',
-    action: 'UPDATE_BRANCH_DEPARTMENTS',
-    details: `تحديث هيكل وترتيب وإظهار الأقسام (${cloned.length} قسم) داخل الفرع (${effectiveBranchId})`,
-    ipAddress: '127.0.0.1',
-    createdAt: new Date().toISOString(),
-  });
-  persistStore(store);
-  return cloned;
-}
-
-export function fallbackCopyAllDepartmentsToAllBranches(
-  sourceBranchId = DEFAULT_BRANCH_ID,
-  actorUsername = 'admin'
-): {
-  updatedBranchIds: string[];
-  departmentsCount: number;
-  subItemsCount: number;
-  departments: BranchDepartmentConfigItem[];
-} {
-  const store = loadStore();
-  const effectiveSourceId = (sourceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const sourceCfg = store.system_config.find((c) => c.branchId === effectiveSourceId)?.systemConfig
-    ?.branchDepartments;
-  const defaultTemplate = cloneDefaultBranchDepartmentsStructure();
-  const sourceCloned =
-    Array.isArray(sourceCfg) && sourceCfg.length > 0
-      ? cloneDefaultBranchDepartmentsStructure(sourceCfg)
-      : defaultTemplate;
-  // Ensure every canonical default department exists in the copied master set
-  const existingIds = new Set(sourceCloned.map((d) => d.id));
-  const mergedMaster: BranchDepartmentConfigItem[] = [
-    ...sourceCloned.map((d) => ({ ...d, visible: true, enabled: true })),
-    ...defaultTemplate
-      .filter((d) => !existingIds.has(d.id))
-      .map((d) => ({ ...d, visible: true, enabled: true })),
-  ].map((d, idx) => ({
-    ...d,
-    order: idx + 1,
-    subItems: (d.subItems || []).map((s, sIdx) => ({
-      ...s,
-      visible: true,
-      enabled: true,
-      order: sIdx + 1,
-    })),
-  }));
-
-  const branches = deduplicateSupplyBranches(store.branches);
-  const updatedBranchIds: string[] = [];
-  for (const br of branches) {
-    const branchClone = cloneDefaultBranchDepartmentsStructure(mergedMaster);
-    const idx = store.system_config.findIndex((c) => c.branchId === br.id);
-    if (idx >= 0) {
-      store.system_config[idx] = {
-        ...store.system_config[idx],
-        systemConfig: {
-          ...store.system_config[idx].systemConfig,
-          branchDepartments: branchClone,
-        },
-        version: Number(store.system_config[idx].version || 1) + 1,
-      };
-    } else {
-      store.system_config.push({
-        branchId: br.id,
-        systemConfig: {
-          governorateTitle: br.governorateTitle || 'محافظة الغربية',
-          directorateTitle: br.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-          administrationTitle: br.name,
-          englishSubtitle: '',
-          logoBase64: '',
-          branchDepartments: branchClone,
-        },
-        columnTitles: {},
-        activityStatuses: ['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى'],
-        version: 1,
-      });
-    }
-    updatedBranchIds.push(br.id);
-  }
-
-  const subItemsCount = mergedMaster.reduce((sum, d) => sum + (d.subItems?.length || 0), 0);
-  store.audit_logs.unshift({
-    id: `aud-sync-all-depts-${Date.now()}`,
-    branchId: effectiveSourceId,
-    userEmail: actorUsername,
-    username: actorUsername,
-    department: 'branches',
-    operation: 'COPY_ALL_DEPARTMENTS_TO_ALL_BRANCHES',
-    recordId: effectiveSourceId,
-    result: 'SUCCESS',
-    action: 'COPY_ALL_DEPARTMENTS_TO_ALL_BRANCHES',
-    details: `نسخ وتعميم كافة الأقسام (${mergedMaster.length} قسم / ${subItemsCount} شاشة فرعية) إلى جميع الفروع (${updatedBranchIds.length} فرع) دون المساس بالبيانات التشغيلية.`,
-    ipAddress: '127.0.0.1',
-    createdAt: new Date().toISOString(),
-  });
-  persistStore(store);
-
-  return {
-    updatedBranchIds,
-    departmentsCount: mergedMaster.length,
-    subItemsCount,
-    departments: mergedMaster,
-  };
-}
-
-export function fallbackResetBranchSection(params: {
-  branchId: string;
-  sectionKey: ResettableSectionKey;
-  villageName?: string;
-  actorUsername?: string;
-}): { success: boolean; deletedCounts: Record<string, number>; message: string } {
-  const store = loadStore();
-  const effectiveBranchId = params.branchId || DEFAULT_BRANCH_ID;
-  const branchName =
-    store.branches.find((b) => b.id === effectiveBranchId)?.name || effectiveBranchId;
-  const actor = params.actorUsername || 'admin';
-  const deletedCounts: Record<string, number> = { bakeries: 0, debts: 0, alerts: 0 };
-
-  if (params.sectionKey === 'bakeries') {
-    const bBefore = store.bakeries.length;
-    const dBefore = store.debts.length;
-    store.bakeries = store.bakeries.filter((b) => b.branchId !== effectiveBranchId);
-    store.debts = store.debts.filter((d) => d.branchId !== effectiveBranchId);
-    store.high_debt_alerts = store.high_debt_alerts.filter((a) => a.branchId !== effectiveBranchId);
-    deletedCounts.bakeries = Math.max(0, bBefore - store.bakeries.length);
-    deletedCounts.debts = Math.max(0, dBefore - store.debts.length);
-  } else if (params.sectionKey === 'debts') {
-    const dBefore = store.debts.length;
-    store.debts = store.debts.filter((d) => d.branchId !== effectiveBranchId);
-    store.high_debt_alerts = store.high_debt_alerts.filter((a) => a.branchId !== effectiveBranchId);
-    deletedCounts.debts = Math.max(0, dBefore - store.debts.length);
-  } else if (
-    params.sectionKey === 'commodities' ||
-    params.sectionKey === 'internal_trade' ||
-    params.sectionKey === 'grain_maintenance' ||
-    params.sectionKey === 'hr'
-  ) {
-    const key = `${effectiveBranchId}::all_modules`;
-    const currentPayload =
-      store.module_states?.[key]?.payload || createEmptyBranchModulesBundle(effectiveBranchId, branchName, []);
-    const wiped = wipeSectionFromModulesBundle(currentPayload, params.sectionKey, actor);
-    fallbackUpsertBranchModuleState(effectiveBranchId, wiped, actor, 'all_modules');
-    const reloaded = loadStore();
-    store.module_states = reloaded.module_states;
-  } else if (params.sectionKey === 'village' && params.villageName) {
-    const normTarget = params.villageName.trim().toLowerCase();
-    const matchingBakeryIds = new Set(
-      store.bakeries
-        .filter((b) => b.branchId === effectiveBranchId && String(b.village || '').trim().toLowerCase() === normTarget)
-        .map((b) => b.id)
-    );
-    const bBefore = store.bakeries.length;
-    const dBefore = store.debts.length;
-    store.bakeries = store.bakeries.filter((b) => !matchingBakeryIds.has(b.id));
-    store.debts = store.debts.filter(
-      (d) =>
-        !(
-          d.branchId === effectiveBranchId &&
-          (String(d.village || '').trim().toLowerCase() === normTarget || matchingBakeryIds.has(d.bakeryId))
-        )
-    );
-    deletedCounts.bakeries = Math.max(0, bBefore - store.bakeries.length);
-    deletedCounts.debts = Math.max(0, dBefore - store.debts.length);
-
-    const key = `${effectiveBranchId}::all_modules`;
-    const currentPayload =
-      store.module_states?.[key]?.payload || createEmptyBranchModulesBundle(effectiveBranchId, branchName, []);
-    const wiped = wipeVillageFromModulesBundle(currentPayload, params.villageName, actor);
-    fallbackUpsertBranchModuleState(effectiveBranchId, wiped, actor, 'all_modules');
-    const reloaded = loadStore();
-    store.module_states = reloaded.module_states;
-  }
-
-  store.audit_logs.unshift({
-    id: `aud-reset-sec-${Date.now()}`,
-    branchId: effectiveBranchId,
-    userEmail: actor,
-    username: actor,
-    department: params.sectionKey,
-    operation: 'SECTION_FACTORY_RESET',
-    recordId: params.villageName || params.sectionKey,
-    result: 'SUCCESS',
-    action: 'SECTION_FACTORY_RESET',
-    details:
-      params.sectionKey === 'village'
-        ? `تصفير شامل لبيانات قرية (${params.villageName}) داخل (${branchName}) مع الحفاظ التام على الأقسام والقرى الأخرى.`
-        : `استعادة ضبط المصنع لبيانات قسم (${params.sectionKey}) داخل (${branchName}) مع الإبقاء التام على كافة الأقسام.`,
-    ipAddress: '127.0.0.1',
-    createdAt: new Date().toISOString(),
-  });
-  persistStore(store);
-  return {
-    success: true,
-    deletedCounts,
-    message:
-      params.sectionKey === 'village'
-        ? `تم تصفير كافة البيانات المدخلة داخل قرية "${params.villageName}" بدون مساس بالأقسام أو القرى الأخرى.`
-        : `تمت استعادة ضبط المصنع لبيانات القسم داخل "${branchName}" مع الإبقاء التام على كافة الأقسام.`,
-  };
-}
-
-

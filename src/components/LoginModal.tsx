@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { AppUser, SupplyBranch, SystemConfig, UserRoleType } from '../types';
+import { AppUser, SupplyBranch, SystemConfig } from '../types';
 import { INITIAL_USERS } from '../defaultData';
 import { normalizePasscodeInput } from '../utils/branchVaultUtils';
-import { getSecurityShieldHeaders, setAuthSessionToken } from '../lib/supabase.ts';
+import { getSecurityShieldHeaders, setAuthSessionToken } from '../lib/supabase';
 import {
   ShieldCheck,
   Lock,
@@ -47,10 +47,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
-  const [registerRole, setRegisterRole] = useState<UserRoleType>('viewer');
-  const [adminAuthUsername, setAdminAuthUsername] = useState('');
-  const [adminAuthPassword, setAdminAuthPassword] = useState('');
-  const [showAdminAuthPassword, setShowAdminAuthPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -73,116 +69,25 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setError('يرجى إدخال الاسم بالكامل واسم المستخدم وكلمة المرور');
         return;
       }
-      if (
-        normalizedInputPass.length < 8 ||
-        !/[a-zA-Z\u0600-\u06FF]/.test(normalizedInputPass) ||
-        !/\d/.test(normalizedInputPass)
-      ) {
-        setError('كلمة المرور يجب أن تتكون من 8 أحرف على الأقل وتحتوي على أحرف وأرقام.');
-        return;
-      }
-
-      const isPrivilegedRole = registerRole === 'super_admin' || registerRole === 'admin';
-      if (isPrivilegedRole && (!adminAuthUsername.trim() || !adminAuthPassword.trim())) {
-        setError(
-          'لإنشاء حساب بصلاحية «مدير النظام» أو «مدير عام النظام»، يرجى إدخال اسم المستخدم وكلمة المرور المعتمدة لمدير النظام الحالي أو بوابة الحماية السرية.'
-        );
-        return;
-      }
-
-      const isHttpOriginReg =
-        typeof window !== 'undefined' &&
-        (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-
-      if (isHttpOriginReg) {
-        setIsSubmitting(true);
-        try {
-          const resp = await fetch('/api/auth/register', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: getSecurityShieldHeaders(true),
-            body: JSON.stringify({
-              branchId: activeBranchId || 'branch-mahalla',
-              username: username.trim(),
-              fullName: fullName.trim(),
-              password: trimmedPass,
-              role: registerRole,
-              isSuperAdmin: registerRole === 'super_admin',
-              applyToAllBranches: registerRole === 'super_admin',
-              adminAuthUsername: isPrivilegedRole ? adminAuthUsername.trim() : undefined,
-              adminAuthPassword: isPrivilegedRole ? adminAuthPassword.trim() : undefined,
-              department:
-                activeBranch?.name ||
-                systemConfig?.administrationTitle ||
-                'إدارة تموين مركز المحلة الكبرى',
-            }),
-          });
-          const data = await resp.json().catch(() => null);
-          if (resp.ok && data?.success && data?.user) {
-            setPassword('');
-            setFullName('');
-            setUsername('');
-            setAdminAuthUsername('');
-            setAdminAuthPassword('');
-            setShowPassword(false);
-            setShowAdminAuthPassword(false);
-            if (onRegisterUser) {
-              await onRegisterUser({
-                ...data.user,
-                password: '',
-              });
-            }
-            setSuccessMsg(
-              isPrivilegedRole
-                ? 'تم إنشاء حساب مدير النظام وتفعيله بنجاح في قاعدة البيانات! يمكنك تسجيل الدخول الآن.'
-                : 'تم إنشاء الحساب بنجاح وحفظه في قاعدة البيانات! يمكنك تسجيل الدخول الآن.'
-            );
-            setMode('login');
-            setIsSubmitting(false);
-            return;
-          }
-          if (resp.status >= 400 && resp.status < 500) {
-            setError(data?.error || 'تعذر إنشاء الحساب الجديد.');
-            setIsSubmitting(false);
-            return;
-          }
-        } catch {
-          // Offline fallback handled below
-        } finally {
-          setIsSubmitting(false);
-        }
-      }
-
       const poolOfUsers = Array.isArray(users) && users.length > 0 ? users : INITIAL_USERS;
       const exists = poolOfUsers.some((u) => (u.username || '').toLowerCase() === trimmedUser);
       if (exists) {
         setError('اسم المستخدم مسجل بالفعل، اختر اسماً آخر.');
         return;
       }
-      const safeOfflineRole: UserRoleType = isPrivilegedRole ? 'viewer' : registerRole;
       const newUser: AppUser = {
         id: `user-${Date.now()}`,
         username: username.trim(),
         password: trimmedPass,
         fullName: fullName.trim(),
-        role: safeOfflineRole,
-        department:
-          activeBranch?.name ||
-          systemConfig?.administrationTitle ||
-          'إدارة تموين مركز المحلة الكبرى',
+        role: 'data_entry',
+        department: activeBranch?.name || systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى',
         isActive: true,
         createdAt: new Date().toISOString().split('T')[0],
       };
       if (onRegisterUser) {
         await onRegisterUser(newUser);
       }
-      setPassword('');
-      setFullName('');
-      setUsername('');
-      setAdminAuthUsername('');
-      setAdminAuthPassword('');
-      setShowPassword(false);
-      setShowAdminAuthPassword(false);
       setSuccessMsg('تم إنشاء الحساب بنجاح! يمكنك تسجيل الدخول الآن.');
       setMode('login');
       return;
@@ -213,8 +118,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         const data = await resp.json().catch(() => null);
         if (resp.ok && data?.success && data?.user && data?.token) {
           setAuthSessionToken(data.token);
-          setPassword('');
-          setShowPassword(false);
           setIsSubmitting(false);
           triggerLogin?.({
             ...data.user,
@@ -222,12 +125,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           });
           return;
         }
-        if (
-          resp.status === 400 ||
-          resp.status === 401 ||
-          resp.status === 403 ||
-          resp.status === 429
-        ) {
+        if (resp.status === 400 || resp.status === 401 || resp.status === 403) {
           setIsSubmitting(false);
           setError(data?.error || 'اسم المستخدم أو كلمة المرور غير صحيحة');
           return;
@@ -266,8 +164,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
 
-    setPassword('');
-    setShowPassword(false);
     triggerLogin?.({
       ...matched,
       isActive: true,
@@ -329,14 +225,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
               <div className="space-y-1">
                 <div className="text-sm font-black text-[#D4AF37] tracking-wide">
-                  {activeBranch?.governorate ||
-                    activeBranch?.governorateTitle ||
-                    systemConfig?.governorateTitle ||
-                    'محافظة الغربية'}
+                  {activeBranch?.governorate || systemConfig?.governorateTitle || 'محافظة الغربية'}
                 </div>
                 <h1 className="text-lg sm:text-xl font-black text-white leading-snug">
                   {activeBranch?.directorate ||
-                    activeBranch?.directorateTitle ||
                     systemConfig?.directorateTitle ||
                     'مديرية التموين والتجارة الداخلية بالغربية'}
                 </h1>
@@ -433,7 +325,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 >
                   {branches.map((branch) => (
                     <option key={branch.id} value={branch.id}>
-                      {branch.name} — ({branch.governorate || branch.governorateTitle || 'محافظة الغربية'})
+                      {branch.name} — ({branch.governorate})
                     </option>
                   ))}
                 </select>
@@ -448,95 +340,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             )}
 
             {mode === 'register' && (
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-black text-[#0A1628] mb-1.5">
-                    الاسم الرباعي للموظف
-                  </label>
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    data-testid="register-fullname-input"
-                    placeholder="أدخل الاسم بالكامل"
-                    autoComplete="off"
-                    className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="login-register-role-select"
-                    className="block text-xs font-black text-[#0A1628] mb-1.5"
-                  >
-                    الصلاحية / الدور الوظيفي المطلوب *
-                  </label>
-                  <select
-                    id="login-register-role-select"
-                    data-testid="login-register-role-select"
-                    value={registerRole}
-                    onChange={(e) => setRegisterRole(e.target.value as UserRoleType)}
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-black text-xs focus:outline-none focus:ring-2 focus:ring-[#0D9488] cursor-pointer"
-                  >
-                    <option value="admin">مدير النظام — Admin (صلاحيات إدارية كاملة للفرع)</option>
-                    <option value="super_admin">مدير عام النظام — Super Admin (صلاحية مطلقة على كافة الفروع)</option>
-                    <option value="supervisor">مشرف عام — Supervisor</option>
-                    <option value="auditor">مراجع حسابات ومديونيات — Auditor</option>
-                    <option value="inspector">مفتش رقابة وتموين — Inspector</option>
-                    <option value="data_entry">مسئول إدخال بيانات — Data Entry</option>
-                    <option value="viewer">مشاهد — Viewer (استعراض وطباعة فقط)</option>
-                    <option value="reader">قارئ فقط — Reader (عرض بدون تعديل)</option>
-                  </select>
-
-                  {(registerRole === 'admin' || registerRole === 'super_admin') && (
-                    <div
-                      data-testid="register-admin-auth-box"
-                      className="mt-2.5 p-3 rounded-2xl bg-amber-50 border border-amber-300 space-y-2"
-                    >
-                      <div className="flex items-center gap-1.5 text-[11px] font-black text-amber-950">
-                        <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0" />
-                        <span>اعتماد مدير النظام (مطلوب لإنشاء حساب مدير النظام)</span>
-                      </div>
-                      <p className="text-[10px] font-bold text-amber-900 leading-relaxed">
-                        أدخل اسم المستخدم وكلمة المرور لمدير النظام الحالي أو لبوابة الحماية السرية للتحقق الفوري على الخادم:
-                      </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <input
-                          type="text"
-                          data-testid="register-admin-auth-username"
-                          value={adminAuthUsername}
-                          onChange={(e) => setAdminAuthUsername(e.target.value)}
-                          placeholder="اسم مستخدم المدير المعتمد (مثل: admin)"
-                          autoComplete="off"
-                          className="w-full px-3 py-2 rounded-xl bg-white border border-amber-300 text-xs font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-amber-500"
-                        />
-                        <div className="relative">
-                          <input
-                            type={showAdminAuthPassword ? 'text' : 'password'}
-                            data-testid="register-admin-auth-password"
-                            value={adminAuthPassword}
-                            onChange={(e) => setAdminAuthPassword(e.target.value)}
-                            placeholder="كلمة مرور المدير / بوابة الحماية"
-                            autoComplete="new-password"
-                            className="w-full pr-3 pl-9 py-2 rounded-xl bg-white border border-amber-300 text-xs font-bold text-[#0A1628] focus:outline-none focus:ring-2 focus:ring-amber-500"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowAdminAuthPassword((p) => !p)}
-                            className="absolute left-2 top-1/2 -translate-y-1/2 text-amber-700 hover:text-amber-950 p-1 cursor-pointer"
-                            title={showAdminAuthPassword ? 'إخفاء' : 'إظهار'}
-                          >
-                            {showAdminAuthPassword ? (
-                              <EyeOff className="w-3.5 h-3.5" />
-                            ) : (
-                              <Eye className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+              <div>
+                <label className="block text-xs font-black text-[#0A1628] mb-1.5">
+                  الاسم الرباعي للموظف
+                </label>
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="أدخل الاسم بالكامل"
+                  className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-bold text-sm focus:outline-none focus:ring-2 focus:ring-[#0D9488]"
+                />
               </div>
             )}
 
@@ -592,11 +406,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               {onRegisterUser && (
                 <button
                   type="button"
-                  data-testid="toggle-login-register-mode-btn"
                   onClick={() => {
                     setMode(mode === 'login' ? 'register' : 'login');
-                    setPassword('');
-                    setShowPassword(false);
                     setError(null);
                     setSuccessMsg(null);
                   }}

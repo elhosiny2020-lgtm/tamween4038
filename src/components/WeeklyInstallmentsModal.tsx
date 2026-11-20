@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bakery, DebtRecord, SystemConfig, AppUser } from '../types';
-import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
 import {
   AlertTriangle,
   Calendar,
@@ -124,8 +123,8 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 p-1 rounded-xl bg-white border border-amber-400 shadow-md flex items-center justify-center shrink-0">
               <img
-                src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
-                alt="شعار وزارة التموين والتجارة الداخلية"
+                src={systemConfig.logoBase64}
+                alt="شعار التموين"
                 className="w-full h-full object-contain"
               />
             </div>
@@ -306,8 +305,8 @@ export const WeeklyInstallmentsModal: React.FC<WeeklyInstallmentsModalProps> = (
                   <div className="text-center">
                     <div className="w-14 h-14 mx-auto p-1 border border-amber-600 rounded-full bg-white flex items-center justify-center">
                       <img
-                        src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
-                        alt="شعار وزارة التموين والتجارة الداخلية"
+                        src={systemConfig.logoBase64}
+                        alt="شعار الوزارة"
                         className="w-full h-full object-contain"
                       />
                     </div>

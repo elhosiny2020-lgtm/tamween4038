@@ -1,7 +1,7 @@
-import type { AppUser, CustomJobRole, SupplyBranch, SystemConfig } from '../types.ts';
-import { INITIAL_USERS, DEFAULT_SYSTEM_CONFIG } from '../defaultData.ts';
-import { getDefaultRolePermissionsMap } from '../permissions.ts';
-import { scrubProtectedOwnerEmail } from '../utils/auditHelper.ts';
+import { AppUser, CustomJobRole, SupplyBranch, SystemConfig } from '../types';
+import { INITIAL_USERS, DEFAULT_SYSTEM_CONFIG } from '../defaultData';
+import { getDefaultRolePermissionsMap } from '../permissions';
+import { scrubProtectedOwnerEmail } from '../utils/auditHelper';
 
 export const DEFAULT_BRANCH_ID = 'branch-mahalla';
 const VAULT_PREFIX = 'TAMWEEN_BRANCH_AUTH_VAULT_V1__';

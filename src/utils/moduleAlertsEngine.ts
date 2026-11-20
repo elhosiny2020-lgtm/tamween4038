@@ -1,15 +1,10 @@
 import type { AppUser } from '../types';
-import type {
-  GrainMaintenanceState,
-  HrModuleState,
-  InternalTradeState,
-  RationModuleState,
-} from '../types/modules';
+import type { InternalTradeState, RationModuleState } from '../types/modules';
 import { hasDepartmentPermission, isSuperAdmin } from './departmentRbac';
 import { computeWarehouseStockStatus } from './rationMathEngine';
 import { normalizeLocalUnitLabel } from './tableGroupingHelpers';
 
-export type DepartmentAlertScope = 'commodities' | 'internal_trade' | 'hr' | 'grain_maintenance';
+export type DepartmentAlertScope = 'commodities' | 'internal_trade';
 export type DepartmentAlertSeverity = 'critical' | 'warning' | 'info';
 
 export interface DepartmentAlertItem {
@@ -465,136 +460,6 @@ export function buildInternalTradeDepartmentAlerts(
         sourceId: dep.id,
         timestamp: dep.licenseExpiryDate || referenceDateIso,
         dateKey: resolveDateKey(dep.licenseExpiryDate, referenceDateIso),
-      });
-    }
-  }
-
-  return alerts;
-}
-
-/**
- * استخراج تنبيهات وإشعارات قسم الموارد البشرية وشؤون العاملين (بما في ذلك عقود الخدمة العامة والاستعانة قبل 30 يوماً)
- */
-export function buildHrDepartmentAlerts(
-  hr: HrModuleState | undefined,
-  referenceDateIso: string = new Date().toISOString().slice(0, 10)
-): DepartmentAlertItem[] {
-  if (!hr) return [];
-  const alerts: DepartmentAlertItem[] = [];
-
-  for (const emp of hr.employees || []) {
-    const isContractEmp = emp.employeeType === 'خدمة عامة' || emp.employeeType === 'استعانة';
-    if (isContractEmp && emp.contractEndDate) {
-      const expState = checkExpiryStatus(emp.contractEndDate, referenceDateIso, 30);
-      if (expState !== 'ok') {
-        const daysLeft = daysUntilDate(emp.contractEndDate, referenceDateIso);
-        alerts.push({
-          id: `hr-contract-${emp.id}-${emp.contractEndDate}`,
-          department: 'hr',
-          type: emp.employeeType === 'استعانة' ? 'عقود موظفي الاستعانة' : 'عقود الخدمة العامة',
-          title:
-            expState === 'expired'
-              ? `عقد ${emp.employeeType} منتهٍ: ${emp.fullName}`
-              : `عقد ${emp.employeeType} ينتهي خلال ${daysLeft} يوماً: ${emp.fullName}`,
-          message: `الكود (${emp.employeeCode}) — الهاتف (${emp.phone || 'غير مسجل'}) — القسم: ${emp.departmentName} — ينتهي في ${emp.contractEndDate}.`,
-          severity: expState === 'expired' ? 'critical' : 'warning',
-          localUnit: normalizeLocalUnitLabel(emp.workSite || emp.departmentName),
-          village: emp.village,
-          sourceLabel: emp.employeeType === 'استعانة' ? 'قسم موظفو الاستعانة' : 'قسم موظفو الخدمة العامة',
-          sourceId: emp.id,
-          timestamp: emp.updatedAt || referenceDateIso,
-          dateKey: resolveDateKey(emp.contractEndDate, referenceDateIso),
-        });
-      }
-    }
-
-    if (!String(emp.phone || '').trim()) {
-      alerts.push({
-        id: `hr-phone-${emp.id}`,
-        department: 'hr',
-        type: 'نواقص بيانات العاملين',
-        title: `رقم الهاتف غير مسجل: ${emp.fullName}`,
-        message: `الموظف (${emp.employeeCode}) في ${emp.departmentName} غير مسجل له رقم هاتف محمول.`,
-        severity: 'info',
-        localUnit: normalizeLocalUnitLabel(emp.workSite || emp.departmentName),
-        village: emp.village,
-        sourceLabel: 'ملف الموظفين',
-        sourceId: emp.id,
-        timestamp: emp.updatedAt || referenceDateIso,
-        dateKey: resolveDateKey(emp.updatedAt, referenceDateIso),
-      });
-    }
-  }
-
-  for (const run of hr.payrollRuns || []) {
-    if (run.status === 'معاينة') {
-      alerts.push({
-        id: `hr-payroll-draft-${run.id}`,
-        department: 'hr',
-        type: 'مسيرات الرواتب',
-        title: `مسير رواتب قيد المعاينة (${run.monthKey})`,
-        message: `يوجد مسير رواتب لشهر ${run.monthKey} بعدد (${run.lines.length}) موظف لم يتم اعتماده وإقفاله نهائياً بعد.`,
-        severity: 'warning',
-        localUnit: 'الإدارة العامة',
-        sourceLabel: 'مسيرات المرتبات',
-        sourceId: run.id,
-        timestamp: `${run.monthKey}-01`,
-        dateKey: `${run.monthKey}-01`,
-      });
-    }
-  }
-
-  return alerts;
-}
-
-/**
- * استخراج تنبيهات وإشعارات قسم صيانة الحبوب والصوامع
- */
-export function buildGrainDepartmentAlerts(
-  grain: GrainMaintenanceState | undefined,
-  referenceDateIso: string = new Date().toISOString().slice(0, 10)
-): DepartmentAlertItem[] {
-  if (!grain) return [];
-  const alerts: DepartmentAlertItem[] = [];
-
-  for (const lic of grain.millLicenses || []) {
-    const expState = checkExpiryStatus(lic.expiryDate, referenceDateIso, 30);
-    if (expState !== 'ok') {
-      const licRec = lic as unknown as Record<string, unknown>;
-      const authority = licRec.issuingAuthority || licRec.licenseType || 'مديرية التموين';
-      alerts.push({
-        id: `grain-mill-lic-${lic.id}`,
-        department: 'grain_maintenance',
-        type: 'تراخيص المطاحن',
-        title: expState === 'expired' ? `ترخيص مطحن منتهٍ (${lic.licenseNumber})` : `ترخيص مطحن يقترب من الانتهاء (${lic.licenseNumber})`,
-        message: `ينتهي بتاريخ ${lic.expiryDate} — جهة الإصدار: ${String(authority)}.`,
-        severity: expState === 'expired' ? 'critical' : 'warning',
-        localUnit: 'المطاحن التموينية',
-        sourceLabel: 'تراخيص المطاحن',
-        sourceId: lic.id,
-        timestamp: lic.expiryDate || referenceDateIso,
-        dateKey: resolveDateKey(lic.expiryDate, referenceDateIso),
-      });
-    }
-  }
-
-  for (const part of grain.spareParts || []) {
-    const pRec = part as unknown as Record<string, unknown>;
-    const curStock = Number(pRec.currentStock ?? pRec.quantity ?? 0) || 0;
-    const minLevel = Number(pRec.reorderPoint ?? pRec.minThreshold ?? 0) || 0;
-    if (curStock <= minLevel) {
-      alerts.push({
-        id: `grain-part-${part.id}`,
-        department: 'grain_maintenance',
-        type: 'قطع الغيار والصيانة',
-        title: `وصول قطعة غيار لحد الطلب: ${part.partName}`,
-        message: `الرصيد الحالي (${curStock}) أقل من أو يساوي حد إعادة الطلب (${minLevel}).`,
-        severity: curStock === 0 ? 'critical' : 'warning',
-        localUnit: 'مخزن قطع الغيار',
-        sourceLabel: 'مخزن قطع الغيار',
-        sourceId: part.id,
-        timestamp: part.updatedAt || referenceDateIso,
-        dateKey: resolveDateKey(part.updatedAt, referenceDateIso),
       });
     }
   }

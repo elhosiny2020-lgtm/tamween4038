@@ -1,4 +1,3 @@
-import { Pool } from 'pg';
 import { pool } from './index.ts';
 import type {
   Bakery,
@@ -77,21 +76,11 @@ import {
 import {
   hashPasswordScrypt,
   isScryptHash,
-  normalizeDigits,
-  sanitizeSystemConfigForClient,
   sanitizeUserForClient,
   verifyPasswordScrypt,
 } from '../utils/serverAuth.ts';
 import { resolveUserDepartmentMatrix } from '../utils/departmentRbac.ts';
 import { INITIAL_USERS } from '../defaultData.ts';
-import {
-  cloneDefaultBranchDepartmentsStructure,
-  wipeSectionFromModulesBundle,
-  wipeVillageFromModulesBundle,
-  type ResettableSectionKey,
-} from '../utils/branchOperations.ts';
-import { createEmptyBranchModulesBundle } from '../services/modulesStorage.ts';
-import type { BranchDepartmentConfigItem } from '../types.ts';
 import {
   fallbackAuthenticateUser,
   fallbackDeleteAuditLogs,
@@ -106,17 +95,12 @@ import {
   fallbackPurgeAll,
   fallbackQueryTablePaginated,
   fallbackRecordAuditDeletionSecurityLog,
-  fallbackCopyAllDepartmentsToAllBranches,
-  fallbackResetBranchSection,
-  fallbackUpdateBranchDepartments,
   fallbackResetNonMahallaBranches,
   fallbackSyncFullBranchState,
   fallbackSyncHighDebtAlerts,
-  fallbackUpdateVaultCredentials,
   fallbackUpsertBranchModuleState,
   fallbackUpsertRow,
   fallbackUpsertStorageFile,
-  fallbackVerifyVaultCredentials,
   isPostgresUnavailableError,
 } from './fallbackStore.ts';
 
@@ -158,152 +142,114 @@ export async function ensurePostgresSchema(): Promise<void> {
            AND NOT EXISTS (SELECT 1 FROM public.bakeries bk WHERE bk.branch_id = b.id)
            AND NOT EXISTS (SELECT 1 FROM public.debts dt WHERE dt.branch_id = b.id)`
       );
-      // Run DDL migrations using admin credentials when configured so app_user gets full tables & columns
-      const adminUser = String(process.env.SQL_ADMIN_USER || '').trim();
-      const adminPass = String(process.env.SQL_ADMIN_PASSWORD || '').trim();
-      const appUser = String(process.env.SQL_USER || '').trim();
-      let ddlPool: Pool = pool;
-      let ownsDdlPool = false;
-      if (adminUser && adminPass && process.env.SQL_HOST) {
-        ddlPool = new Pool({
-          host: process.env.SQL_HOST,
-          port: Number(process.env.SQL_PORT || 5432),
-          user: adminUser,
-          password: adminPass,
-          database: process.env.SQL_DB_NAME,
-          max: 2,
-          connectionTimeoutMillis: 10000,
-        });
-        ownsDdlPool = true;
-      }
+      // Ensure cross-branch module state table, schema columns, and departments exist concurrently
+      await Promise.all([
+        pool
+          .query(
+            `CREATE TABLE IF NOT EXISTS public.branch_module_states (
+              id TEXT PRIMARY KEY,
+              branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+              module_key TEXT NOT NULL DEFAULT 'all_modules',
+              payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+              updated_by TEXT NOT NULL DEFAULT '',
+              version INTEGER NOT NULL DEFAULT 1,
+              updated_at TIMESTAMPTZ DEFAULT NOW(),
+              CONSTRAINT uq_branch_module_state UNIQUE (branch_id, module_key)
+            )`
+          )
+          .catch(() => {}),
+        pool
+          .query(
+            `ALTER TABLE public.app_users
+               ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+               ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE,
+               ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS department_permissions JSONB DEFAULT NULL`
+          )
+          .catch(() => {}),
+        pool
+          .query(
+            `CREATE TABLE IF NOT EXISTS public.app_departments (
+              id TEXT PRIMARY KEY,
+              name_ar TEXT NOT NULL,
+              display_order INTEGER NOT NULL DEFAULT 1,
+              created_at TIMESTAMPTZ DEFAULT NOW()
+            )`
+          )
+          .catch(() => {}),
+        pool
+          .query(
+            `ALTER TABLE public.audit_logs
+               ADD COLUMN IF NOT EXISTS username TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS operation TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS record_id TEXT DEFAULT '',
+               ADD COLUMN IF NOT EXISTS result TEXT DEFAULT 'SUCCESS'`
+          )
+          .catch(() => {}),
+        pool
+          .query(
+            `CREATE TABLE IF NOT EXISTS public.audit_deletion_security_log (
+              id TEXT PRIMARY KEY,
+              branch_id TEXT NOT NULL DEFAULT 'branch-mahalla',
+              deleted_by TEXT NOT NULL,
+              deleted_by_full_name TEXT NOT NULL DEFAULT '',
+              target_scope TEXT NOT NULL,
+              deleted_count INTEGER NOT NULL DEFAULT 0,
+              reason TEXT NOT NULL DEFAULT '',
+              ip_address TEXT NOT NULL DEFAULT '127.0.0.1',
+              created_at TIMESTAMPTZ DEFAULT NOW()
+            )`
+          )
+          .catch(() => {}),
+      ]);
 
-      try {
-        await Promise.all([
-          ddlPool
+      await Promise.all([
+        ...SYSTEM_DEPARTMENT_KEYS.map((deptId, i) => {
+          const scope = DEPARTMENT_SCOPES.find((d) => d.id === deptId);
+          return pool
             .query(
-              `CREATE TABLE IF NOT EXISTS public.branch_module_states (
-                id TEXT PRIMARY KEY,
-                branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
-                module_key TEXT NOT NULL DEFAULT 'all_modules',
-                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-                updated_by TEXT NOT NULL DEFAULT '',
-                version INTEGER NOT NULL DEFAULT 1,
-                updated_at TIMESTAMPTZ DEFAULT NOW(),
-                CONSTRAINT uq_branch_module_state UNIQUE (branch_id, module_key)
-              )`
-            )
-            .catch(() => {}),
-          ddlPool
-            .query(
-              `ALTER TABLE public.app_users
-                 ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
-                 ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE,
-                 ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '',
-                 ADD COLUMN IF NOT EXISTS department_permissions JSONB DEFAULT NULL`
-            )
-            .catch(() => {}),
-          ddlPool
-            .query(
-              `CREATE TABLE IF NOT EXISTS public.app_departments (
-                id TEXT PRIMARY KEY,
-                name_ar TEXT NOT NULL,
-                display_order INTEGER NOT NULL DEFAULT 1,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-              )`
-            )
-            .catch(() => {}),
-          ddlPool
-            .query(
-              `ALTER TABLE public.audit_logs
-                 ADD COLUMN IF NOT EXISTS username TEXT DEFAULT '',
-                 ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
-                 ADD COLUMN IF NOT EXISTS operation TEXT DEFAULT '',
-                 ADD COLUMN IF NOT EXISTS record_id TEXT DEFAULT '',
-                 ADD COLUMN IF NOT EXISTS result TEXT DEFAULT 'SUCCESS'`
-            )
-            .catch(() => {}),
-          ddlPool
-            .query(
-              `CREATE TABLE IF NOT EXISTS public.audit_deletion_security_log (
-                id TEXT PRIMARY KEY,
-                branch_id TEXT NOT NULL DEFAULT 'branch-mahalla',
-                deleted_by TEXT NOT NULL,
-                deleted_by_full_name TEXT NOT NULL DEFAULT '',
-                target_scope TEXT NOT NULL,
-                deleted_count INTEGER NOT NULL DEFAULT 0,
-                reason TEXT NOT NULL DEFAULT '',
-                ip_address TEXT NOT NULL DEFAULT '127.0.0.1',
-                created_at TIMESTAMPTZ DEFAULT NOW()
-              )`
-            )
-            .catch(() => {}),
-        ]);
-
-        await Promise.all([
-          ...SYSTEM_DEPARTMENT_KEYS.map((deptId, i) => {
-            const scope = DEPARTMENT_SCOPES.find((d) => d.id === deptId);
-            return ddlPool
-              .query(
-                `INSERT INTO public.app_departments (id, name_ar, display_order)
-                 VALUES ($1, $2, $3)
-                 ON CONFLICT (id) DO UPDATE SET name_ar = EXCLUDED.name_ar, display_order = EXCLUDED.display_order`,
-                [deptId, scope?.label || deptId, i + 1]
-              )
-              .catch(() => {});
-          }),
-          ddlPool
-            .query(
-              `CREATE TABLE IF NOT EXISTS public.user_department_permissions (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
-                branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
-                department_id TEXT NOT NULL REFERENCES public.app_departments(id) ON DELETE CASCADE,
-                can_view BOOLEAN NOT NULL DEFAULT FALSE,
-                can_insert BOOLEAN NOT NULL DEFAULT FALSE,
-                can_update BOOLEAN NOT NULL DEFAULT FALSE,
-                can_delete BOOLEAN NOT NULL DEFAULT FALSE,
-                can_print BOOLEAN NOT NULL DEFAULT FALSE,
-                can_export BOOLEAN NOT NULL DEFAULT FALSE,
-                updated_at TIMESTAMPTZ DEFAULT NOW(),
-                CONSTRAINT uq_user_dept_perm UNIQUE (user_id, department_id)
-              )`
-            )
-            .catch(() => {}),
-        ]);
-
-        if (ownsDdlPool && /^[a-zA-Z0-9_]+$/.test(appUser)) {
-          await ddlPool
-            .query(
-              `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "${appUser}";
-               GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${appUser}";`
+              `INSERT INTO public.app_departments (id, name_ar, display_order)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (id) DO UPDATE SET name_ar = EXCLUDED.name_ar, display_order = EXCLUDED.display_order`,
+              [deptId, scope?.label || deptId, i + 1]
             )
             .catch(() => {});
-        }
-      } finally {
-        if (ownsDdlPool) {
-          await ddlPool.end().catch(() => {});
-        }
-      }
-
-      const isProd =
-        process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
-      const initialAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
-      if (!isProd || initialAdminPass) {
-        const hashedAdminPass = hashPasswordScrypt(initialAdminPass || 'admin');
-        await pool
+        }),
+        pool
           .query(
-            `INSERT INTO public.app_users (
-              id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions, is_active, is_super_admin
-            )
-            SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', $1, 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb, TRUE, TRUE
-            WHERE NOT EXISTS (
-              SELECT 1 FROM public.app_users WHERE branch_id = 'branch-mahalla' AND lower(username) = 'admin'
-            )
-            ON CONFLICT (id) DO NOTHING`,
-            [hashedAdminPass]
+            `CREATE TABLE IF NOT EXISTS public.user_department_permissions (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
+              branch_id TEXT NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
+              department_id TEXT NOT NULL REFERENCES public.app_departments(id) ON DELETE CASCADE,
+              can_view BOOLEAN NOT NULL DEFAULT FALSE,
+              can_insert BOOLEAN NOT NULL DEFAULT FALSE,
+              can_update BOOLEAN NOT NULL DEFAULT FALSE,
+              can_delete BOOLEAN NOT NULL DEFAULT FALSE,
+              can_print BOOLEAN NOT NULL DEFAULT FALSE,
+              can_export BOOLEAN NOT NULL DEFAULT FALSE,
+              updated_at TIMESTAMPTZ DEFAULT NOW(),
+              CONSTRAINT uq_user_dept_perm UNIQUE (user_id, department_id)
+            )`
           )
-          .catch(() => {});
-      }
+          .catch(() => {}),
+      ]);
+
+      const hashedAdminPass = hashPasswordScrypt('admin');
+      await pool
+        .query(
+          `INSERT INTO public.app_users (
+            id, branch_id, username, full_name, password_hash, role, job_title, department, custom_permissions, is_active, is_super_admin
+          )
+          SELECT 'u-1__branch-mahalla', 'branch-mahalla', 'admin', 'مدير المنظومة التموينية', $1, 'admin', 'مدير عام النظام', 'إدارة تموين مركز المحلة الكبرى', '[]'::jsonb, TRUE, TRUE
+          WHERE NOT EXISTS (
+            SELECT 1 FROM public.app_users WHERE branch_id = 'branch-mahalla' AND lower(username) = 'admin'
+          )
+          ON CONFLICT (id) DO NOTHING`,
+          [hashedAdminPass]
+        )
+        .catch(() => {});
       // Auto-upgrade any legacy plaintext passwords stored in app_users to scrypt
       const legacyUsersRes = await pool
         .query(`SELECT id, password_hash FROM public.app_users`)
@@ -578,45 +524,43 @@ export function mapDbRowByTable(table: NormalizedTableName, row: any): any {
       return mapDbInboxToApp(row);
     case 'high_debt_alerts':
       return mapDbAlertToApp(row);
-    case 'system_config': {
-      const rawAlertCfg = row.daily_alert_config || {};
-      const {
-        branchDepartments: storedBranchDepts,
-        customTableTitles: storedTableTitles,
-        customColumnTitles: storedColumnTitles,
-        ...restAlertCfg
-      } = rawAlertCfg;
+    case 'system_config':
       return {
         branchId: String(row.branch_id || DEFAULT_BRANCH_ID),
-        systemConfig: sanitizeSystemConfigForClient({
+        systemConfig: {
           governorateTitle: String(row.governorate_title || ''),
           directorateTitle: String(row.directorate_title || ''),
           administrationTitle: String(row.administration_title || ''),
           englishSubtitle: String(row.english_subtitle || ''),
           logoBase64: String(row.logo_base64 || ''),
           debtAlertThreshold: Number(row.debt_alert_threshold || 50000),
+          vaultUsername: String(
+            row.daily_alert_config?.vaultUsername || DEFAULT_VAULT_USERNAME
+          ),
+          vaultPasscode: String(
+            row.daily_alert_config?.vaultPasscode || row.vault_passcode || DEFAULT_VAULT_PASSCODE
+          ),
+          branchVaultCredentials:
+            row.daily_alert_config?.branchVaultCredentials &&
+            typeof row.daily_alert_config.branchVaultCredentials === 'object'
+              ? row.daily_alert_config.branchVaultCredentials
+              : undefined,
           dailyAlertConfig: row.daily_alert_config
             ? {
-                ...restAlertCfg,
+                ...row.daily_alert_config,
                 supervisorEmailRecipients: scrubProtectedOwnerEmailList(
-                  restAlertCfg.supervisorEmailRecipients
+                  row.daily_alert_config.supervisorEmailRecipients
                 ),
               }
             : undefined,
           rolePermissions: row.role_permissions || undefined,
           roleLabels: row.role_labels || undefined,
           customRoles: Array.isArray(row.custom_roles) ? row.custom_roles : undefined,
-          branchDepartments: Array.isArray(storedBranchDepts) ? storedBranchDepts : undefined,
-          customTableTitles:
-            storedTableTitles && typeof storedTableTitles === 'object' ? storedTableTitles : undefined,
-          customColumnTitles:
-            storedColumnTitles && typeof storedColumnTitles === 'object' ? storedColumnTitles : undefined,
-        } as SystemConfig),
+        } as SystemConfig,
         columnTitles: (row.column_titles || {}) as Partial<ColumnTitles>,
         activityStatuses: Array.isArray(row.activity_statuses) ? row.activity_statuses : [],
         version: Number(row.version || 1),
       };
-    }
     case 'dropdown_lists':
       return {
         id: String(row.id),
@@ -715,33 +659,12 @@ export async function getBootstrapFromPostgres(requestedBranchId = DEFAULT_BRANC
       }
     }
 
-    const branchesList = deduplicateSupplyBranches(branchesRes.rows.map(mapDbBranchToApp));
     const cfgRow = cfgRes.rows[0];
     const mappedCfg = cfgRow ? mapDbRowByTable('system_config', cfgRow) : null;
-    const branchMeta = branchesList.find((b) => b.id === branchId);
-    const resolvedSystemConfig: SystemConfig | null = mappedCfg?.systemConfig
-      ? {
-          ...mappedCfg.systemConfig,
-          branchDepartments:
-            Array.isArray(mappedCfg.systemConfig.branchDepartments) &&
-            mappedCfg.systemConfig.branchDepartments.length > 0
-              ? mappedCfg.systemConfig.branchDepartments
-              : cloneDefaultBranchDepartmentsStructure(),
-        }
-      : branchMeta
-      ? sanitizeSystemConfigForClient({
-          governorateTitle: branchMeta.governorateTitle || 'محافظة الغربية',
-          directorateTitle: branchMeta.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-          administrationTitle: branchMeta.name,
-          englishSubtitle: '',
-          logoBase64: '',
-          branchDepartments: cloneDefaultBranchDepartmentsStructure(),
-        } as SystemConfig)
-      : null;
 
     return {
       branchId,
-      branches: branchesList,
+      branches: deduplicateSupplyBranches(branchesRes.rows.map(mapDbBranchToApp)),
       villages: villagesRes.rows.map((r) => ({
         village: String(r.village),
         localUnits: Array.isArray(r.local_units) ? r.local_units : [],
@@ -752,7 +675,7 @@ export async function getBootstrapFromPostgres(requestedBranchId = DEFAULT_BRANC
       dailyTasks: tasksRes.rows.map(mapDbTaskToApp),
       inboxMessages: inboxRes.rows.map(mapDbInboxToApp),
       highDebtAlerts: alertsRes.rows.map(mapDbAlertToApp),
-      systemConfig: resolvedSystemConfig,
+      systemConfig: mappedCfg?.systemConfig || null,
       columnTitles: mappedCfg?.columnTitles || null,
       activityStatuses: mappedCfg?.activityStatuses || [],
       dropdownLists,
@@ -1011,35 +934,6 @@ export async function upsertRowWithClient(
         ]
       );
       resultRow = mapDbRowByTable('branches', res.rows[0]);
-      // Provision isolated cloned departments hierarchy on newly created branch without any operational data
-      const cfgCheck = await client.query(
-        `SELECT branch_id FROM public.system_config WHERE branch_id = $1`,
-        [finalBranchId]
-      );
-      if (cfgCheck.rows.length === 0) {
-        const mahallaCfg = await client.query(
-          `SELECT daily_alert_config FROM public.system_config WHERE branch_id = $1`,
-          [DEFAULT_BRANCH_ID]
-        );
-        const mahallaDepts = mahallaCfg.rows[0]?.daily_alert_config?.branchDepartments;
-        const clonedDepts = cloneDefaultBranchDepartmentsStructure(mahallaDepts);
-        await client.query(
-          `INSERT INTO public.system_config (
-            branch_id, governorate_title, directorate_title, administration_title, english_subtitle,
-            logo_base64, debt_alert_threshold, daily_alert_config, role_permissions, role_labels,
-            custom_roles, column_titles, activity_statuses
-          ) VALUES ($1, $2, $3, $4, '', '', 50000, $5::jsonb, '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, $6::jsonb)
-          ON CONFLICT (branch_id) DO NOTHING`,
-          [
-            finalBranchId,
-            String(payload.governorateTitle || 'محافظة الغربية'),
-            String(payload.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'),
-            canonicalName,
-            JSON.stringify({ branchDepartments: clonedDepts }),
-            JSON.stringify(['يعمل', 'متوقف كلي', 'متوقف جزئي', 'ملغى']),
-          ]
-        );
-      }
       break;
     }
 
@@ -1573,36 +1467,6 @@ export async function upsertRowWithClient(
       const cfg = (payload.systemConfig || payload) as SystemConfig;
       const colTitles = payload.columnTitles || existingRow?.column_titles || {};
       const actStatuses = payload.activityStatuses || existingRow?.activity_statuses || [];
-      const hashVaultPassIfPlain = (candidate: string | undefined, fallbackStored: string): string => {
-        const raw = String(candidate || '').trim();
-        if (!raw || raw === '••••••••') return fallbackStored;
-        return isScryptHash(raw) ? raw : hashPasswordScrypt(raw);
-      };
-      const existingPass =
-        existingRow?.daily_alert_config?.vaultPasscode ||
-        existingRow?.vault_passcode ||
-        hashPasswordScrypt(DEFAULT_VAULT_PASSCODE);
-      const resolvedVaultPass = hashVaultPassIfPlain(cfg.vaultPasscode, existingPass);
-      const rawCredMap =
-        cfg.branchVaultCredentials && typeof cfg.branchVaultCredentials === 'object'
-          ? cfg.branchVaultCredentials
-          : existingRow?.daily_alert_config?.branchVaultCredentials;
-      let resolvedCredMap: Record<string, any> | undefined = undefined;
-      if (rawCredMap && typeof rawCredMap === 'object') {
-        resolvedCredMap = {};
-        for (const [bKey, cred] of Object.entries(rawCredMap)) {
-          if (!cred || typeof cred !== 'object') continue;
-          const prevCred = existingRow?.daily_alert_config?.branchVaultCredentials?.[bKey];
-          const prevCredPass = prevCred?.password || resolvedVaultPass;
-          resolvedCredMap[bKey] = {
-            ...cred,
-            username: normalizeDigits(
-              String((cred as any).username || prevCred?.username || DEFAULT_VAULT_USERNAME)
-            ),
-            password: hashVaultPassIfPlain((cred as any).password, prevCredPass),
-          };
-        }
-      }
       const mergedDailyAlertConfig = {
         ...(existingRow?.daily_alert_config || {}),
         ...(cfg.dailyAlertConfig || {}),
@@ -1611,14 +1475,15 @@ export async function upsertRowWithClient(
             existingRow?.daily_alert_config?.vaultUsername ??
             DEFAULT_VAULT_USERNAME
         ),
-        vaultPasscode: resolvedVaultPass,
-        branchVaultCredentials: resolvedCredMap,
-        branchDepartments:
-          cfg.branchDepartments ?? existingRow?.daily_alert_config?.branchDepartments,
-        customTableTitles:
-          cfg.customTableTitles ?? existingRow?.daily_alert_config?.customTableTitles,
-        customColumnTitles:
-          cfg.customColumnTitles ?? existingRow?.daily_alert_config?.customColumnTitles,
+        vaultPasscode: String(
+          cfg.vaultPasscode ??
+            existingRow?.daily_alert_config?.vaultPasscode ??
+            DEFAULT_VAULT_PASSCODE
+        ),
+        branchVaultCredentials:
+          cfg.branchVaultCredentials ??
+          existingRow?.daily_alert_config?.branchVaultCredentials ??
+          undefined,
       };
       const res = await client.query(
         `INSERT INTO public.system_config (
@@ -1680,41 +1545,24 @@ export async function upsertRowWithClient(
     }
 
     case 'audit_logs': {
-      try {
-        const res = await client.query(
-          `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           RETURNING *`,
-          [
-            effectiveBranchId,
-            String(payload.userEmail || 'system'),
-            String(payload.username || payload.userEmail || 'system'),
-            String(payload.department || ''),
-            String(payload.operation || payload.action || ''),
-            String(payload.recordId || ''),
-            String(payload.result || 'SUCCESS'),
-            String(payload.action || 'ACTION'),
-            String(payload.details || ''),
-            String(payload.ipAddress || '127.0.0.1'),
-          ]
-        );
-        resultRow = mapDbRowByTable('audit_logs', res.rows[0]);
-      } catch (colErr: any) {
-        if (String(colErr?.code || '') !== '42703') throw colErr;
-        const res = await client.query(
-          `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING *`,
-          [
-            effectiveBranchId,
-            String(payload.userEmail || 'system'),
-            String(payload.action || 'ACTION'),
-            String(payload.details || ''),
-            String(payload.ipAddress || '127.0.0.1'),
-          ]
-        );
-        resultRow = mapDbRowByTable('audit_logs', res.rows[0]);
-      }
+      const res = await client.query(
+        `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,
+        [
+          effectiveBranchId,
+          String(payload.userEmail || 'system'),
+          String(payload.username || payload.userEmail || 'system'),
+          String(payload.department || ''),
+          String(payload.operation || payload.action || ''),
+          String(payload.recordId || ''),
+          String(payload.result || 'SUCCESS'),
+          String(payload.action || 'ACTION'),
+          String(payload.details || ''),
+          String(payload.ipAddress || '127.0.0.1'),
+        ]
+      );
+      resultRow = mapDbRowByTable('audit_logs', res.rows[0]);
       break;
     }
   }
@@ -1942,25 +1790,17 @@ export async function syncFullBranchStateToPostgres(
       }
     }
 
-    if (options?.pruneRemoved && hasDebtsArray) {
-      if (incomingDebtIds.length === 0) {
-        await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [effectiveBranchId]);
-      } else {
-        await client.query(`DELETE FROM public.debts WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
-          effectiveBranchId,
-          incomingDebtIds,
-        ]);
-      }
+    if (options?.pruneRemoved && hasDebtsArray && incomingDebtIds.length > 0) {
+      await client.query(`DELETE FROM public.debts WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+        effectiveBranchId,
+        incomingDebtIds,
+      ]);
     }
-    if (options?.pruneRemoved && hasBakeriesArray) {
-      if (incomingBakeryIds.length === 0) {
-        await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1`, [effectiveBranchId]);
-      } else {
-        await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
-          effectiveBranchId,
-          incomingBakeryIds,
-        ]);
-      }
+    if (options?.pruneRemoved && hasBakeriesArray && incomingBakeryIds.length > 0) {
+      await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1 AND NOT (id = ANY($2::text[]))`, [
+        effectiveBranchId,
+        incomingBakeryIds,
+      ]);
     }
 
     // 5. Users
@@ -2198,38 +2038,16 @@ export async function authenticateUserInPostgres(
       `SELECT * FROM public.app_users WHERE branch_id = $1`,
       [effectiveBranchId]
     );
-    const isProd =
-      process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
     if (usersRes.rows.length === 0) {
-      const envAdminPass = String(process.env.INITIAL_ADMIN_PASSWORD || '').trim();
-      if (isProd) {
-        if (envAdminPass) {
-          const adminSeed = INITIAL_USERS.find((u) => u.role === 'admin');
-          if (adminSeed) {
-            const seedId = effectiveBranchId === DEFAULT_BRANCH_ID ? adminSeed.id : `${adminSeed.id}__${effectiveBranchId}`;
-            await upsertRowInPostgres('app_users', effectiveBranchId, {
-              ...adminSeed,
-              id: seedId,
-              branchId: effectiveBranchId,
-              password: envAdminPass,
-              isSuperAdmin: true,
-              isActive: true,
-            });
-          }
-        }
-      } else {
-        for (const seed of INITIAL_USERS) {
-          const seedId = effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`;
-          const resolvedPass = seed.role === 'admin' && envAdminPass ? envAdminPass : seed.password;
-          await upsertRowInPostgres('app_users', effectiveBranchId, {
-            ...seed,
-            id: seedId,
-            branchId: effectiveBranchId,
-            password: resolvedPass,
-            isSuperAdmin: seed.role === 'admin',
-            isActive: seed.isActive !== false,
-          });
-        }
+      for (const seed of INITIAL_USERS) {
+        const seedId = effectiveBranchId === DEFAULT_BRANCH_ID ? seed.id : `${seed.id}__${effectiveBranchId}`;
+        await upsertRowInPostgres('app_users', effectiveBranchId, {
+          ...seed,
+          id: seedId,
+          branchId: effectiveBranchId,
+          isSuperAdmin: seed.role === 'admin',
+          isActive: seed.isActive !== false,
+        });
       }
       usersRes = await pool.query(
         `SELECT * FROM public.app_users WHERE branch_id = $1`,
@@ -2440,31 +2258,22 @@ export async function recordAuditLog(
       });
       return;
     }
-    try {
-      await pool.query(
-        `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          branchId,
-          userEmail,
-          extra?.username || userEmail,
-          extra?.department || '',
-          extra?.operation || action,
-          extra?.recordId || '',
-          extra?.result || 'SUCCESS',
-          action,
-          details,
-          ipAddress || '127.0.0.1',
-        ]
-      );
-    } catch (colErr: any) {
-      if (String(colErr?.code || '') !== '42703') throw colErr;
-      await pool.query(
-        `INSERT INTO public.audit_logs (branch_id, user_email, action, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [branchId, userEmail, action, details, ipAddress || '127.0.0.1']
-      );
-    }
+    await pool.query(
+      `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        branchId,
+        userEmail,
+        extra?.username || userEmail,
+        extra?.department || '',
+        extra?.operation || action,
+        extra?.recordId || '',
+        extra?.result || 'SUCCESS',
+        action,
+        details,
+        ipAddress || '127.0.0.1',
+      ]
+    );
   } catch (error) {
     if (isPostgresUnavailableError(error)) {
       pgFallbackMode = true;
@@ -2944,370 +2753,4 @@ export async function deleteAuditLogsInPostgres(params: {
     client.release();
   }
 }
-
-export async function verifyVaultCredentialsInPostgres(params: {
-  branchId: string;
-  enteredUsername?: string;
-  enteredPassword: string;
-}): Promise<boolean> {
-  await ensurePostgresSchema();
-  if (pgFallbackMode) {
-    return fallbackVerifyVaultCredentials(params);
-  }
-  const effectiveBranchId = params.branchId || DEFAULT_BRANCH_ID;
-  try {
-    const res = await pool.query(
-      `SELECT daily_alert_config FROM public.system_config WHERE branch_id IN ($1, $2)`,
-      [effectiveBranchId, DEFAULT_BRANCH_ID]
-    );
-    const branchRow = res.rows.find((r) => r.branch_id === effectiveBranchId) || res.rows[0];
-    const alertCfg = branchRow?.daily_alert_config || {};
-    const cred = alertCfg?.branchVaultCredentials?.[effectiveBranchId];
-    const targetUser = normalizeDigits(
-      String(cred?.username || alertCfg?.vaultUsername || DEFAULT_VAULT_USERNAME)
-    ).toLowerCase();
-    const isProd =
-      process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
-    const defaultVaultPass = isProd
-      ? String(process.env.INITIAL_VAULT_PASSCODE || '').trim()
-      : DEFAULT_VAULT_PASSCODE;
-    const targetPass = String(cred?.password || alertCfg?.vaultPasscode || defaultVaultPass);
-    if (!targetPass) return false;
-    if (!verifyPasswordScrypt(params.enteredPassword, targetPass)) return false;
-
-    const cleanUser = normalizeDigits(String(params.enteredUsername || '')).toLowerCase();
-    if (cleanUser) return cleanUser === targetUser;
-    return targetUser === DEFAULT_VAULT_USERNAME.toLowerCase();
-  } catch (err) {
-    if (isPostgresUnavailableError(err)) {
-      pgFallbackMode = true;
-      return fallbackVerifyVaultCredentials(params);
-    }
-    throw err;
-  }
-}
-
-export async function updateVaultCredentialsInPostgres(params: {
-  targetScope: 'all' | string;
-  newUsername: string;
-  newPassword: string;
-}): Promise<{ updatedBranches: string[] }> {
-  await ensurePostgresSchema();
-  if (pgFallbackMode) {
-    return fallbackUpdateVaultCredentials(params);
-  }
-  const cleanUser = normalizeDigits(params.newUsername) || DEFAULT_VAULT_USERNAME;
-  const hashedPass = hashPasswordScrypt(params.newPassword);
-  const nowIso = new Date().toISOString();
-  try {
-    const branchesRes = await pool.query(`SELECT id FROM public.branches`);
-    const allIds = branchesRes.rows.map((r) => String(r.id)).filter(Boolean);
-    const targetIds =
-      params.targetScope === 'all' || params.targetScope === 'ALL'
-        ? allIds.length > 0
-          ? allIds
-          : [DEFAULT_BRANCH_ID]
-        : [params.targetScope];
-
-    for (const bId of targetIds) {
-      const res = await pool.query(
-        `SELECT daily_alert_config FROM public.system_config WHERE branch_id = $1`,
-        [bId]
-      );
-      const prevAlertCfg = res.rows[0]?.daily_alert_config || {};
-      const nextMap = { ...(prevAlertCfg.branchVaultCredentials || {}) };
-      nextMap[bId] = {
-        branchId: bId,
-        username: cleanUser,
-        password: hashedPass,
-        updatedAt: nowIso,
-      };
-      await upsertRowInPostgres('system_config', bId, {
-        branchId: bId,
-        systemConfig: {
-          vaultUsername: cleanUser,
-          vaultPasscode: hashedPass,
-          branchVaultCredentials: nextMap,
-        },
-      });
-    }
-    return { updatedBranches: targetIds };
-  } catch (err) {
-    if (isPostgresUnavailableError(err)) {
-      pgFallbackMode = true;
-      return fallbackUpdateVaultCredentials(params);
-    }
-    throw err;
-  }
-}
-
-export async function updateBranchDepartmentsInPostgres(
-  branchId: string,
-  departments: BranchDepartmentConfigItem[],
-  actorUsername = 'admin'
-): Promise<BranchDepartmentConfigItem[]> {
-  await ensurePostgresSchema();
-  const effectiveBranchId = (branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  if (pgFallbackMode) {
-    return fallbackUpdateBranchDepartments(effectiveBranchId, departments, actorUsername);
-  }
-  const cloned = cloneDefaultBranchDepartmentsStructure(departments);
-  try {
-    const cfgRes = await pool.query(
-      `SELECT governorate_title, directorate_title, administration_title, daily_alert_config
-       FROM public.system_config WHERE branch_id = $1`,
-      [effectiveBranchId]
-    );
-    const branchRes = await pool.query(`SELECT name, governorate_title, directorate_title FROM public.branches WHERE id = $1`, [
-      effectiveBranchId,
-    ]);
-    const prevRow = cfgRes.rows[0];
-    const br = branchRes.rows[0];
-    await upsertRowInPostgres('system_config', effectiveBranchId, {
-      branchId: effectiveBranchId,
-      systemConfig: {
-        governorateTitle: prevRow?.governorate_title || br?.governorate_title || 'محافظة الغربية',
-        directorateTitle:
-          prevRow?.directorate_title || br?.directorate_title || 'مديرية التموين والتجارة الداخلية بالغربية',
-        administrationTitle: prevRow?.administration_title || br?.name || effectiveBranchId,
-        branchDepartments: cloned,
-      },
-    });
-    await recordAuditLog(
-      actorUsername,
-      'UPDATE_BRANCH_DEPARTMENTS',
-      `تحديث هيكل وترتيب وإظهار الأقسام (${cloned.length} قسم) داخل الفرع (${effectiveBranchId})`,
-      '127.0.0.1',
-      effectiveBranchId,
-      { username: actorUsername, department: 'branches', operation: 'UPDATE', recordId: effectiveBranchId, result: 'SUCCESS' }
-    ).catch(() => {});
-    return cloned;
-  } catch (err) {
-    if (isPostgresUnavailableError(err)) {
-      pgFallbackMode = true;
-      return fallbackUpdateBranchDepartments(effectiveBranchId, departments, actorUsername);
-    }
-    throw err;
-  }
-}
-
-export async function copyAllDepartmentsToAllBranchesInPostgres(
-  sourceBranchId = DEFAULT_BRANCH_ID,
-  actorUsername = 'admin'
-): Promise<{
-  updatedBranchIds: string[];
-  departmentsCount: number;
-  subItemsCount: number;
-  departments: BranchDepartmentConfigItem[];
-}> {
-  await ensurePostgresSchema();
-  const effectiveSourceId = (sourceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  if (pgFallbackMode) {
-    return fallbackCopyAllDepartmentsToAllBranches(effectiveSourceId, actorUsername);
-  }
-  try {
-    const [branchesRes, sourceCfgRes] = await Promise.all([
-      pool.query(
-        `SELECT id, name, governorate_title, directorate_title FROM public.branches ORDER BY is_default DESC, created_at ASC`
-      ),
-      pool.query(
-        `SELECT daily_alert_config FROM public.system_config WHERE branch_id = $1`,
-        [effectiveSourceId]
-      ),
-    ]);
-
-    const rawSourceDepts = sourceCfgRes.rows[0]?.daily_alert_config?.branchDepartments;
-    const defaultTemplate = cloneDefaultBranchDepartmentsStructure();
-    const sourceCloned =
-      Array.isArray(rawSourceDepts) && rawSourceDepts.length > 0
-        ? cloneDefaultBranchDepartmentsStructure(rawSourceDepts)
-        : defaultTemplate;
-    const existingIds = new Set(sourceCloned.map((d) => d.id));
-    const mergedMaster: BranchDepartmentConfigItem[] = [
-      ...sourceCloned.map((d) => ({ ...d, visible: true, enabled: true })),
-      ...defaultTemplate
-        .filter((d) => !existingIds.has(d.id))
-        .map((d) => ({ ...d, visible: true, enabled: true })),
-    ].map((d, idx) => ({
-      ...d,
-      order: idx + 1,
-      subItems: (d.subItems || []).map((s, sIdx) => ({
-        ...s,
-        visible: true,
-        enabled: true,
-        order: sIdx + 1,
-      })),
-    }));
-
-    const existingBranchIdsInDb = new Set(branchesRes.rows.map((r: any) => String(r.id)));
-    const allDeduplicatedBranches = deduplicateSupplyBranches(
-      branchesRes.rows.map(mapDbBranchToApp)
-    );
-
-    const updatedBranchIds: string[] = [];
-    for (const br of allDeduplicatedBranches) {
-      const targetId = String(br.id);
-      if (!existingBranchIdsInDb.has(targetId)) {
-        await upsertRowInPostgres('branches', targetId, {
-          id: targetId,
-          name: br.name,
-          governorateTitle: br.governorateTitle || 'محافظة الغربية',
-          directorateTitle:
-            br.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية',
-          description: br.description || '',
-          isDefault: Boolean(br.isDefault),
-        });
-      }
-      const branchClone = cloneDefaultBranchDepartmentsStructure(mergedMaster);
-      const prevCfgRes = await pool.query(
-        `SELECT governorate_title, directorate_title, administration_title
-         FROM public.system_config WHERE branch_id = $1`,
-        [targetId]
-      );
-      const prevRow = prevCfgRes.rows[0];
-      await upsertRowInPostgres('system_config', targetId, {
-        branchId: targetId,
-        systemConfig: {
-          governorateTitle: prevRow?.governorate_title || br.governorateTitle || 'محافظة الغربية',
-          directorateTitle:
-            prevRow?.directorate_title ||
-            br.directorateTitle ||
-            'مديرية التموين والتجارة الداخلية بالغربية',
-          administrationTitle: prevRow?.administration_title || br.name || targetId,
-          branchDepartments: branchClone,
-        },
-      });
-      updatedBranchIds.push(targetId);
-    }
-
-    const subItemsCount = mergedMaster.reduce((sum, d) => sum + (d.subItems?.length || 0), 0);
-    await recordAuditLog(
-      actorUsername,
-      'COPY_ALL_DEPARTMENTS_TO_ALL_BRANCHES',
-      `نسخ وتعميم كافة الأقسام (${mergedMaster.length} قسم / ${subItemsCount} شاشة فرعية) إلى جميع الفروع (${updatedBranchIds.length} فرع) دون المساس بالبيانات التشغيلية.`,
-      '127.0.0.1',
-      effectiveSourceId,
-      {
-        username: actorUsername,
-        department: 'branches',
-        operation: 'COPY_ALL_DEPARTMENTS',
-        recordId: effectiveSourceId,
-        result: 'SUCCESS',
-      }
-    ).catch(() => {});
-
-    return {
-      updatedBranchIds,
-      departmentsCount: mergedMaster.length,
-      subItemsCount,
-      departments: mergedMaster,
-    };
-  } catch (err) {
-    if (isPostgresUnavailableError(err)) {
-      pgFallbackMode = true;
-      return fallbackCopyAllDepartmentsToAllBranches(effectiveSourceId, actorUsername);
-    }
-    throw err;
-  }
-}
-
-export async function resetBranchSectionInPostgres(params: {
-  branchId: string;
-  sectionKey: ResettableSectionKey;
-  villageName?: string;
-  actorUsername?: string;
-}): Promise<{ success: boolean; deletedCounts: Record<string, number>; message: string }> {
-  await ensurePostgresSchema();
-  const effectiveBranchId = (params.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const actor = params.actorUsername || 'admin';
-  if (pgFallbackMode) {
-    return fallbackResetBranchSection({ ...params, branchId: effectiveBranchId, actorUsername: actor });
-  }
-  const client = await pool.connect();
-  const deletedCounts: Record<string, number> = { bakeries: 0, debts: 0 };
-  try {
-    await client.query('BEGIN');
-    const brRes = await client.query(`SELECT name FROM public.branches WHERE id = $1`, [effectiveBranchId]);
-    const branchName = brRes.rows[0]?.name || effectiveBranchId;
-
-    if (params.sectionKey === 'bakeries') {
-      const delDebts = await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [effectiveBranchId]);
-      const delBakeries = await client.query(`DELETE FROM public.bakeries WHERE branch_id = $1`, [effectiveBranchId]);
-      await client.query(`DELETE FROM public.high_debt_alerts WHERE branch_id = $1`, [effectiveBranchId]);
-      deletedCounts.debts = delDebts.rowCount || 0;
-      deletedCounts.bakeries = delBakeries.rowCount || 0;
-    } else if (params.sectionKey === 'debts') {
-      const delDebts = await client.query(`DELETE FROM public.debts WHERE branch_id = $1`, [effectiveBranchId]);
-      await client.query(`DELETE FROM public.high_debt_alerts WHERE branch_id = $1`, [effectiveBranchId]);
-      deletedCounts.debts = delDebts.rowCount || 0;
-    } else if (
-      params.sectionKey === 'commodities' ||
-      params.sectionKey === 'internal_trade' ||
-      params.sectionKey === 'grain_maintenance' ||
-      params.sectionKey === 'hr'
-    ) {
-      const modState = await getBranchModuleStateFromPostgres(effectiveBranchId, 'all_modules');
-      const currentPayload = modState.exists && modState.payload
-        ? modState.payload
-        : createEmptyBranchModulesBundle(effectiveBranchId, branchName, []);
-      const wiped = wipeSectionFromModulesBundle(currentPayload, params.sectionKey, actor);
-      await upsertBranchModuleStateInPostgres(effectiveBranchId, wiped, actor, 'all_modules');
-    } else if (params.sectionKey === 'village' && params.villageName) {
-      const normVillage = params.villageName.trim().toLowerCase();
-      const delDebts = await client.query(
-        `DELETE FROM public.debts
-         WHERE branch_id = $1
-           AND (lower(trim(village)) = $2 OR bakery_id IN (SELECT id FROM public.bakeries WHERE branch_id = $1 AND lower(trim(village)) = $2))`,
-        [effectiveBranchId, normVillage]
-      );
-      const delBakeries = await client.query(
-        `DELETE FROM public.bakeries WHERE branch_id = $1 AND lower(trim(village)) = $2`,
-        [effectiveBranchId, normVillage]
-      );
-      deletedCounts.debts = delDebts.rowCount || 0;
-      deletedCounts.bakeries = delBakeries.rowCount || 0;
-      const modState = await getBranchModuleStateFromPostgres(effectiveBranchId, 'all_modules');
-      const currentPayload = modState.exists && modState.payload
-        ? modState.payload
-        : createEmptyBranchModulesBundle(effectiveBranchId, branchName, []);
-      const wiped = wipeVillageFromModulesBundle(currentPayload, params.villageName, actor);
-      await upsertBranchModuleStateInPostgres(effectiveBranchId, wiped, actor, 'all_modules');
-    }
-
-    await client.query(
-      `INSERT INTO public.audit_logs (branch_id, user_email, username, department, operation, record_id, result, action, details, ip_address)
-       VALUES ($1, $2, $3, $4, 'SECTION_FACTORY_RESET', $5, 'SUCCESS', 'SECTION_FACTORY_RESET', $6, '127.0.0.1')`,
-      [
-        effectiveBranchId,
-        actor,
-        actor,
-        params.sectionKey,
-        params.villageName || params.sectionKey,
-        params.sectionKey === 'village'
-          ? `تصفير شامل لبيانات قرية (${params.villageName}) داخل (${branchName}) مع الحفاظ التام على الأقسام والقرى الأخرى.`
-          : `استعادة ضبط المصنع لبيانات قسم (${params.sectionKey}) داخل (${branchName}) مع الإبقاء التام على كافة الأقسام.`,
-      ]
-    );
-    await client.query('COMMIT');
-    return {
-      success: true,
-      deletedCounts,
-      message:
-        params.sectionKey === 'village'
-          ? `تم تصفير كافة البيانات المدخلة داخل قرية "${params.villageName}" بدون مساس بالأقسام أو القرى الأخرى.`
-          : `تمت استعادة ضبط المصنع لبيانات القسم داخل "${branchName}" مع الإبقاء التام على كافة الأقسام.`,
-    };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    if (isPostgresUnavailableError(err)) {
-      pgFallbackMode = true;
-      return fallbackResetBranchSection({ ...params, branchId: effectiveBranchId, actorUsername: actor });
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
-
 

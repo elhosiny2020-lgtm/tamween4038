@@ -10,8 +10,8 @@ import type {
   ShunaRecord,
   ShunaWheatIssueRecord,
   SparePartItem,
-} from '../types/modules.ts';
-import { round2 } from './rationMathEngine.ts';
+} from '../types/modules';
+import { round2 } from './rationMathEngine';
 
 export function safeNum(val: unknown, fallback = 0): number {
   const n = Number(val);

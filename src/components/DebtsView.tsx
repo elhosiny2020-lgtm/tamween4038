@@ -1,8 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bakery, DebtRecord, VillageHierarchy, SystemConfig, AppUser } from '../types';
 import { PAYMENT_METHODS } from '../defaultData';
-import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
-import { ErrorBoundary } from './ErrorBoundary';
 import {
   FileSpreadsheet,
   Printer,
@@ -47,8 +45,6 @@ import {
   canUserPrintDepartment,
   canUserExportDepartment,
 } from '../utils/departmentRbac';
-import { SectionFactoryResetButton } from './modules/ModuleCrudShared';
-import { resolveCustomTableTitle, resolveCustomColumnTitle } from '../utils/branchOperations';
 
 export const getDebtOverdueInfo = (
   dateStr?: string,
@@ -105,7 +101,6 @@ interface DebtsViewProps {
   onSafeSaveAndLogout?: () => void;
   openScheduleSignal?: number;
   onSendLatePaymentAlert?: (debtsToNotify: DebtRecord[]) => void;
-  onFactoryResetSection?: () => Promise<void> | void;
 }
 
 export const DebtsView: React.FC<DebtsViewProps> = ({
@@ -136,7 +131,6 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   onSafeSaveAndLogout,
   openScheduleSignal = 0,
   onSendLatePaymentAlert,
-  onFactoryResetSection,
 }) => {
   const debtsPrintRef = React.useRef<HTMLDivElement>(null);
   const canInsertDebt = hasDepartmentPermission(currentUser, 'debts', 'insert');
@@ -690,7 +684,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           <div>
             <div className="flex items-center flex-wrap gap-2.5">
               <h2 className="text-xl md:text-2xl font-black tracking-tight text-white">
-                {resolveCustomTableTitle(systemConfig, 'debts_main', 'سجل مديونيات المخابز الموحد')}
+                سجل مديونيات المخابز الموحد
               </h2>
               <span className="text-xs bg-amber-400/20 text-amber-300 px-3 py-1 rounded-xl border border-amber-400/40 font-black">
                 منظومة الرقابة والتحصيل المالي ERP
@@ -763,14 +757,6 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               <span>طباعة فورية</span>
             </button>
           )}
-
-          <SectionFactoryResetButton
-            currentUser={currentUser}
-            sectionLabel="سجل المديونيات والمخالفات"
-            branchName={branchName}
-            onConfirm={onFactoryResetSection}
-            testId="debts-factory-reset-btn"
-          />
         </div>
       </div>
 
@@ -1589,13 +1575,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               <h4 className="text-xs font-black text-[#0F2342]">{systemConfig.directorateTitle}</h4>
               <h4 className="text-xs font-black text-[#0F2342]">{systemConfig.administrationTitle}</h4>
             </div>
-            <div className="w-14 h-14 p-1 rounded-xl bg-white border border-slate-300 flex items-center justify-center">
-              <img
-                src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
-                alt="شعار وزارة التموين والتجارة الداخلية"
-                className="w-full h-full object-contain"
-              />
-            </div>
+            {systemConfig.logoBase64 && (
+              <div className="w-14 h-14">
+                <img src={systemConfig.logoBase64} alt="شعار" className="w-full h-full object-contain" />
+              </div>
+            )}
             <div className="text-left font-mono text-[10px] font-bold space-y-0.5">
               <p className="font-black">تقرير سجل مديونيات المخابز وجدولة السداد</p>
               <p>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</p>
@@ -1609,8 +1593,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
         {/* Debts Database Table (Enlarged +1 step to text-sm with bold fonts) */}
         <div className="bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-md">
-          <ErrorBoundary fallbackTitle="تعذر عرض جدول سجل المديونيات مؤقتاً دون تأثر باقي المنظومة">
-          <div dir="rtl" className="overflow-x-auto relative custom-scrollbar">
+          <div className="overflow-x-auto relative custom-scrollbar">
             <table className="w-full text-center border-collapse text-sm font-extrabold">
               {/* Super Headers */}
               <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-black shadow-md text-xs sm:text-sm">
@@ -1685,7 +1668,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                     rowSpan={2}
                     className="py-3 px-3 bg-[#1E3A8A] border-l border-blue-800 text-amber-300 text-sm font-black min-w-[145px]"
                   >
-                    {resolveCustomColumnTitle(systemConfig, 'debts_main', 'netRemainingDebt', 'صافي المتبقي على صاحب المخبز')}
+                    صافي المتبقي على صاحب المخبز
                   </th>
                   <th
                     rowSpan={2}
@@ -1699,35 +1682,27 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                 <tr className="bg-[#152E59] text-xs sm:text-sm text-white font-black border-b-2 border-amber-400/70">
                   {/* 1. Mandatory 4 Core Columns */}
                   <th className="py-2.5 px-2.5 border-l border-[#1E3A8A] min-w-[165px] text-right bg-[#102548] text-amber-200">
-                    {resolveCustomColumnTitle(systemConfig, 'debts_main', 'bakeryOwnerName', 'اسم المخبز')}
+                    اسم المخبز
                   </th>
                   <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[100px] bg-[#102548] text-amber-200">
-                    {resolveCustomColumnTitle(systemConfig, 'debts_main', 'machineNumber', 'رقم الماكينة')}
+                    رقم الماكينة
                   </th>
                   <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[95px] bg-[#102548] text-amber-200">
-                    {resolveCustomColumnTitle(systemConfig, 'debts_main', 'village', 'اسم القرية')}
+                    اسم القرية
                   </th>
                   <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[110px] bg-[#102548] text-amber-200">
-                    {resolveCustomColumnTitle(systemConfig, 'debts_main', 'localUnit', 'اسم الوحدة المحلية')}
+                    اسم الوحدة المحلية
                   </th>
 
                   {/* 2. Violations */}
                   {showViolationsCols && (
                     <>
-                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">
-                        {resolveCustomColumnTitle(systemConfig, 'debts_main', 'violationDate', 'تاريخ العملية')}
-                      </th>
-                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[115px]">
-                        {resolveCustomColumnTitle(systemConfig, 'debts_main', 'issuingEntity', 'الجهة المحررة')}
-                      </th>
-                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[125px]">
-                        {resolveCustomColumnTitle(systemConfig, 'debts_main', 'violationType', 'نوع المخالفة')}
-                      </th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ العملية</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[115px]">الجهة المحررة</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[125px]">نوع المخالفة</th>
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A]">قيمة المخالفة</th>
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A]">مخالفات قديمة</th>
-                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">
-                        {resolveCustomColumnTitle(systemConfig, 'debts_main', 'totalViolations', 'إجمالي المخالفات')}
-                      </th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">إجمالي المخالفات</th>
                     </>
                   )}
 
@@ -1737,12 +1712,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">نوع السداد</th>
-                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">
-                        {resolveCustomColumnTitle(systemConfig, 'debts_main', 'paidViolationAmount', 'المبلغ المسدد')}
-                      </th>
-                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">
-                        {resolveCustomColumnTitle(systemConfig, 'debts_main', 'remainingViolations', 'المتبقي')}
-                      </th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A]">المبلغ المسدد</th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">المتبقي</th>
                     </>
                   )}
 
@@ -1765,9 +1736,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       <th className="py-2.5 px-1.5 border-l border-[#1E3A8A]">الشكاير</th>
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A]">سعر الشيكارة</th>
                       <th className="py-2.5 px-1.5 border-l border-[#1E3A8A]">المضاعفة</th>
-                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">
-                        {resolveCustomColumnTitle(systemConfig, 'debts_main', 'disposalValue', 'قيمة التصرف')}
-                      </th>
+                      <th className="py-2.5 px-2 border-l border-[#1E3A8A] bg-[#1E3A8A]">قيمة التصرف</th>
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A]">قيمة التصرف</th>
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[85px]">تاريخ السداد</th>
                       <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[80px]">رقم الإيصال</th>
@@ -1795,7 +1764,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
                   {/* 7. Debt Scheduling on Bakery Owner */}
                   <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[130px] bg-[#0F3F32] text-emerald-200">
-                    {resolveCustomColumnTitle(systemConfig, 'debts_main', 'scheduleStatus', 'حالة الجدولة والدفعات')}
+                    حالة الجدولة والدفعات
                   </th>
                   <th className="py-2.5 px-2 border-l border-[#1E3A8A] min-w-[100px] bg-[#0F3F32] text-emerald-200">
                     قيمة القسط الدوري
@@ -2400,7 +2369,6 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               )}
             </table>
           </div>
-        </ErrorBoundary>
 
           {/* Enterprise Pagination Bar */}
           {filteredDebts.length > debtsPageSize && (

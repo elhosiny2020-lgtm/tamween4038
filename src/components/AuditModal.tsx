@@ -5,7 +5,6 @@ import {
   calculateAnnualWeightedAveragesReport,
   MathAuditResult,
 } from '../utils/auditHelper';
-import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
 import {
   CheckCircle2,
   XCircle,
@@ -107,8 +106,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 p-1 rounded-xl bg-white border border-emerald-400 shadow-md flex items-center justify-center shrink-0">
               <img
-                src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
-                alt="شعار وزارة التموين والتجارة الداخلية"
+                src={systemConfig.logoBase64}
+                alt="شعار التموين"
                 className="w-full h-full object-contain"
               />
             </div>
@@ -456,8 +455,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({
               <div className="text-center">
                 <div className="w-12 h-12 mx-auto p-1 border border-emerald-600 rounded-full bg-white flex items-center justify-center">
                   <img
-                    src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
-                    alt="شعار وزارة التموين والتجارة الداخلية"
+                    src={systemConfig.logoBase64}
+                    alt="شعار الوزارة"
                     className="w-full h-full object-contain"
                   />
                 </div>

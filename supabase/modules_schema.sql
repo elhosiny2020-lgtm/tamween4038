@@ -1276,7 +1276,6 @@ BEGIN
     END;
 
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
-    EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS "Tamween module read on %s" ON public.%I', tbl, tbl);
     EXECUTE format('DROP POLICY IF EXISTS "Tamween module write on %s" ON public.%I', tbl, tbl);
     EXECUTE format('DROP POLICY IF EXISTS "Tamween module insert on %s" ON public.%I', tbl, tbl);
@@ -1284,30 +1283,10 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS "Tamween module delete on %s" ON public.%I', tbl, tbl);
 
     IF dept = 'all' THEN
-      EXECUTE 'CREATE POLICY "Tamween module read on branch_module_states" ON public.branch_module_states FOR SELECT USING (public.can_access_branch(branch_id))';
-      EXECUTE 'CREATE POLICY "Tamween module insert on branch_module_states" ON public.branch_module_states FOR INSERT WITH CHECK (public.is_tamween_authorized_writer() AND public.can_access_branch(branch_id))';
-      EXECUTE 'CREATE POLICY "Tamween module update on branch_module_states" ON public.branch_module_states FOR UPDATE USING (public.is_tamween_authorized_writer() AND public.can_access_branch(branch_id)) WITH CHECK (public.is_tamween_authorized_writer() AND public.can_access_branch(branch_id))';
-      EXECUTE 'CREATE POLICY "Tamween module delete on branch_module_states" ON public.branch_module_states FOR DELETE USING (public.is_tamween_super_admin() AND public.can_access_branch(branch_id))';
-    ELSIF EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = tbl AND column_name = 'branch_id'
-    ) THEN
-      EXECUTE format(
-        'CREATE POLICY "Tamween module read on %s" ON public.%I FOR SELECT USING (public.can_access_branch(branch_id) AND public.has_department_permission(%L, ''view''))',
-        tbl, tbl, dept
-      );
-      EXECUTE format(
-        'CREATE POLICY "Tamween module insert on %s" ON public.%I FOR INSERT WITH CHECK (public.can_access_branch(branch_id) AND public.has_department_permission(%L, ''insert''))',
-        tbl, tbl, dept
-      );
-      EXECUTE format(
-        'CREATE POLICY "Tamween module update on %s" ON public.%I FOR UPDATE USING (public.can_access_branch(branch_id) AND public.has_department_permission(%L, ''update'')) WITH CHECK (public.can_access_branch(branch_id) AND public.has_department_permission(%L, ''update''))',
-        tbl, tbl, dept, dept
-      );
-      EXECUTE format(
-        'CREATE POLICY "Tamween module delete on %s" ON public.%I FOR DELETE USING (public.can_access_branch(branch_id) AND public.has_department_permission(%L, ''delete''))',
-        tbl, tbl, dept
-      );
+      EXECUTE 'CREATE POLICY "Tamween module read on branch_module_states" ON public.branch_module_states FOR SELECT USING (auth.role() = ''authenticated'')';
+      EXECUTE 'CREATE POLICY "Tamween module insert on branch_module_states" ON public.branch_module_states FOR INSERT WITH CHECK (public.is_tamween_authorized_writer())';
+      EXECUTE 'CREATE POLICY "Tamween module update on branch_module_states" ON public.branch_module_states FOR UPDATE USING (public.is_tamween_authorized_writer()) WITH CHECK (public.is_tamween_authorized_writer())';
+      EXECUTE 'CREATE POLICY "Tamween module delete on branch_module_states" ON public.branch_module_states FOR DELETE USING (public.is_tamween_super_admin())';
     ELSE
       EXECUTE format(
         'CREATE POLICY "Tamween module read on %s" ON public.%I FOR SELECT USING (public.has_department_permission(%L, ''view''))',

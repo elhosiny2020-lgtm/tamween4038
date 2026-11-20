@@ -40,7 +40,7 @@ import {
   registerRowQueueFlusher,
   SESSION_CLIENT_ID,
   setCloudConnectionStatus,
-} from '../lib/supabase.ts';
+} from '../lib/supabase';
 
 export interface GranularRowChangeEvent {
   table: RowMutationTable | 'backup_snapshots';

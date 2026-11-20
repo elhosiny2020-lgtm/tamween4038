@@ -522,29 +522,21 @@ test('Realtime Diagnostics telemetry tracks all 11 subscribed tables, incoming/o
   assert.strictEqual(clearedSnap.errorsLog.length, 0);
 });
 
-test('Last 50 Realtime Events DataGrid classifies INSERT, UPDATE, and DELETE mutations across tables, tracks latency cadence, and attaches safe client/auth headers without static shared tokens', async () => {
+test('Last 50 Realtime Events DataGrid classifies INSERT, UPDATE, and DELETE mutations across tables, tracks latency cadence, and attaches API security shield headers', async () => {
   const {
     detectStateMutationType,
     getLast50RealtimeEvents,
     recordRealtimeDiagnosticEvent,
     clearRealtimeDiagnosticsLogs,
     getSecurityShieldHeaders,
-    setAuthSessionToken,
+    API_SECURITY_SHIELD_TOKEN,
   } = await import('./supabase');
 
-  // 1. Verify static shared shield token is removed and dynamic Bearer token works
-  setAuthSessionToken(null);
-  const anonHeaders = getSecurityShieldHeaders(true);
-  assert.strictEqual(anonHeaders['X-Tamween-Security-Token'], undefined);
-  assert.strictEqual(anonHeaders['Authorization'], undefined);
-  assert.strictEqual(anonHeaders['X-Tamween-Client-Id'], SESSION_CLIENT_ID);
-  assert.strictEqual(anonHeaders['Content-Type'], 'application/json');
-
-  setAuthSessionToken('test-session-token-123');
-  const authedHeaders = getSecurityShieldHeaders(true);
-  assert.strictEqual(authedHeaders['X-Tamween-Security-Token'], undefined);
-  assert.strictEqual(authedHeaders['Authorization'], 'Bearer test-session-token-123');
-  setAuthSessionToken(null);
+  // 1. Verify API Security Shield headers
+  const headers = getSecurityShieldHeaders(true);
+  assert.strictEqual(headers['X-Tamween-Security-Token'], API_SECURITY_SHIELD_TOKEN);
+  assert.strictEqual(headers['X-Tamween-Client-Id'], SESSION_CLIENT_ID);
+  assert.strictEqual(headers['Content-Type'], 'application/json');
 
   // 2. Verify detectStateMutationType classifies INSERT, UPDATE, and DELETE accurately
   const baseState: any = {

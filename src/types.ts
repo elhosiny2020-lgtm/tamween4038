@@ -239,9 +239,6 @@ export interface DailyAlertConfig {
   includeSystemSupervisors?: boolean; // include supervisor/admin users with gmailEmail
   lastDebtEmailAlertDate?: string; // YYYY-MM-DD
   debtEmailHistory?: DailyDebtEmailLogEntry[];
-  // In-App PUSH Alerts to Managers for Low Daily Flour Quota (in sacks / شكائر)
-  lowFlourQuotaAlertEnabled?: boolean;
-  lowFlourQuotaMinSacks?: number;
 }
 
 export interface CustomJobRole {
@@ -257,30 +254,6 @@ export interface BranchVaultCredential {
   username: string;
   password: string;
   updatedAt?: string;
-}
-
-export interface BranchSubDepartmentItem {
-  id: string;
-  label: string;
-  targetTab?: string;
-  targetAction?: string;
-  visible: boolean;
-  enabled: boolean;
-  order: number;
-  defaultPermissions?: string[];
-}
-
-export interface BranchDepartmentConfigItem {
-  id: string;
-  key: SystemDepartmentKey | string;
-  label: string;
-  shortLabel?: string;
-  iconKey?: string;
-  visible: boolean;
-  enabled: boolean;
-  order: number;
-  defaultPermissions?: string[];
-  subItems: BranchSubDepartmentItem[];
 }
 
 export interface SystemConfig {
@@ -301,9 +274,6 @@ export interface SystemConfig {
   vaultPasscode?: string;
   branchVaultCredentials?: Record<string, BranchVaultCredential>;
   loafWeightSettings?: LoafWeightSettings;
-  branchDepartments?: BranchDepartmentConfigItem[];
-  customTableTitles?: Record<string, string>;
-  customColumnTitles?: Record<string, Record<string, string>>;
 }
 
 export type UserRoleType =
@@ -314,7 +284,6 @@ export type UserRoleType =
   | 'auditor'
   | 'data_entry'
   | 'viewer'
-  | 'reader'
   | string;
 
 export interface AppUser {

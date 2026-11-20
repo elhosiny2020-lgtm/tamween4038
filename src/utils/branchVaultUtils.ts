@@ -99,15 +99,6 @@ export const CANONICAL_DEFAULT_BRANCHES: SupplyBranch[] = [
     createdAt: '2025-01-01',
     isDefault: false,
   },
-  {
-    id: 'branch-directorate-hq',
-    name: 'ديوان عام مديرية التموين والتجارة الداخلية بالغربية',
-    governorateTitle: 'محافظة الغربية',
-    directorateTitle: 'مديرية التموين والتجارة الداخلية بالغربية',
-    description: 'الديوان العام لمديرية التموين والتجارة الداخلية بمحافظة الغربية (قاعدة بيانات مستقلة)',
-    createdAt: '2025-01-01',
-    isDefault: false,
-  },
 ];
 
 /**
@@ -140,7 +131,7 @@ export function normalizeBranchNameKey(rawName: string | undefined | null): stri
     }
   }
 
-  // Canonicalize common aliases for Mahalla, Samanoud, and Directorate HQ
+  // Canonicalize common aliases for Mahalla and Samanoud
   if (
     cleaned === 'اداره تموين المحله الكبري' ||
     cleaned === 'اداره تموين مركز المحله الكبري' ||
@@ -156,15 +147,6 @@ export function normalizeBranchNameKey(rawName: string | undefined | null): stri
     cleaned === 'تموين سمنود'
   ) {
     return 'اداره تموين سمنود';
-  }
-
-  if (
-    cleaned === 'ديوان عام مديريه التموين بالغربية' ||
-    cleaned === 'ديوان عام مديريه التموين بالغربيه' ||
-    cleaned === 'ديوان عام مديريه التموين والتجاره الداخليه بالغربيه' ||
-    cleaned === 'مديريه التموين والتجاره الداخليه بالغربيه'
-  ) {
-    return 'ديوان عام مديريه التموين والتجاره الداخليه بالغربيه';
   }
 
   return cleaned;

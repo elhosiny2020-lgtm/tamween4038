@@ -2,7 +2,6 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Bakery, DebtRecord, SystemConfig, VillageHierarchy } from '../types';
 import { calculateDailyPerformanceSummary } from '../utils/auditHelper';
 import { exportElementToPdf, printHtmlElementA4 } from '../utils/pdfHelper';
-import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
 import {
   BarChart3,
   Calendar,
@@ -230,22 +229,12 @@ export const DailyPerformanceSummaryModal: React.FC<DailyPerformanceSummaryModal
           >
             {/* Official Governmental Report Header */}
             <div className="border-b-2 border-[#0F2342] pb-4 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3 text-right">
-                <div className="w-14 h-14 p-1 rounded-xl bg-white border border-[#0F2342]/30 flex items-center justify-center shrink-0">
-                  <img
-                    src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
-                    alt="شعار وزارة التموين والتجارة الداخلية"
-                    className="w-full h-full object-contain"
-                  />
-                </div>
-                <div className="space-y-0.5 text-right">
-                  <p className="text-[11px] font-black text-slate-600">جمهورية مصر العربية — وزارة التموين والتجارة الداخلية</p>
-                  <p className="text-xs font-black text-slate-700">{systemConfig.governorateTitle}</p>
-                  <p className="text-sm font-black text-[#0F2342]">{systemConfig.directorateTitle}</p>
-                  <p className="text-xs font-black text-[#0D9488]">
-                    {branchName || systemConfig.administrationTitle}
-                  </p>
-                </div>
+              <div className="space-y-0.5 text-right">
+                <p className="text-xs font-black text-slate-700">{systemConfig.governorateTitle}</p>
+                <p className="text-sm font-black text-[#0F2342]">{systemConfig.directorateTitle}</p>
+                <p className="text-xs font-black text-[#0D9488]">
+                  {branchName || systemConfig.administrationTitle}
+                </p>
               </div>
 
               <div className="text-center space-y-1">

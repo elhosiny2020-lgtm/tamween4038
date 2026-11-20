@@ -19,17 +19,7 @@ import type {
   RefrigeratorRecord,
   RefrigeratorTempLogRecord,
 } from '../../../types/modules';
-import type { AppUser, VillageHierarchy } from '../../../types';
-import type { ModulePermissions } from '../../../utils/moduleCrudHelpers';
-import { resolveModuleCrudPermissions } from '../../../utils/moduleCrudHelpers';
-import { groupRecordsByLocalUnit } from '../../../utils/tableGroupingHelpers';
-import {
-  ModuleRowActions,
-  LocalUnitSubtotalRow,
-  VillageGrandTotalRow,
-  ModuleRecordProfileModal,
-  ModuleDeleteConfirmModal,
-} from '../ModuleCrudShared';
+import type { VillageHierarchy } from '../../../types';
 import {
   computeRefrigeratorAssetValuation,
   computeRefrigeratorFinancialSummary,
@@ -41,8 +31,6 @@ interface RefrigeratorsDatabaseViewProps {
   state: GrainMaintenanceState;
   branchName: string;
   currentUserFullName: string;
-  currentUser?: AppUser | null;
-  permissions?: ModulePermissions;
   isViewer: boolean;
   canAdd?: boolean;
   canPrint?: boolean;
@@ -56,8 +44,6 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
   state,
   branchName,
   currentUserFullName,
-  currentUser,
-  permissions,
   isViewer,
   canAdd = !isViewer,
   canPrint = !isViewer,
@@ -66,10 +52,6 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
   onUpdateState,
   onNotify,
 }) => {
-  const effectivePermissions: ModulePermissions = useMemo(() => {
-    if (permissions) return permissions;
-    return resolveModuleCrudPermissions(currentUser || null, isViewer, 'grain_maintenance');
-  }, [permissions, currentUser, isViewer]);
   const [subTab, setSubTab] = useState<
     | 'registry'
     | 'rooms'
@@ -179,91 +161,6 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
       }),
     }));
   }, [rooms]);
-
-  const [profileModal, setProfileModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    entityType: string;
-    subtitle?: string;
-    onEdit?: () => void;
-    fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
-  } | null>(null);
-
-  const [editingRecord, setEditingRecord] = useState<{
-    sliceKey:
-      | 'refrigerators'
-      | 'refrigeratorRooms'
-      | 'refrigeratorReceipts'
-      | 'refrigeratorIssues'
-      | 'refrigeratorAssets'
-      | 'refrigeratorTempLogs'
-      | 'refrigeratorMaintenance'
-      | 'refrigeratorFinancials';
-    title: string;
-    data: Record<string, any>;
-  } | null>(null);
-
-  const [deleteModal, setDeleteModal] = useState<{
-    isOpen: boolean;
-    sliceKey:
-      | 'refrigerators'
-      | 'refrigeratorRooms'
-      | 'refrigeratorReceipts'
-      | 'refrigeratorIssues'
-      | 'refrigeratorAssets'
-      | 'refrigeratorTempLogs'
-      | 'refrigeratorMaintenance'
-      | 'refrigeratorFinancials';
-    entityId: string;
-    entityTitle: string;
-    recordSummary: { label: string; value: string | number }[];
-  } | null>(null);
-
-  const handleSaveEditedRecord = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingRecord) return;
-    const { sliceKey, title, data } = editingRecord;
-    const nowIso = new Date().toISOString();
-    onUpdateState(
-      (prev) => ({
-        ...prev,
-        [sliceKey]: ((prev[sliceKey] as any[]) || []).map((item) =>
-          item.id === data.id ? { ...item, ...data, updatedAt: nowIso } : item
-        ),
-      }),
-      `تعديل سجل الثلاجات: ${title}`
-    );
-    setEditingRecord(null);
-    onNotify('ok', `تم حفظ التعديلات على «${title}» في قاعدة البيانات بنجاح.`);
-  };
-
-  const handleConfirmDelete = () => {
-    if (!deleteModal) return;
-    const { sliceKey, entityId, entityTitle } = deleteModal;
-    onUpdateState(
-      (prev) => ({
-        ...prev,
-        [sliceKey]: ((prev[sliceKey] as any[]) || []).filter((item) => item.id !== entityId),
-      }),
-      `حذف سجل من الثلاجات: ${entityTitle}`
-    );
-    onNotify('ok', `تم حذف «${entityTitle}» بنجاح.`);
-    setDeleteModal(null);
-  };
-
-  const refGrouping = useMemo(() => {
-    return groupRecordsByLocalUnit({
-      rows: refrigerators,
-      getLocalUnit: (r) => r.village,
-      numericFields: [
-        { key: 'coolingRoomsCount', getValue: (r) => r.coolingRoomsCount },
-        { key: 'freezingRoomsCount', getValue: (r) => r.freezingRoomsCount },
-        { key: 'totalAreaSqm', getValue: (r) => r.totalAreaSqm },
-        { key: 'designCapacityTons', getValue: (r) => r.designCapacityTons },
-        { key: 'operationalCapacityTons', getValue: (r) => r.operationalCapacityTons },
-      ],
-    });
-  }, [refrigerators]);
 
   const handleCreateRefrigerator = (e: React.FormEvent) => {
     e.preventDefault();
@@ -647,7 +544,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right compact-erp-table">
+              <table className="w-full text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">كود الثلاجة</th>
@@ -659,142 +556,63 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                     <th className="p-3 text-center">الطاقة (تصميمي / فعلي)</th>
                     <th className="p-3">نظام التبريد</th>
                     <th className="p-3 text-center">الحالة والصيانة</th>
-                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {refGrouping.groups.map((group) => (
-                    <React.Fragment key={group.localUnit}>
-                      {group.rows.map((r) => {
-                        const openEditRef = () =>
-                          setEditingRecord({
-                            sliceKey: 'refrigerators',
-                            title: r.refrigeratorName,
-                            data: { ...r },
-                          });
-                        return (
-                          <tr key={r.id} className="hover:bg-slate-50">
-                            <td className="p-3 font-mono font-black text-sky-800">{r.refrigeratorCode}</td>
-                            <td className="p-3">
-                              <div className="font-black text-slate-900">{r.refrigeratorName}</div>
-                              <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-sky-100 text-sky-800 text-[10px] font-black">
-                                ملكية: {r.ownershipType}
-                              </span>
-                            </td>
-                            <td className="p-3">
-                              <div>{r.ownerName}</div>
-                              <div className="text-[10px] text-slate-500">{r.operatingCompany}</div>
-                            </td>
-                            <td className="p-3">
-                              <div>{r.village}</div>
-                              <div className="text-[10px] text-slate-500">{r.detailedAddress}</div>
-                            </td>
-                            <td className="p-3">
-                              <div>{r.managerName}</div>
-                              <div className="text-[10px] text-slate-500">
-                                تشغيل: {r.operationsOfficer} | {r.phone}
-                              </div>
-                            </td>
-                            <td className="p-3 text-center">
-                              <div>
-                                {r.coolingRoomsCount} تبريد + {r.freezingRoomsCount} تجميد
-                              </div>
-                              <div className="text-[10px] text-slate-500">{r.totalAreaSqm} م²</div>
-                            </td>
-                            <td className="p-3 text-center">
-                              <div className="font-black text-slate-900">{r.designCapacityTons} طن</div>
-                              <div className="text-[10px] text-emerald-700">
-                                فعلي: {r.operationalCapacityTons} طن
-                              </div>
-                            </td>
-                            <td className="p-3 text-slate-700">{r.coolingSystemType}</td>
-                            <td className="p-3 text-center">
-                              <span
-                                className={`inline-block px-2.5 py-0.5 rounded-lg text-[11px] font-black ${
-                                  r.operationalStatus === 'تعمل'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : r.operationalStatus === 'تحت الصيانة'
-                                    ? 'bg-amber-100 text-amber-800'
-                                    : 'bg-rose-100 text-rose-800'
-                                }`}
-                              >
-                                {r.operationalStatus}
-                              </span>
-                              <div className="text-[10px] text-slate-500 mt-0.5">
-                                صيانة قادمة: {r.nextMaintenanceDate}
-                              </div>
-                            </td>
-                            <td className="p-3 text-center">
-                              <ModuleRowActions
-                                entityLabel={r.refrigeratorName}
-                                permissions={effectivePermissions}
-                                testIdPrefix={`ref-row-${r.id}`}
-                                onView={() =>
-                                  setProfileModal({
-                                    isOpen: true,
-                                    title: `بطاقة الثلاجة: ${r.refrigeratorName}`,
-                                    subtitle: `كود ${r.refrigeratorCode} — ملكية ${r.ownershipType}`,
-                                    entityType: 'بيانات تفصيلية لثلاجة ومخزن تبريد/تجميد',
-                                    onEdit: openEditRef,
-                                    fields: [
-                                      { label: 'كود الثلاجة', value: r.refrigeratorCode, mono: true },
-                                      { label: 'اسم الثلاجة', value: r.refrigeratorName },
-                                      { label: 'المالك / الشركة المشغلة', value: `${r.ownerName} (${r.operatingCompany})` },
-                                      { label: 'الموقع والعنوان', value: `${r.village} — ${r.detailedAddress}` },
-                                      { label: 'المدير ومسؤول التشغيل', value: `${r.managerName} | ${r.operationsOfficer} (${r.phone})` },
-                                      { label: 'عدد الغرف والمساحة', value: `${r.coolingRoomsCount} تبريد + ${r.freezingRoomsCount} تجميد (${r.totalAreaSqm} م²)` },
-                                      { label: 'الطاقة التصميمية', value: `${r.designCapacityTons} طن` },
-                                      { label: 'الطاقة التشغيلية الفعلية', value: `${r.operationalCapacityTons} طن`, mono: true },
-                                      { label: 'نظام التبريد', value: r.coolingSystemType },
-                                      { label: 'الحالة التشغيلية', value: r.operationalStatus, badge: true, badgeColor: 'teal' },
-                                      { label: 'تاريخ الصيانة القادمة', value: r.nextMaintenanceDate },
-                                      { label: 'ملاحظات', value: r.notes || 'لا توجد' },
-                                    ],
-                                  })
-                                }
-                                onEdit={openEditRef}
-                                onDelete={() =>
-                                  setDeleteModal({
-                                    isOpen: true,
-                                    sliceKey: 'refrigerators',
-                                    entityId: r.id,
-                                    entityTitle: r.refrigeratorName,
-                                    recordSummary: [
-                                      { label: 'كود الثلاجة', value: r.refrigeratorCode },
-                                      { label: 'اسم الثلاجة', value: r.refrigeratorName },
-                                      { label: 'المالك', value: r.ownerName },
-                                      { label: 'الطاقة التشغيلية', value: `${r.operationalCapacityTons} طن` },
-                                    ],
-                                  })
-                                }
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      <LocalUnitSubtotalRow
-                        unitName={group.localUnit}
-                        recordCount={group.count}
-                        labelColSpan={5}
-                        metricCells={[
-                          { content: `${group.subtotals.coolingRoomsCount} تبريد + ${group.subtotals.freezingRoomsCount} تجميد (${group.subtotals.totalAreaSqm?.toLocaleString('ar-EG')} م²)`, align: 'center' },
-                          { content: `${group.subtotals.designCapacityTons?.toLocaleString('ar-EG')} / ${group.subtotals.operationalCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
-                          { content: '—', align: 'center', colSpan: 3 },
-                        ]}
-                      />
-                    </React.Fragment>
+                  {refrigerators.map((r) => (
+                    <tr key={r.id} className="hover:bg-slate-50">
+                      <td className="p-3 font-mono font-black text-sky-800">{r.refrigeratorCode}</td>
+                      <td className="p-3">
+                        <div className="font-black text-slate-900">{r.refrigeratorName}</div>
+                        <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-sky-100 text-sky-800 text-[10px] font-black">
+                          ملكية: {r.ownershipType}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <div>{r.ownerName}</div>
+                        <div className="text-[10px] text-slate-500">{r.operatingCompany}</div>
+                      </td>
+                      <td className="p-3">
+                        <div>{r.village}</div>
+                        <div className="text-[10px] text-slate-500">{r.detailedAddress}</div>
+                      </td>
+                      <td className="p-3">
+                        <div>{r.managerName}</div>
+                        <div className="text-[10px] text-slate-500">
+                          تشغيل: {r.operationsOfficer} | {r.phone}
+                        </div>
+                      </td>
+                      <td className="p-3 text-center">
+                        <div>
+                          {r.coolingRoomsCount} تبريد + {r.freezingRoomsCount} تجميد
+                        </div>
+                        <div className="text-[10px] text-slate-500">{r.totalAreaSqm} م²</div>
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="font-black text-slate-900">{r.designCapacityTons} طن</div>
+                        <div className="text-[10px] text-emerald-700">
+                          فعلي: {r.operationalCapacityTons} طن
+                        </div>
+                      </td>
+                      <td className="p-3 text-slate-700">{r.coolingSystemType}</td>
+                      <td className="p-3 text-center">
+                        <span
+                          className={`inline-block px-2.5 py-0.5 rounded-lg text-[11px] font-black ${
+                            r.operationalStatus === 'تعمل'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : r.operationalStatus === 'تحت الصيانة'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-rose-100 text-rose-800'
+                          }`}
+                        >
+                          {r.operationalStatus}
+                        </span>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          صيانة قادمة: {r.nextMaintenanceDate}
+                        </div>
+                      </td>
+                    </tr>
                   ))}
-                  {refGrouping.groups.length > 0 && (
-                    <VillageGrandTotalRow
-                      totalCount={refGrouping.grandTotalCount}
-                      labelColSpan={5}
-                      metricCells={[
-                        { content: `${refGrouping.grandTotals.coolingRoomsCount} تبريد + ${refGrouping.grandTotals.freezingRoomsCount} تجميد (${refGrouping.grandTotals.totalAreaSqm?.toLocaleString('ar-EG')} م²)`, align: 'center' },
-                        { content: `${refGrouping.grandTotals.designCapacityTons?.toLocaleString('ar-EG')} / ${refGrouping.grandTotals.operationalCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
-                        { content: '—', align: 'center', colSpan: 3 },
-                      ]}
-                    />
-                  )}
                 </tbody>
               </table>
             </div>
@@ -814,7 +632,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right compact-erp-table">
+            <table className="w-full text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">الثلاجة</th>
@@ -829,115 +647,48 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                   <th className="p-3 text-center">نسبة الإشغال %</th>
                   <th className="p-3 text-center">الحرارة المطلوبة</th>
                   <th className="p-3 text-center">الحالة</th>
-                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
-                {roomsWithMetrics.map(({ room, metrics }) => {
-                  const openEditRoom = () =>
-                    setEditingRecord({
-                      sliceKey: 'refrigeratorRooms',
-                      title: `${room.refrigeratorName} — ${room.roomNumber}`,
-                      data: { ...room },
-                    });
-                  return (
-                    <tr key={room.id} className="hover:bg-slate-50">
-                      <td className="p-3">
-                        <div className="font-black text-slate-900">{room.refrigeratorName}</div>
-                        <div className="text-[10px] font-mono text-sky-700">{room.refrigeratorCode}</div>
-                      </td>
-                      <td className="p-3 font-black text-indigo-900">
-                        {room.roomNumber} ({room.roomType})
-                      </td>
-                      <td className="p-3">{room.storedCommodityType}</td>
-                      <td className="p-3 text-center">{room.roomCapacityTons} طن</td>
-                      <td className="p-3 text-center">{room.openingBalanceTons} طن</td>
-                      <td className="p-3 text-center text-emerald-700">+{room.approvedInboundTons} طن</td>
-                      <td className="p-3 text-center text-amber-800">-{room.approvedOutboundTons} طن</td>
-                      <td className="p-3 text-center font-black text-sky-900 bg-sky-50">
-                        {metrics.currentBalanceTons} طن
-                      </td>
-                      <td className="p-3 text-center text-emerald-800">
-                        {metrics.availableCapacityTons} طن
-                      </td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`px-2 py-0.5 rounded font-black ${
-                            metrics.occupancyPct >= 90
-                              ? 'bg-rose-100 text-rose-800'
-                              : metrics.occupancyPct >= 75
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-emerald-100 text-emerald-800'
-                          }`}
-                        >
-                          {metrics.occupancyPct}%
-                        </span>
-                      </td>
-                      <td className="p-3 text-center font-mono" dir="ltr">
-                        {room.requiredTempCelsius}°C
-                      </td>
-                      <td className="p-3 text-center">{room.roomStatus}</td>
-                      <td className="p-3 text-center">
-                        <ModuleRowActions
-                          entityLabel={room.roomNumber}
-                          permissions={effectivePermissions}
-                          testIdPrefix={`ref-room-${room.id}`}
-                          onView={() =>
-                            setProfileModal({
-                              isOpen: true,
-                              title: `غرفة تبريد/تجميد: ${room.roomNumber}`,
-                              subtitle: `${room.refrigeratorName} (${room.roomType})`,
-                              entityType: 'غرفة تبريد وتجميد',
-                              onEdit: openEditRoom,
-                              fields: [
-                                { label: 'الثلاجة', value: `${room.refrigeratorName} (${room.refrigeratorCode})` },
-                                { label: 'رقم ونوع الغرفة', value: `${room.roomNumber} (${room.roomType})` },
-                                { label: 'نوع السلعة المخزنة', value: room.storedCommodityType },
-                                { label: 'سعة الغرفة', value: `${room.roomCapacityTons} طن`, mono: true },
-                                { label: 'الرصيد الافتتاحي', value: `${room.openingBalanceTons} طن` },
-                                { label: 'الوارد المعتمد', value: `+${room.approvedInboundTons} طن` },
-                                { label: 'المنصرف المعتمد', value: `-${room.approvedOutboundTons} طن` },
-                                { label: 'الرصيد الحالي', value: `${metrics.currentBalanceTons} طن`, mono: true },
-                                { label: 'الطاقة المتاحة', value: `${metrics.availableCapacityTons} طن`, mono: true },
-                                { label: 'نسبة الإشغال', value: `${metrics.occupancyPct}%` },
-                                { label: 'الحرارة المطلوبة', value: `${room.requiredTempCelsius}°C` },
-                                { label: 'حالة الغرفة', value: room.roomStatus },
-                              ],
-                            })
-                          }
-                          onEdit={openEditRoom}
-                          onDelete={() =>
-                            setDeleteModal({
-                              isOpen: true,
-                              sliceKey: 'refrigeratorRooms',
-                              entityId: room.id,
-                              entityTitle: `${room.refrigeratorName} - ${room.roomNumber}`,
-                              recordSummary: [
-                                { label: 'الثلاجة', value: room.refrigeratorName },
-                                { label: 'الغرفة', value: room.roomNumber },
-                                { label: 'الرصيد الحالي', value: `${metrics.currentBalanceTons} طن` },
-                              ],
-                            })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-                <VillageGrandTotalRow
-                  totalCount={roomsWithMetrics.length}
-                  labelColSpan={3}
-                  title="الإجمالي العام لسعات وأرصدة غرف الثلاجات TOTAL"
-                  metricCells={[
-                    { content: `${roomsWithMetrics.reduce((s, x) => s + (x.room.roomCapacityTons || 0), 0)} طن`, mono: true },
-                    { content: `${roomsWithMetrics.reduce((s, x) => s + (x.room.openingBalanceTons || 0), 0)} طن`, mono: true },
-                    { content: `+${roomsWithMetrics.reduce((s, x) => s + (x.room.approvedInboundTons || 0), 0)} طن`, mono: true },
-                    { content: `-${roomsWithMetrics.reduce((s, x) => s + (x.room.approvedOutboundTons || 0), 0)} طن`, mono: true },
-                    { content: `${roomsWithMetrics.reduce((s, x) => s + (x.metrics.currentBalanceTons || 0), 0)} طن`, mono: true },
-                    { content: `${roomsWithMetrics.reduce((s, x) => s + (x.metrics.availableCapacityTons || 0), 0)} طن متاح`, mono: true },
-                    { content: '—', colSpan: 4 },
-                  ]}
-                />
+                {roomsWithMetrics.map(({ room, metrics }) => (
+                  <tr key={room.id} className="hover:bg-slate-50">
+                    <td className="p-3">
+                      <div className="font-black text-slate-900">{room.refrigeratorName}</div>
+                      <div className="text-[10px] font-mono text-sky-700">{room.refrigeratorCode}</div>
+                    </td>
+                    <td className="p-3 font-black text-indigo-900">
+                      {room.roomNumber} ({room.roomType})
+                    </td>
+                    <td className="p-3">{room.storedCommodityType}</td>
+                    <td className="p-3 text-center">{room.roomCapacityTons} طن</td>
+                    <td className="p-3 text-center">{room.openingBalanceTons} طن</td>
+                    <td className="p-3 text-center text-emerald-700">+{room.approvedInboundTons} طن</td>
+                    <td className="p-3 text-center text-amber-800">-{room.approvedOutboundTons} طن</td>
+                    <td className="p-3 text-center font-black text-sky-900 bg-sky-50">
+                      {metrics.currentBalanceTons} طن
+                    </td>
+                    <td className="p-3 text-center text-emerald-800">
+                      {metrics.availableCapacityTons} طن
+                    </td>
+                    <td className="p-3 text-center">
+                      <span
+                        className={`px-2 py-0.5 rounded font-black ${
+                          metrics.occupancyPct >= 90
+                            ? 'bg-rose-100 text-rose-800'
+                            : metrics.occupancyPct >= 75
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}
+                      >
+                        {metrics.occupancyPct}%
+                      </span>
+                    </td>
+                    <td className="p-3 text-center font-mono" dir="ltr">
+                      {room.requiredTempCelsius}°C
+                    </td>
+                    <td className="p-3 text-center">{room.roomStatus}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -969,7 +720,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right compact-erp-table">
+              <table className="w-full text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم الإذن والتاريخ</th>
@@ -983,118 +734,55 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                     <th className="p-3 text-center">حرارة الاستلام</th>
                     <th className="p-3 text-center">الصلاحية</th>
                     <th className="p-3 text-center">الحالة</th>
-                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {receipts.map((r) => {
-                    const openEditRec = () =>
-                      setEditingRecord({
-                        sliceKey: 'refrigeratorReceipts',
-                        title: r.receiptOrderNumber,
-                        data: { ...r },
-                      });
-                    return (
-                      <tr key={r.id} className="hover:bg-slate-50">
-                        <td className="p-3">
-                          <div className="font-mono font-black text-indigo-900">
-                            {r.receiptOrderNumber}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            {r.receiptDate} | {r.receiptTime}
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          <div className="font-black">{r.refrigeratorName}</div>
-                          <div className="text-[10px] text-sky-700">{r.roomNumber}</div>
-                        </td>
-                        <td className="p-3">{r.depositorOrSupplierName}</td>
-                        <td className="p-3">
-                          <div>{r.commodityType}</div>
-                          <div className="text-[10px] text-slate-500">{r.subCategory}</div>
-                        </td>
-                        <td className="p-3 text-center">{r.packagesCount.toLocaleString('ar-EG')}</td>
-                        <td className="p-3 text-center">
-                          {r.grossWeightTons} / {r.tareWeightTons} طن
-                        </td>
-                        <td className="p-3 text-center font-black text-emerald-800 bg-emerald-50">
-                          {r.netWeightTons} طن
-                        </td>
-                        <td className="p-3 text-center">
-                          <div>{r.totalValue.toLocaleString('ar-EG')} ج.م</div>
-                          <div className="text-[10px] text-slate-500">
-                            ({r.unitOrTonPrice.toLocaleString('ar-EG')} ج.م/طن)
-                          </div>
-                        </td>
-                        <td className="p-3 text-center font-mono" dir="ltr">
-                          {r.receivingTempCelsius}°C
-                        </td>
-                        <td className="p-3 text-center text-[11px]">
-                          <div>إنتاج: {r.productionDate}</div>
-                          <div className="text-rose-700">انتهاء: {r.expiryDate}</div>
-                        </td>
-                        <td className="p-3 text-center">
-                          <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-black">
-                            {r.approvalStatus}
-                          </span>
-                        </td>
-                        <td className="p-3 text-center">
-                          <ModuleRowActions
-                            entityLabel={r.receiptOrderNumber}
-                            permissions={effectivePermissions}
-                            testIdPrefix={`ref-rec-${r.id}`}
-                            onView={() =>
-                              setProfileModal({
-                                isOpen: true,
-                                title: `إذن استلام وارد ثلاجة: ${r.receiptOrderNumber}`,
-                                subtitle: `${r.refrigeratorName} — ${r.roomNumber}`,
-                                entityType: 'إذن استلام وارد للثلاجات',
-                                onEdit: openEditRec,
-                                fields: [
-                                  { label: 'رقم الإذن', value: r.receiptOrderNumber, mono: true },
-                                  { label: 'التاريخ والوقت', value: `${r.receiptDate} | ${r.receiptTime}` },
-                                  { label: 'الثلاجة والغرفة', value: `${r.refrigeratorName} (${r.roomNumber})` },
-                                  { label: 'المورد / المودع', value: r.depositorOrSupplierName },
-                                  { label: 'السلعة والصنف', value: `${r.commodityType} — ${r.subCategory}` },
-                                  { label: 'عدد العبوات', value: r.packagesCount, mono: true },
-                                  { label: 'صافي الوزن', value: `${r.netWeightTons} طن`, mono: true },
-                                  { label: 'إجمالي القيمة', value: `${r.totalValue.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                  { label: 'حرارة الاستلام', value: `${r.receivingTempCelsius}°C` },
-                                  { label: 'تاريخ الانتهاء', value: r.expiryDate },
-                                ],
-                              })
-                            }
-                            onEdit={openEditRec}
-                            onDelete={() =>
-                              setDeleteModal({
-                                isOpen: true,
-                                sliceKey: 'refrigeratorReceipts',
-                                entityId: r.id,
-                                entityTitle: r.receiptOrderNumber,
-                                recordSummary: [
-                                  { label: 'رقم الإذن', value: r.receiptOrderNumber },
-                                  { label: 'الثلاجة', value: r.refrigeratorName },
-                                  { label: 'صافي الوزن', value: `${r.netWeightTons} طن` },
-                                ],
-                              })
-                            }
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  <VillageGrandTotalRow
-                    totalCount={receipts.length}
-                    labelColSpan={4}
-                    title="الإجمالي العام لدفتر استلام الوارد للثلاجات TOTAL"
-                    metricCells={[
-                      { content: `${receipts.reduce((s, r) => s + (r.packagesCount || 0), 0).toLocaleString('ar-EG')} عبوة`, mono: true },
-                      { content: '—' },
-                      { content: `${Number(receipts.reduce((s, r) => s + (r.netWeightTons || 0), 0).toFixed(3))} طن`, mono: true },
-                      { content: `${receipts.reduce((s, r) => s + (r.totalValue || 0), 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                      { content: '—', colSpan: 4 },
-                    ]}
-                  />
+                  {receipts.map((r) => (
+                    <tr key={r.id} className="hover:bg-slate-50">
+                      <td className="p-3">
+                        <div className="font-mono font-black text-indigo-900">
+                          {r.receiptOrderNumber}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {r.receiptDate} | {r.receiptTime}
+                        </div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-black">{r.refrigeratorName}</div>
+                        <div className="text-[10px] text-sky-700">{r.roomNumber}</div>
+                      </td>
+                      <td className="p-3">{r.depositorOrSupplierName}</td>
+                      <td className="p-3">
+                        <div>{r.commodityType}</div>
+                        <div className="text-[10px] text-slate-500">{r.subCategory}</div>
+                      </td>
+                      <td className="p-3 text-center">{r.packagesCount.toLocaleString('ar-EG')}</td>
+                      <td className="p-3 text-center">
+                        {r.grossWeightTons} / {r.tareWeightTons} طن
+                      </td>
+                      <td className="p-3 text-center font-black text-emerald-800 bg-emerald-50">
+                        {r.netWeightTons} طن
+                      </td>
+                      <td className="p-3 text-center">
+                        <div>{r.totalValue.toLocaleString('ar-EG')} ج.م</div>
+                        <div className="text-[10px] text-slate-500">
+                          ({r.unitOrTonPrice.toLocaleString('ar-EG')} ج.م/طن)
+                        </div>
+                      </td>
+                      <td className="p-3 text-center font-mono" dir="ltr">
+                        {r.receivingTempCelsius}°C
+                      </td>
+                      <td className="p-3 text-center text-[11px]">
+                        <div>إنتاج: {r.productionDate}</div>
+                        <div className="text-rose-700">انتهاء: {r.expiryDate}</div>
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-black">
+                          {r.approvalStatus}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1127,7 +815,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right compact-erp-table">
+              <table className="w-full text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم إذن الصرف</th>
@@ -1140,94 +828,34 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                     <th className="p-3 text-center">الرصيد بعد الصرف</th>
                     <th className="p-3 text-center">إجمالي القيمة</th>
                     <th className="p-3">المسؤول عن الصرف</th>
-                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {issues.map((iss) => {
-                    const openEditIss = () =>
-                      setEditingRecord({
-                        sliceKey: 'refrigeratorIssues',
-                        title: iss.issueOrderNumber,
-                        data: { ...iss },
-                      });
-                    return (
-                      <tr key={iss.id} className="hover:bg-slate-50">
-                        <td className="p-3 font-mono font-black text-amber-800">
-                          {iss.issueOrderNumber}
-                        </td>
-                        <td className="p-3">{iss.issueDate}</td>
-                        <td className="p-3">
-                          <div className="font-black">{iss.refrigeratorName}</div>
-                          <div className="text-[10px] text-sky-700">{iss.roomNumber}</div>
-                        </td>
-                        <td className="p-3">{iss.beneficiaryEntityName}</td>
-                        <td className="p-3">{iss.commodityType}</td>
-                        <td className="p-3 text-center">{iss.balanceBeforeIssueTons} طن</td>
-                        <td className="p-3 text-center font-black text-amber-800 bg-amber-50">
-                          {iss.netIssuedWeightTons} طن
-                        </td>
-                        <td className="p-3 text-center font-black text-emerald-800">
-                          {iss.balanceAfterIssueTons} طن
-                        </td>
-                        <td className="p-3 text-center">
-                          {iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م
-                        </td>
-                        <td className="p-3">{iss.issuerName}</td>
-                        <td className="p-3 text-center">
-                          <ModuleRowActions
-                            entityLabel={iss.issueOrderNumber}
-                            permissions={effectivePermissions}
-                            testIdPrefix={`ref-iss-${iss.id}`}
-                            onView={() =>
-                              setProfileModal({
-                                isOpen: true,
-                                title: `إذن صرف ثلاجة: ${iss.issueOrderNumber}`,
-                                subtitle: `${iss.refrigeratorName} — ${iss.roomNumber}`,
-                                entityType: 'إذن صرف من الثلاجة',
-                                onEdit: openEditIss,
-                                fields: [
-                                  { label: 'رقم إذن الصرف', value: iss.issueOrderNumber, mono: true },
-                                  { label: 'التاريخ', value: iss.issueDate },
-                                  { label: 'الثلاجة والغرفة', value: `${iss.refrigeratorName} (${iss.roomNumber})` },
-                                  { label: 'الجهة المستلمة', value: iss.beneficiaryEntityName },
-                                  { label: 'نوع السلعة', value: iss.commodityType },
-                                  { label: 'الوزن المنصرف', value: `${iss.netIssuedWeightTons} طن`, mono: true },
-                                  { label: 'إجمالي القيمة', value: `${iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                  { label: 'المسؤول عن الصرف', value: iss.issuerName },
-                                ],
-                              })
-                            }
-                            onEdit={openEditIss}
-                            onDelete={() =>
-                              setDeleteModal({
-                                isOpen: true,
-                                sliceKey: 'refrigeratorIssues',
-                                entityId: iss.id,
-                                entityTitle: iss.issueOrderNumber,
-                                recordSummary: [
-                                  { label: 'رقم الإذن', value: iss.issueOrderNumber },
-                                  { label: 'الجهة المستلمة', value: iss.beneficiaryEntityName },
-                                  { label: 'الكمية المنصرفة', value: `${iss.netIssuedWeightTons} طن` },
-                                ],
-                              })
-                            }
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  <VillageGrandTotalRow
-                    totalCount={issues.length}
-                    labelColSpan={6}
-                    title="الإجمالي العام لدفتر صرف الثلاجات TOTAL"
-                    metricCells={[
-                      { content: `${Number(issues.reduce((s, i) => s + (i.netIssuedWeightTons || 0), 0).toFixed(3))} طن`, mono: true },
-                      { content: '—' },
-                      { content: `${issues.reduce((s, i) => s + (i.totalIssuedValue || 0), 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                      { content: '—', colSpan: 2 },
-                    ]}
-                  />
+                  {issues.map((iss) => (
+                    <tr key={iss.id} className="hover:bg-slate-50">
+                      <td className="p-3 font-mono font-black text-amber-800">
+                        {iss.issueOrderNumber}
+                      </td>
+                      <td className="p-3">{iss.issueDate}</td>
+                      <td className="p-3">
+                        <div className="font-black">{iss.refrigeratorName}</div>
+                        <div className="text-[10px] text-sky-700">{iss.roomNumber}</div>
+                      </td>
+                      <td className="p-3">{iss.beneficiaryEntityName}</td>
+                      <td className="p-3">{iss.commodityType}</td>
+                      <td className="p-3 text-center">{iss.balanceBeforeIssueTons} طن</td>
+                      <td className="p-3 text-center font-black text-amber-800 bg-amber-50">
+                        {iss.netIssuedWeightTons} طن
+                      </td>
+                      <td className="p-3 text-center font-black text-emerald-800">
+                        {iss.balanceAfterIssueTons} طن
+                      </td>
+                      <td className="p-3 text-center">
+                        {iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م
+                      </td>
+                      <td className="p-3">{iss.issuerName}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1247,7 +875,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right compact-erp-table">
+            <table className="w-full text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">الثلاجة</th>
@@ -1258,18 +886,11 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                   <th className="p-3 text-center bg-emerald-950/80">قيمة المخزون الحالي</th>
                   <th className="p-3 text-center bg-amber-950/80">إجمالي القيمة التقديرية</th>
                   <th className="p-3">لجنة التقييم والتاريخ</th>
-                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
                 {assets.map((a) => {
                   const calc = computeRefrigeratorAssetValuation(a);
-                  const openEditAsset = () =>
-                    setEditingRecord({
-                      sliceKey: 'refrigeratorAssets',
-                      title: `تقييم أصول: ${a.refrigeratorName}`,
-                      data: { ...a },
-                    });
                   return (
                     <tr key={a.id} className="hover:bg-slate-50">
                       <td className="p-3">
@@ -1309,58 +930,9 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                         <div>{a.evaluatorCommittee}</div>
                         <div className="text-[10px] text-slate-500">{a.valuationDate}</div>
                       </td>
-                      <td className="p-3 text-center">
-                        <ModuleRowActions
-                          entityLabel={a.refrigeratorName}
-                          permissions={effectivePermissions}
-                          testIdPrefix={`ref-asset-${a.id}`}
-                          onView={() =>
-                            setProfileModal({
-                              isOpen: true,
-                              title: `التقييم المالي للثلاجة: ${a.refrigeratorName}`,
-                              subtitle: `كود ${a.refrigeratorCode} — تاريخ التقييم ${a.valuationDate}`,
-                              entityType: 'تقييم أصول ومخزون ثلاجة',
-                              onEdit: openEditAsset,
-                              fields: [
-                                { label: 'الثلاجة', value: `${a.refrigeratorName} (${a.refrigeratorCode})` },
-                                { label: 'قيمة الأرض والمباني', value: `${(a.landValue + a.buildingsValue).toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'غرف ووحدات التبريد', value: `${(a.coolingRoomsValue + a.coolingUnitsCompressorsValue).toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'إجمالي الأصول الثابتة', value: `${calc.totalFixedAssetsValue.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'قيمة المخزون السلعي الحالي', value: `${calc.currentStoredInventoryValue.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'إجمالي القيمة التقديرية', value: `${calc.totalEstimatedValue.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'لجنة التقييم', value: a.evaluatorCommittee },
-                              ],
-                            })
-                          }
-                          onEdit={openEditAsset}
-                          onDelete={() =>
-                            setDeleteModal({
-                              isOpen: true,
-                              sliceKey: 'refrigeratorAssets',
-                              entityId: a.id,
-                              entityTitle: a.refrigeratorName,
-                              recordSummary: [
-                                { label: 'الثلاجة', value: a.refrigeratorName },
-                                { label: 'الأصول الثابتة', value: `${calc.totalFixedAssetsValue.toLocaleString('ar-EG')} ج.م` },
-                              ],
-                            })
-                          }
-                        />
-                      </td>
                     </tr>
                   );
                 })}
-                <VillageGrandTotalRow
-                  totalCount={assets.length}
-                  labelColSpan={4}
-                  title="الإجمالي العام لتقييم أصول ومخزون الثلاجات TOTAL"
-                  metricCells={[
-                    { content: `${assets.reduce((s, a) => s + computeRefrigeratorAssetValuation(a).totalFixedAssetsValue, 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                    { content: `${assets.reduce((s, a) => s + computeRefrigeratorAssetValuation(a).currentStoredInventoryValue, 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                    { content: `${assets.reduce((s, a) => s + computeRefrigeratorAssetValuation(a).totalEstimatedValue, 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                    { content: '—', colSpan: 2 },
-                  ]}
-                />
               </tbody>
             </table>
           </div>
@@ -1392,7 +964,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right compact-erp-table">
+              <table className="w-full text-xs text-right">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">الثلاجة والغرفة</th>
@@ -1404,108 +976,50 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                     <th className="p-3 text-center">الكهرباء والمولد</th>
                     <th className="p-3 text-center">حالة الإنذار</th>
                     <th className="p-3">الفني والملاحظات</th>
-                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {tempLogs.map((t) => {
-                    const openEditTemp = () =>
-                      setEditingRecord({
-                        sliceKey: 'refrigeratorTempLogs',
-                        title: `قراءة حرارة: ${t.refrigeratorName} - ${t.roomNumber}`,
-                        data: { ...t },
-                      });
-                    return (
-                      <tr key={t.id} className="hover:bg-slate-50">
-                        <td className="p-3">
-                          <div className="font-black">{t.refrigeratorName}</div>
-                          <div className="text-[10px] text-sky-700">{t.roomNumber}</div>
-                        </td>
-                        <td className="p-3">{t.commodityType}</td>
-                        <td className="p-3 text-center font-mono" dir="ltr">
-                          {t.requiredTempCelsius}°C
-                        </td>
-                        <td
-                          className={`p-3 text-center font-mono font-black ${
-                            t.alarmStatus !== 'طبيعي' ? 'text-rose-700 bg-rose-50' : 'text-emerald-700'
+                  {tempLogs.map((t) => (
+                    <tr key={t.id} className="hover:bg-slate-50">
+                      <td className="p-3">
+                        <div className="font-black">{t.refrigeratorName}</div>
+                        <div className="text-[10px] text-sky-700">{t.roomNumber}</div>
+                      </td>
+                      <td className="p-3">{t.commodityType}</td>
+                      <td className="p-3 text-center font-mono" dir="ltr">
+                        {t.requiredTempCelsius}°C
+                      </td>
+                      <td
+                        className={`p-3 text-center font-mono font-black ${
+                          t.alarmStatus !== 'طبيعي' ? 'text-rose-700 bg-rose-50' : 'text-emerald-700'
+                        }`}
+                        dir="ltr"
+                      >
+                        {t.actualTempCelsius}°C
+                      </td>
+                      <td className="p-3 text-center font-mono">{t.measurementDateTime}</td>
+                      <td className="p-3 text-center">{t.coolingUnitsStatus}</td>
+                      <td className="p-3 text-center">
+                        <div>{t.powerStatus}</div>
+                        <div className="text-[10px] text-slate-500">{t.backupGeneratorStatus}</div>
+                      </td>
+                      <td className="p-3 text-center">
+                        <span
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${
+                            t.alarmStatus === 'طبيعي'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-rose-100 text-rose-800 border border-rose-300'
                           }`}
-                          dir="ltr"
                         >
-                          {t.actualTempCelsius}°C
-                        </td>
-                        <td className="p-3 text-center font-mono">{t.measurementDateTime}</td>
-                        <td className="p-3 text-center">{t.coolingUnitsStatus}</td>
-                        <td className="p-3 text-center">
-                          <div>{t.powerStatus}</div>
-                          <div className="text-[10px] text-slate-500">{t.backupGeneratorStatus}</div>
-                        </td>
-                        <td className="p-3 text-center">
-                          <span
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${
-                              t.alarmStatus === 'طبيعي'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-rose-100 text-rose-800 border border-rose-300'
-                            }`}
-                          >
-                            {t.alarmStatus}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <div>{t.technicianName}</div>
-                          <div className="text-[10px] text-slate-500">{t.notes}</div>
-                        </td>
-                        <td className="p-3 text-center">
-                          <ModuleRowActions
-                            entityLabel={`${t.refrigeratorName} - ${t.roomNumber}`}
-                            permissions={effectivePermissions}
-                            testIdPrefix={`ref-temp-${t.id}`}
-                            onView={() =>
-                              setProfileModal({
-                                isOpen: true,
-                                title: `قراءة حرارة وتشغيل: ${t.refrigeratorName}`,
-                                subtitle: `${t.roomNumber} — ${t.measurementDateTime}`,
-                                entityType: 'سجل حرارة وتشغيل ثلاجة',
-                                onEdit: openEditTemp,
-                                fields: [
-                                  { label: 'الثلاجة والغرفة', value: `${t.refrigeratorName} (${t.roomNumber})` },
-                                  { label: 'السلعة', value: t.commodityType },
-                                  { label: 'الحرارة المطلوبة', value: `${t.requiredTempCelsius}°C`, mono: true },
-                                  { label: 'الحرارة الفعلية', value: `${t.actualTempCelsius}°C`, mono: true },
-                                  { label: 'وحدات التبريد', value: t.coolingUnitsStatus },
-                                  { label: 'حالة التيار والمولد', value: `${t.powerStatus} | ${t.backupGeneratorStatus}` },
-                                  { label: 'حالة الإنذار', value: t.alarmStatus },
-                                  { label: 'الفني المسؤول', value: t.technicianName },
-                                ],
-                              })
-                            }
-                            onEdit={openEditTemp}
-                            onDelete={() =>
-                              setDeleteModal({
-                                isOpen: true,
-                                sliceKey: 'refrigeratorTempLogs',
-                                entityId: t.id,
-                                entityTitle: `${t.refrigeratorName} (${t.roomNumber})`,
-                                recordSummary: [
-                                  { label: 'الثلاجة', value: t.refrigeratorName },
-                                  { label: 'الغرفة', value: t.roomNumber },
-                                  { label: 'الحرارة الفعلية', value: `${t.actualTempCelsius}°C` },
-                                ],
-                              })
-                            }
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  <VillageGrandTotalRow
-                    totalCount={tempLogs.length}
-                    labelColSpan={7}
-                    title="الإجمالي العام لقراءات درجات الحرارة والإنذارات TOTAL"
-                    metricCells={[
-                      { content: `إنذارات: ${tempLogs.filter((t) => t.alarmStatus !== 'طبيعي').length}`, mono: true },
-                      { content: '—', colSpan: 2 },
-                    ]}
-                  />
+                          {t.alarmStatus}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <div>{t.technicianName}</div>
+                        <div className="text-[10px] text-slate-500">{t.notes}</div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1525,7 +1039,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right compact-erp-table">
+            <table className="w-full text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">رقم أمر الصيانة</th>
@@ -1536,99 +1050,40 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                   <th className="p-3 text-center">قطع الغيار + المصنعية</th>
                   <th className="p-3 text-center">إجمالي التكلفة</th>
                   <th className="p-3 text-center">الحالة</th>
-                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
-                {maintenance.map((m) => {
-                  const openEditMaint = () =>
-                    setEditingRecord({
-                      sliceKey: 'refrigeratorMaintenance',
-                      title: `أمر صيانة ثلاجة: ${m.orderNumber}`,
-                      data: { ...m },
-                    });
-                  return (
-                    <tr key={m.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-amber-800">{m.orderNumber}</td>
-                      <td className="p-3">
-                        <div className="font-black">{m.refrigeratorName}</div>
-                        <div className="text-[10px] text-slate-500">{m.roomOrEquipmentNumber}</div>
-                      </td>
-                      <td className="p-3">
-                        <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-black ml-1">
-                          {m.maintenanceType}
-                        </span>
-                        <span>{m.faultDescription}</span>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div>{m.reportDate}</div>
-                        <div className="text-[10px] text-rose-700">توقف {m.downtimeHours} ساعة</div>
-                      </td>
-                      <td className="p-3">{m.sparePartsUsed}</td>
-                      <td className="p-3 text-center">
-                        {m.partsCost.toLocaleString('ar-EG')} + {m.laborCost.toLocaleString('ar-EG')} ج.م
-                      </td>
-                      <td className="p-3 text-center font-black text-rose-800">
-                        {m.totalMaintenanceCost.toLocaleString('ar-EG')} ج.م
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 text-[11px] font-black">
-                          {m.status}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center">
-                        <ModuleRowActions
-                          entityLabel={m.orderNumber}
-                          permissions={effectivePermissions}
-                          testIdPrefix={`ref-maint-${m.id}`}
-                          onView={() =>
-                            setProfileModal({
-                              isOpen: true,
-                              title: `أمر صيانة ثلاجة: ${m.orderNumber}`,
-                              subtitle: `${m.refrigeratorName} — ${m.roomOrEquipmentNumber}`,
-                              entityType: 'أمر صيانة ثلاجة',
-                              onEdit: openEditMaint,
-                              fields: [
-                                { label: 'رقم الأمر', value: m.orderNumber, mono: true },
-                                { label: 'الثلاجة والمعدة', value: `${m.refrigeratorName} (${m.roomOrEquipmentNumber})` },
-                                { label: 'نوع الصيانة', value: m.maintenanceType },
-                                { label: 'وصف العطل', value: m.faultDescription },
-                                { label: 'تاريخ البلاغ', value: m.reportDate },
-                                { label: 'ساعات التوقف', value: `${m.downtimeHours} ساعة`, mono: true },
-                                { label: 'قطع الغيار', value: m.sparePartsUsed },
-                                { label: 'إجمالي التكلفة', value: `${m.totalMaintenanceCost.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'الحالة', value: m.status },
-                              ],
-                            })
-                          }
-                          onEdit={openEditMaint}
-                          onDelete={() =>
-                            setDeleteModal({
-                              isOpen: true,
-                              sliceKey: 'refrigeratorMaintenance',
-                              entityId: m.id,
-                              entityTitle: m.orderNumber,
-                              recordSummary: [
-                                { label: 'رقم الأمر', value: m.orderNumber },
-                                { label: 'الثلاجة', value: m.refrigeratorName },
-                                { label: 'إجمالي التكلفة', value: `${m.totalMaintenanceCost.toLocaleString('ar-EG')} ج.م` },
-                              ],
-                            })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-                <VillageGrandTotalRow
-                  totalCount={maintenance.length}
-                  labelColSpan={6}
-                  title="الإجمالي العام لتكاليف صيانة الثلاجات TOTAL"
-                  metricCells={[
-                    { content: `${maintenance.reduce((s, m) => s + (m.totalMaintenanceCost || 0), 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                    { content: '—', colSpan: 2 },
-                  ]}
-                />
+                {maintenance.map((m) => (
+                  <tr key={m.id} className="hover:bg-slate-50">
+                    <td className="p-3 font-mono font-black text-amber-800">{m.orderNumber}</td>
+                    <td className="p-3">
+                      <div className="font-black">{m.refrigeratorName}</div>
+                      <div className="text-[10px] text-slate-500">{m.roomOrEquipmentNumber}</div>
+                    </td>
+                    <td className="p-3">
+                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-black ml-1">
+                        {m.maintenanceType}
+                      </span>
+                      <span>{m.faultDescription}</span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <div>{m.reportDate}</div>
+                      <div className="text-[10px] text-rose-700">توقف {m.downtimeHours} ساعة</div>
+                    </td>
+                    <td className="p-3">{m.sparePartsUsed}</td>
+                    <td className="p-3 text-center">
+                      {m.partsCost.toLocaleString('ar-EG')} + {m.laborCost.toLocaleString('ar-EG')} ج.م
+                    </td>
+                    <td className="p-3 text-center font-black text-rose-800">
+                      {m.totalMaintenanceCost.toLocaleString('ar-EG')} ج.م
+                    </td>
+                    <td className="p-3 text-center">
+                      <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 text-[11px] font-black">
+                        {m.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -1647,7 +1102,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right compact-erp-table">
+            <table className="w-full text-xs text-right">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">رقم المستند والتاريخ</th>
@@ -1658,18 +1113,11 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                   <th className="p-3 text-center bg-emerald-950/70">صافي الحركة المالية</th>
                   <th className="p-3 text-center">المستحقات / المسدد</th>
                   <th className="p-3 text-center bg-rose-950/70">المتبقي من المستحقات</th>
-                  <th className="p-3 text-center">إدارة السجل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
                 {financials.map((f) => {
                   const calc = computeRefrigeratorFinancialSummary(f);
-                  const openEditFin = () =>
-                    setEditingRecord({
-                      sliceKey: 'refrigeratorFinancials',
-                      title: `قيد مالي ثلاجة: ${f.documentNumber}`,
-                      data: { ...f },
-                    });
                   return (
                     <tr key={f.id} className="hover:bg-slate-50">
                       <td className="p-3">
@@ -1701,62 +1149,9 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
                       <td className="p-3 text-center font-black text-rose-800 bg-rose-50">
                         {calc.remainingReceivables.toLocaleString('ar-EG')} ج.م
                       </td>
-                      <td className="p-3 text-center">
-                        <ModuleRowActions
-                          entityLabel={f.documentNumber}
-                          permissions={effectivePermissions}
-                          testIdPrefix={`ref-fin-${f.id}`}
-                          onView={() =>
-                            setProfileModal({
-                              isOpen: true,
-                              title: `مستند مالي للثلاجة: ${f.documentNumber}`,
-                              subtitle: `${f.refrigeratorName} — ${f.pricingMode}`,
-                              entityType: 'مستند مالي للثلاجات',
-                              onEdit: openEditFin,
-                              fields: [
-                                { label: 'رقم المستند', value: f.documentNumber, mono: true },
-                                { label: 'التاريخ', value: f.date },
-                                { label: 'الثلاجة', value: f.refrigeratorName },
-                                { label: 'نظام التسعير', value: `${f.pricingMode} (${f.ratePerTon} ج.م/طن)` },
-                                { label: 'إجمالي المصروفات', value: `${calc.totalExpenses.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'الإيرادات الفعلية', value: `${calc.effectiveRevenue.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'صافي الحركة المالية', value: `${calc.netFinancialMovement.toLocaleString('ar-EG')} ج.م`, mono: true },
-                                { label: 'المتبقي من المستحقات', value: `${calc.remainingReceivables.toLocaleString('ar-EG')} ج.م`, mono: true },
-                              ],
-                            })
-                          }
-                          onEdit={openEditFin}
-                          onDelete={() =>
-                            setDeleteModal({
-                              isOpen: true,
-                              sliceKey: 'refrigeratorFinancials',
-                              entityId: f.id,
-                              entityTitle: f.documentNumber,
-                              recordSummary: [
-                                { label: 'رقم المستند', value: f.documentNumber },
-                                { label: 'الثلاجة', value: f.refrigeratorName },
-                                { label: 'صافي الحركة', value: `${calc.netFinancialMovement.toLocaleString('ar-EG')} ج.م` },
-                              ],
-                            })
-                          }
-                        />
-                      </td>
                     </tr>
                   );
                 })}
-                <VillageGrandTotalRow
-                  totalCount={financials.length}
-                  labelColSpan={3}
-                  title="الإجمالي العام للمصروفات والإيرادات والمستحقات TOTAL"
-                  metricCells={[
-                    { content: `${financials.reduce((s, f) => s + computeRefrigeratorFinancialSummary(f).totalExpenses, 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                    { content: `${financials.reduce((s, f) => s + computeRefrigeratorFinancialSummary(f).effectiveRevenue, 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                    { content: `${financials.reduce((s, f) => s + computeRefrigeratorFinancialSummary(f).netFinancialMovement, 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                    { content: '—' },
-                    { content: `${financials.reduce((s, f) => s + computeRefrigeratorFinancialSummary(f).remainingReceivables, 0).toLocaleString('ar-EG')} ج.م`, mono: true },
-                    { content: '—' },
-                  ]}
-                />
               </tbody>
             </table>
           </div>
@@ -1765,7 +1160,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
 
       {/* نافذة إضافة ثلاجة جديدة */}
       {showAddRefModal && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">إضافة ثلاجة حفظ وتبريد جديدة</h3>
             <form onSubmit={handleCreateRefrigerator} className="space-y-4 text-xs font-bold">
@@ -1858,7 +1253,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
 
       {/* نافذة تسجيل استلام وارد للثلاجة */}
       {showAddReceiptModal && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل إذن استلام وارد يومي للثلاجة
@@ -1962,7 +1357,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
 
       {/* نافذة تسجيل صرف منصرف من الثلاجة */}
       {showAddIssueModal && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل إذن صرف يومي من الثلاجة
@@ -2040,7 +1435,7 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
 
       {/* نافذة تسجيل قراءة حرارة وتشغيل */}
       {showAddTempModal && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل قراءة درجة حرارة وحالة تشغيل الغرفة
@@ -2121,82 +1516,6 @@ export const RefrigeratorsDatabaseView: React.FC<RefrigeratorsDatabaseViewProps>
             </form>
           </div>
         </div>
-      )}
-
-      {/* نافذة تعديل سجل الثلاجة */}
-      {editingRecord && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-black text-slate-900 mb-3">تعديل بيانات: {editingRecord.title}</h3>
-            <form onSubmit={handleSaveEditedRecord} className="space-y-4 text-xs font-bold">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {Object.entries(editingRecord.data)
-                  .filter(([k]) => !['id', 'serialNo', 'updatedAt'].includes(k))
-                  .map(([key, val]) => (
-                    <div key={key}>
-                      <label className="block mb-1 text-slate-700 font-mono text-[11px]">{key}</label>
-                      <input
-                        type={typeof val === 'number' ? 'number' : 'text'}
-                        step={typeof val === 'number' ? 'any' : undefined}
-                        value={val ?? ''}
-                        onChange={(e) =>
-                          setEditingRecord({
-                            ...editingRecord,
-                            data: {
-                              ...editingRecord.data,
-                              [key]: typeof val === 'number' ? Number(e.target.value) : e.target.value,
-                            },
-                          })
-                        }
-                        className="w-full px-3 py-2 rounded-xl border border-slate-300"
-                      />
-                    </div>
-                  ))}
-              </div>
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setEditingRecord(null)}
-                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-sky-700 text-white font-black"
-                >
-                  حفظ التعديلات
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* نافذة بطاقة السجل للقراءة فقط */}
-      {profileModal && (
-        <ModuleRecordProfileModal
-          isOpen={profileModal.isOpen}
-          title={profileModal.title}
-          subtitle={profileModal.subtitle}
-          entityType={profileModal.entityType}
-          fields={profileModal.fields}
-          canEdit={effectivePermissions.canEdit}
-          onEdit={profileModal.onEdit}
-          onClose={() => setProfileModal(null)}
-        />
-      )}
-
-      {/* نافذة تأكيد الحذف */}
-      {deleteModal && (
-        <ModuleDeleteConfirmModal
-          isOpen={deleteModal.isOpen}
-          entityTitle={deleteModal.entityTitle}
-          recordSummary={deleteModal.recordSummary}
-          canDelete={effectivePermissions.canDelete !== false}
-          onClose={() => setDeleteModal(null)}
-          onConfirmDelete={handleConfirmDelete}
-        />
       )}
     </div>
   );

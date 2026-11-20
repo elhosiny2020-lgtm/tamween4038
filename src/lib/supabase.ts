@@ -1,11 +1,11 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { type AppState, buildFullCloudMultiBranchPayload } from '../storage.ts';
-import { generateStandaloneHtml } from '../utils/htmlExporter.ts';
-import type { HighDebtAlertNotification } from '../types.ts';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { AppState, buildFullCloudMultiBranchPayload } from '../storage';
+import { generateStandaloneHtml } from '../utils/htmlExporter';
+import type { HighDebtAlertNotification } from '../types';
 import {
   DEFAULT_DEBT_ALERT_THRESHOLD,
   mergeHighDebtAlerts,
-} from './firebaseSyncHelpers.ts';
+} from './firebaseSyncHelpers';
 import {
   DEFAULT_VILLAGES_HIERARCHY,
   DEFAULT_SYSTEM_CONFIG,
@@ -13,11 +13,11 @@ import {
   DEFAULT_ISSUING_ENTITIES,
   DEFAULT_VIOLATION_TYPES,
   DEFAULT_ACTIVITY_STATUSES,
-} from '../defaultData.ts';
+} from '../defaultData';
 import {
   clearRowMutationQueue,
   getRowMutationQueueCount,
-} from '../services/offlineMutationQueue.ts';
+} from '../services/offlineMutationQueue';
 
 // Unique per-tab client ID to prevent infinite self-echo sync loops
 export const SESSION_CLIENT_ID = `supa-client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -593,6 +593,7 @@ function getDiagnosticPingApiUrl(): string {
   return '/api/supabase/diagnostic-ping';
 }
 
+export const API_SECURITY_SHIELD_TOKEN = 'TAMWEEN-GOV-SHIELD-2026-V5';
 export const AUTH_TOKEN_STORAGE_KEY = 'TAMWEEN_AUTH_TOKEN';
 
 let inMemoryAuthToken = '';
@@ -609,15 +610,6 @@ export function setAuthSessionToken(token: string | null): void {
       }
     }
   } catch {}
-  if (typeof window !== 'undefined') {
-    if (clean) {
-      if (wsListeners.size > 0) {
-        ensureSharedWebSocket();
-      }
-    } else {
-      disconnectSharedWebSocket();
-    }
-  }
 }
 
 export function getAuthSessionToken(): string {
@@ -636,6 +628,7 @@ export function getAuthSessionToken(): string {
 
 export function getSecurityShieldHeaders(includeJsonContentType = true): Record<string, string> {
   const headers: Record<string, string> = {
+    'X-Tamween-Security-Token': API_SECURITY_SHIELD_TOKEN,
     'X-Tamween-Client-Id': SESSION_CLIENT_ID,
   };
   const authToken = getAuthSessionToken();
@@ -788,7 +781,6 @@ export function saveSupabaseConfig(url: string, anonKey: string): SupabaseConfig
 
       fetch(targetUrl, {
         method: 'POST',
-        credentials: 'same-origin',
         headers: getSecurityShieldHeaders(true),
         body: JSON.stringify({
           url: isValidHttpUrl(cleanUrl) ? cleanUrl : '',
@@ -822,9 +814,7 @@ export async function syncSupabaseConfigFromRemote(force = false): Promise<Supab
     return localCfg;
   }
 
-  if (typeof window === 'undefined' || isBrowserOffline() || !getAuthSessionToken()) {
-    return localCfg;
-  }
+  if (typeof window === 'undefined' || isBrowserOffline()) return localCfg;
 
   const now = Date.now();
   if (!force && now - lastRemoteConfigCheckAt < 120000) {
@@ -838,7 +828,6 @@ export async function syncSupabaseConfigFromRemote(force = false): Promise<Supab
       : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app/api/supabase/config';
 
     const resp = await fetch(targetUrl, {
-      credentials: 'same-origin',
       headers: getSecurityShieldHeaders(false),
     });
     if (resp.ok) {
@@ -3380,7 +3369,7 @@ function disconnectSharedWebSocket() {
 }
 
 function scheduleWsReconnect() {
-  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline() || !getAuthSessionToken()) return;
+  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline()) return;
   if (wsReconnectTimer) return;
   const delay = Math.min(6000, 800 * Math.pow(2, Math.min(wsReconnectAttempts, 3)));
   wsReconnectAttempts += 1;
@@ -3391,7 +3380,7 @@ function scheduleWsReconnect() {
 }
 
 function scheduleSseReconnect() {
-  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline() || !getAuthSessionToken()) return;
+  if (wsListeners.size === 0 || typeof window === 'undefined' || isBrowserOffline()) return;
   if (sseReconnectTimer) return;
   const delay = Math.min(6000, 1000 * Math.pow(2, Math.min(sseReconnectAttempts, 3)));
   sseReconnectAttempts += 1;
@@ -3579,7 +3568,7 @@ function handleIncomingRealtimeRelayMessage(
 
 function ensureSharedEventSource(): void {
   if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
-  if (wsListeners.size === 0 || !getAuthSessionToken()) return;
+  if (wsListeners.size === 0) return;
   const cfg = getSupabaseConfig();
   if (!cfg.isConfigured || isBrowserOffline()) return;
   if (
@@ -3657,7 +3646,7 @@ function ensureSharedEventSource(): void {
 function ensureSharedWebSocket(): void {
   installRealtimeConsoleInterceptor();
   if (typeof window === 'undefined') return;
-  if (wsListeners.size === 0 || !getAuthSessionToken()) return;
+  if (wsListeners.size === 0) return;
   const cfg = getSupabaseConfig();
   if (!cfg.isConfigured || isBrowserOffline()) return;
 
@@ -4205,40 +4194,37 @@ export async function fetchDatabaseFromSupabase(): Promise<{
       });
     }
 
-    if (getAuthSessionToken()) {
-      const liveDbUrl = `${getLiveDbApiUrl()}?branchId=${encodeURIComponent(activeBranchId)}&_t=${Date.now()}`;
-      const serverSnap = await fetch(liveDbUrl, {
-        cache: 'no-store',
-        credentials: 'same-origin',
-        headers: getSecurityShieldHeaders(false),
+    const liveDbUrl = `${getLiveDbApiUrl()}?branchId=${encodeURIComponent(activeBranchId)}&_t=${Date.now()}`;
+    const serverSnap = await fetch(liveDbUrl, {
+      cache: 'no-store',
+      headers: getSecurityShieldHeaders(false),
+    })
+      .then(async (r) => {
+        if (r.ok) {
+          serverReachable = true;
+          return await r.json();
+        }
+        return null;
       })
-        .then(async (r) => {
-          if (r.ok) {
-            serverReachable = true;
-            return await r.json();
-          }
-          return null;
-        })
-        .catch(() => null);
+      .catch(() => null);
 
-      const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
-      const serverTimestamp =
-        serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
-      if (
-        serverSnap &&
-        serverSnap.success &&
-        serverData &&
-        (Array.isArray(serverData.bakeries) ||
-          Array.isArray(serverData.debts) ||
-          Array.isArray(serverData.branches) ||
-          (serverData as any).branchPartitions)
-      ) {
-        candidates.push({
-          data: serverData as AppState,
-          timestamp: serverTimestamp,
-          source: 'خادم المزامنة اللحظية (Supabase WebSocket)',
-        });
-      }
+    const serverData = (serverSnap?.data || serverSnap?.snapshot?.data) as AppState | undefined;
+    const serverTimestamp =
+      serverSnap?.timestamp || serverSnap?.snapshot?.timestamp || new Date(0).toISOString();
+    if (
+      serverSnap &&
+      serverSnap.success &&
+      serverData &&
+      (Array.isArray(serverData.bakeries) ||
+        Array.isArray(serverData.debts) ||
+        Array.isArray(serverData.branches) ||
+        (serverData as any).branchPartitions)
+    ) {
+      candidates.push({
+        data: serverData as AppState,
+        timestamp: serverTimestamp,
+        source: 'خادم المزامنة اللحظية (Supabase WebSocket)',
+      });
     }
   }
 
@@ -4848,10 +4834,9 @@ export async function fetchHighDebtAlertsFromSupabase(): Promise<{
     }
   }
 
-  if (typeof window !== 'undefined' && getAuthSessionToken()) {
+  if (typeof window !== 'undefined') {
     try {
       const resp = await fetch(getAlertsApiUrl(), {
-        credentials: 'same-origin',
         headers: getSecurityShieldHeaders(false),
       });
       if (resp.ok) {
@@ -4891,10 +4876,9 @@ export async function syncHighDebtAlertsToSupabase(
   const trimmed = (alerts || []).slice(0, 150);
   let serverOk = false;
 
-  if (typeof window !== 'undefined' && getAuthSessionToken()) {
+  if (typeof window !== 'undefined') {
     serverOk = await fetch(getAlertsApiUrl(), {
       method: 'POST',
-      credentials: 'same-origin',
       headers: getSecurityShieldHeaders(true),
       body: JSON.stringify({
         alerts: trimmed,
@@ -4956,10 +4940,10 @@ export async function clearHighDebtAlertsInSupabase(
   const nowIso = new Date().toISOString();
 
   let serverOk = false;
-  if (typeof window !== 'undefined' && getAuthSessionToken()) {
+  if (typeof window !== 'undefined') {
     serverOk = await fetch(
       `${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&threshold=${effectiveThreshold}`,
-      { method: 'DELETE', credentials: 'same-origin', headers: getSecurityShieldHeaders(false) }
+      { method: 'DELETE', headers: getSecurityShieldHeaders(false) }
     )
       .then((r) => r.ok)
       .catch(() => false);
@@ -5657,21 +5641,16 @@ export function subscribeToSupabaseRealtime(
 }
 
 /**
- * مسح قواعد البيانات على Supabase والخادم والذاكرة المحلية.
- * عند تمرير branchId يتم مسح بيانات الفرع المحدد فقط دون المساس ببقية الفروع نهائياً.
+ * مسح شامل لكافة قواعد البيانات الموجودة حالياً على Supabase والخادم والذاكرة المحلية
+ * لبدء التسجيل والكتابة على قاعدة البيانات من أول وجديد (0 مخبز، 0 مديونية)
  */
-export async function clearSupabaseDatabaseData(
-  branchId?: string
-): Promise<{ success: boolean; message: string }> {
+export async function clearSupabaseDatabaseData(): Promise<{ success: boolean; message: string }> {
   const startMs = Date.now();
   const nowIso = new Date().toISOString();
-  const scopedBranchId = typeof branchId === 'string' && branchId.trim() ? branchId.trim() : null;
 
   try {
-    // 1. Purge offline sync queue / vault (scoped when branchId is given)
-    if (!scopedBranchId) {
-      clearPermanentSafetyVault();
-    }
+    // 1. Purge local Permanent Safety Vault, offline sync queue, and cached state counts
+    clearPermanentSafetyVault();
     clearOfflineSyncQueue();
     pendingSyncPayload = null;
     lastObservedStateCounts = {
@@ -5683,54 +5662,33 @@ export async function clearSupabaseDatabaseData(
       dailyTasks: 0,
     };
 
-    // 2. Purge server-side live-db (branch-scoped when scopedBranchId is provided)
+    // 2. Purge server-side live-db and alerts snapshots + broadcast state_cleared to all connected peers
     if (typeof window !== 'undefined' && !isBrowserOffline()) {
-      const liveDbQuery = scopedBranchId
-        ? `${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&confirmPurge=true&branchId=${encodeURIComponent(scopedBranchId)}`
-        : `${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}&confirmPurge=true`;
-      const requests: Promise<Response | null>[] = [
-        fetch(liveDbQuery, {
+      await Promise.all([
+        fetch(`${getLiveDbApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
           method: 'DELETE',
           credentials: 'same-origin',
-          headers: getSecurityShieldHeaders(true),
-          body: JSON.stringify(
-            scopedBranchId ? { confirmPurge: true, branchId: scopedBranchId } : { confirmPurge: true }
-          ),
+          headers: getSecurityShieldHeaders(false),
         }).catch(() => null),
-      ];
-      if (!scopedBranchId) {
-        requests.push(
-          fetch(`${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
-            method: 'DELETE',
-            credentials: 'same-origin',
-            headers: getSecurityShieldHeaders(false),
-          }).catch(() => null)
-        );
-      }
-      await Promise.all(requests);
+        fetch(`${getAlertsApiUrl()}?clientId=${encodeURIComponent(SESSION_CLIENT_ID)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: getSecurityShieldHeaders(false),
+        }).catch(() => null),
+      ]);
     }
 
-    // 3. If external Supabase SQL project is configured, delete records (strictly scoped to branchId when given)
+    // 3. If external Supabase SQL project is configured, delete all records across tables
     const client = getSupabaseClient();
     if (client) {
       try {
-        if (scopedBranchId) {
-          await Promise.all([
-            client.from('debts').delete().eq('branch_id', scopedBranchId),
-            client.from('bakeries').delete().eq('branch_id', scopedBranchId),
-            client.from('daily_tasks').delete().eq('branch_id', scopedBranchId),
-            client.from('high_debt_alerts').delete().eq('branch_id', scopedBranchId),
-            client.from('backup_snapshots').delete().eq('id', `mod__${scopedBranchId}__all_modules`),
-          ]);
-        } else {
-          await Promise.all([
-            client.from('debts').delete().neq('id', '__non_existent__'),
-            client.from('bakeries').delete().neq('id', '__non_existent__'),
-            client.from('daily_tasks').delete().neq('id', '__non_existent__'),
-            client.from('high_debt_alerts').delete().neq('id', '__non_existent__'),
-            client.from('backup_snapshots').delete().neq('id', '__non_existent__'),
-          ]);
-        }
+        await Promise.all([
+          client.from('debts').delete().neq('id', '__non_existent__'),
+          client.from('bakeries').delete().neq('id', '__non_existent__'),
+          client.from('daily_tasks').delete().neq('id', '__non_existent__'),
+          client.from('high_debt_alerts').delete().neq('id', '__non_existent__'),
+          client.from('backup_snapshots').delete().neq('id', '__non_existent__'),
+        ]);
         if (activeRealtimeChannel) {
           activeRealtimeChannel.send({
             type: 'broadcast',
@@ -5739,7 +5697,6 @@ export async function clearSupabaseDatabaseData(
               clientId: SESSION_CLIENT_ID,
               timestamp: nowIso,
               cleared: true,
-              branchId: scopedBranchId || undefined,
               data: { bakeries: [], debts: [], dailyTasks: [] },
             },
           });
@@ -5752,28 +5709,22 @@ export async function clearSupabaseDatabaseData(
       markTableRealtimeEvent(tbl, 'DELETE', nowIso);
     }
 
-    const scopeMsg = scopedBranchId
-      ? `تم تنفيذ استعادة ضبط المصنع ومسح بيانات الفرع المحدد (${scopedBranchId}) فقط (${latencyMs}ms) مع الحفاظ الكامل على بيانات جميع الفروع الأخرى`
-      : 'تم المسح الشامل لجميع قواعد البيانات الموجودة حالياً على Supabase والخادم بنجاح (0 مخبز، 0 مديونية). يمكنك الآن التسجيل والكتابة على قاعدة البيانات من أول وجديد!';
-
     recordRealtimeDiagnosticEvent({
       direction: 'OUTGOING',
       channel: 'SUPABASE_REALTIME',
-      eventType: scopedBranchId ? 'BRANCH_FACTORY_RESET' : 'FULL_DATABASE_PURGE_AND_RESET',
+      eventType: 'FULL_DATABASE_PURGE_AND_RESET',
       sqlOperation: 'DELETE',
       table: 'bakeries',
       affectedTable: 'bakeries',
       responseLatencyMs: latencyMs,
       senderClientId: SESSION_CLIENT_ID,
       isSelf: true,
-      summary: scopeMsg,
+      summary: `تم تنفيذ مسح شامل لجميع قواعد البيانات على Supabase وتصفير الجداول (${latencyMs}ms) لبدء التسجيل من أول وجديد`,
     });
 
     setCloudConnectionStatus(
       'connected',
-      scopedBranchId
-        ? 'تمت استعادة ضبط المصنع للفرع الحالي فقط مع الحفاظ على باقي الفروع'
-        : 'تم المسح الشامل لقواعد البيانات — جاهز للتسجيل والكتابة من أول وجديد',
+      'تم المسح الشامل لقواعد البيانات — جاهز للتسجيل والكتابة من أول وجديد',
       {
         hasPendingSync: false,
         pendingQueueCount: 0,
@@ -5782,7 +5733,8 @@ export async function clearSupabaseDatabaseData(
 
     return {
       success: true,
-      message: scopeMsg,
+      message:
+        'تم المسح الشامل لجميع قواعد البيانات الموجودة حالياً على Supabase والخادم بنجاح (0 مخبز، 0 مديونية). يمكنك الآن التسجيل والكتابة على قاعدة البيانات من أول وجديد!',
     };
   } catch (err: any) {
     return {

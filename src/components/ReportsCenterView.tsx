@@ -9,7 +9,6 @@ import {
   normalizeArabicText,
 } from '../utils/auditHelper';
 import { exportElementToPdf, printHtmlElementA4 } from '../utils/pdfHelper';
-import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
 import {
   canUserPrintDepartment,
   canUserExportDepartment,
@@ -34,9 +33,7 @@ import {
   ArrowUp,
   ArrowDown,
   History,
-  PieChart as PieChartIcon,
 } from 'lucide-react';
-import { LocalUnitsDebtsPieChart } from './LocalUnitsDebtsPieChart';
 
 export type ReportTemplateId =
   | 'bak-all'
@@ -62,8 +59,7 @@ export type ReportTemplateId =
   | 'comp-diffs'
   | 'comp-totals'
   | 'comp-review'
-  | 'comp-master'
-  | 'debts-local-units-pie';
+  | 'comp-master';
 
 interface ReportDefinition {
   id: ReportTemplateId;
@@ -577,21 +573,6 @@ export const OFFICIAL_REPORTS_CATALOG: ReportDefinition[] = [
       'avg2025',
       'perCapitaAverage',
       'avgDiff',
-      'remainingDebt',
-    ],
-  },
-  {
-    id: 'debts-local-units-pie',
-    groupId: 5,
-    groupTitle: '5. التقارير المقارنة والإجمالية',
-    title: 'توزيع المديونيات حسب الوحدات المحلية (Pie Chart)',
-    subtitle: 'عرض بياني دائري تفاعلي (Recharts) لتوزيع ونسب صافي المديونيات عبر الوحدات المحلية التابعة للمركز',
-    defaultColumns: [
-      'index',
-      'localUnit',
-      'village',
-      'bakeryOwnerName',
-      'machineNumber',
       'remainingDebt',
     ],
   },
@@ -1302,28 +1283,6 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
             </button>
           )}
 
-          <button
-            type="button"
-            data-testid="reports-open-local-units-pie-btn"
-            onClick={() => {
-              const pieReport = OFFICIAL_REPORTS_CATALOG.find((r) => r.id === 'debts-local-units-pie');
-              if (pieReport) {
-                handleSelectReport(pieReport);
-              } else {
-                setSelectedReportId('debts-local-units-pie');
-              }
-            }}
-            className={`px-3.5 py-2.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer border shadow-xs ${
-              selectedReportId === 'debts-local-units-pie'
-                ? 'bg-[#D4AF37] text-[#0A1628] border-[#FDE68A]'
-                : 'bg-teal-600 hover:bg-teal-500 text-white border-teal-400/50'
-            }`}
-            title="عرض التوزيع البياني للمديونيات حسب الوحدات المحلية (Pie Chart)"
-          >
-            <PieChartIcon className="w-4 h-4" />
-            <span>توزيع المديونيات بالوحدات المحلية (Pie Chart)</span>
-          </button>
-
           {onOpenDebtEmailHistory && (
             <button
               type="button"
@@ -1703,11 +1662,13 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
           {/* 4.1 Official Report Header (رأس التقرير الموحد) */}
           <div className="border-b-2 border-[#0F2342] pb-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3.5">
-              <img
-                src={systemConfig.logoBase64 || MINISTRY_LOGO_URL}
-                alt="شعار وزارة التموين والتجارة الداخلية"
-                className="w-16 h-16 object-contain rounded-xl border border-slate-300 p-1 bg-white shadow-xs shrink-0"
-              />
+              {systemConfig.logoBase64 && (
+                <img
+                  src={systemConfig.logoBase64}
+                  alt="شعار المديرية"
+                  className="w-14 h-14 object-contain rounded-lg border border-slate-200 p-1 bg-white"
+                />
+              )}
               <div>
                 <p className="text-xs font-extrabold text-slate-700">
                   {systemConfig.governorateTitle || 'محافظة الغربية'} · {systemConfig.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'}
@@ -1745,7 +1706,7 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
           </div>
 
           {/* 4.2 Executive Summary Strip inside Report */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5 text-center">
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
               <span className="text-[11px] font-bold text-slate-600 block">عدد المخابز</span>
               <span className="text-sm font-black text-[#0F2342] font-mono">
@@ -1793,17 +1754,6 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
               </span>
             </div>
           </div>
-
-          {/* 4.2.5 Interactive Local Units Debt Distribution Pie Chart (Recharts) */}
-          {selectedReportId === 'debts-local-units-pie' && (
-            <LocalUnitsDebtsPieChart
-              debts={debts}
-              bakeries={bakeries}
-              administrationTitle={
-                systemConfig.administrationTitle || 'إدارة تموين مركز المحلة الكبرى'
-              }
-            />
-          )}
 
           {/* 4.3 Official Report Data Table (Deep Navy Header + White Bold Text + Alternating Rows) */}
           <div className="overflow-x-auto">
@@ -1879,177 +1829,28 @@ export const ReportsCenterView: React.FC<ReportsCenterViewProps> = ({
                   ))
                 )}
               </tbody>
-              {filteredBakeries.length > 0 && (() => {
-                const byLocalUnit = new Map<string, Bakery[]>();
-                const byVillage = new Map<string, { localUnit: string; list: Bakery[] }>();
-                filteredBakeries.forEach((b) => {
-                  const lu = (b.localUnit || 'مركز المحلة الكبرى').trim();
-                  const vil = (b.village || 'غير محدد').trim();
-                  const luList = byLocalUnit.get(lu) || [];
-                  luList.push(b);
-                  byLocalUnit.set(lu, luList);
-
-                  const vilKey = `${lu}__${vil}`;
-                  const vilEntry = byVillage.get(vilKey) || { localUnit: lu, list: [] };
-                  vilEntry.list.push(b);
-                  byVillage.set(vilKey, vilEntry);
-                });
-
-                const renderGroupMetricCell = (
-                  colKey: string,
-                  idx: number,
-                  groupList: Bakery[],
-                  labelText: string,
-                  luName: string,
-                  vilName?: string,
-                  isLocalUnitSubtotal = false
-                ) => {
-                  if (idx === 0) return labelText;
-                  switch (colKey) {
-                    case 'bakeryOwnerName':
-                      return `${labelText} (${groupList.length} مخبز)`;
-                    case 'localUnit':
-                      return luName;
-                    case 'village':
-                      return vilName || `${groupList.length} مخبز`;
-                    case 'insuranceValue':
-                      return safeFormatNum(groupList.reduce((s, x) => s + (Number(x.insuranceValue) || 0), 0));
-                    case 'insuranceQuota': {
-                      const v = groupList.reduce((s, x) => s + (Number(x.insuranceQuota) || 0), 0);
-                      return safeFormatNum(v, v % 1 !== 0 ? 2 : 0);
-                    }
-                    case 'actualQuota': {
-                      const v = groupList.reduce((s, x) => s + (Number(x.actualQuota) || 0), 0);
-                      return safeFormatNum(v, v % 1 !== 0 ? 2 : 0);
-                    }
-                    case 'quotaDiff': {
-                      const v = groupList.reduce(
-                        (s, x) => s + ((Number(x.actualQuota) || 0) - (Number(x.insuranceQuota) || 0)),
-                        0
-                      );
-                      return (v > 0 ? '+' : '') + safeFormatNum(v, v % 1 !== 0 ? 2 : 0);
-                    }
-                    case 'loavesCount':
-                    case 'totalLoaves':
-                      return safeFormatNum(
-                        groupList.reduce(
-                          (s, x) => s + (Number(x.actualQuota) || 0) * extractBreadLoafMultiplier(x.breadType),
-                          0
-                        )
-                      );
-                    case 'villagePopulation':
-                    case 'beneficiaries2023':
-                    case 'beneficiaries2024':
-                    case 'beneficiaries2025': {
-                      // لا يُجمع عدد السكان ولا عدد المستفيدين داخل نفس الوحدة المحلية نهائياً
-                      if (isLocalUnitSubtotal) return '—';
-                      const byUnitMax = new Map<string, number>();
-                      for (const x of groupList) {
-                        const uKey = String(x.localUnit || 'غير محدد').trim() || 'غير محدد';
-                        const val = Number((x as any)[colKey]) || 0;
-                        if (val > (byUnitMax.get(uKey) || 0)) {
-                          byUnitMax.set(uKey, val);
-                        }
-                      }
-                      let totalUnique = 0;
-                      byUnitMax.forEach((v) => {
-                        totalUnique += v;
-                      });
-                      return safeFormatNum(totalUnique, 0);
-                    }
-                    case 'remainingDebt':
-                      return safeFormatNum(groupList.reduce((s, x) => s + (bakeryDebtMap[x.id] || 0), 0));
-                    default:
-                      return '—';
-                  }
-                };
-
-                return (
-                  <tfoot>
-                    {Array.from(byLocalUnit.entries()).map(([luName, luBakeries]) => (
-                      <tr
-                        key={`lu-sub-${luName}`}
-                        className="bg-sky-100/95 text-sky-950 font-black border-t-2 border-sky-300"
+              {filteredBakeries.length > 0 && (
+                <tfoot>
+                  <tr className="bg-[#0F2342] text-amber-300 font-black border-t-2 border-amber-500 total-summary-row">
+                    {activeColumnsMeta.map((col, idx) => (
+                      <td
+                        key={col.key}
+                        dir={col.key === 'avgDiff' ? 'ltr' : undefined}
+                        className={`py-2.5 px-2 border border-[#1E3A8A] font-black ${
+                          col.align === 'right' ? 'text-right' : 'text-center'
+                        } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
                       >
-                        {activeColumnsMeta.map((col, idx) => (
-                          <td
-                            key={col.key}
-                            className={`py-2 px-2 border border-sky-300 font-black ${
-                              col.align === 'right' ? 'text-right' : 'text-center'
-                            } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
-                          >
-                            {renderGroupMetricCell(
-                              col.key,
-                              idx,
-                              luBakeries,
-                              `إجمالي الوحدة المحلية: ${luName}`,
-                              luName,
-                              undefined,
-                              true
-                            )}
-                          </td>
-                        ))}
-                        {onSelectBakeryDetails && (
-                          <td className="py-2 px-2 border border-sky-300 text-center font-mono text-[10px] no-print">
-                            {luBakeries.length} مخبز
-                          </td>
-                        )}
-                      </tr>
+                        {renderFooterCell(col.key, idx)}
+                      </td>
                     ))}
-                    {Array.from(byVillage.entries()).map(([vilKey, vilData]) => {
-                      const vilName = vilKey.split('__')[1] || 'غير محدد';
-                      return (
-                        <tr
-                          key={`vil-sub-${vilKey}`}
-                          className="bg-amber-50/95 text-amber-950 font-extrabold border-t border-amber-300"
-                        >
-                          {activeColumnsMeta.map((col, idx) => (
-                            <td
-                              key={col.key}
-                              className={`py-1.5 px-2 border border-amber-200 font-extrabold ${
-                                col.align === 'right' ? 'text-right' : 'text-center'
-                              } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
-                            >
-                              {renderGroupMetricCell(
-                                col.key,
-                                idx,
-                                vilData.list,
-                                `إجمالي القرية: ${vilName}`,
-                                vilData.localUnit,
-                                vilName,
-                                false
-                              )}
-                            </td>
-                          ))}
-                          {onSelectBakeryDetails && (
-                            <td className="py-1.5 px-2 border border-amber-200 text-center font-mono text-[10px] no-print">
-                              {vilData.list.length} مخبز
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                    <tr className="bg-[#0F2342] text-amber-300 font-black border-t-2 border-amber-500 total-summary-row">
-                      {activeColumnsMeta.map((col, idx) => (
-                        <td
-                          key={col.key}
-                          dir={col.key === 'avgDiff' ? 'ltr' : undefined}
-                          className={`py-2.5 px-2 border border-[#1E3A8A] font-black ${
-                            col.align === 'right' ? 'text-right' : 'text-center'
-                          } ${col.isNumeric ? 'font-mono tabular-nums' : ''}`}
-                        >
-                          {renderFooterCell(col.key, idx)}
-                        </td>
-                      ))}
-                      {onSelectBakeryDetails && (
-                        <td className="py-2.5 px-2 border border-[#1E3A8A] text-center font-mono text-[10px] text-amber-200 no-print">
-                          100% مكتمل
-                        </td>
-                      )}
-                    </tr>
-                  </tfoot>
-                );
-              })()}
+                    {onSelectBakeryDetails && (
+                      <td className="py-2.5 px-2 border border-[#1E3A8A] text-center font-mono text-[10px] text-amber-200 no-print">
+                        100% مكتمل
+                      </td>
+                    )}
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
 

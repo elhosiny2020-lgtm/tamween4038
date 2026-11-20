@@ -32,19 +32,14 @@ import {
   deleteSupplyBranch,
   syncAllBranchesFromCloudPayload,
   readBranchPartitionFromLocal,
-  writeBranchPartitionToLocal,
   isDefaultSeedState,
   resetNonMahallaBranchesLocal,
-  factoryResetBranch,
 } from './storage';
 import {
   loadBranchAuthVault,
   saveBranchAuthVault,
   sanitizeBranchUsers,
 } from './services/branchAuthVault';
-import { BranchesManagerModal } from './components/BranchesManagerModal';
-import { BranchDepartmentsManagerModal } from './components/BranchDepartmentsManagerModal';
-import { VaultSecurityGateModal } from './components/VaultSecurityGateModal';
 import {
   DEFAULT_SYSTEM_CONFIG,
   DEFAULT_VILLAGES_HIERARCHY,
@@ -105,7 +100,7 @@ import {
   getAuthSessionToken,
   setAuthSessionToken,
   getSecurityShieldHeaders,
-} from './lib/supabase.ts';
+} from './lib/supabase';
 import {
   applyGranularRowChangeToState,
   batchSyncToDb,
@@ -128,26 +123,6 @@ import type { InternalTradeSubView } from './components/modules/InternalTradeSui
 import type { GrainSubView } from './components/modules/GrainMaintenanceSuite';
 import type { HrSubView } from './components/modules/HrPersonnelSuite';
 import type { BranchModulesBundle } from './types/modules';
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { Button } from './components/common/Button';
-import { ReportToolbar } from './components/common/ReportToolbar';
-import { LowFlourQuotaPushBanner } from './components/LowFlourQuotaPushBanner';
-import { BakeryChangeHistoryDrawer } from './components/BakeryChangeHistoryDrawer';
-import {
-  buildBakeryChangeDiffSummary,
-  createBakeryActivityLogItem,
-  findLowFlourQuotaBakeries,
-} from './utils/bakeryAlertsAndHistory';
-import {
-  computeBranchSidebarCounts,
-  computeDepartmentRecordCounts,
-  normalizeBranchDepartments,
-  resolveCustomTableTitle,
-  SidebarCountsSummary,
-  wipeSectionFromModulesBundle,
-  wipeVillageFromModulesBundle,
-} from './utils/branchOperations';
-import type { BranchDepartmentConfigItem } from './types';
 
 const HeaderCustomizerModal = lazy(() =>
   import('./components/HeaderCustomizerModal').then((m) => ({ default: m.HeaderCustomizerModal }))
@@ -253,6 +228,14 @@ const BakeryDetailsModal = lazy(() =>
 const GoogleWorkspaceModal = lazy(() =>
   import('./components/GoogleWorkspaceModal').then((m) => ({ default: m.GoogleWorkspaceModal }))
 );
+const BranchesManagerModal = lazy(() =>
+  import('./components/BranchesManagerModal').then((m) => ({ default: m.BranchesManagerModal }))
+);
+const VaultSecurityGateModal = lazy(() =>
+  import('./components/VaultSecurityGateModal').then((m) => ({
+    default: m.VaultSecurityGateModal,
+  }))
+);
 const InteractiveDashboardPage = lazy(() =>
   import('./components/InteractiveDashboardPage').then((m) => ({
     default: m.InteractiveDashboardPage,
@@ -284,11 +267,7 @@ const HrPersonnelSuite = lazy(() =>
 import {
   loadBranchModulesBundle,
   saveBranchModulesBundle,
-  saveBranchModulesBundleDebounced,
   subscribeBranchModulesRealtime,
-  resetBranchModulesBundleForBranch,
-  createEmptyBranchModulesBundle,
-  readLocalBranchModulesBundle,
 } from './services/modulesStorage';
 import {
   canUserAccessTab,
@@ -313,7 +292,6 @@ import {
   setStoredVaultPasscode,
   getBranchVaultCredentialsMap,
   updateBranchVaultCredentialsMap,
-  verifyBranchVaultCredentials,
 } from './utils/branchVaultUtils';
 import { HighDebtAlertNotification, DailyDebtEmailLogEntry } from './types';
 import {
@@ -546,16 +524,8 @@ export default function App() {
   const [showAdvancedSearchPanel, setShowAdvancedSearchPanel] = useState<boolean>(true);
   const [searchFocusMode, setSearchFocusMode] = useState<'ALL' | 'NAME' | 'MACHINE'>('ALL');
   const [detailsBakery, setDetailsBakery] = useState<Bakery | null>(null);
-  const [isBakeryHistoryDrawerOpen, setIsBakeryHistoryDrawerOpen] = useState<boolean>(false);
-  const [bakeryHistoryInitialOwner, setBakeryHistoryInitialOwner] = useState<string>('');
   const [isActionLocked, setIsActionLocked] = useState<boolean>(false);
   const [isVaultUnlocked, setIsVaultUnlocked] = useState<boolean>(false);
-  const [sidebarPeriodMonth, setSidebarPeriodMonth] = useState<number | 'ALL'>('ALL');
-  const [sidebarPeriodYear, setSidebarPeriodYear] = useState<number | 'ALL'>(2026);
-  const [serverSidebarCounts, setServerSidebarCounts] = useState<{
-    key: string;
-    counts: SidebarCountsSummary;
-  } | null>(null);
   const [vaultGateModal, setVaultGateModal] = useState<{
     isOpen: boolean;
     section: 'backup' | 'branches' | 'both';
@@ -666,10 +636,6 @@ export default function App() {
   const [isDailyPerformanceModalOpen, setIsDailyPerformanceModalOpen] = useState(false);
   const [isDisplaySettingsModalOpen, setIsDisplaySettingsModalOpen] = useState(false);
   const [isBranchesModalOpen, setIsBranchesModalOpen] = useState(false);
-  const [branchDepartmentsTarget, setBranchDepartmentsTarget] = useState<SupplyBranch | null>(null);
-  const [isVillageResetModalOpen, setIsVillageResetModalOpen] = useState(false);
-  const [villageResetTargetName, setVillageResetTargetName] = useState('');
-  const [highlightedUnitAnchorId, setHighlightedUnitAnchorId] = useState<string | null>(null);
   const [isGoogleWorkspaceModalOpen, setIsGoogleWorkspaceModalOpen] = useState(false);
   const [googleWorkspaceInitialTab, setGoogleWorkspaceInitialTab] = useState<'calendar' | 'tasks' | 'forms'>('calendar');
   const [debtsColumnGroup, setDebtsColumnGroup] = useState<
@@ -762,9 +728,7 @@ export default function App() {
   );
 
   // Sync High-Debt Alerts & Threshold live across all devices on Supabase Realtime
-  const isAuthenticatedUser = Boolean(appState?.currentUser);
   useEffect(() => {
-    if (!isAuthenticatedUser) return;
     let disposed = false;
 
     fetchHighDebtAlertsFromSupabase()
@@ -832,7 +796,7 @@ export default function App() {
       disposed = true;
       unsubAlerts();
     };
-  }, [isAuthenticatedUser]);
+  }, []);
 
   // Format current Arabic clock timestamp
   const getArabicTimestamp = () => {
@@ -1045,66 +1009,35 @@ export default function App() {
             ? incomingData
             : null);
 
-        const pruneDeletedTombstones = <T extends { id?: string }>(
-          tableKey: string,
-          list: T[]
-        ): T[] => {
-          const map = recentlyDeletedIdsRef.current;
-          if (!map || map.size === 0 || !Array.isArray(list)) return list;
-          const now = Date.now();
-          let hasActiveForTable = false;
-          for (const [k, exp] of map.entries()) {
-            if (exp <= now) {
-              map.delete(k);
-            } else if (k.startsWith(`${tableKey}:`)) {
-              hasActiveForTable = true;
-            }
-          }
-          if (!hasActiveForTable) return list;
-          return list.filter((item) => !map.has(`${tableKey}:${String(item?.id ?? '')}`));
-        };
-
-        const rawBakeries = pruneDeletedTombstones(
-          'bakeries',
-          Array.isArray(directBranchData?.bakeries)
-            ? directBranchData!.bakeries!
-            : Array.isArray(syncedPartition.bakeries)
-            ? syncedPartition.bakeries
-            : current.bakeries
-        );
-        const rawDebts = pruneDeletedTombstones(
-          'debts',
-          Array.isArray(directBranchData?.debts)
-            ? directBranchData!.debts!
-            : Array.isArray(syncedPartition.debts)
-            ? syncedPartition.debts
-            : current.debts
-        );
+        const rawBakeries = Array.isArray(directBranchData?.bakeries)
+          ? directBranchData!.bakeries!
+          : Array.isArray(syncedPartition.bakeries)
+          ? syncedPartition.bakeries
+          : current.bakeries;
+        const rawDebts = Array.isArray(directBranchData?.debts)
+          ? directBranchData!.debts!
+          : Array.isArray(syncedPartition.debts)
+          ? syncedPartition.debts
+          : current.debts;
 
         const syncedMemory = synchronizeBakeryAndDebts(rawBakeries, rawDebts);
         const nextBakeries = syncedMemory.bakeries;
         const nextDebts = syncedMemory.debts;
 
-        const nextUsers = pruneDeletedTombstones(
-          'app_users',
+        const nextUsers =
           Array.isArray(directBranchData?.users) && directBranchData!.users!.length > 0
             ? directBranchData!.users!
             : Array.isArray(syncedPartition.users) && syncedPartition.users.length > 0
             ? syncedPartition.users
-            : current.users
-        );
+            : current.users;
         const nextVillages =
           (Array.isArray(directBranchData?.villages) && directBranchData!.villages!.length > 0
             ? directBranchData!.villages
             : syncedPartition.villages) || current.villages;
-        const nextTasks = pruneDeletedTombstones(
-          'daily_tasks',
-          directBranchData?.dailyTasks || syncedPartition.dailyTasks || current.dailyTasks || []
-        );
-        const nextMessages = pruneDeletedTombstones(
-          'inbox_messages',
-          directBranchData?.inboxMessages || syncedPartition.inboxMessages || current.inboxMessages || []
-        );
+        const nextTasks =
+          directBranchData?.dailyTasks || syncedPartition.dailyTasks || current.dailyTasks;
+        const nextMessages =
+          directBranchData?.inboxMessages || syncedPartition.inboxMessages || current.inboxMessages;
         const nextConfig: SystemConfig = {
           ...current.systemConfig,
           ...(syncedPartition.systemConfig || {}),
@@ -1194,7 +1127,6 @@ export default function App() {
 
     // 1. Deferred initial external Supabase pull (avoids duplicating loadInitialState boot read)
     const bootSupaTimer = setTimeout(() => {
-      if (!latestAppStateRef.current?.currentUser && !getAuthSessionToken()) return;
       fetchDatabaseFromSupabase()
         .then((supaRes) => {
           if (
@@ -1298,21 +1230,14 @@ export default function App() {
         if (typeof window === 'undefined' || typeof navigator === 'undefined' || navigator.onLine === false) {
           return;
         }
-        // Skip polling while a local mutation is actively being committed or within the settle window
-        if (
-          inFlightMutationsCountRef.current > 0 ||
-          Date.now() - lastLocalMutationAtRef.current < 4500
-        ) {
-          return;
-        }
+        // Skip polling while a local mutation is actively being committed
         const current = latestAppStateRef.current;
         if (!current || !current.currentUser) return;
         const activeBranchId = current.activeBranchId || DEFAULT_BRANCH_ID;
-        const pollStartedAt = Date.now();
         const resp = await fetch(
           `${window.location.protocol}//${window.location.host}/api/db/bootstrap?branchId=${encodeURIComponent(
             activeBranchId
-          )}&_t=${pollStartedAt}`,
+          )}&_t=${Date.now()}`,
           {
             method: 'GET',
             cache: 'no-store',
@@ -1323,16 +1248,6 @@ export default function App() {
         if (!resp || !resp.ok) return;
         const bootJson = await resp.json().catch(() => null);
         if (!bootJson?.success || bootJson.authenticated === false) return;
-
-        // Discard stale poll response if a local delete/edit occurred or branch switched while fetch was in flight
-        if (
-          inFlightMutationsCountRef.current > 0 ||
-          lastLocalMutationAtRef.current >= pollStartedAt ||
-          Date.now() - lastLocalMutationAtRef.current < 4500 ||
-          (latestAppStateRef.current?.activeBranchId || DEFAULT_BRANCH_ID) !== activeBranchId
-        ) {
-          return;
-        }
 
         const bootPayload: any = {
           activeBranchId,
@@ -1368,68 +1283,35 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isAuthenticatedUser || !getAuthSessionToken()) return;
-    fetchDatabaseFromSupabase()
-      .then((supaRes) => {
-        if (
-          supaRes &&
-          supaRes.success &&
-          supaRes.data &&
-          (!supaRes.timestamp || supaRes.timestamp !== lastAppliedCloudTimestampRef.current)
-        ) {
-          applyIncomingCloudStateRef.current?.(supaRes.data, supaRes.timestamp);
-        }
-      })
-      .catch(() => {});
-  }, [isAuthenticatedUser]);
-
   // Load & WebSocket-sync isolated departmental ERP modules bundle for active branch
   const isAppStateReady = Boolean(appState);
   const activeBranchIdForModules = appState?.activeBranchId || DEFAULT_BRANCH_ID;
   const activeBranchNameForModules =
     appState?.systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى';
 
-  const latestModulesBundleRef = React.useRef<BranchModulesBundle | null>(null);
   useEffect(() => {
-    latestModulesBundleRef.current = modulesBundle;
-  }, [modulesBundle]);
-
-  useEffect(() => {
-    if (!isAppStateReady || !isAuthenticatedUser) return;
+    if (!isAppStateReady || !appState) return;
     let cancelled = false;
-    const branchTitle =
-      latestAppStateRef.current?.systemConfig?.administrationTitle ||
-      activeBranchNameForModules;
-    const branchVillages =
-      latestAppStateRef.current?.villages ||
-      (activeBranchIdForModules === DEFAULT_BRANCH_ID ? DEFAULT_VILLAGES_HIERARCHY : []);
     loadBranchModulesBundle(
       activeBranchIdForModules,
-      branchTitle,
-      branchVillages
+      activeBranchNameForModules,
+      appState.villages || DEFAULT_VILLAGES_HIERARCHY
     )
       .then((bundle) => {
-        if (!cancelled) {
-          latestModulesBundleRef.current = bundle;
-          setModulesBundle(bundle);
-        }
+        if (!cancelled) setModulesBundle(bundle);
       })
       .catch(() => {});
     const unsubSupaRt = subscribeBranchModulesRealtime(
       activeBranchIdForModules,
       (incoming) => {
-        if (!cancelled) {
-          latestModulesBundleRef.current = incoming;
-          setModulesBundle(incoming);
-        }
+        if (!cancelled) setModulesBundle(incoming);
       }
     );
     return () => {
       cancelled = true;
       unsubSupaRt();
     };
-  }, [isAppStateReady, isAuthenticatedUser, activeBranchIdForModules]);
+  }, [isAppStateReady, activeBranchIdForModules, activeBranchNameForModules]);
 
   useEffect(() => {
     const unsubWs = addSharedWebSocketListener((msg) => {
@@ -1441,19 +1323,7 @@ export default function App() {
       ) {
         const incoming = msg.payload as BranchModulesBundle;
         if (incoming.ration && incoming.grainMaintenance && incoming.hr) {
-          setModulesBundle((prev) => {
-            if (!prev) {
-              latestModulesBundleRef.current = incoming;
-              return incoming;
-            }
-            const prevMs = Date.parse(prev.updatedAt || '');
-            const incMs = Date.parse(incoming.updatedAt || '');
-            if (Number.isFinite(prevMs) && Number.isFinite(incMs) && incMs <= prevMs) {
-              return prev;
-            }
-            latestModulesBundleRef.current = incoming;
-            return incoming;
-          });
+          setModulesBundle(incoming);
         }
       }
     });
@@ -1467,20 +1337,12 @@ export default function App() {
         latestAppStateRef.current?.currentUser?.fullName ||
         latestAppStateRef.current?.currentUser?.username ||
         'مستخدم المنظومة';
-      const base = latestModulesBundleRef.current;
-      if (!base) return;
-      const nextRaw = updater(base);
-      const next: BranchModulesBundle = {
-        ...nextRaw,
-        branchId: currentBranchId,
-        updatedAt: new Date(
-          Math.max(Date.now(), (Date.parse(base.updatedAt || '') || 0) + 1)
-        ).toISOString(),
-      };
-      latestModulesBundleRef.current = next;
-      setModulesBundle(next);
-      // Persist synchronously to localStorage + dispatch server/Supabase save immediately ONCE so deletes & edits NEVER revert on reload
-      void saveBranchModulesBundle(currentBranchId, next, currentUserLabel);
+      setModulesBundle((prev) => {
+        if (!prev) return prev;
+        const next = updater(prev);
+        void saveBranchModulesBundle(currentBranchId, next, currentUserLabel);
+        return next;
+      });
       if (toastMsg) {
         setSaveToast({
           id: Date.now(),
@@ -1506,14 +1368,6 @@ export default function App() {
 
   // Async Optimistic Save with Row-Level PostgreSQL/Supabase confirmation & conflict/error rollback
   const saveLockRef = React.useRef<Promise<void>>(Promise.resolve());
-  const inFlightMutationsCountRef = React.useRef<number>(0);
-  const lastLocalMutationAtRef = React.useRef<number>(0);
-  const recentlyDeletedIdsRef = React.useRef<Map<string, number>>(new Map());
-
-  const markRecentlyDeleted = useCallback((table: string, id: string) => {
-    recentlyDeletedIdsRef.current.set(`${table}:${String(id)}`, Date.now() + 20_000);
-    lastLocalMutationAtRef.current = Date.now();
-  }, []);
 
   const commitRowMutation = useCallback(
     (params: {
@@ -1525,13 +1379,9 @@ export default function App() {
       patchReturnedRow?: (current: AppState, savedRow: any) => AppState;
     }): Promise<DbMutationResult> => {
       const previousState = latestAppStateRef.current;
-      inFlightMutationsCountRef.current += 1;
-      lastLocalMutationAtRef.current = Date.now();
       latestAppStateRef.current = params.nextState;
       setAppState(params.nextState);
       setIsSavingPulse(true);
-      // Immediately persist optimistic state to localStorage so rapid reload never sees stale pre-delete rows
-      void persistFullState(params.nextState, { skipCloudSync: true }).catch(() => {});
       const ts = getArabicTimestamp();
       const diskInfo = getActiveDiskBackupInfo();
       const diskSuffix = diskInfo.hasHandle
@@ -1546,7 +1396,6 @@ export default function App() {
         .then(async (): Promise<DbMutationResult> => {
           const res = await params.executeDb();
           if (res.success) {
-            lastLocalMutationAtRef.current = Date.now();
             let confirmedState = latestAppStateRef.current || params.nextState;
             if (res.row && params.patchReturnedRow) {
               confirmedState = params.patchReturnedRow(confirmedState, res.row);
@@ -1608,8 +1457,6 @@ export default function App() {
           return res;
         })
         .finally(() => {
-          inFlightMutationsCountRef.current = Math.max(0, inFlightMutationsCountRef.current - 1);
-          lastLocalMutationAtRef.current = Date.now();
           setTimeout(() => setIsSavingPulse(false), 600);
         });
 
@@ -2553,20 +2400,6 @@ export default function App() {
     return calculateAnnualWeightedAveragesReport(filteredBakeries.length > 0 ? filteredBakeries : appState.bakeries);
   }, [appState?.bakeries, filteredBakeries]);
 
-  // Low Daily Flour Quota Alerts (in sacks / شكائر) for immediate in-app manager PUSH notifications
-  const lowFlourQuotaMinSacks = appState?.systemConfig?.dailyAlertConfig?.lowFlourQuotaMinSacks ?? 10;
-  const lowFlourQuotaAlertEnabled = appState?.systemConfig?.dailyAlertConfig?.lowFlourQuotaAlertEnabled ?? true;
-  const isCurrentUserManager = Boolean(
-    appState?.currentUser?.isSuperAdmin ||
-      appState?.currentUser?.role === 'super_admin' ||
-      appState?.currentUser?.role === 'admin' ||
-      appState?.currentUser?.role === 'supervisor'
-  );
-  const lowFlourQuotaAlerts = useMemo(
-    () => findLowFlourQuotaBakeries(appState?.bakeries || [], lowFlourQuotaMinSacks),
-    [appState?.bakeries, lowFlourQuotaMinSacks]
-  );
-
   // Keep fresh ref of appState for 10-min pre-logout autosave
   const appStateRef = React.useRef(appState);
   useEffect(() => {
@@ -2576,7 +2409,7 @@ export default function App() {
   // Handle Logout (Terminates session safely without resetting data)
   const handleLogout = useCallback((reason?: string) => {
     const headers = getSecurityShieldHeaders(false);
-    fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers }).catch(() => {});
+    fetch('/api/auth/logout', { method: 'POST', headers }).catch(() => {});
     setAuthSessionToken(null);
     saveSessionUser(null);
     setLogoutReason(reason || null);
@@ -2587,9 +2420,8 @@ export default function App() {
   const handleResetNonMahallaBranches = useCallback(async () => {
     const resp = await fetch('/api/branches/reset-non-default', {
       method: 'POST',
-      credentials: 'same-origin',
       headers: getSecurityShieldHeaders(true),
-      body: JSON.stringify({ confirmReset: true }),
+      body: JSON.stringify({}),
     });
     const json = await resp.json().catch(() => null);
     if (!resp.ok || !json?.success) {
@@ -2670,20 +2502,9 @@ export default function App() {
       }
       const branchObj = branchesToUse.find((b) => b.id === targetBranchId);
 
-      // 1. Immediately apply local branch partition, isolated modules bundle (empty for non-default), & branch auth vault (0ms UI response)
+      // 1. Immediately apply local branch partition & isolated branch auth vault (0ms UI response)
       const immediatePartition = readBranchPartitionFromLocal(targetBranchId);
       const immediateVault = loadBranchAuthVault(targetBranchId, branchObj?.name);
-      const immediateLocalModules =
-        readLocalBranchModulesBundle(targetBranchId) ||
-        (targetBranchId === DEFAULT_BRANCH_ID
-          ? null
-          : createEmptyBranchModulesBundle(
-              targetBranchId,
-              branchObj?.name || 'إدارة تموين فرعية',
-              immediatePartition.villages || []
-            ));
-      latestModulesBundleRef.current = immediateLocalModules;
-      setModulesBundle(immediateLocalModules);
 
       setAppState((prev) => {
         if (!prev) return prev;
@@ -2869,7 +2690,7 @@ export default function App() {
     if (!appState?.currentUser) return;
 
     let idleTimeout: ReturnType<typeof setTimeout>;
-    const IDLE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes of inactivity
+    const IDLE_LIMIT_MS = 10 * 60 * 1000; // 10 minutes of inactivity
 
     const resetIdleTimer = () => {
       clearTimeout(idleTimeout);
@@ -2895,7 +2716,7 @@ export default function App() {
             console.error('Pre-logout autosave failed:', e);
           }
         }
-        handleLogout('تم الحفظ التلقائي لجميع البيانات وقفل الشاشة وتأمين تسجيل الخروج التلقائي لعدم وجود نشاط لمدة 5 دقائق.');
+        handleLogout('تم الحفظ التلقائي لجميع البيانات وقفل الشاشة وتأمين تسجيل الخروج التلقائي لعدم وجود نشاط لمدة 10 دقائق.');
       }, IDLE_LIMIT_MS);
     };
 
@@ -2917,148 +2738,6 @@ export default function App() {
       window.removeEventListener('beforeunload', handlePageExit);
     };
   }, [appState?.currentUser, handleLogout]);
-
-  const handleVerifyVaultOnServer = useCallback(
-    async ({
-      branchId,
-      username,
-      passcode,
-    }: {
-      branchId: string;
-      username: string;
-      passcode: string;
-    }): Promise<{ ok: boolean; error?: string }> => {
-      const isHttp =
-        typeof window !== 'undefined' &&
-        (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-      if (isHttp && navigator.onLine !== false) {
-        try {
-          const resp = await fetch('/api/vault/verify', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: getSecurityShieldHeaders(true),
-            body: JSON.stringify({ branchId, username, passcode }),
-          });
-          const json = await resp.json().catch(() => null);
-          if (resp.ok && json?.verified) {
-            return { ok: true };
-          }
-          if (resp.status === 400 || resp.status === 401 || resp.status === 403 || resp.status === 429) {
-            return { ok: false, error: json?.error };
-          }
-        } catch {
-          // Offline / unreachable fallback handled below
-        }
-      }
-      const latest = latestAppStateRef.current;
-      const branchesSnapshot = deduplicateSupplyBranches(latest?.branches || getBranchesList());
-      const fallbackPass = getStoredVaultPasscode(latest?.systemConfig?.vaultPasscode);
-      const fallbackUser = getStoredVaultUsername(latest?.systemConfig?.vaultUsername);
-      const credsMap = getBranchVaultCredentialsMap(
-        branchesSnapshot,
-        latest?.systemConfig?.branchVaultCredentials,
-        fallbackUser,
-        fallbackPass
-      );
-      const isValidLocal = verifyBranchVaultCredentials({
-        branchId,
-        enteredUsername: username,
-        enteredPassword: passcode,
-        branches: branchesSnapshot,
-        credentialsMap: credsMap,
-        fallbackUsername: fallbackUser,
-        fallbackPasscode: fallbackPass,
-      });
-      return { ok: isValidLocal };
-    },
-    []
-  );
-
-  const activeCountsBranchId = appState?.activeBranchId || DEFAULT_BRANCH_ID;
-  const activeCountsKey = `${activeCountsBranchId}|${sidebarPeriodMonth}|${sidebarPeriodYear}`;
-
-  useEffect(() => {
-    if (!appState?.currentUser) return;
-    const isHttpOrigin =
-      typeof window !== 'undefined' &&
-      (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-    if (!isHttpOrigin || navigator.onLine === false) return;
-    let cancelled = false;
-    const params = new URLSearchParams({
-      branchId: activeCountsBranchId,
-      month: String(sidebarPeriodMonth),
-      year: String(sidebarPeriodYear),
-    });
-    fetch(`/api/db/counts?${params.toString()}`, {
-      credentials: 'same-origin',
-      headers: getSecurityShieldHeaders(false),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json) => {
-        if (!cancelled && json?.success && json.counts) {
-          setServerSidebarCounts({
-            key: activeCountsKey,
-            counts: json.counts as SidebarCountsSummary,
-          });
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    appState?.currentUser,
-    activeCountsBranchId,
-    activeCountsKey,
-    sidebarPeriodMonth,
-    sidebarPeriodYear,
-    appState?.bakeries?.length,
-    appState?.debts?.length,
-    appState?.dailyTasks?.length,
-    appState?.inboxMessages?.length,
-    modulesBundle,
-  ]);
-
-  const sidebarCounts = useMemo(() => {
-    const msgs = appState?.inboxMessages || INITIAL_INBOX_MESSAGES;
-    const uname = appState?.currentUser?.username || 'admin';
-    const unreadCount = msgs.filter((m) => !m.readBy || !m.readBy.includes(uname)).length;
-    const localCounts = computeBranchSidebarCounts({
-      bakeries: appState?.bakeries || [],
-      debts: appState?.debts || [],
-      alertsCount: alertsList.length,
-      largeDebtsCount: largeDebtsList.length,
-      unreadInboxCount: unreadCount,
-      pendingTasksCount: (appState?.dailyTasks || []).filter((t) => t.status !== 'completed').length,
-      modulesBundle,
-      periodMonth: sidebarPeriodMonth,
-      periodYear: sidebarPeriodYear,
-    });
-    if (serverSidebarCounts && serverSidebarCounts.key === activeCountsKey) {
-      return {
-        ...serverSidebarCounts.counts,
-        alertsCount: localCounts.alertsCount,
-        largeDebtsCount: localCounts.largeDebtsCount,
-        unreadInboxCount: localCounts.unreadInboxCount,
-        pendingTasksCount: localCounts.pendingTasksCount,
-        reportsSecurityGroupTotal: localCounts.reportsSecurityGroupTotal,
-      };
-    }
-    return localCounts;
-  }, [
-    appState?.inboxMessages,
-    appState?.currentUser?.username,
-    appState?.bakeries,
-    appState?.debts,
-    appState?.dailyTasks,
-    alertsList.length,
-    largeDebtsList.length,
-    modulesBundle,
-    sidebarPeriodMonth,
-    sidebarPeriodYear,
-    serverSidebarCounts,
-    activeCountsKey,
-  ]);
 
   if (!appState) {
     return (
@@ -3199,27 +2878,6 @@ export default function App() {
             users: updatedUsers,
           };
           const mergedState = performGmailDriveAdditiveMerge(baseWithUser, scopedNewUser);
-
-          const isHttp =
-            typeof window !== 'undefined' &&
-            (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-
-          // When registered over HTTP via POST /api/auth/register before authentication, server persistence already succeeded
-          if (isHttp && !getAuthSessionToken()) {
-            const nextState: AppState = { ...mergedState, currentUser: null };
-            latestAppStateRef.current = nextState;
-            setAppState(nextState);
-            void persistFullState(nextState, { skipCloudSync: true }).catch(() => {});
-            saveBranchAuthVault(activeBranchId, {
-              branchName: appState.systemConfig.administrationTitle,
-              users: updatedUsers,
-              rolePermissions: appState.systemConfig.rolePermissions,
-              roleLabels: appState.systemConfig.roleLabels,
-              customRoles: appState.systemConfig.customRoles,
-            });
-            return { success: true };
-          }
-
           const res = await commitRowMutation({
             nextState: { ...mergedState, currentUser: null },
             table: 'app_users',
@@ -3285,12 +2943,10 @@ export default function App() {
   };
 
   const handleDeleteInboxMessage = (msgId: string) => {
-    const current = latestAppStateRef.current || appState;
-    const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
-    markRecentlyDeleted('inbox_messages', msgId);
-    const updatedMessages = (current.inboxMessages || []).filter((m) => String(m.id) !== String(msgId));
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+    const updatedMessages = inboxMessages.filter((m) => m.id !== msgId);
     commitRowMutation({
-      nextState: { ...current, inboxMessages: updatedMessages },
+      nextState: { ...appState, inboxMessages: updatedMessages },
       table: 'inbox_messages',
       branchId,
       toastMessage: 'تم حذف الرسالة من قاعدة البيانات ومزامنة صندوق الوارد',
@@ -3338,27 +2994,12 @@ export default function App() {
         ? (existingBakery as any).version
         : undefined;
 
-    const changeSummary = buildBakeryChangeDiffSummary(existingBakery, bakery);
-    const newLogItem = createBakeryActivityLogItem({
-      action: existingIndex >= 0 ? 'تعديل بيانات مخبز' : 'إضافة مخبز جديد',
-      details: changeSummary,
-      user: appState.currentUser,
-    });
-    const mergedActivityLog = [
-      newLogItem,
-      ...(Array.isArray(bakery.activityLog)
-        ? bakery.activityLog
-        : Array.isArray(existingBakery?.activityLog)
-        ? existingBakery.activityLog
-        : []),
-    ].slice(0, 100);
-
     let updated: Bakery[];
     if (existingIndex >= 0) {
       updated = [...appState.bakeries];
-      updated[existingIndex] = { ...existingBakery, ...bakery, activityLog: mergedActivityLog };
+      updated[existingIndex] = { ...existingBakery, ...bakery };
     } else {
-      updated = [{ ...bakery, activityLog: mergedActivityLog }, ...appState.bakeries];
+      updated = [bakery, ...appState.bakeries];
     }
     const unifiedUpdated = syncLocalUnitDemographicsAcrossBakeries(
       updated,
@@ -3479,23 +3120,17 @@ export default function App() {
   };
 
   const handleDeleteBakery = (bakeryId: string, ownerName: string) => {
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     setPendingConfirm({
       title: 'تأكيد حذف المخبز نهائياً',
       message: `هل أنت متأكد من حذف المخبز الخاص بـ "${ownerName}" نهائياً من المنظومة؟`,
       confirmLabel: 'حذف المخبز نهائياً',
       variant: 'danger',
       onConfirm: () => {
-        const current = latestAppStateRef.current || appState;
-        const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
-        markRecentlyDeleted('bakeries', bakeryId);
-        const removedDebts = (current.debts || []).filter((d) => String(d.bakeryId) === String(bakeryId));
-        for (const d of removedDebts) {
-          markRecentlyDeleted('debts', d.id);
-        }
-        const updatedBakeries = (current.bakeries || []).filter((b) => String(b.id) !== String(bakeryId));
-        const updatedDebts = (current.debts || []).filter((d) => String(d.bakeryId) !== String(bakeryId));
+        const updatedBakeries = appState.bakeries.filter((b) => String(b.id) !== String(bakeryId));
+        const updatedDebts = appState.debts.filter((d) => String(d.bakeryId) !== String(bakeryId));
         commitRowMutation({
-          nextState: { ...current, bakeries: updatedBakeries, debts: updatedDebts },
+          nextState: { ...appState, bakeries: updatedBakeries, debts: updatedDebts },
           table: 'bakeries',
           branchId,
           toastMessage: `تم حذف مخبز (${ownerName}) وتحديث قاعدة البيانات وجميع الأجهزة بنجاح`,
@@ -3581,13 +3216,11 @@ export default function App() {
   };
 
   const handleDeleteDebt = (debtId: string) => {
-    const current = latestAppStateRef.current || appState;
-    const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
-    markRecentlyDeleted('debts', debtId);
-    const updated = (current.debts || []).filter((d) => String(d.id) !== String(debtId));
-    const synced = synchronizeBakeryAndDebts(current.bakeries || [], updated);
+    const branchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
+    const updated = appState.debts.filter((d) => String(d.id) !== String(debtId));
+    const synced = synchronizeBakeryAndDebts(appState.bakeries, updated);
     commitRowMutation({
-      nextState: { ...current, bakeries: synced.bakeries, debts: synced.debts },
+      nextState: { ...appState, bakeries: synced.bakeries, debts: synced.debts },
       table: 'debts',
       branchId,
       toastMessage: 'تم حذف قيد المديونية وتحديث الأرصدة وجميع الأجهزة بنجاح',
@@ -3721,220 +3354,7 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const ct: ColumnTitles = (() => {
-    const customCols = appState.systemConfig?.customColumnTitles?.bakeries_main;
-    if (!customCols) return appState.columnTitles;
-    const merged: Record<string, string> = { ...(appState.columnTitles as any) };
-    for (const [k, v] of Object.entries(customCols)) {
-      if (v && v.trim()) merged[k] = v.trim();
-    }
-    return merged as unknown as ColumnTitles;
-  })();
-
-  const handleSaveBranchDepartments = async (
-    targetBranchId: string,
-    nextDepartments: BranchDepartmentConfigItem[]
-  ): Promise<{ success?: boolean; error?: string }> => {
-    const current = latestAppStateRef.current;
-    if (!current) {
-      return { success: false, error: 'تعذر قراءة حالة المنظومة الحالية.' };
-    }
-    const canManageDepts =
-      Boolean(current.currentUser) &&
-      (isSuperAdmin(current.currentUser) ||
-        hasPermission(current.currentUser, 'MANAGE_DEPARTMENTS', current.systemConfig));
-    if (!canManageDepts) {
-      return { success: false, error: 'صلاحية إدارة الأقسام أو مدير النظام مطلوبة لتعديل أقسام الفرع.' };
-    }
-    let savedDepartments = nextDepartments;
-    const isHttpOrigin =
-      typeof window !== 'undefined' &&
-      (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-    if (isHttpOrigin && navigator.onLine !== false) {
-      try {
-        const resp = await fetch(
-          `/api/branches/${encodeURIComponent(targetBranchId)}/departments`,
-          {
-            method: 'PUT',
-            credentials: 'same-origin',
-            headers: getSecurityShieldHeaders(true),
-            body: JSON.stringify({ departments: nextDepartments }),
-          }
-        );
-        const json = await resp.json().catch(() => null);
-        if (!resp.ok || json?.success === false) {
-          return {
-            success: false,
-            error: json?.error || 'تعذر حفظ هيكل أقسام الفرع في قاعدة البيانات.',
-          };
-        }
-        if (Array.isArray(json?.departments)) {
-          savedDepartments = json.departments;
-        }
-      } catch {
-        // Offline fallback continues cleanly below
-      }
-    }
-
-    const activeId = current.activeBranchId || DEFAULT_BRANCH_ID;
-    if (targetBranchId === activeId) {
-      const nextConfig: SystemConfig = {
-        ...current.systemConfig,
-        branchDepartments: savedDepartments,
-      };
-      const nextState: AppState = {
-        ...current,
-        systemConfig: nextConfig,
-      };
-      latestAppStateRef.current = nextState;
-      setAppState(nextState);
-      await persistFullState(nextState, { skipCloudSync: true }).catch(() => {});
-    } else {
-      const part = readBranchPartitionFromLocal(targetBranchId);
-      const nextPartConfig: SystemConfig = {
-        ...(part.systemConfig || current.systemConfig),
-        branchDepartments: savedDepartments,
-      };
-      writeBranchPartitionToLocal(targetBranchId, {
-        ...(part as AppState),
-        activeBranchId: targetBranchId,
-        systemConfig: nextPartConfig,
-      });
-    }
-
-    const nowAr = getArabicTimestamp();
-    setSaveTimestamp(nowAr);
-    setSaveToast({
-      id: Date.now(),
-      message: 'تم تحديث هيكل أقسام الفرع بشكل مستقل تماماً عن باقي الفروع وحفظه في قاعدة البيانات.',
-      timestamp: nowAr,
-      variant: 'success',
-    });
-    return { success: true };
-  };
-
-  const handleFactoryResetSection = async (
-    sectionKey:
-      | 'bakeries'
-      | 'debts'
-      | 'commodities'
-      | 'internal_trade'
-      | 'grain_maintenance'
-      | 'hr'
-      | 'village',
-    villageName?: string
-  ) => {
-    const current = latestAppStateRef.current;
-    if (!current) return;
-    const canResetSection =
-      Boolean(current.currentUser) &&
-      (isSuperAdmin(current.currentUser) ||
-        hasPermission(current.currentUser, 'FACTORY_RESET_SECTION', current.systemConfig));
-    if (!canResetSection) return;
-    const branchId = current.activeBranchId || DEFAULT_BRANCH_ID;
-    const actor = current.currentUser?.fullName || current.currentUser?.username || 'admin';
-    const isHttpOrigin =
-      typeof window !== 'undefined' &&
-      (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-
-    if (isHttpOrigin && navigator.onLine !== false) {
-      try {
-        const resp = await fetch(
-          `/api/branches/${encodeURIComponent(branchId)}/reset-section`,
-          {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: getSecurityShieldHeaders(true),
-            body: JSON.stringify({
-              sectionKey,
-              villageName,
-              confirmReset: true,
-            }),
-          }
-        );
-        if (!resp.ok) {
-          const errJson = await resp.json().catch(() => null);
-          setSaveToast({
-            id: Date.now(),
-            message: errJson?.error || 'تعذر تنفيذ استعادة ضبط المصنع في قاعدة البيانات.',
-            timestamp: getArabicTimestamp(),
-            variant: 'error',
-          });
-          return;
-        }
-      } catch {
-        // Offline fallback handled cleanly below
-      }
-    }
-
-    const normTargetVillage = normalizeArabicText(villageName || '');
-    if (sectionKey === 'bakeries') {
-      const nextState: AppState = {
-        ...current,
-        bakeries: [],
-        debts: [],
-      };
-      latestAppStateRef.current = nextState;
-      setAppState(nextState);
-      setHighDebtNotifications([]);
-      await persistFullState(nextState, { skipCloudSync: true }).catch(() => {});
-    } else if (sectionKey === 'debts') {
-      const nextState: AppState = {
-        ...current,
-        debts: [],
-      };
-      latestAppStateRef.current = nextState;
-      setAppState(nextState);
-      setHighDebtNotifications([]);
-      await persistFullState(nextState, { skipCloudSync: true }).catch(() => {});
-    } else if (
-      sectionKey === 'commodities' ||
-      sectionKey === 'internal_trade' ||
-      sectionKey === 'grain_maintenance' ||
-      sectionKey === 'hr'
-    ) {
-      handleUpdateModulesBundle((prev) =>
-        wipeSectionFromModulesBundle(prev, sectionKey, actor)
-      );
-    } else if (sectionKey === 'village' && villageName) {
-      const removedBakeryIds = new Set(
-        current.bakeries
-          .filter((b) => normalizeArabicText(b.village) === normTargetVillage)
-          .map((b) => b.id)
-      );
-      const nextState: AppState = {
-        ...current,
-        bakeries: current.bakeries.filter(
-          (b) => normalizeArabicText(b.village) !== normTargetVillage
-        ),
-        debts: current.debts.filter(
-          (d) =>
-            normalizeArabicText(d.village) !== normTargetVillage &&
-            !removedBakeryIds.has(d.bakeryId)
-        ),
-      };
-      latestAppStateRef.current = nextState;
-      setAppState(nextState);
-      await persistFullState(nextState, { skipCloudSync: true }).catch(() => {});
-      if (latestModulesBundleRef.current) {
-        handleUpdateModulesBundle((prev) =>
-          wipeVillageFromModulesBundle(prev, villageName, actor)
-        );
-      }
-    }
-
-    const nowAr = getArabicTimestamp();
-    setSaveTimestamp(nowAr);
-    setSaveToast({
-      id: Date.now(),
-      message:
-        sectionKey === 'village' && villageName
-          ? `تم تصفير جميع بيانات قرية (${villageName}) فقط مع الحفاظ التام على الأقسام والقرى الأخرى.`
-          : 'تمت استعادة ضبط المصنع وتصفير البيانات المدخلة للقسم فقط مع بقاء الأقسام والإعدادات سليمة.',
-      timestamp: nowAr,
-      variant: 'success',
-    });
-  };
+  const ct = appState.columnTitles;
 
   // Guarded action runner to prevent duplicate executions on rapid clicks
   const runGuardedAction = (fn: () => void) => {
@@ -3943,7 +3363,7 @@ export default function App() {
     try {
       fn();
     } finally {
-      setTimeout(() => setIsActionLocked(false), 180);
+      setTimeout(() => setIsActionLocked(false), 450);
     }
   };
 
@@ -4038,10 +3458,6 @@ export default function App() {
           setIsMasterEditorModalOpen(true);
         }
         break;
-      case 'bakery-change-history':
-        setBakeryHistoryInitialOwner('');
-        setIsBakeryHistoryDrawerOpen(true);
-        break;
       case 'data-edit-master':
         setMasterEditorInitialCategory('ALL');
         setIsMasterEditorModalOpen(true);
@@ -4074,11 +3490,9 @@ export default function App() {
         setIsWeeklyInstallmentsModalOpen(true);
         break;
 
-      // 4. قسم الفروع محمي بالكامل ببوابة الحماية السرية
+      // 4. قسم الفروع مفتوح لاختيار الفرع على الواجهة (والإضافة/التعديل/الحذف داخل النافذة محمي بالباسورد)
       case 'branches-manage':
-        requireVaultAccess('branches', 'قسم الفروع والإدارات التموينية', () => {
-          setIsBranchesModalOpen(true);
-        });
+        setIsBranchesModalOpen(true);
         break;
       case 'ops-save-data':
         requireVaultAccess('backup', 'قسم الحفظ والنسخ — حفظ البيانات', () => {
@@ -4434,18 +3848,6 @@ export default function App() {
           setActiveTab('hr-personnel');
         }
         break;
-      case 'hr-public-service':
-        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
-          setHrSubView('public_service');
-          setActiveTab('hr-personnel');
-        }
-        break;
-      case 'hr-external-assistance':
-        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
-          setHrSubView('external_assistance');
-          setActiveTab('hr-personnel');
-        }
-        break;
       case 'hr-attendance':
         if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
           setHrSubView('attendance');
@@ -4467,12 +3869,6 @@ export default function App() {
       case 'hr-loans-promotions':
         if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
           setHrSubView('loans_promotions');
-          setActiveTab('hr-personnel');
-        }
-        break;
-      case 'hr-alerts':
-        if (canUserAccessTab(appState.currentUser, 'hr-personnel')) {
-          setHrSubView('alerts');
           setActiveTab('hr-personnel');
         }
         break;
@@ -4543,40 +3939,8 @@ export default function App() {
   const handleUpdateVaultPasscode = async (
     newPasscode: string,
     newUsername?: string,
-    targetBranchId: string | 'ALL' = 'ALL',
-    currentCredentials?: { currentUsername?: string; currentPasscode?: string }
+    targetBranchId: string | 'ALL' = 'ALL'
   ) => {
-    const isHttp =
-      typeof window !== 'undefined' &&
-      (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-    const activeBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
-
-    if (isHttp && navigator.onLine !== false && currentCredentials?.currentPasscode) {
-      const resp = await fetch('/api/vault/credentials', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: getSecurityShieldHeaders(true),
-        body: JSON.stringify({
-          targetScope: targetBranchId === 'ALL' ? 'all' : targetBranchId,
-          currentBranchId: activeBranchId,
-          currentUsername: currentCredentials.currentUsername || '',
-          currentPasscode: currentCredentials.currentPasscode,
-          newUsername: (newUsername || '').trim() || configuredVaultUsername,
-          newPasscode: newPasscode.trim(),
-        }),
-      });
-      const json = await resp.json().catch(() => null);
-      if (!resp.ok || !json?.success) {
-        throw new Error(json?.error || 'تعذر تحديث بيانات بوابة الحماية في الخادم.');
-      }
-      setSaveToast({
-        id: Date.now(),
-        message: 'تم تشفير وتحديث بيانات بوابة الحماية السرية في قاعدة البيانات بنجاح.',
-        timestamp: getArabicTimestamp(),
-      });
-      return;
-    }
-
     const normalizedPass = setStoredVaultPasscode(newPasscode, newUsername);
     const normalizedUser = getStoredVaultUsername(newUsername || configuredVaultUsername);
     const updatedCredentialsMap = updateBranchVaultCredentialsMap({
@@ -4589,6 +3953,7 @@ export default function App() {
       fallbackPasscode: configuredVaultPasscode,
     });
 
+    const activeBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
     const activeBranchCred = updatedCredentialsMap[activeBranchId];
     const nextConfig: SystemConfig = {
       ...appState.systemConfig,
@@ -4623,6 +3988,47 @@ export default function App() {
           },
           operation: 'UPDATE',
         });
+        if (targetBranchId === 'ALL') {
+          for (const br of cleanBranchesList) {
+            if (br.id === activeBranchId) continue;
+            await saveRowToDb({
+              table: 'system_config',
+              branchId: br.id,
+              row: {
+                branchId: br.id,
+                systemConfig: {
+                  ...nextConfig,
+                  administrationTitle: br.name,
+                  vaultUsername: normalizedUser,
+                  vaultPasscode: normalizedPass,
+                  branchVaultCredentials: updatedCredentialsMap,
+                },
+                columnTitles: appState.columnTitles,
+                activityStatuses: appState.activityStatuses,
+              },
+              operation: 'UPDATE',
+            }).catch(() => {});
+          }
+        } else if (targetBranchId !== activeBranchId) {
+          const targetBrObj = cleanBranchesList.find((b) => b.id === targetBranchId);
+          await saveRowToDb({
+            table: 'system_config',
+            branchId: targetBranchId,
+            row: {
+              branchId: targetBranchId,
+              systemConfig: {
+                ...nextConfig,
+                administrationTitle: targetBrObj?.name || nextConfig.administrationTitle,
+                vaultUsername: normalizedUser,
+                vaultPasscode: normalizedPass,
+                branchVaultCredentials: updatedCredentialsMap,
+              },
+              columnTitles: appState.columnTitles,
+              activityStatuses: appState.activityStatuses,
+            },
+            operation: 'UPDATE',
+          }).catch(() => {});
+        }
         return primaryRes;
       },
     });
@@ -4819,7 +4225,7 @@ export default function App() {
               </span>
             </div>
 
-            {/* Header Direct Branch Dropdown Switcher — Protected Behind Secret Vault */}
+            {/* Header Direct Branch Dropdown Switcher — ALWAYS OPEN ON THE INTERFACE */}
             <div className="flex items-center gap-1.5 bg-[#0F1E36] text-[#FDE68A] px-3 py-1.5 rounded-xl border border-[#D4AF37]/50 shadow-sm">
               <Building2 className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
               <label htmlFor="header-branch-select" className="text-[11px] font-black text-[#D4AF37] hidden md:inline">
@@ -4831,12 +4237,10 @@ export default function App() {
                 value={appState.activeBranchId || DEFAULT_BRANCH_ID}
                 onChange={(e) => {
                   const targetBranchId = e.target.value;
-                  requireVaultAccess('branches', 'تبديل الفرع / الإدارة التموينية', () => {
-                    handleSwitchBranch(targetBranchId, cleanBranchesList);
-                  });
+                  handleSwitchBranch(targetBranchId, cleanBranchesList);
                 }}
                 className="bg-[#0F1E36] text-white font-black text-xs cursor-pointer focus:outline-none pr-1"
-                title="تبديل الفروع والإدارات التموينية (محمي ببوابة الحماية السرية)"
+                title="التبديل المباشر بين الفروع والإدارات التموينية في أي وقت"
               >
                 {cleanBranchesList.map((branch) => (
                   <option key={branch.id} value={branch.id} className="bg-[#0A1628] text-white font-bold">
@@ -4846,17 +4250,13 @@ export default function App() {
               </select>
             </div>
 
-            {/* Branches Manager Button — Protected Behind Secret Vault */}
+            {/* Branches Manager Button — Opens directly to view/switch branches; Add/Edit/Delete inside requires password */}
             <button
               type="button"
               data-testid="header-branches-manager-btn"
-              onClick={() =>
-                requireVaultAccess('branches', 'قسم الفروع والإدارات التموينية', () => {
-                  setIsBranchesModalOpen(true);
-                })
-              }
+              onClick={() => setIsBranchesModalOpen(true)}
               className="px-3 py-1.5 bg-gradient-to-l from-[#D4AF37] to-amber-500 hover:from-amber-400 hover:to-amber-500 text-[#0A1628] rounded-xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-[#D4AF37]"
-              title="فتح قسم الفروع للتنقل والإدارة (محمي ببوابة الحماية السرية)"
+              title="فتح قسم الفروع للتنقل بين الإدارات (الإضافة أو التعديل أو الحذف محمي بالباسورد)"
             >
               <Building2 className="w-3.5 h-3.5 text-[#0A1628]" />
               <span>قسم الفروع ({cleanBranchesList.length})</span>
@@ -4902,13 +4302,13 @@ export default function App() {
                   setSaveToast({
                     id: Date.now(),
                     message:
-                      'تم قفل الحماية السرية بنجاح: تبديل وإضافة وتعديل وحذف الفروع وقسم الحفظ والنسخ مقفلة الآن بكلمة المرور السرية',
+                      'تم قفل الحماية السرية بنجاح: تعديل/إضافة/حذف الفروع وقسم الحفظ والنسخ مقفلان الآن، والتنقل بين الفروع متاح',
                     timestamp: getArabicTimestamp(),
                     variant: 'success',
                   });
                 }}
                 className="px-2.5 py-1 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white transition cursor-pointer flex items-center gap-1 shadow-xs"
-                title="قفل فوري للحماية السرية (يقفل قسم الحفظ والنسخ وتبديل/إدارة الفروع)"
+                title="قفل فوري للحماية السرية (يقفل قسم الحفظ والنسخ وإضافة/تعديل/حذف الفروع)"
               >
                 <Lock className="w-3 h-3" />
                 <span>اقفل</span>
@@ -4955,20 +4355,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* 2. Calm Semantic Alert Banners (if any urgent expirations, large debts, HR 30-day contract expiry, or pending supervisor debt email) */}
-      {(alertsList.length > 0 ||
-        largeDebtsList.length > 0 ||
-        pendingDailyDebtEmailBanner ||
-        (modulesBundle?.hr?.employees || []).some(
-          (e) =>
-            (e.employeeType === 'خدمة عامة' || e.employeeType === 'استعانة') &&
-            e.contractEndDate &&
-            Math.round(
-              (new Date(`${e.contractEndDate.slice(0, 10)}T00:00:00Z`).getTime() -
-                new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime()) /
-                (1000 * 60 * 60 * 24)
-            ) <= 30
-        )) && (
+      {/* 2. Calm Semantic Alert Banners (if any urgent expirations, large debts, or pending supervisor debt email) */}
+      {(alertsList.length > 0 || largeDebtsList.length > 0 || pendingDailyDebtEmailBanner) && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-900 no-print">
           <div className="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-3 flex-wrap">
@@ -5001,41 +4389,6 @@ export default function App() {
                   </button>
                 </span>
               )}
-              {(isSuperAdmin(appState.currentUser) || canUserAccessTab(appState.currentUser, 'hr-personnel')) &&
-                (() => {
-                  const hrContractAlertsCount = (modulesBundle?.hr?.employees || []).filter(
-                    (e) =>
-                      (e.employeeType === 'خدمة عامة' || e.employeeType === 'استعانة') &&
-                      e.contractEndDate &&
-                      Math.round(
-                        (new Date(`${e.contractEndDate.slice(0, 10)}T00:00:00Z`).getTime() -
-                          new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime()) /
-                          (1000 * 60 * 60 * 24)
-                      ) <= 30
-                  ).length;
-                  if (hrContractAlertsCount === 0) return null;
-                  return (
-                    <span
-                      data-testid="superadmin-hr-contract-alert-banner"
-                      className="flex items-center gap-1.5 font-bold text-teal-950 bg-teal-100/80 border border-teal-400 px-2.5 py-0.5 rounded-lg"
-                    >
-                      <Bell className="w-3.5 h-3.5 text-teal-800 shrink-0" />
-                      <span>
-                        تنبيه الموارد البشرية للسوبر أدمن: يوجد ({hrContractAlertsCount}) عقد خدمة عامة / استعانة ينتهي خلال ≤ 30 يوماً
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setHrSubView('alerts');
-                          setActiveTab('hr-personnel');
-                        }}
-                        className="text-teal-900 font-black underline hover:text-teal-950 cursor-pointer mr-1"
-                      >
-                        مراجعة وتجديد العقود
-                      </button>
-                    </span>
-                  );
-                })()}
               {pendingDailyDebtEmailBanner && (
                 <span
                   data-testid="pending-daily-debt-email-banner"
@@ -5082,24 +4435,6 @@ export default function App() {
           isAudioMuted={!shouldPlayAlertSound(appState.systemConfig?.dailyAlertConfig)}
           scheduledAlertsCount={alertsList.length + largeDebtsList.length}
           currentUser={appState.currentUser}
-          sidebarCounts={sidebarCounts}
-          periodMonth={sidebarPeriodMonth}
-          periodYear={sidebarPeriodYear}
-          onChangePeriod={(nextMonth, nextYear) => {
-            setSidebarPeriodMonth(nextMonth);
-            setSidebarPeriodYear(nextYear);
-          }}
-          branchDepartments={appState.systemConfig?.branchDepartments}
-          onOpenBranchDepartments={() => {
-            const activeBranchObj =
-              cleanBranchesList.find((b) => b.id === (appState.activeBranchId || DEFAULT_BRANCH_ID)) ||
-              cleanBranchesList[0] ||
-              null;
-            if (!activeBranchObj) return;
-            requireVaultAccess('branches', 'إدارة أقسام الفرع الحالي', () => {
-              setBranchDepartmentsTarget(activeBranchObj);
-            });
-          }}
           onOpenVaultGate={(section, label) =>
             setVaultGateModal({
               isOpen: true,
@@ -5231,29 +4566,12 @@ export default function App() {
                   <span>سجل المديونيات ({appState.debts.length})</span>
                 </button>
               )}
-              {canUserAccessTab(appState.currentUser, 'internal-trade') && (
-                <button
-                  type="button"
-                  data-testid="nav-internal-trade-tab"
-                  onClick={() =>
-                    handleSelectSidebarNav('internal-trade-dashboard', '3. قسم التجارة الداخلية', 'لوحة تحكم التجارة الداخلية')
-                  }
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === 'internal-trade'
-                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
-                      : 'text-[#0A1628] hover:bg-white'
-                  }`}
-                >
-                  <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>التجارة الداخلية</span>
-                </button>
-              )}
               {canUserAccessTab(appState.currentUser, 'commodities') && (
                 <button
                   type="button"
                   data-testid="nav-commodities-tab"
                   onClick={() =>
-                    handleSelectSidebarNav('commodities-dashboard', '4. قسم السلع التموينية', 'لوحة مؤشرات السلع التموينية')
+                    handleSelectSidebarNav('commodities-dashboard', '6. قسم السلع التموينية', 'لوحة مؤشرات السلع التموينية')
                   }
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'commodities'
@@ -5265,12 +4583,29 @@ export default function App() {
                   <span>السلع التموينية</span>
                 </button>
               )}
+              {canUserAccessTab(appState.currentUser, 'internal-trade') && (
+                <button
+                  type="button"
+                  data-testid="nav-internal-trade-tab"
+                  onClick={() =>
+                    handleSelectSidebarNav('internal-trade-dashboard', '7. قسم التجارة الداخلية', 'لوحة تحكم التجارة الداخلية')
+                  }
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === 'internal-trade'
+                      ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-white shadow-sm'
+                      : 'text-[#0A1628] hover:bg-white'
+                  }`}
+                >
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>التجارة الداخلية</span>
+                </button>
+              )}
               {canUserAccessTab(appState.currentUser, 'grain-maintenance') && (
                 <button
                   type="button"
                   data-testid="nav-grain-maintenance-tab"
                   onClick={() =>
-                    handleSelectSidebarNav('grain-dashboard', '5. قسم صيانة الحبوب', 'لوحة الصيانة ومؤشرات OEE')
+                    handleSelectSidebarNav('grain-dashboard', '8. قسم صيانة الحبوب والصوامع', 'لوحة الصيانة ومؤشرات OEE')
                   }
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'grain-maintenance'
@@ -5287,7 +4622,7 @@ export default function App() {
                   type="button"
                   data-testid="nav-hr-personnel-tab"
                   onClick={() =>
-                    handleSelectSidebarNav('hr-dashboard', '6. قسم الموارد البشرية', 'لوحة تحكم الموارد البشرية')
+                    handleSelectSidebarNav('hr-dashboard', '9. الموارد البشرية وشؤون العاملين', 'لوحة تحكم الموارد البشرية')
                   }
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'hr-personnel'
@@ -5329,22 +4664,6 @@ export default function App() {
               </button>
             </div>
           </div>
-
-          {/* 3.1B Immediate In-App Manager PUSH Alert for Low Daily Flour Quota (in sacks) */}
-          <LowFlourQuotaPushBanner
-            alerts={lowFlourQuotaAlerts}
-            minThresholdSacks={lowFlourQuotaMinSacks}
-            isManager={isCurrentUserManager}
-            enabled={lowFlourQuotaAlertEnabled}
-            onInspectBakery={(bakeryId) => {
-              const target = appState.bakeries.find((b) => b.id === bakeryId);
-              if (target) {
-                setSelectedBakeryRowId(target.id);
-                setDetailsBakery(target);
-              }
-            }}
-            onOpenSettings={() => setIsDailySettingsModalOpen(true)}
-          />
 
           {/* 3.2 Unified Command Toolbar */}
           <div className="bg-white border border-[#D4AF37]/30 rounded-2xl px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2 no-print">
@@ -5775,10 +5094,6 @@ export default function App() {
               bakeriesCount={appState.bakeries.length}
               debtsCount={appState.debts.length}
               villagesCount={appState.villages.length}
-              logoBase64={appState.systemConfig.logoBase64}
-              administrationTitle={appState.systemConfig.administrationTitle}
-              directorateTitle={appState.systemConfig.directorateTitle}
-              preparedBy={appState.currentUser?.fullName}
             />
             </Suspense>
           ) : activeTab === 'realtime-diagnostics' ? (
@@ -5794,16 +5109,8 @@ export default function App() {
                 await handleManualCloudPull();
               }}
               onPurgeAllDatabases={async () => {
-                const targetBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
-                const targetBranchName = appState.systemConfig.administrationTitle || 'الفرع الحالي';
-                const res = await clearSupabaseDatabaseData(targetBranchId);
-                await factoryResetBranch(targetBranchId);
-                const emptyMod = await resetBranchModulesBundleForBranch(
-                  targetBranchId,
-                  targetBranchName,
-                  appState.villages || DEFAULT_VILLAGES_HIERARCHY
-                );
-                setModulesBundle(emptyMod);
+                const res = await clearSupabaseDatabaseData();
+                await factoryReset();
                 setHighDebtNotifications([]);
                 setAppState((prev) =>
                   prev
@@ -6018,7 +5325,7 @@ export default function App() {
                   isRead: false,
                 };
                 const nextMessages = [newMsg, ...(appState.inboxMessages || [])];
-                    commitRowMutation({
+                commitRowMutation({
                   nextState: { ...appState, inboxMessages: nextMessages },
                   table: 'inbox_messages',
                   branchId,
@@ -6035,7 +5342,6 @@ export default function App() {
                     }),
                 });
               }}
-              onFactoryResetSection={() => handleFactoryResetSection('debts')}
             />
             </Suspense>
           ) : activeTab === 'executive-analytics' ? (
@@ -6056,13 +5362,12 @@ export default function App() {
             modulesBundle ? (
               <Suspense fallback={<LazyViewLoadingFallback />}>
                 <RationCommoditiesSuite
-                  key={`commodities-${modulesBundle.branchId}`}
+                  key={`${activeTab}-${modulesBundle.branchId}-${rationSubView}`}
                   state={modulesBundle.ration}
                   branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                   branchName={appState.systemConfig.administrationTitle}
                   villages={appState.villages}
                   currentUser={appState.currentUser}
-                  systemConfig={appState.systemConfig}
                   initialMode="commodities"
                   initialSubView={rationSubView}
                   bakeriesCount={appState.bakeries.length}
@@ -6076,7 +5381,6 @@ export default function App() {
                       actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
                     )
                   }
-                  onFactoryResetSection={() => handleFactoryResetSection('commodities')}
                 />
               </Suspense>
             ) : (
@@ -6088,14 +5392,13 @@ export default function App() {
             modulesBundle ? (
               <Suspense fallback={<LazyViewLoadingFallback />}>
                 <InternalTradeSuite
-                  key={`internal-trade-${modulesBundle.branchId}`}
+                  key={`internal-trade-${modulesBundle.branchId}-${internalTradeSubView}`}
                   state={modulesBundle.internalTrade}
                   branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                   branchName={appState.systemConfig.administrationTitle}
                   villages={appState.villages}
                   bakeries={appState.bakeries}
                   currentUser={appState.currentUser}
-                  systemConfig={appState.systemConfig}
                   initialSubView={internalTradeSubView}
                   onChangeState={(nextInternalTrade, actionSummary) =>
                     handleUpdateModulesBundle(
@@ -6103,7 +5406,6 @@ export default function App() {
                       actionSummary || 'تم حفظ تعديلات قسم التجارة الداخلية ومزامنتها مع Supabase'
                     )
                   }
-                  onFactoryResetSection={() => handleFactoryResetSection('internal_trade')}
                 />
               </Suspense>
             ) : (
@@ -6115,12 +5417,11 @@ export default function App() {
             modulesBundle ? (
               <Suspense fallback={<LazyViewLoadingFallback />}>
                 <GrainMaintenanceSuite
-                  key={`grain-${modulesBundle.branchId}`}
+                  key={`grain-${modulesBundle.branchId}-${grainSubView}`}
                   state={modulesBundle.grainMaintenance}
                   branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                   branchName={appState.systemConfig.administrationTitle}
                   currentUser={appState.currentUser}
-                  systemConfig={appState.systemConfig}
                   bakeries={appState.bakeries}
                   villages={appState.villages}
                   initialSubView={grainSubView}
@@ -6130,7 +5431,6 @@ export default function App() {
                       actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
                     )
                   }
-                  onFactoryResetSection={() => handleFactoryResetSection('grain_maintenance')}
                 />
               </Suspense>
             ) : (
@@ -6142,12 +5442,11 @@ export default function App() {
             modulesBundle ? (
               <Suspense fallback={<LazyViewLoadingFallback />}>
                 <HrPersonnelSuite
-                  key={`hr-${modulesBundle.branchId}`}
+                  key={`hr-${modulesBundle.branchId}-${hrSubView}`}
                   state={modulesBundle.hr}
                   branchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
                   branchName={appState.systemConfig.administrationTitle}
                   currentUser={appState.currentUser}
-                  systemConfig={appState.systemConfig}
                   initialSubView={hrSubView}
                   onChangeState={(nextHr, actionSummary) =>
                     handleUpdateModulesBundle(
@@ -6155,7 +5454,6 @@ export default function App() {
                       actionSummary || 'تم حفظ التعديلات ومزامنتها مع قاعدة بيانات Supabase'
                     )
                   }
-                  onFactoryResetSection={() => handleFactoryResetSection('hr')}
                 />
               </Suspense>
             ) : (
@@ -6521,88 +5819,9 @@ export default function App() {
                 )}
               </div>
 
-              {/* Unified ReportToolbar directly above the Bakeries table */}
-              <ReportToolbar
-                title={resolveCustomTableTitle(
-                  appState.systemConfig,
-                  'bakeries_main',
-                  'سجل وقاعدة بيانات المخابز البلدية والمدعمة'
-                )}
-                subtitle="إدارة الحصص التأمينية والفعلية، متوسطات السكان والمستفيدين، والتراخيص والمديونيات"
-                count={sortedBakeries.length}
-                countLabel="مخبز"
-                testIdPrefix="bakeries-main"
-                onOpenHistory={() => {
-                  setBakeryHistoryInitialOwner('');
-                  setIsBakeryHistoryDrawerOpen(true);
-                }}
-                historyLabel="سجل التغييرات التاريخي"
-                onExportPdf={() => setIsReportModalOpen(true)}
-                onPrint={() => setIsReportModalOpen(true)}
-                onAdd={
-                  hasDepartmentPermission(appState.currentUser, 'bakeries', 'insert')
-                    ? () =>
-                        runGuardedAction(() => {
-                          setBakeryToEdit(null);
-                          setIsBakeryModalOpen(true);
-                        })
-                    : undefined
-                }
-                addLabel="إضافة مخبز جديد"
-                extraActions={
-                  isSuperAdmin(appState.currentUser) ? (
-                    <>
-                      <button
-                        type="button"
-                        data-testid="village-factory-reset-btn"
-                        onClick={() => {
-                          const defaultV =
-                            selectedVillage !== 'ALL'
-                              ? selectedVillage
-                              : availableVillagesFilter[0] || '';
-                          setVillageResetTargetName(defaultV);
-                          setIsVillageResetModalOpen(true);
-                        }}
-                        className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/35 text-amber-200 border border-amber-400/50 rounded-xl text-xs font-black inline-flex items-center gap-1.5 transition cursor-pointer"
-                        title="مسح شامل للبيانات المدخلة داخل قرية محددة (المخابز، التجار، الأكواد، الماكينات، المنشآت، الري/الشون) بدون مسح الأقسام"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>
-                          {selectedVillage !== 'ALL'
-                            ? `تصفير قرية: ${selectedVillage}`
-                            : 'تصفير بيانات قرية'}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="bakeries-factory-reset-btn"
-                        onClick={() =>
-                          setPendingConfirm({
-                            title: 'تأكيد استعادة ضبط المصنع لبيانات المخابز والمديونيات',
-                            message:
-                              'سيتم مسح جميع المخابز والمديونيات المدخلة داخل هذا الفرع فقط، مع الإبقاء التام على هيكل الأقسام والإعدادات وحسابات المستخدمين وباقي الفروع.',
-                            confirmLabel: 'تأكيد استعادة ضبط المصنع',
-                            variant: 'danger',
-                            onConfirm: () => {
-                              void handleFactoryResetSection('bakeries');
-                            },
-                          })
-                        }
-                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black inline-flex items-center gap-1.5 shadow-xs transition cursor-pointer"
-                        title="استعادة ضبط المصنع لبيانات المخابز في هذا الفرع مع بقاء الأقسام"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>استعادة ضبط المصنع</span>
-                      </button>
-                    </>
-                  ) : undefined
-                }
-              />
-
               {/* Main Bakeries Data Table (Pure White & Light Gray with Sticky Navy Headers) */}
-              <ErrorBoundary fallbackTitle="تعذر عرض جدول المخابز مؤقتاً دون تأثر باقي المنظومة">
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-                <div dir="rtl" className="overflow-x-auto relative custom-scrollbar">
+                <div className="overflow-x-auto relative custom-scrollbar">
                   <table className="w-full text-center border-collapse text-xs">
                     {/* Grouped Super Headers */}
                     <thead className="sticky top-0 z-20 bg-[#0F2342] text-white font-bold shadow-xs">
@@ -6894,14 +6113,8 @@ export default function App() {
                       ) : (
                         (() => {
                           // Helper to render a single bakery row
-                          const renderBakeryRow = (
-                            b: Bakery,
-                            globalIndex: number,
-                            unitAnchorId?: string
-                          ) => {
+                          const renderBakeryRow = (b: Bakery, globalIndex: number) => {
                             const isSelected = selectedBakeryRowId === b.id;
-                            const isAnchorHighlighted =
-                              Boolean(unitAnchorId) && highlightedUnitAnchorId === unitAnchorId;
                             const remainingDebt = bakeryRemainingDebtsMap[b.id] || 0;
 
                             const today = new Date();
@@ -6927,12 +6140,9 @@ export default function App() {
                             return (
                               <tr
                                 key={b.id}
-                                id={unitAnchorId}
                                 onClick={() => setSelectedBakeryRowId(b.id)}
                                 className={`cursor-pointer transition-colors ${
-                                  isAnchorHighlighted
-                                    ? 'bg-amber-100 ring-2 ring-amber-400'
-                                    : isSelected
+                                  isSelected
                                     ? 'row-selected'
                                     : globalIndex % 2 === 0
                                     ? 'bg-white hover:bg-blue-50/40'
@@ -7174,51 +6384,46 @@ export default function App() {
                                   </>
                                 )}
 
-                                <td className="py-2 px-2 no-print text-center" onClick={(e) => e.stopPropagation()}>
+                                <td className="py-2 px-2 no-print text-center">
                                   <div className="flex items-center justify-center gap-1">
-                                    <Button
-                                      variant="view"
-                                      size="xs"
-                                      onClick={() => setDetailsBakery(b)}
-                                      className="!px-2 !py-1"
-                                      title="عرض تفصيلي لبيانات ومعادلات المخبز"
-                                      icon={<Eye className="w-3.5 h-3.5" />}
-                                    />
-
-                                    <Button
-                                      variant="amber"
-                                      size="xs"
-                                      onClick={() => {
-                                        setBakeryHistoryInitialOwner(b.bakeryOwnerName);
-                                        setIsBakeryHistoryDrawerOpen(true);
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDetailsBakery(b);
                                       }}
-                                      className="!px-2 !py-1"
-                                      title={`عرض سجل التغييرات التاريخي لمخبز ${b.bakeryOwnerName}`}
-                                      icon={<Clock className="w-3.5 h-3.5" />}
-                                    />
+                                      className="p-1.5 text-[#1E40AF] hover:bg-blue-100 rounded-lg transition cursor-pointer"
+                                      title="عرض تفصيلي لبيانات ومعادلات المخبز"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
 
                                     {hasDepartmentPermission(appState.currentUser, 'bakeries', 'update') && (
-                                      <Button
-                                        variant="edit"
-                                        size="xs"
-                                        onClick={() => {
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
                                           setBakeryToEdit(b);
                                           setIsBakeryModalOpen(true);
                                         }}
-                                        className="!px-2 !py-1"
+                                        className="p-1.5 text-slate-700 hover:text-[#0F2342] hover:bg-slate-200 rounded-lg transition cursor-pointer"
                                         title="تعديل بيانات المخبز"
-                                        icon={<Edit2 className="w-3.5 h-3.5" />}
-                                      />
+                                      >
+                                        <Edit2 className="w-4 h-4" />
+                                      </button>
                                     )}
                                     {hasDepartmentPermission(appState.currentUser, 'bakeries', 'delete') && (
-                                      <Button
-                                        variant="delete"
-                                        size="xs"
-                                        onClick={() => handleDeleteBakery(b.id, b.bakeryOwnerName)}
-                                        className="!px-2 !py-1"
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteBakery(b.id, b.bakeryOwnerName);
+                                        }}
+                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
                                         title="حذف المخبز"
-                                        icon={<Trash2 className="w-3.5 h-3.5" />}
-                                      />
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
                                     )}
                                   </div>
                                 </td>
@@ -7226,63 +6431,17 @@ export default function App() {
                             );
                           };
 
-                          // Helper to render Local Unit Subtotal Row (إجمالي الوحدة المحلية مع زر الانتقال السريع لأول مخبز بالوحدة)
-                          const renderLocalUnitSubtotalRow = (uGroup: any, unitAnchorId: string) => (
+                          // Helper to render Local Unit Subtotal Row (إجمالي الوحدة المحلية مع ذكر اسم الوحدة المحلية)
+                          const renderLocalUnitSubtotalRow = (uGroup: any) => (
                             <tr
                               key={`utotal-${uGroup.village}-${uGroup.localUnit}`}
-                              data-testid="bakery-unit-subtotal-row"
                               className="village-total-row bg-[#DBEAFE] text-[#0F2342] font-black border-t-2 border-b-2 border-sky-400 shadow-xs text-xs"
                             >
                               <td className="py-2.5 px-2 border-l border-sky-300 text-[#0369A1] font-extrabold">∑</td>
                               {showBasicCols && (
                                 <>
                                   <td className="py-2.5 px-2.5 border-l border-sky-300 text-right font-black text-[#0F2342]">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                      <span>
-                                        إجمالي الوحدة المحلية ({uGroup.localUnit}) — قرية {uGroup.village}
-                                      </span>
-                                      <div className="flex flex-wrap items-center gap-1.5 no-print">
-                                        <button
-                                          type="button"
-                                          data-testid="quick-jump-unit-btn"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            const targetEl = document.getElementById(unitAnchorId);
-                                            if (targetEl) {
-                                              targetEl.scrollIntoView({
-                                                behavior: 'smooth',
-                                                block: 'center',
-                                              });
-                                              setHighlightedUnitAnchorId(unitAnchorId);
-                                              setTimeout(() => {
-                                                setHighlightedUnitAnchorId((curr) =>
-                                                  curr === unitAnchorId ? null : curr
-                                                );
-                                              }, 1800);
-                                            }
-                                          }}
-                                          className="px-2 py-0.5 rounded-lg bg-[#0F2342] hover:bg-[#1E3A8A] text-amber-300 text-[10px] font-black inline-flex items-center gap-1 shadow-xs transition cursor-pointer"
-                                          title={`انتقال سريع لأول مخبز تابع للوحدة المحلية (${uGroup.localUnit})`}
-                                        >
-                                          <span>القفز للمخابز ↑</span>
-                                        </button>
-                                        <button
-                                          type="button"
-                                          data-testid="filter-local-unit-bakeries-btn"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedUnit(uGroup.localUnit);
-                                            setSelectedVillage('ALL');
-                                            setCurrentPage(1);
-                                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                                          }}
-                                          className="px-2 py-0.5 rounded-lg bg-white hover:bg-sky-50 text-[#0F2342] border border-sky-500 text-[10px] font-black inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
-                                          title={`تصفية الجدول لعرض مخابز الوحدة المحلية (${uGroup.localUnit}) فقط`}
-                                        >
-                                          <span>مخابز الوحدة ({uGroup.bakeryCount})</span>
-                                        </button>
-                                      </div>
-                                    </div>
+                                    إجمالي الوحدة المحلية ({uGroup.localUnit}) — قرية {uGroup.village}
                                   </td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged text-[#1E3A8A]">
                                     {uGroup.bakeryCount} مخبز
@@ -7314,18 +6473,10 @@ export default function App() {
                               )}
                               {showDemographicsCols && (
                                 <>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title="لا يُجمع عدد السكان داخل نفس الوحدة المحلية — يُجمع في إجمالي القرية فقط">
-                                    —
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title="لا يُجمع عدد المستفيدين داخل نفس الوحدة المحلية — يُجمع في إجمالي القرية فقط">
-                                    —
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title="لا يُجمع عدد المستفيدين داخل نفس الوحدة المحلية — يُجمع في إجمالي القرية فقط">
-                                    —
-                                  </td>
-                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged" title="لا يُجمع عدد المستفيدين داخل نفس الوحدة المحلية — يُجمع في إجمالي القرية فقط">
-                                    —
-                                  </td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{uGroup.villagePopulation?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{uGroup.beneficiaries2023?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{uGroup.beneficiaries2024?.toLocaleString()}</td>
+                                  <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged">{uGroup.beneficiaries2025?.toLocaleString()}</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{uGroup.avg2023}</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{uGroup.avg2024}</td>
                                   <td className="py-2.5 px-2 border-l border-sky-300 num-enlarged bg-sky-200/60 text-[#1E3A8A]">{uGroup.avg2025}</td>
@@ -7366,14 +6517,11 @@ export default function App() {
                             let pageRunningIndex = (safeCurrentPage - 1) * pageSize;
 
                             hierarchicalGroups.forEach((uGroup) => {
-                              const unitAnchorId = `bakery-unit-anchor-${encodeURIComponent(`${uGroup.village}__${uGroup.localUnit}`)}`;
-                              uGroup.bakeries.forEach((b, uIdx) => {
+                              uGroup.bakeries.forEach((b) => {
                                 pageRunningIndex++;
-                                elements.push(
-                                  renderBakeryRow(b, pageRunningIndex, uIdx === 0 ? unitAnchorId : undefined)
-                                );
+                                elements.push(renderBakeryRow(b, pageRunningIndex));
                               });
-                              elements.push(renderLocalUnitSubtotalRow(uGroup, unitAnchorId));
+                              elements.push(renderLocalUnitSubtotalRow(uGroup));
                             });
 
                             return elements;
@@ -7589,7 +6737,6 @@ export default function App() {
                   </div>
                 )}
               </div>
-              </ErrorBoundary>
             </div>
           )}
           </div>
@@ -8070,16 +7217,8 @@ export default function App() {
           onRestoreState={(restored) => triggerSave(restored, 'تم استعادة وتطبيق قاعدة البيانات بنجاح')}
           onResetNonMahallaBranches={handleResetNonMahallaBranches}
           onFactoryReset={async () => {
-            const targetBranchId = appState.activeBranchId || DEFAULT_BRANCH_ID;
-            const targetBranchName = appState.systemConfig.administrationTitle || 'الفرع الحالي';
-            await clearSupabaseDatabaseData(targetBranchId).catch(() => {});
-            await factoryResetBranch(targetBranchId);
-            const emptyMod = await resetBranchModulesBundleForBranch(
-              targetBranchId,
-              targetBranchName,
-              appState.villages || DEFAULT_VILLAGES_HIERARCHY
-            );
-            setModulesBundle(emptyMod);
+            await clearSupabaseDatabaseData().catch(() => {});
+            await factoryReset();
             setHighDebtNotifications([]);
             setAppState((prev) =>
               prev
@@ -8088,7 +7227,6 @@ export default function App() {
                     bakeries: [],
                     debts: [],
                     dailyTasks: [],
-                    inboxMessages: [],
                   }
                 : prev
             );
@@ -8670,8 +7808,6 @@ export default function App() {
                 ? [appState.systemConfig.gmailEmail]
                 : [],
               includeSystemSupervisors: true,
-              lowFlourQuotaAlertEnabled: true,
-              lowFlourQuotaMinSacks: 10,
             }
           }
           bakeries={appState.bakeries}
@@ -8697,18 +7833,6 @@ export default function App() {
           }
         />
       )}
-
-      {/* 12A. Bakery Historical Change Log Slide-Over Drawer (سجل التغييرات التاريخي للمخابز) */}
-      <BakeryChangeHistoryDrawer
-        isOpen={isBakeryHistoryDrawerOpen}
-        onClose={() => setIsBakeryHistoryDrawerOpen(false)}
-        bakeries={appState.bakeries}
-        initialOwnerQuery={bakeryHistoryInitialOwner}
-        onSelectBakery={(bakery) => {
-          setSelectedBakeryRowId(bakery.id);
-          setDetailsBakery(bakery);
-        }}
-      />
 
       {/* 12B. Daily Critical Debt Email Delivery History Modal (سجل إرسال التنبيهات البريدية اليومية) */}
       {isDebtEmailHistoryOpen && (
@@ -9224,18 +8348,12 @@ export default function App() {
         activeBranchId={appState.activeBranchId || DEFAULT_BRANCH_ID}
         currentUser={appState.currentUser}
         isVaultUnlocked={isVaultUnlocked}
+        onResetNonMahallaBranches={handleResetNonMahallaBranches}
         onRequireVaultUnlock={(label, onUnlocked) => {
           requireVaultAccess('branches', label, onUnlocked);
         }}
-        onManageDepartments={(targetBranch) => {
-          requireVaultAccess('branches', `إدارة أقسام ${targetBranch.name}`, () => {
-            setBranchDepartmentsTarget(targetBranch);
-          });
-        }}
         onSelectBranch={(branchId) => {
-          requireVaultAccess('branches', 'تبديل الفرع / الإدارة التموينية', () => {
-            handleSwitchBranch(branchId, cleanBranchesList);
-          });
+          handleSwitchBranch(branchId, cleanBranchesList);
         }}
         onCreateBranch={async (name, directorate, governorate, description) => {
           if (!isSuperAdmin(appState.currentUser)) return;
@@ -9243,183 +8361,13 @@ export default function App() {
           if (!created.success || !created.newBranch) return;
           const deduplicatedNext = deduplicateSupplyBranches(created.branches);
           saveBranchesList(deduplicatedNext);
-          await resetBranchModulesBundleForBranch(
-            created.newBranch.id,
-            created.newBranch.name,
-            []
-          ).catch(() => {});
           await saveRowToDb({
             table: 'branches',
             branchId: created.newBranch.id,
             row: created.newBranch,
             operation: 'INSERT',
           });
-          setAppState((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  branches: deduplicatedNext,
-                }
-              : prev
-          );
-          setSaveToast({
-            id: Date.now(),
-            message: `تمت إضافة "${created.newBranch.name}" بكامل الأقسام مع تصفير المخابز والمديونيات بنجاح`,
-            timestamp: getArabicTimestamp(),
-            variant: 'success',
-          });
-        }}
-        onCopyDepartmentsToAllBranches={async () => {
-          const canManageDepts =
-            isSuperAdmin(appState.currentUser) ||
-            hasPermission(appState.currentUser, 'MANAGE_DEPARTMENTS', appState.systemConfig);
-          if (!canManageDepts) {
-            return { success: false, error: 'نسخ الأقسام لجميع الفروع مقصور على مدير النظام فقط.' };
-          }
-          const isHttpOrigin =
-            typeof window !== 'undefined' &&
-            (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-          let syncedDepartments = normalizeBranchDepartments(
-            appState.systemConfig?.branchDepartments
-          );
-          let updatedIds = cleanBranchesList.map((b) => b.id);
-          let serverMsg: string | undefined;
-
-          if (isHttpOrigin && navigator.onLine !== false) {
-            const resp = await fetch('/api/branches/sync-all-departments', {
-              method: 'POST',
-              credentials: 'same-origin',
-              headers: getSecurityShieldHeaders(true),
-              body: JSON.stringify({
-                sourceBranchId: DEFAULT_BRANCH_ID,
-              }),
-            });
-            const json = await resp.json().catch(() => null);
-            if (!resp.ok || json?.success === false) {
-              return {
-                success: false,
-                error: json?.error || 'تعذر نسخ الأقسام إلى جميع الفروع على الخادم.',
-              };
-            }
-            if (Array.isArray(json?.departments) && json.departments.length > 0) {
-              syncedDepartments = json.departments;
-            }
-            if (Array.isArray(json?.updatedBranchIds) && json.updatedBranchIds.length > 0) {
-              updatedIds = json.updatedBranchIds;
-            }
-            if (json?.message) serverMsg = String(json.message);
-          }
-
-          for (const bId of updatedIds) {
-            const existingPart = readBranchPartitionFromLocal(bId);
-            if (existingPart) {
-              writeBranchPartitionToLocal(bId, {
-                ...existingPart,
-                systemConfig: {
-                  ...(existingPart.systemConfig || appState.systemConfig),
-                  branchDepartments: syncedDepartments,
-                },
-              });
-            }
-          }
-          setAppState((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  systemConfig: {
-                    ...prev.systemConfig,
-                    branchDepartments: syncedDepartments,
-                  },
-                }
-              : prev
-          );
-          const nowAr = getArabicTimestamp();
-          setSaveTimestamp(nowAr);
-          const finalMsg =
-            serverMsg ||
-            `تم نسخ جميع الأقسام (${syncedDepartments.length} أقسام) داخل كافة الفروع (${updatedIds.length} فرع) بنجاح دون المساس بالبيانات.`;
-          setSaveToast({
-            id: Date.now(),
-            message: finalMsg,
-            timestamp: nowAr,
-            variant: 'success',
-          });
-          return { success: true, updatedCount: updatedIds.length, message: finalMsg };
-        }}
-        onFactoryResetBranch={async (targetBranchId) => {
-          const canResetBranch =
-            isSuperAdmin(appState.currentUser) ||
-            hasPermission(appState.currentUser, 'FACTORY_RESET_BRANCH', appState.systemConfig);
-          if (!canResetBranch) {
-            return { success: false, error: 'صلاحية تصفير بيانات الفرع أو مدير النظام مطلوبة.' };
-          }
-          const targetBranch = cleanBranchesList.find((b) => b.id === targetBranchId);
-          const targetName = targetBranch?.name || 'الإدارة التموينية';
-          const isCurrentActive = targetBranchId === (appState.activeBranchId || DEFAULT_BRANCH_ID);
-          const isHttpOrigin =
-            typeof window !== 'undefined' &&
-            (window.location.protocol === 'http:' || window.location.protocol === 'https:');
-          if (isHttpOrigin && navigator.onLine !== false) {
-            try {
-              const resp = await fetch(
-                `/api/branches/${encodeURIComponent(targetBranchId)}/reset-branch`,
-                {
-                  method: 'POST',
-                  credentials: 'same-origin',
-                  headers: getSecurityShieldHeaders(true),
-                  body: JSON.stringify({
-                    confirmReset: true,
-                    confirmDouble: true,
-                  }),
-                }
-              );
-              const json = await resp.json().catch(() => null);
-              if (!resp.ok || json?.success === false) {
-                return {
-                  success: false,
-                  error: json?.error || 'تعذر تنفيذ تصفير بيانات الفرع على الخادم.',
-                };
-              }
-            } catch {
-              await clearSupabaseDatabaseData(targetBranchId);
-            }
-          } else {
-            await clearSupabaseDatabaseData(targetBranchId);
-          }
-          await factoryResetBranch(targetBranchId);
-          const emptyMod = await resetBranchModulesBundleForBranch(
-            targetBranchId,
-            targetName,
-            isCurrentActive ? appState.villages || [] : []
-          );
-          if (isCurrentActive) {
-            latestModulesBundleRef.current = emptyMod;
-            setModulesBundle(emptyMod);
-            setHighDebtNotifications([]);
-            setAppState((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    bakeries: [],
-                    debts: [],
-                    dailyTasks: [],
-                    inboxMessages: [],
-                  }
-                : prev
-            );
-          }
-          const nowAr = getArabicTimestamp();
-          setSaveTimestamp(nowAr);
-          setSaveToast({
-            id: Date.now(),
-            message: `تمت استعادة ضبط المصنع وتصفير جميع بيانات «${targetName}» فقط بنجاح مع بقاء الأقسام والمستخدمين والإعدادات`,
-            timestamp: nowAr,
-            variant: 'success',
-          });
-          return {
-            success: true,
-            message: `تم تنفيذ تصفير جميع البيانات التشغيلية داخل «${targetName}» فقط (المخابز = 0، المديونيات = 0، كافة الأقسام = 0) مع بقاء الأقسام والمستخدمين والإعدادات دون التأثير على أي فرع آخر.`,
-          };
+          handleSwitchBranch(created.newBranch.id, deduplicatedNext);
         }}
         onRenameBranch={async (branchId, name, directorate, governorate, description) => {
           if (!isSuperAdmin(appState.currentUser)) return;
@@ -9503,102 +8451,6 @@ export default function App() {
       />
       )}
 
-      {/* Per-Branch Independent Departments Manager Modal (إدارة الأقسام داخل كل فرع بشكل مستقل) */}
-      {branchDepartmentsTarget && (
-        <BranchDepartmentsManagerModal
-          isOpen={Boolean(branchDepartmentsTarget)}
-          onClose={() => setBranchDepartmentsTarget(null)}
-          branch={branchDepartmentsTarget}
-          initialDepartments={
-            branchDepartmentsTarget.id === (appState.activeBranchId || DEFAULT_BRANCH_ID)
-              ? appState.systemConfig?.branchDepartments
-              : readBranchPartitionFromLocal(branchDepartmentsTarget.id)?.systemConfig
-                  ?.branchDepartments
-          }
-          departmentRecordCounts={
-            branchDepartmentsTarget.id === (appState.activeBranchId || DEFAULT_BRANCH_ID)
-              ? computeDepartmentRecordCounts(sidebarCounts)
-              : undefined
-          }
-          onSaveDepartments={handleSaveBranchDepartments}
-        />
-      )}
-
-      {/* Per-Village Comprehensive Operational Data Factory Reset Modal */}
-      {isVillageResetModalOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="village-factory-reset-title"
-          className="fixed inset-0 z-[10000] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 no-print"
-          dir="rtl"
-          onClick={() => setIsVillageResetModalOpen(false)}
-        >
-          <div
-            className="bg-white border-2 border-amber-500/70 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-amber-100 text-amber-700 shrink-0">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 id="village-factory-reset-title" className="text-sm font-black text-[#0F2342]">
-                  استعادة ضبط المصنع لبيانات قرية محددة فقط
-                </h3>
-                <p className="text-xs font-semibold text-slate-600 mt-1.5 leading-relaxed">
-                  سيتم تنفيذ مسح شامل للبيانات المدخلة داخل القرية المختارة فقط (المخابز، المديونيات،
-                  التجار التموينيين، الأكواد، الماكينات، المنشآت، الشون/الري) دون المساس بهيكل الأقسام
-                  أو باقي القرى أو الفروع الأخرى.
-                </p>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-black text-[#0F2342] mb-1.5">
-                اختر القرية المطلوب تصفير بياناتها بالكامل:
-              </label>
-              <select
-                data-testid="village-reset-select"
-                value={villageResetTargetName}
-                onChange={(e) => setVillageResetTargetName(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-[#0F2342]"
-              >
-                {availableVillagesFilter.map((vName) => (
-                  <option key={vName} value={vName}>
-                    {vName}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setIsVillageResetModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
-              >
-                إلغاء
-              </button>
-              <button
-                type="button"
-                disabled={!villageResetTargetName.trim()}
-                data-testid="village-reset-confirm-btn"
-                onClick={async () => {
-                  const target = villageResetTargetName.trim();
-                  if (!target) return;
-                  setIsVillageResetModalOpen(false);
-                  await handleFactoryResetSection('village', target);
-                }}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-black cursor-pointer shadow-xs"
-              >
-                تأكيد التصفير الشامل لهذه القرية
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Master Secret Passcode Gate Modal for Backup & Copy and Branch Modifications */}
       {vaultGateModal.isOpen && (
         <VaultSecurityGateModal
@@ -9611,7 +8463,6 @@ export default function App() {
           branchCredentialsMap={configuredBranchCredentialsMap}
           globalUsername={configuredVaultUsername}
           currentPasscode={configuredVaultPasscode}
-          onVerifyCredentials={handleVerifyVaultOnServer}
           onUnlockSuccess={() => {
             setIsVaultUnlocked(true);
             const pendingFn = vaultGateModal.onAfterUnlock;
@@ -9620,18 +8471,11 @@ export default function App() {
               pendingFn();
             }
           }}
-          onChangeCredentials={async ({
-            targetScope,
-            currentUsername,
-            currentPasscode,
-            newUsername,
-            newPasscode,
-          }) => {
+          onChangeCredentials={async ({ targetScope, newUsername, newPasscode }) => {
             await handleUpdateVaultPasscode(
               newPasscode,
               newUsername,
-              targetScope === 'all' ? 'ALL' : targetScope,
-              { currentUsername, currentPasscode }
+              targetScope === 'all' ? 'ALL' : targetScope
             );
           }}
         />

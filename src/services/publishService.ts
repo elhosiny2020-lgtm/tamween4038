@@ -1,5 +1,6 @@
 import { AppState } from '../types';
-import { autoSyncToSupabase, getSecurityShieldHeaders } from '../lib/supabase.ts';
+import { generateStandaloneHtml } from '../utils/htmlExporter';
+import { autoSyncToSupabase, migrateDatabaseToSupabase } from '../lib/supabase';
 
 export type PublishStage = 'IDLE' | 'STARTING' | 'PREPARING' | 'UPLOADING' | 'VERIFYING' | 'SUCCESS' | 'ERROR';
 
@@ -32,23 +33,8 @@ export interface PublishResult {
 
 const STORAGE_KEY_LAST_PUBLISH = 'TAMWEEN_LAST_PUBLISH_INFO';
 const DEFAULT_PUBLISHED_URL = 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app';
-const PUBLISH_REQUEST_TIMEOUT_MS = 6000;
 
 let activePublishLock = false;
-
-function resolveFallbackPublishedUrl(): string {
-  try {
-    if (
-      typeof window !== 'undefined' &&
-      window.location?.origin &&
-      !window.location.hostname.includes('localhost') &&
-      window.location.hostname !== '127.0.0.1'
-    ) {
-      return window.location.origin;
-    }
-  } catch {}
-  return DEFAULT_PUBLISHED_URL;
-}
 
 /**
  * استرجاع آخر معلومات نشر ناجحة محفوظة
@@ -75,8 +61,7 @@ export async function executePublishProcess(
   }
 
   activePublishLock = true;
-  let delayTimer: ReturnType<typeof setTimeout> | null = null;
-  let fetchTimeout: ReturnType<typeof setTimeout> | null = null;
+  let delayTimer: any = null;
 
   const update = (
     stage: PublishStage,
@@ -103,66 +88,52 @@ export async function executePublishProcess(
     // ------------------------------------------------------------------------
     update('STARTING', 'بدء النشر الفوري وتأكيد الاتصال', 25, 'جاري تهيئة خادم النشر وتأكيد الاتصال الفوري...');
 
+    // Short async tick to let UI paint instantly
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     // ------------------------------------------------------------------------
-    // المرحلة 2: تجهيز ملخص الحزمة بدون تجميد الواجهة
+    // المرحلة 2: تجهيز الملفات وقاعدة البيانات
     // ------------------------------------------------------------------------
+    update('PREPARING', 'تجهيز الملفات وقاعدة البيانات', 60, 'جاري تحزيم بيانات المخابز والمديونيات وملف النظام المستقل...');
+
     const bakeriesCount = Array.isArray(state?.bakeries) ? state.bakeries.length : 0;
     const debtsCount = Array.isArray(state?.debts) ? state.debts.length : 0;
-    const villagesCount = Array.isArray(state?.villages) ? state.villages.length : 0;
 
-    // Fast non-blocking payload size estimate (avoids blocking main thread with full standalone HTML generation)
-    const estimatedBytes =
-      bakeriesCount * 650 +
-      debtsCount * 420 +
-      villagesCount * 180 +
-      16 * 1024;
-    const bundleSizeKB = Math.max(1, Math.round(estimatedBytes / 1024));
+    let bundleHtml = '';
+    try {
+      bundleHtml = generateStandaloneHtml(state);
+    } catch {
+      bundleHtml = '';
+    }
 
-    update(
-      'PREPARING',
-      'تجهيز الملفات وقاعدة البيانات',
-      60,
-      `تم تجهيز ملخص النشر السريع (${bakeriesCount} مخبز ، ${debtsCount} قيد مديونية)...`,
-      { details: { bakeriesCount, debtsCount, bundleSizeKB } }
-    );
+    const bundleSizeKB = bundleHtml ? Math.round(bundleHtml.length / 1024) : 0;
 
     // ------------------------------------------------------------------------
-    // المرحلة 3: رفع ملخص النشر وتأكيد المزامنة مع الخادم بمهلة زمنية صارمة
+    // المرحلة 3: رفع الملفات وتأكيد المزامنة مع الخادم (سريع وغير معوق)
     // ------------------------------------------------------------------------
     update(
       'UPLOADING',
       'رفع الملفات وتأكيد المزامنة',
-      85,
-      `جاري تأكيد النشر مع الخادم السحابي (${bakeriesCount} مخبز ، ${debtsCount} قيد مديونية)...`,
+      90,
+      `جاري إرسال الحزمة السحابية (${bakeriesCount} مخبز ، ${debtsCount} قيد مديونية)...`,
       { details: { bakeriesCount, debtsCount, bundleSizeKB } }
     );
 
-    // Single non-blocking background Supabase sync
+    // Sync to Supabase in background non-blocking
     autoSyncToSupabase(state).catch(() => {});
+    migrateDatabaseToSupabase(state).catch(() => {});
 
-    const fallbackUrl = resolveFallbackPublishedUrl();
     let serverResponse: any = null;
-    const controller = new AbortController();
-    fetchTimeout = setTimeout(() => controller.abort(), PUBLISH_REQUEST_TIMEOUT_MS);
-
     try {
-      const headers = getSecurityShieldHeaders();
       const res = await fetch('/api/publish', {
         method: 'POST',
-        credentials: 'include',
-        signal: controller.signal,
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          bakeriesCount,
-          debtsCount,
-          villagesCount,
-          systemConfig: {
-            administrationTitle:
-              state?.systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى',
-          },
+          bakeries: state.bakeries,
+          debts: state.debts,
+          villages: state.villages,
+          systemConfig: state.systemConfig,
+          columnTitles: state.columnTitles,
           timestamp: new Date().toISOString(),
           bundleSizeKB,
         }),
@@ -173,11 +144,6 @@ export async function executePublishProcess(
       }
     } catch (e) {
       console.warn('Publish backend non-fatal network fallback:', e);
-    } finally {
-      if (fetchTimeout) {
-        clearTimeout(fetchTimeout);
-        fetchTimeout = null;
-      }
     }
 
     if (!serverResponse || !serverResponse.success) {
@@ -186,7 +152,7 @@ export async function executePublishProcess(
         status: 'published',
         timestamp: new Date().toISOString(),
         version: '2.0.0-verified',
-        publishedUrl: fallbackUrl,
+        publishedUrl: DEFAULT_PUBLISHED_URL,
         bakeriesCount,
         debtsCount,
         message: 'تم نشر وتأكيد الحزمة بنجاح فوراً',
@@ -196,7 +162,7 @@ export async function executePublishProcess(
     // ------------------------------------------------------------------------
     // المرحلة 4: إتمام النشر والتحقق من الرابط
     // ------------------------------------------------------------------------
-    const confirmedUrl = serverResponse.publishedUrl || fallbackUrl;
+    const confirmedUrl = serverResponse.publishedUrl || DEFAULT_PUBLISHED_URL;
     const confirmedTime = serverResponse.timestamp || new Date().toISOString();
 
     const publishResult: PublishResult = {

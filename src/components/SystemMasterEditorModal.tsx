@@ -1,12 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { VillageHierarchy, AppUser } from '../types';
 import { AppState } from '../storage';
-import { isSuperAdmin } from '../utils/departmentRbac';
-import {
-  UNIVERSAL_TABLES_CATALOG,
-  resolveCustomTableTitle,
-  resolveCustomColumnTitle,
-} from '../utils/branchOperations';
 import {
   DEFAULT_BAKERY_CATEGORIES,
   DEFAULT_BREAD_TYPES,
@@ -40,13 +34,11 @@ import {
   Store,
   ShieldAlert,
   Scale,
-  CreditCard,
-  RotateCcw,
+  CreditCard
 } from 'lucide-react';
 
 export type DropdownCategoryKey =
   | 'ALL'
-  | 'universalTables'
   | 'lineTypes'
   | 'fuelTypes'
   | 'leaseContractTypes'
@@ -73,10 +65,8 @@ interface SystemMasterEditorModalProps {
   onOpenVillagesManager: () => void;
 }
 
-type StandardDropdownKey = Exclude<DropdownCategoryKey, 'ALL' | 'villages' | 'universalTables'>;
-
 interface DropdownListMeta {
-  key: StandardDropdownKey;
+  key: Exclude<DropdownCategoryKey, 'ALL' | 'villages'>;
   title: string;
   subtitle: string;
   placeholder: string;
@@ -187,26 +177,10 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
   onOpenUsersManager,
   onOpenVillagesManager,
 }) => {
-  const isReadOnly =
-    appState.currentUser?.role === 'viewer' || appState.currentUser?.role === 'reader';
+  const isReadOnly = appState.currentUser?.role === 'viewer';
 
   const [activeCategory, setActiveCategory] = useState<DropdownCategoryKey>(initialCategory);
   const [searchQuery, setSearchQuery] = useState('');
-
-  // State for editing all tables & columns across all departments
-  const [tableTitlesDraft, setTableTitlesDraft] = useState<Record<string, string>>(
-    () => ({ ...(appState.systemConfig?.customTableTitles || {}) })
-  );
-  const [columnTitlesDraft, setColumnTitlesDraft] = useState<
-    Record<string, Record<string, string>>
-  >(() => {
-    const base: Record<string, Record<string, string>> = {
-      ...(appState.systemConfig?.customColumnTitles || {}),
-    };
-    const mainCols = { ...(appState.columnTitles || {}), ...(base.bakeries_main || {}) };
-    base.bakeries_main = mainCols as Record<string, string>;
-    return base;
-  });
 
   // State for adding new items per list key
   const [newInputs, setNewInputs] = useState<Record<string, string>>({});
@@ -232,60 +206,11 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
     if (isOpen && initialCategory) {
       setActiveCategory(initialCategory);
     }
-    if (isOpen) {
-      setTableTitlesDraft({ ...(appState.systemConfig?.customTableTitles || {}) });
-      const base: Record<string, Record<string, string>> = {};
-      const srcCustom = appState.systemConfig?.customColumnTitles || {};
-      for (const k of Object.keys(srcCustom)) {
-        base[k] = { ...srcCustom[k] };
-      }
-      base.bakeries_main = {
-        ...((appState.columnTitles || {}) as unknown as Record<string, string>),
-        ...(base.bakeries_main || {}),
-      };
-      setColumnTitlesDraft(base);
-    }
-  }, [isOpen, initialCategory, appState.systemConfig, appState.columnTitles]);
-
-  const handleSaveAllTablesAndColumns = () => {
-    if (isReadOnly) return;
-    const cleanedTableTitles: Record<string, string> = {};
-    for (const [k, v] of Object.entries(tableTitlesDraft)) {
-      if (v && v.trim()) cleanedTableTitles[k] = v.trim();
-    }
-    const cleanedColumnTitles: Record<string, Record<string, string>> = {};
-    for (const [tKey, cols] of Object.entries(columnTitlesDraft)) {
-      const cleanedCols: Record<string, string> = {};
-      for (const [cKey, cVal] of Object.entries(cols || {})) {
-        if (cVal && cVal.trim()) cleanedCols[cKey] = cVal.trim();
-      }
-      if (Object.keys(cleanedCols).length > 0) {
-        cleanedColumnTitles[tKey] = cleanedCols;
-      }
-    }
-
-    const updatedMainCols = {
-      ...(appState.columnTitles || {}),
-      ...(cleanedColumnTitles.bakeries_main || {}),
-    };
-
-    onUpdateState(
-      {
-        ...appState,
-        columnTitles: updatedMainCols,
-        systemConfig: {
-          ...appState.systemConfig,
-          customTableTitles: cleanedTableTitles,
-          customColumnTitles: cleanedColumnTitles,
-        },
-      },
-      'تم حفظ مسميات جميع الجداول والأعمدة على كامل أقسام المنظومة في قاعدة البيانات بنجاح!'
-    );
-  };
+  }, [isOpen, initialCategory]);
 
   // Escape key closing is intentionally disabled per user preference
 
-  const getListItems = (key: StandardDropdownKey): string[] => {
+  const getListItems = (key: Exclude<DropdownCategoryKey, 'ALL' | 'villages'>): string[] => {
     switch (key) {
       case 'lineTypes':
         return appState.lineTypes || DEFAULT_LINE_TYPES;
@@ -312,7 +237,7 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
     }
   };
 
-  const handleAddItem = (key: StandardDropdownKey, title: string) => {
+  const handleAddItem = (key: Exclude<DropdownCategoryKey, 'ALL' | 'villages'>, title: string) => {
     if (isReadOnly) return;
     const raw = (newInputs[key] || '').trim();
     if (!raw) return;
@@ -333,7 +258,7 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
   };
 
   const handleSaveEditItem = (
-    key: StandardDropdownKey,
+    key: Exclude<DropdownCategoryKey, 'ALL' | 'villages'>,
     title: string,
     oldVal: string,
     newVal: string
@@ -399,7 +324,7 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
   };
 
   const handleDeleteItem = (
-    key: StandardDropdownKey,
+    key: Exclude<DropdownCategoryKey, 'ALL' | 'villages'>,
     title: string,
     valToDelete: string
   ) => {
@@ -631,7 +556,7 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
               <span>إدارة القرى والوحدات المفصلة</span>
             </button>
 
-            {isSuperAdmin(appState.currentUser) && (
+            {appState.currentUser?.role === 'admin' && (
               <button
                 type="button"
                 onClick={() => {
@@ -683,19 +608,6 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
               }`}
             >
               جميع القوائم المنسدلة (12)
-            </button>
-            <button
-              type="button"
-              data-testid="tab-universal-tables-editor"
-              onClick={() => setActiveCategory('universalTables')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black whitespace-nowrap cursor-pointer flex items-center gap-1 ${
-                activeCategory === 'universalTables'
-                  ? 'bg-gradient-to-l from-[#0A1628] to-[#0D9488] text-amber-300 shadow-xs border border-[#D4AF37]'
-                  : 'bg-teal-50 text-teal-900 border border-teal-400 hover:bg-teal-100'
-              }`}
-            >
-              <Columns3 className="w-3.5 h-3.5" />
-              <span>تعديل مسميات الجداول والأعمدة لكافة الأقسام ({UNIVERSAL_TABLES_CATALOG.length})</span>
             </button>
             <button
               type="button"
@@ -834,143 +746,9 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
 
         {/* Main Scrollable Content */}
         <div className="p-5 overflow-y-auto flex-1 bg-slate-50 space-y-5">
-          {activeCategory === 'universalTables' ? (
-            <div data-testid="universal-tables-editor-panel" className="space-y-4">
-              <div className="bg-white border-2 border-[#0D9488]/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-                <div>
-                  <h4 className="text-sm font-black text-[#0A1628] flex items-center gap-2">
-                    <Columns3 className="w-4 h-4 text-[#0D9488]" />
-                    <span>تعديل جميع مسميات الجداول والأعمدة على كامل أقسام المنظومة (7 أقسام)</span>
-                  </h4>
-                  <p className="text-xs font-bold text-slate-500 mt-0.5">
-                    عدّل اسم أي جدول أو أي عمود في المخابز أو المديونيات أو السلع أو التجارة الداخلية أو صيانة الحبوب أو الموارد البشرية أو التقارير واضغط حفظ للاعتماد في قاعدة البيانات.
-                  </p>
-                </div>
-                {!isReadOnly && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTableTitlesDraft({});
-                        setColumnTitlesDraft({});
-                      }}
-                      className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-black cursor-pointer"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      <span>مسودة افتراضية</span>
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="save-universal-tables-btn"
-                      onClick={handleSaveAllTablesAndColumns}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-l from-[#0A1628] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] text-white text-xs font-black shadow cursor-pointer"
-                    >
-                      <Save className="w-4 h-4 text-[#D4AF37]" />
-                      <span>حفظ جميع مسميات الجداول والأعمدة</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-4">
-                {UNIVERSAL_TABLES_CATALOG.filter((tbl) => {
-                  const q = searchQuery.trim().toLowerCase();
-                  if (!q) return true;
-                  return (
-                    tbl.departmentLabel.toLowerCase().includes(q) ||
-                    tbl.defaultTitle.toLowerCase().includes(q) ||
-                    tbl.columns.some((c) => c.defaultLabel.toLowerCase().includes(q))
-                  );
-                }).map((tbl) => {
-                  const currentTableTitle =
-                    tableTitlesDraft[tbl.tableKey] ??
-                    resolveCustomTableTitle(appState.systemConfig, tbl.tableKey, tbl.defaultTitle);
-                  return (
-                    <div
-                      key={tbl.tableKey}
-                      data-testid={`universal-table-card-${tbl.tableKey}`}
-                      className="bg-white border-2 border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-1 rounded-lg bg-[#0A1628] text-[#D4AF37] text-[11px] font-black">
-                            {tbl.departmentLabel}
-                          </span>
-                          <span className="text-xs font-bold text-slate-500">
-                            ({tbl.columns.length} عمود)
-                          </span>
-                        </div>
-                        <div className="flex-1 min-w-[260px] max-w-xl">
-                          <label className="block text-[10px] font-black text-slate-500 mb-1">
-                            عنوان الجدول المخصص:
-                          </label>
-                          <input
-                            type="text"
-                            disabled={isReadOnly}
-                            data-testid={`table-title-input-${tbl.tableKey}`}
-                            value={currentTableTitle}
-                            onChange={(e) =>
-                              setTableTitlesDraft((prev) => ({
-                                ...prev,
-                                [tbl.tableKey]: e.target.value,
-                              }))
-                            }
-                            placeholder={tbl.defaultTitle}
-                            className="w-full px-3 py-1.5 rounded-xl border border-slate-300 bg-[#FAF8F5] text-xs font-black text-[#0A1628] focus:border-[#0D9488]"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                        {tbl.columns.map((col) => {
-                          const currentColLabel =
-                            columnTitlesDraft[tbl.tableKey]?.[col.key] ??
-                            resolveCustomColumnTitle(
-                              appState.systemConfig,
-                              tbl.tableKey,
-                              col.key,
-                              col.defaultLabel
-                            );
-                          return (
-                            <div
-                              key={`${tbl.tableKey}-${col.key}`}
-                              className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1"
-                            >
-                              <div className="flex items-center justify-between gap-1 text-[10px] font-bold text-slate-500">
-                                <span>الافتراضي: {col.defaultLabel}</span>
-                                <span className="font-mono text-slate-400">{col.key}</span>
-                              </div>
-                              <input
-                                type="text"
-                                disabled={isReadOnly}
-                                data-testid={`col-title-input-${tbl.tableKey}-${col.key}`}
-                                value={currentColLabel}
-                                onChange={(e) =>
-                                  setColumnTitlesDraft((prev) => ({
-                                    ...prev,
-                                    [tbl.tableKey]: {
-                                      ...(prev[tbl.tableKey] || {}),
-                                      [col.key]: e.target.value,
-                                    },
-                                  }))
-                                }
-                                placeholder={col.defaultLabel}
-                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-black text-slate-900 focus:border-[#0D9488]"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Standard Dropdown Lists Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {visibleMetaLists.map((meta) => {
+          {/* Standard 9 Dropdown Lists Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {visibleMetaLists.map((meta) => {
               const allItems = getListItems(meta.key);
               const q = searchQuery.trim().toLowerCase();
               const filteredItems = q
@@ -1349,8 +1127,6 @@ export const SystemMasterEditorModal: React.FC<SystemMasterEditorModalProps> = (
                 })}
               </div>
             </div>
-          )}
-            </>
           )}
         </div>
 

@@ -1,56 +1,6 @@
-import type { AppState } from '../storage.ts';
+import { AppState } from '../storage';
 
 export const OFFICIAL_ONLINE_URL = 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app';
-
-const HTML2PDF_CDN_URL = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
-const HTML2PDF_CDN_SRI = 'sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==';
-
-export function buildSafeExportPayload(currentState: AppState) {
-  const safeUsers = Array.isArray(currentState.users)
-    ? currentState.users.map((u) => {
-        const clone: Record<string, any> = { ...u };
-        delete clone.password;
-        delete clone.passwordHash;
-        delete clone.gmailPassword;
-        delete clone.salt;
-        delete clone.hash;
-        delete clone.token;
-        return clone;
-      })
-    : [];
-
-  let safeSystemConfig = currentState.systemConfig;
-  if (safeSystemConfig && typeof safeSystemConfig === 'object') {
-    const cfgClone: Record<string, any> = { ...safeSystemConfig };
-    delete cfgClone.vaultPasscode;
-    delete cfgClone.vaultUsername;
-    delete cfgClone.branchVaultCredentials;
-    safeSystemConfig = cfgClone as typeof currentState.systemConfig;
-  }
-
-  return {
-    exportTimestamp: new Date().toISOString(),
-    version: '3.0',
-    bakeries: currentState.bakeries,
-    debts: currentState.debts,
-    villages: currentState.villages,
-    issuingEntities: currentState.issuingEntities,
-    violationTypes: currentState.violationTypes,
-    activityStatuses: currentState.activityStatuses,
-    columnTitles: currentState.columnTitles,
-    systemConfig: safeSystemConfig,
-    users: safeUsers,
-  };
-}
-
-export function serializeSafeEmbeddedJson(payload: unknown): string {
-  return JSON.stringify(payload)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
-}
 
 /**
  * Downloads a complete, standalone, self-contained HTML application file
@@ -63,12 +13,25 @@ export function serializeSafeEmbeddedJson(payload: unknown): string {
  * 4. Permanently saves changes on the device via LocalStorage/IndexedDB.
  */
 export function generateStandaloneHtml(currentState: AppState): string {
-  const exportPayload = buildSafeExportPayload(currentState);
+  const exportTimestamp = new Date().toISOString();
+  const exportPayload = {
+    exportTimestamp,
+    version: '3.0',
+    bakeries: currentState.bakeries,
+    debts: currentState.debts,
+    villages: currentState.villages,
+    issuingEntities: currentState.issuingEntities,
+    violationTypes: currentState.violationTypes,
+    activityStatuses: currentState.activityStatuses,
+    columnTitles: currentState.columnTitles,
+    systemConfig: currentState.systemConfig,
+    users: currentState.users,
+  };
 
   const preloadedScript =
     '<scr' +
     'ipt id="tamween-preloaded-data">\nwindow.PRELOADED_TAMWEEN_STATE = ' +
-    serializeSafeEmbeddedJson(exportPayload) +
+    JSON.stringify(exportPayload) +
     ';\n</scr' +
     'ipt>';
 
@@ -87,9 +50,7 @@ export function generateStandaloneHtml(currentState: AppState): string {
     try {
       if (typeof window !== 'undefined' && navigator.onLine) {
         var s = document.createElement('script');
-        s.src = '${HTML2PDF_CDN_URL}';
-        s.integrity = '${HTML2PDF_CDN_SRI}';
-        s.crossOrigin = 'anonymous';
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
         s.async = true;
         document.head.appendChild(s);
       }
@@ -116,9 +77,22 @@ export function generateStandaloneHtml(currentState: AppState): string {
  */
 export async function downloadUpdatedAppHtml(currentState: AppState): Promise<{ success: boolean; message: string; fileName?: string }> {
   try {
-    const exportPayload = buildSafeExportPayload(currentState);
+    const exportTimestamp = new Date().toISOString();
+    const exportPayload = {
+      exportTimestamp,
+      version: '3.0',
+      bakeries: currentState.bakeries,
+      debts: currentState.debts,
+      villages: currentState.villages,
+      issuingEntities: currentState.issuingEntities,
+      violationTypes: currentState.violationTypes,
+      activityStatuses: currentState.activityStatuses,
+      columnTitles: currentState.columnTitles,
+      systemConfig: currentState.systemConfig,
+      users: currentState.users,
+    };
 
-    const preloadedScript = '<scr' + 'ipt id="tamween-preloaded-data">\nwindow.PRELOADED_TAMWEEN_STATE = ' + serializeSafeEmbeddedJson(exportPayload) + ';\n</scr' + 'ipt>';
+    const preloadedScript = '<scr' + 'ipt id="tamween-preloaded-data">\nwindow.PRELOADED_TAMWEEN_STATE = ' + JSON.stringify(exportPayload) + ';\n</scr' + 'ipt>';
 
     let baseHtml = '';
 
@@ -151,9 +125,7 @@ export async function downloadUpdatedAppHtml(currentState: AppState): Promise<{ 
     try {
       if (typeof window !== 'undefined' && navigator.onLine) {
         var s = document.createElement('script');
-        s.src = '${HTML2PDF_CDN_URL}';
-        s.integrity = '${HTML2PDF_CDN_SRI}';
-        s.crossOrigin = 'anonymous';
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
         s.async = true;
         document.head.appendChild(s);
       }

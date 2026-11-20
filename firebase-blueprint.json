@@ -31,8 +31,8 @@
         },
         "payloadJson": {
           "type": "string",
-          "description": "Serialized workspace backup state (UTF-8 bounded under 1 MiB)",
-          "maxLength": 450000
+          "description": "Serialized workspace backup state",
+          "maxLength": 950000
         }
       },
       "required": ["ownerId", "updatedAt", "bakeriesCount", "debtsCount", "payloadJson"]
@@ -161,7 +161,7 @@
   "firestore": {
     "/shared_sync/{syncId}": {
       "schema": { "$ref": "#/entities/SharedSyncRecord" },
-      "description": "Deprecated and permanently locked down (read/write denied); PostgreSQL/Supabase is authoritative"
+      "description": "Real-time cross-device shared database state (directory, per-branch partitions, and high-debt alerts log)"
     },
     "/workspaces/{workspaceId}": {
       "schema": { "$ref": "#/entities/Workspace" },

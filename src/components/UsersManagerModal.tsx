@@ -18,15 +18,13 @@ import {
 } from '../permissions';
 import {
   buildDefaultFlagsForRole,
-  canAssignSuperAdmin,
   createDepartmentPermissionsMatrix,
   EMPTY_DEPARTMENT_FLAGS,
   FULL_DEPARTMENT_FLAGS,
   isSuperAdmin as checkIsSuperAdmin,
   resolveUserDepartmentMatrix,
 } from '../utils/departmentRbac';
-import { getSecurityShieldHeaders } from '../lib/supabase.ts';
-import { sanitizePhoneInput, validateExactPhone } from '../utils/fieldValidation';
+import { getSecurityShieldHeaders } from '../lib/supabase';
 import {
   Users,
   UserPlus,
@@ -98,9 +96,9 @@ const ROLE_DEFINITIONS: {
   },
   {
     role: 'admin',
-    title: '🏛️ مدير النظام / مدير إدارة',
+    title: '🏛️ مدير إدارة / رئيس قسم',
     badgeColor: 'bg-amber-100 text-amber-950 border-amber-400',
-    summary: 'صلاحية إدارية كاملة داخل الفرع وفق مصفوفة الأقسام والعمليات المحددة للحساب.',
+    summary: 'صلاحية إدارية متقدمة حسب مصفوفة الأقسام والعمليات المحددة للحساب.',
   },
   {
     role: 'supervisor',
@@ -128,21 +126,9 @@ const ROLE_DEFINITIONS: {
   },
   {
     role: 'viewer',
-    title: '👁️ مشاهد (استعراض وطباعة فقط)',
+    title: '👁️ مشاهد / قارئ فقط (بدون تعديل)',
     badgeColor: 'bg-blue-100 text-blue-950 border-blue-400',
-    summary: 'عرض وتصفح كافة الجداول والرسوم البيانية وطباعتها دون أي تعديل أو حذف.',
-  },
-  {
-    role: 'reader',
-    title: '📖 قارئ فقط — Reader (عرض فقط بدون تعديل)',
-    badgeColor: 'bg-slate-100 text-slate-900 border-slate-400',
-    summary: 'قراءة وتصفح البيانات فقط دون تعديل أو إضافة أو حذف أو تصدير.',
-  },
-  {
-    role: 'custom_role',
-    title: '⚙️ دور مخصص (Custom Role)',
-    badgeColor: 'bg-violet-100 text-violet-950 border-violet-400',
-    summary: 'صلاحيات مخصصة تُحدد يدوياً عبر مصفوفة الأقسام والعمليات التفصيلية.',
+    summary: 'عرض وتصفح كافة الجداول والرسوم البيانية دون أي تعديل أو حذف.',
   },
 ];
 
@@ -241,7 +227,6 @@ function deriveLegacyPermissionsFromMatrix(
 interface DepartmentPermissionsGridProps {
   matrix: Record<SystemDepartmentKey, DepartmentPermissionFlags>;
   isSuper: boolean;
-  canGrantSuperAdmin?: boolean;
   onChangeSuperAdmin: (next: boolean) => void;
   onChangeMatrix: (next: Record<SystemDepartmentKey, DepartmentPermissionFlags>) => void;
   testIdPrefix: string;
@@ -250,7 +235,6 @@ interface DepartmentPermissionsGridProps {
 const DepartmentPermissionsGrid: React.FC<DepartmentPermissionsGridProps> = ({
   matrix,
   isSuper,
-  canGrantSuperAdmin = false,
   onChangeSuperAdmin,
   onChangeMatrix,
   testIdPrefix,
@@ -293,25 +277,12 @@ const DepartmentPermissionsGrid: React.FC<DepartmentPermissionsGridProps> = ({
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-black ${
-              canGrantSuperAdmin
-                ? 'bg-amber-100 border-amber-400 text-amber-950 cursor-pointer'
-                : 'bg-slate-200 border-slate-300 text-slate-500 cursor-not-allowed opacity-75'
-            }`}
-            title={
-              canGrantSuperAdmin
-                ? 'منح صلاحية مدير عام النظام (Super Admin)'
-                : 'منح صلاحية Super Admin مقتصر على مدير عام النظام المخوّل فقط'
-            }
-          >
+          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 border border-amber-400 text-amber-950 text-[11px] font-black cursor-pointer">
             <input
               type="checkbox"
               checked={isSuper}
-              disabled={!canGrantSuperAdmin}
               data-testid={`${testIdPrefix}-super-admin-toggle`}
               onChange={(e) => {
-                if (!canGrantSuperAdmin) return;
                 const checked = e.target.checked;
                 onChangeSuperAdmin(checked);
                 if (checked) {
@@ -319,10 +290,7 @@ const DepartmentPermissionsGrid: React.FC<DepartmentPermissionsGridProps> = ({
                 }
               }}
             />
-            <span>
-              مدير عام النظام (Super Admin)
-              {!canGrantSuperAdmin ? ' — مخوّل لـ Super Admin فقط' : ' - كافة الصلاحيات'}
-            </span>
+            <span>مدير عام النظام (Super Admin - كافة الصلاحيات)</span>
           </label>
           {!isSuper && (
             <>
@@ -432,7 +400,6 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   onDeleteUser,
 }) => {
   const viewerIsSuperAdmin = checkIsSuperAdmin(currentUser);
-  const actorCanGrantSuperAdmin = canAssignSuperAdmin(currentUser);
   const [activeTab, setActiveTab] = useState<'users' | 'audit'>('users');
 
   // Add New User Form State
@@ -443,7 +410,7 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   const [jobTitle, setJobTitle] = useState('مفتش تموين أول');
   const [department, setDepartment] = useState('قسم الرقابة التموينية والمخابز');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<UserRoleType | ''>('');
+  const [role, setRole] = useState<UserRoleType>('inspector');
   const [newIsSuperAdmin, setNewIsSuperAdmin] = useState<boolean>(false);
   const [newIsActive, setNewIsActive] = useState<boolean>(true);
   const [newNotes, setNewNotes] = useState('');
@@ -540,19 +507,9 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
     setTimeout(() => setSuccessMsg(''), 4000);
   };
 
-  const handleRoleChangeForNewUser = (newRole: UserRoleType | '') => {
-    if (!newRole) {
-      setRole('');
-      setNewIsSuperAdmin(false);
-      return;
-    }
-    if (newRole === 'super_admin' && !actorCanGrantSuperAdmin) {
-      setError('لا يُمنح دور Super Admin تلقائياً؛ يمنحه فقط مدير عام النظام المخوّل.');
-      return;
-    }
-    setError('');
+  const handleRoleChangeForNewUser = (newRole: UserRoleType) => {
     setRole(newRole);
-    const nextIsSuper = newRole === 'super_admin' && actorCanGrantSuperAdmin;
+    const nextIsSuper = newRole === 'super_admin';
     setNewIsSuperAdmin(nextIsSuper);
     setCustomPermissions(getDefaultPermissionsForRole(newRole));
     if (nextIsSuper) {
@@ -605,13 +562,8 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
   };
 
   const handleEditRoleChange = (newRole: UserRoleType) => {
-    if (newRole === 'super_admin' && !actorCanGrantSuperAdmin) {
-      setError('لا يُسمح بمنح صلاحية Super Admin إلا بواسطة مدير عام النظام المخوّل فقط.');
-      return;
-    }
-    setError('');
     setEditRole(newRole);
-    const nextIsSuper = newRole === 'super_admin' && actorCanGrantSuperAdmin;
+    const nextIsSuper = newRole === 'super_admin';
     setEditIsSuperAdmin(nextIsSuper);
     setEditPermissions(getDefaultPermissionsForRole(newRole));
     if (nextIsSuper) {
@@ -664,39 +616,25 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       return;
     }
 
-    if (editPhone.trim()) {
-      const phoneCheck = validateExactPhone(editPhone, true);
-      if (!phoneCheck.valid) {
-        setError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
-        return;
-      }
-    }
-
     const originalUser = users.find((u) => u.id === editingUserId);
     if (!originalUser) return;
 
-    if ((editIsSuperAdmin || editRole === 'super_admin') && !actorCanGrantSuperAdmin && !checkIsSuperAdmin(originalUser)) {
-      setError('منح صلاحية Super Admin مقتصر على مدير عام النظام المخوّل فقط.');
-      return;
-    }
-
-    const effectiveEditSuper = editIsSuperAdmin && (actorCanGrantSuperAdmin || checkIsSuperAdmin(originalUser));
     const cleanNewPass = editPassword.trim();
     const updatedUser: AppUser = {
       ...originalUser,
       fullName: cleanFullName,
       username: cleanUsername,
-      role: effectiveEditSuper ? 'super_admin' : editRole === 'super_admin' ? 'admin' : editRole,
-      isSuperAdmin: effectiveEditSuper,
+      role: editIsSuperAdmin ? 'super_admin' : editRole === 'super_admin' ? 'admin' : editRole,
+      isSuperAdmin: editIsSuperAdmin,
       isActive: editIsActive,
       notes: editNotes.trim(),
       jobTitle: editJobTitle.trim(),
       department: editDepartment.trim(),
-      phone: editPhone.trim() ? sanitizePhoneInput(editPhone) : '',
+      phone: editPhone.trim(),
       allowedDepartments: derivedAllowed,
-      departmentPermissions: effectiveEditSuper ? buildFullMatrix() : editDeptMatrix,
+      departmentPermissions: editIsSuperAdmin ? buildFullMatrix() : editDeptMatrix,
       applyToAllBranches: editApplyToAllBranches,
-      customPermissions: effectiveEditSuper
+      customPermissions: editIsSuperAdmin
         ? ALL_PERMISSIONS_LIST.map((p) => p.id)
         : editPermissions.length > 0
         ? editPermissions
@@ -740,39 +678,20 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       return;
     }
 
-    if (!role) {
-      setError('اختيار الدور الوظيفي إجباري قبل إضافة المستخدم الجديد.');
-      return;
-    }
-
-    if ((role === 'super_admin' || newIsSuperAdmin) && !actorCanGrantSuperAdmin) {
-      setError('لا يُمنح دور Super Admin تلقائياً، ويمنحه فقط مدير عام النظام المخوّل.');
-      return;
-    }
-
     if (users.some((u) => u.username.toLowerCase() === cleanUser.toLowerCase())) {
       setError('اسم المستخدم مسجل مسبقاً في المنظومة');
       return;
     }
 
-    const effectiveNewSuper = newIsSuperAdmin && actorCanGrantSuperAdmin;
-    const derivedAllowed = deriveAllowedDepartmentsFromMatrix(newDeptMatrix, effectiveNewSuper);
-    if (!effectiveNewSuper && derivedAllowed.length === 0) {
+    const derivedAllowed = deriveAllowedDepartmentsFromMatrix(newDeptMatrix, newIsSuperAdmin);
+    if (!newIsSuperAdmin && derivedAllowed.length === 0) {
       setError('يجب تحديد قسم واحد على الأقل بصلاحية (مشاهدة) للمستخدم الجديد.');
       return;
     }
 
-    if (phone.trim()) {
-      const phoneCheck = validateExactPhone(phone, true);
-      if (!phoneCheck.valid) {
-        setError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
-        return;
-      }
-    }
-
     setIsSubmitting(true);
     try {
-      const effectiveRole: UserRoleType = effectiveNewSuper
+      const effectiveRole = newIsSuperAdmin
         ? 'super_admin'
         : role === 'super_admin'
         ? 'admin'
@@ -783,19 +702,17 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
         fullName: cleanName,
         password: cleanPass,
         role: effectiveRole,
-        isSuperAdmin: effectiveNewSuper,
+        isSuperAdmin: newIsSuperAdmin,
         isActive: newIsActive,
         notes: newNotes.trim(),
         jobTitle: jobTitle.trim(),
         department: department.trim(),
-        phone: phone.trim() ? sanitizePhoneInput(phone) : '',
+        phone: phone.trim(),
         allowedDepartments: derivedAllowed,
-        departmentPermissions: effectiveNewSuper ? buildFullMatrix() : newDeptMatrix,
+        departmentPermissions: newIsSuperAdmin ? buildFullMatrix() : newDeptMatrix,
         applyToAllBranches,
-        customPermissions: effectiveNewSuper
+        customPermissions: newIsSuperAdmin
           ? ALL_PERMISSIONS_LIST.map((p) => p.id)
-          : customPermissions.length > 0
-          ? customPermissions
           : deriveLegacyPermissionsFromMatrix(newDeptMatrix, false, effectiveRole),
         createdAt: new Date().toISOString().split('T')[0],
       });
@@ -809,8 +726,6 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
       setPassword('');
       setPhone('');
       setNewNotes('');
-      setRole('');
-      setNewIsSuperAdmin(false);
       showToast(`تم إنشاء حساب (${cleanName}) وحفظه في قاعدة البيانات بنجاح!`);
     } catch (err: any) {
       setError(err?.message || 'حدث خطأ أثناء إنشاء الحساب.');
@@ -1328,22 +1243,14 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                               </div>
 
                               <div>
-                                <label className="flex items-center justify-between text-[11px] font-black text-slate-800 mb-1">
-                                  <span className="inline-flex items-center gap-1">
-                                    <Phone className="w-3 h-3 text-amber-700" />
-                                    <span>رقم التليفون (11 رقماً)</span>
-                                  </span>
-                                  <span className="text-[10px] font-mono tabular-nums text-slate-500">
-                                    {editPhone.replace(/\D/g, '').length} / 11
-                                  </span>
+                                <label className="block text-[11px] font-black text-slate-800 mb-1 flex items-center gap-1">
+                                  <Phone className="w-3 h-3 text-amber-700" />
+                                  <span>رقم التليفون</span>
                                 </label>
                                 <input
                                   type="text"
-                                  inputMode="numeric"
-                                  maxLength={11}
                                   value={editPhone}
-                                  onChange={(e) => setEditPhone(sanitizePhoneInput(e.target.value))}
-                                  placeholder="01012345678"
+                                  onChange={(e) => setEditPhone(e.target.value)}
                                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 font-mono text-left"
                                 />
                               </div>
@@ -1354,20 +1261,12 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                                 </label>
                                 <select
                                   value={editRole}
-                                  required
                                   onChange={(e) => handleEditRoleChange(e.target.value)}
                                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900"
                                 >
                                   {ROLE_DEFINITIONS.map((r) => (
-                                    <option
-                                      key={r.role}
-                                      value={r.role}
-                                      disabled={r.role === 'super_admin' && !actorCanGrantSuperAdmin}
-                                    >
+                                    <option key={r.role} value={r.role}>
                                       {r.title}
-                                      {r.role === 'super_admin' && !actorCanGrantSuperAdmin
-                                        ? ' (مخوّل لـ Super Admin فقط)'
-                                        : ''}
                                     </option>
                                   ))}
                                 </select>
@@ -1419,7 +1318,6 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                             <DepartmentPermissionsGrid
                               matrix={editDeptMatrix}
                               isSuper={editIsSuperAdmin}
-                              canGrantSuperAdmin={actorCanGrantSuperAdmin}
                               onChangeSuperAdmin={setEditIsSuperAdmin}
                               onChangeMatrix={setEditDeptMatrix}
                               testIdPrefix="edit-user"
@@ -1597,47 +1495,29 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-black text-slate-700 mb-1">
-                      الدور الوظيفي (إجباري) *
+                      مستوى الصلاحية الأساسي *
                     </label>
                     <select
-                      required
-                      data-testid="new-user-role"
                       value={role}
-                      onChange={(e) => handleRoleChangeForNewUser(e.target.value as UserRoleType | '')}
-                      className={`w-full px-3 py-2 bg-white border-2 rounded-xl text-xs font-black text-slate-900 ${
-                        !role ? 'border-amber-400 bg-amber-50/40' : 'border-slate-300'
-                      }`}
+                      onChange={(e) => handleRoleChangeForNewUser(e.target.value as UserRoleType)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-black text-slate-900"
                     >
-                      <option value="">-- اختر الدور الوظيفي (إجباري) --</option>
                       {ROLE_DEFINITIONS.map((r) => (
-                        <option
-                          key={r.role}
-                          value={r.role}
-                          disabled={r.role === 'super_admin' && !actorCanGrantSuperAdmin}
-                        >
+                        <option key={r.role} value={r.role}>
                           {r.title}
-                          {r.role === 'super_admin' && !actorCanGrantSuperAdmin
-                            ? ' (مخوّل لـ Super Admin فقط)'
-                            : ''}
                         </option>
                       ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="flex items-center justify-between text-[11px] font-black text-slate-700 mb-1">
-                      <span>رقم التليفون (11 رقماً)</span>
-                      <span className="text-[10px] font-mono tabular-nums text-slate-500">
-                        {phone.replace(/\D/g, '').length} / 11
-                      </span>
+                    <label className="block text-[11px] font-black text-slate-700 mb-1">
+                      رقم التليفون
                     </label>
                     <input
                       type="text"
-                      inputMode="numeric"
-                      maxLength={11}
                       value={phone}
-                      onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))}
-                      placeholder="01012345678"
+                      onChange={(e) => setPhone(e.target.value)}
                       className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 font-mono text-left"
                     />
                   </div>
@@ -1684,7 +1564,6 @@ export const UsersManagerModal: React.FC<UsersManagerModalProps> = ({
                 <DepartmentPermissionsGrid
                   matrix={newDeptMatrix}
                   isSuper={newIsSuperAdmin}
-                  canGrantSuperAdmin={actorCanGrantSuperAdmin}
                   onChangeSuperAdmin={setNewIsSuperAdmin}
                   onChangeMatrix={setNewDeptMatrix}
                   testIdPrefix="new-user"
