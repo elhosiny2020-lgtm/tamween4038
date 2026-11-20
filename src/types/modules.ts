@@ -9,19 +9,7 @@ export type SystemDepartmentKey =
 
 export type DepartmentScopeId = 'all' | SystemDepartmentKey;
 
-export type PermissionAction =
-  | 'view'
-  | 'enter'
-  | 'hide'
-  | 'insert'
-  | 'update'
-  | 'delete'
-  | 'approve'
-  | 'print'
-  | 'export'
-  | 'manageUsers'
-  | 'assignPermissions'
-  | 'departmentSettings';
+export type PermissionAction = 'view' | 'insert' | 'update' | 'delete' | 'print' | 'export';
 
 export interface DepartmentPermissionFlags {
   view: boolean;
@@ -30,12 +18,6 @@ export interface DepartmentPermissionFlags {
   delete: boolean;
   print: boolean;
   export: boolean;
-  enter?: boolean;
-  hide?: boolean;
-  approve?: boolean;
-  manageUsers?: boolean;
-  assignPermissions?: boolean;
-  departmentSettings?: boolean;
 }
 
 export type DepartmentPermissionsMap = Partial<Record<SystemDepartmentKey, DepartmentPermissionFlags>>;

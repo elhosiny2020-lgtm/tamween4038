@@ -220,24 +220,18 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
   if (role === 'super_admin') {
     return ALL_PERMISSIONS_LIST.map((p) => p.id);
   }
-  if (role === 'main_admin_manager' || role === 'supply_admin_manager' || role === 'admin') {
+  if (role === 'admin') {
+    // مدير النظام يحصل على صلاحيات الإدارة التشغيلية دون تصفير الفرع التلقائي إلا بمنح صريح من Super Admin
     return ALL_PERMISSIONS_LIST.map((p) => p.id).filter(
       (id) => id !== 'FACTORY_RESET_BRANCH'
     );
   }
-  if (role === 'branch_manager') {
-    return ALL_PERMISSIONS_LIST.map((p) => p.id).filter(
-      (id) => id !== 'FACTORY_RESET_BRANCH'
-    );
-  }
-  if (role === 'deputy_branch_manager' || role === 'system_officer') {
+  if (role === 'supervisor') {
     return [
       'ADD_BAKERY',
       'EDIT_BAKERY',
       'ADD_DEBT',
       'EDIT_DEBT',
-      'MANAGE_USERS',
-      'MANAGE_DEPARTMENTS',
       'USE_FINES_CALCULATOR',
       'VIEW_REPORTS',
       'PRINT_DATA',
@@ -251,69 +245,20 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
       'OPEN_DEBT_MODAL',
       'OPEN_DAILY_TASKS_MODAL',
       'OPEN_MASTER_EDITOR_MODAL',
-    ];
-  }
-  if (role === 'department_manager' || role === 'supervisor') {
-    return [
-      'ADD_BAKERY',
-      'EDIT_BAKERY',
-      'ADD_DEBT',
-      'EDIT_DEBT',
-      'MANAGE_DEPARTMENTS',
-      'USE_FINES_CALCULATOR',
-      'VIEW_REPORTS',
-      'PRINT_DATA',
-      'VIEW_CHARTS',
-      'EXPORT_DATA',
-      'MANAGE_VILLAGES',
-      'MANAGE_ACTIVITIES',
-      'MANAGE_COLUMN_TITLES',
-      'AUDIT_MATH',
-      'OPEN_BAKERY_MODAL',
-      'OPEN_DEBT_MODAL',
-      'OPEN_DAILY_TASKS_MODAL',
-      'OPEN_MASTER_EDITOR_MODAL',
-    ];
-  }
-  if (role === 'department_head' || role === 'department_officer') {
-    return [
-      'ADD_BAKERY',
-      'EDIT_BAKERY',
-      'ADD_DEBT',
-      'EDIT_DEBT',
-      'USE_FINES_CALCULATOR',
-      'VIEW_REPORTS',
-      'PRINT_DATA',
-      'VIEW_CHARTS',
-      'EXPORT_DATA',
-      'AUDIT_MATH',
-      'OPEN_BAKERY_MODAL',
-      'OPEN_DEBT_MODAL',
-      'OPEN_DAILY_TASKS_MODAL',
-    ];
-  }
-  if (role === 'employee' || role === 'data_entry') {
-    return [
-      'ADD_BAKERY',
-      'EDIT_BAKERY',
-      'ADD_DEBT',
-      'EDIT_DEBT',
-      'USE_FINES_CALCULATOR',
-      'VIEW_REPORTS',
-      'PRINT_DATA',
-      'VIEW_CHARTS',
-      'OPEN_BAKERY_MODAL',
-      'OPEN_DEBT_MODAL',
-      'OPEN_DAILY_TASKS_MODAL',
     ];
   }
   if (role === 'auditor') {
     return [
+      'ADD_DEBT',
+      'EDIT_DEBT',
+      'USE_FINES_CALCULATOR',
       'VIEW_REPORTS',
       'PRINT_DATA',
       'VIEW_CHARTS',
       'EXPORT_DATA',
       'AUDIT_MATH',
+      'MANAGE_ACTIVITIES',
+      'OPEN_DEBT_MODAL',
       'OPEN_DAILY_TASKS_MODAL',
     ];
   }
@@ -332,8 +277,20 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
       'OPEN_DAILY_TASKS_MODAL',
     ];
   }
-  if (role === 'custom_user' || role === 'custom_role') {
-    return ['VIEW_REPORTS', 'VIEW_CHARTS'];
+  if (role === 'data_entry') {
+    return [
+      'ADD_BAKERY',
+      'EDIT_BAKERY',
+      'ADD_DEBT',
+      'EDIT_DEBT',
+      'USE_FINES_CALCULATOR',
+      'VIEW_REPORTS',
+      'PRINT_DATA',
+      'VIEW_CHARTS',
+      'OPEN_BAKERY_MODAL',
+      'OPEN_DEBT_MODAL',
+      'OPEN_DAILY_TASKS_MODAL',
+    ];
   }
   if (role === 'reader') {
     return ['VIEW_REPORTS', 'VIEW_CHARTS'];
@@ -345,19 +302,9 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
 export function getDefaultRolePermissionsMap(): Record<UserRoleType, UserAction[]> {
   return {
     super_admin: getDefaultPermissionsForRole('super_admin'),
-    main_admin_manager: getDefaultPermissionsForRole('main_admin_manager'),
-    supply_admin_manager: getDefaultPermissionsForRole('supply_admin_manager'),
-    branch_manager: getDefaultPermissionsForRole('branch_manager'),
-    deputy_branch_manager: getDefaultPermissionsForRole('deputy_branch_manager'),
-    system_officer: getDefaultPermissionsForRole('system_officer'),
-    department_manager: getDefaultPermissionsForRole('department_manager'),
-    department_head: getDefaultPermissionsForRole('department_head'),
-    department_officer: getDefaultPermissionsForRole('department_officer'),
-    employee: getDefaultPermissionsForRole('employee'),
-    auditor: getDefaultPermissionsForRole('auditor'),
-    custom_user: getDefaultPermissionsForRole('custom_user'),
     admin: getDefaultPermissionsForRole('admin'),
     supervisor: getDefaultPermissionsForRole('supervisor'),
+    auditor: getDefaultPermissionsForRole('auditor'),
     inspector: getDefaultPermissionsForRole('inspector'),
     data_entry: getDefaultPermissionsForRole('data_entry'),
     viewer: getDefaultPermissionsForRole('viewer'),
@@ -403,26 +350,16 @@ export function hasPermission(
 }
 
 export function getRoleNameArabic(role: UserRoleType | string, systemConfig?: SystemConfig | null): string {
-  if (role === 'super_admin') return 'مدير النظام الرئيسي (super_admin)';
-  if (role === 'main_admin_manager') return 'مدير الإدارة الرئيسية (main_admin_manager)';
-  if (role === 'supply_admin_manager') return 'مدير إدارة التموين (supply_admin_manager)';
-  if (role === 'branch_manager') return 'مدير الفرع (branch_manager)';
-  if (role === 'deputy_branch_manager') return 'نائب مدير الفرع (deputy_branch_manager)';
-  if (role === 'system_officer') return 'مسؤول النظام (system_officer)';
-  if (role === 'department_manager') return 'مدير القسم (department_manager)';
-  if (role === 'department_head') return 'رئيس قسم (department_head)';
-  if (role === 'department_officer') return 'مسؤول القسم (department_officer)';
-  if (role === 'employee') return 'موظف (employee)';
-  if (role === 'auditor') return 'مراقب (auditor)';
-  if (role === 'custom_user') return 'مستخدم بصلاحيات مخصصة (custom_user)';
-  if (role === 'admin') return 'مدير نظام (admin)';
-  if (role === 'supervisor') return 'مشرف عام رقابة ومخابز (supervisor)';
-  if (role === 'inspector') return 'مفتش رقابة وتموين ميداني (inspector)';
-  if (role === 'data_entry') return 'مسئول إدخال وتحديث بيانات (data_entry)';
-  if (role === 'viewer') return 'مشاهد (viewer)';
-  if (role === 'reader') return 'قارئ فقط (reader)';
-  if (role === 'custom_role') return 'مستخدم بصلاحيات مخصصة (custom_user)';
+  if (role === 'super_admin') return 'مدير عام النظام (Super Admin — صلاحيات كاملة ومراقبة)';
+  if (role === 'admin') return 'مدير نظام (Admin — إدارة تشغيلية وصلاحيات محددة)';
+  if (role === 'supervisor') return 'مشرف عام رقابة ومخابز (صلاحيات إشرافية موسعة)';
+  if (role === 'auditor') return 'مراجع حسابات ومديونيات وتحصيل';
+  if (role === 'inspector') return 'مفتش رقابة وتموين ميداني';
+  if (role === 'data_entry') return 'مسئول إدخال وتحديث بيانات (Data Entry)';
+  if (role === 'viewer') return 'مشاهد (Viewer — تصفح وطباعة بدون تعديلات)';
+  if (role === 'reader') return 'قارئ فقط (Reader — قراءة الجداول والتقارير بدون تعديل)';
+  if (role === 'custom_role') return 'دور مخصص (Custom Role)';
   const foundCustom = systemConfig?.customRoles?.find((r) => r.id === role || r.title === role);
   if (foundCustom) return foundCustom.fullTitle || foundCustom.title;
-  return role || 'مستخدم بصلاحيات مخصصة';
+  return role || 'دور مخصص (Custom Role)';
 }
