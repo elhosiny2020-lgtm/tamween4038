@@ -1,11 +1,11 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { AppState, buildFullCloudMultiBranchPayload } from '../storage';
-import { generateStandaloneHtml } from '../utils/htmlExporter';
-import type { HighDebtAlertNotification } from '../types';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { type AppState, buildFullCloudMultiBranchPayload } from '../storage.ts';
+import { generateStandaloneHtml } from '../utils/htmlExporter.ts';
+import type { HighDebtAlertNotification } from '../types.ts';
 import {
   DEFAULT_DEBT_ALERT_THRESHOLD,
   mergeHighDebtAlerts,
-} from './firebaseSyncHelpers';
+} from './firebaseSyncHelpers.ts';
 import {
   DEFAULT_VILLAGES_HIERARCHY,
   DEFAULT_SYSTEM_CONFIG,
@@ -13,11 +13,11 @@ import {
   DEFAULT_ISSUING_ENTITIES,
   DEFAULT_VIOLATION_TYPES,
   DEFAULT_ACTIVITY_STATUSES,
-} from '../defaultData';
+} from '../defaultData.ts';
 import {
   clearRowMutationQueue,
   getRowMutationQueueCount,
-} from '../services/offlineMutationQueue';
+} from '../services/offlineMutationQueue.ts';
 
 // Unique per-tab client ID to prevent infinite self-echo sync loops
 export const SESSION_CLIENT_ID = `supa-client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

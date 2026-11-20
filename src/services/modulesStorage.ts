@@ -28,22 +28,22 @@ import type {
   RationRequisition,
   RationWarehouseBalance,
   SparePartItem,
-} from '../types/modules';
-import type { VillageHierarchy } from '../types';
+} from '../types/modules.ts';
+import type { VillageHierarchy } from '../types.ts';
 import { getAuthSessionToken, getSecurityShieldHeaders, getSupabaseClient, SESSION_CLIENT_ID } from '../lib/supabase.ts';
 import {
   computeAttendanceMetrics,
   computeEmployeePayrollLine,
   parseEgyptianNationalId,
-} from '../utils/hrPayrollMath';
+} from '../utils/hrPayrollMath.ts';
 import {
   computeMaintenanceOrderCost,
   computeMoistureCorrectedWeight,
-} from '../utils/grainMaintenanceMath';
-import { buildMay2026RationMerchantsList } from '../data/may2026RationMerchants';
-import { createInitialInternalTradeState } from '../data/internalTradeInitialData';
-import { buildGrainDepartmentCollections } from '../data/grainDepartmentInitialData';
-import { DEFAULT_BRANCH_ID } from '../utils/branchVaultUtils';
+} from '../utils/grainMaintenanceMath.ts';
+import { buildMay2026RationMerchantsList } from '../data/may2026RationMerchants.ts';
+import { createInitialInternalTradeState } from '../data/internalTradeInitialData.ts';
+import { buildGrainDepartmentCollections } from '../data/grainDepartmentInitialData.ts';
+import { DEFAULT_BRANCH_ID } from '../utils/branchVaultUtils.ts';
 
 const LOCAL_MODULES_STORAGE_PREFIX = 'tamween_branch_modules_v1::';
 

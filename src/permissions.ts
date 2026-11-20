@@ -1,4 +1,4 @@
-import { AppUser, SystemConfig, UserRoleType } from './types';
+import type { AppUser, SystemConfig, UserRoleType } from './types.ts';
 
 export type UserAction =
   | 'ADD_BAKERY'

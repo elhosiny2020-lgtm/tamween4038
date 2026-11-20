@@ -4838,8 +4838,18 @@ async function startServer() {
       }
       const payload = req.body || {};
       const publishTimestamp = new Date().toISOString();
-      const bakeriesCount = Array.isArray(payload?.bakeries) ? payload.bakeries.length : 0;
-      const debtsCount = Array.isArray(payload?.debts) ? payload.debts.length : 0;
+      const bakeriesCount = Array.isArray(payload?.bakeries)
+        ? payload.bakeries.length
+        : Math.max(0, Number(payload?.bakeriesCount) || 0);
+      const debtsCount = Array.isArray(payload?.debts)
+        ? payload.debts.length
+        : Math.max(0, Number(payload?.debtsCount) || 0);
+      const reqHost = req.get('host');
+      const reqProto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0]?.trim() || req.protocol || 'https';
+      const inferredUrl =
+        reqHost && !reqHost.includes('localhost') && !reqHost.startsWith('127.0.0.1')
+          ? `${reqProto}://${reqHost}`
+          : 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app';
 
       const releaseData = {
         publishedAt: publishTimestamp,
@@ -4848,7 +4858,7 @@ async function startServer() {
         bakeriesCount,
         debtsCount,
         systemTitle: payload?.systemConfig?.administrationTitle || 'إدارة تموين مركز المحلة الكبرى',
-        publishedUrl: process.env.PUBLIC_APP_URL || 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app',
+        publishedUrl: process.env.PUBLIC_APP_URL || inferredUrl,
         dataSummary: {
           bakeriesCount,
           debtsCount,
@@ -4999,6 +5009,25 @@ async function startServer() {
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Tamween Supabase Realtime Server running on http://localhost:${PORT}`);
   });
+
+  // Fast graceful shutdown for Cloud Run revision rollouts during Publish
+  let shuttingDown = false;
+  const gracefulShutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      for (const client of wss.clients) {
+        try { client.close(); } catch {}
+      }
+      wss.close();
+    } catch {}
+    httpServer.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 1500).unref();
+  };
+  process.once('SIGTERM', gracefulShutdown);
+  process.once('SIGINT', gracefulShutdown);
 }
 
 startServer().catch((err) => {

@@ -1,4 +1,4 @@
-import {
+import type {
   Bakery,
   DebtRecord,
   VillageHierarchy,
@@ -8,7 +8,7 @@ import {
   DailyBakeryTask,
   InboxChatMessage,
   SupplyBranch
-} from './types';
+} from './types.ts';
 import {
   DEFAULT_SYSTEM_CONFIG,
   DEFAULT_OFFICIAL_LOGO,
@@ -30,13 +30,13 @@ import {
   INITIAL_USERS,
   INITIAL_DAILY_TASKS,
   INITIAL_INBOX_MESSAGES
-} from './defaultData';
+} from './defaultData.ts';
 import {
   normalizeBakeryCalculations,
   synchronizeBakeryAndDebts,
   scrubProtectedOwnerEmail,
   scrubProtectedOwnerEmailList,
-} from './utils/auditHelper';
+} from './utils/auditHelper.ts';
 import {
   autoSyncToSupabase,
   autoSyncToSupabaseDetailed,
@@ -46,15 +46,15 @@ import {
   CLEAN_START_RESET_EPOCH,
   clearPermanentSafetyVault,
 } from './lib/supabase.ts';
-import { cloneDefaultBranchDepartmentsStructure } from './utils/branchOperations';
+import { cloneDefaultBranchDepartmentsStructure } from './utils/branchOperations.ts';
 import {
-  BranchAuthVaultRecord,
+  type BranchAuthVaultRecord,
   loadBranchAuthVault,
   saveBranchAuthVault,
   sanitizeBranchUsers,
   collectAllBranchAuthVaults,
   syncAllBranchAuthVaultsFromCloud,
-} from './services/branchAuthVault';
+} from './services/branchAuthVault.ts';
 import {
   deduplicateSupplyBranches,
   normalizeBranchNameKey,
@@ -63,7 +63,7 @@ import {
   unmarkBranchDeleted,
   isBranchMarkedDeleted,
   CANONICAL_DEFAULT_BRANCHES,
-} from './utils/branchVaultUtils';
+} from './utils/branchVaultUtils.ts';
 
 export interface MergeConflictItem {
   id: string;

@@ -1,4 +1,4 @@
-import { AppState } from '../storage';
+import type { AppState } from '../storage.ts';
 
 export const OFFICIAL_ONLINE_URL = 'https://ais-pre-7v2ybbenoneaktwif4yyyx-518853989588.europe-west2.run.app';
 

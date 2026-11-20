@@ -5,8 +5,8 @@ import type {
   HrPayrollLine,
   HrPolicySettingsVersion,
   HrTaxBracket,
-} from '../types/modules';
-import { round2 } from './rationMathEngine';
+} from '../types/modules.ts';
+import { round2 } from './rationMathEngine.ts';
 
 function safeNum(val: unknown, fallback = 0): number {
   const n = Number(val);
