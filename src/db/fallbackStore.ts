@@ -77,7 +77,31 @@ const SAMANOUD_BRANCH: SupplyBranch & { version?: number } = {
   version: 1,
 };
 
-interface FallbackStoreData {
+export interface FallbackStoreData {
+  administrations?: Array<{
+    id: string;
+    name: string;
+    governorateTitle: string;
+    directorateTitle: string;
+    isActive: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+  }>;
+  roles?: Array<{
+    id: string;
+    code: string;
+    nameAr: string;
+    hierarchyLevel: number;
+    isCentral: boolean;
+    isSystem: boolean;
+    isActive: boolean;
+    badgeColor: string;
+    description: string;
+    defaultPermissions: string[];
+    createdAt?: string;
+    updatedAt?: string;
+  }>;
+  central_departments?: BranchDepartmentConfigItem[];
   branches: Array<SupplyBranch & { version?: number }>;
   deleted_branch_keys?: string[];
   villages: Array<VillageHierarchy & { id: string; branchId: string; version?: number }>;
@@ -138,6 +162,9 @@ let memoryStorePath: string | null = null;
 
 function createEmptyStore(): FallbackStoreData {
   return {
+    administrations: [],
+    roles: [],
+    central_departments: [],
     branches: CANONICAL_DEFAULT_BRANCHES.map((b) => ({ ...b, version: 1 })),
     deleted_branch_keys: [],
     villages: [],
@@ -176,6 +203,9 @@ function loadStore(): FallbackStoreData {
         memoryStore = {
           ...base,
           ...parsed,
+          administrations: Array.isArray(parsed.administrations) ? parsed.administrations : [],
+          roles: Array.isArray(parsed.roles) ? parsed.roles : [],
+          central_departments: Array.isArray(parsed.central_departments) ? parsed.central_departments : [],
           deleted_branch_keys: Array.from(getDeletedBranchKeys()),
           branches:
             Array.isArray(parsed.branches) && parsed.branches.length > 0
@@ -196,6 +226,19 @@ function loadStore(): FallbackStoreData {
   memoryStorePath = storePath;
   memoryStore = createEmptyStore();
   return memoryStore;
+}
+
+export function getRawFallbackStore(): FallbackStoreData {
+  return loadStore();
+}
+
+export function saveRawFallbackStore(store: FallbackStoreData): void {
+  persistStore(store);
+}
+
+export function resetFallbackStoreCacheForTests(): void {
+  memoryStore = null;
+  memoryStorePath = null;
 }
 
 function persistStore(store: FallbackStoreData): void {
@@ -540,20 +583,28 @@ function upsertInStoreInternal(
           ? incomingPass
           : hashPasswordScrypt(incomingPass)
         : existing?.password || '';
-      const resolvedRole = String(payload.role || existing?.role || 'inspector');
+      const resolvedRole = String(payload.role || existing?.role || 'employee');
+      const finalUsername = cleanUsername || existing?.username || '';
+      const isLegacyRootAdmin =
+        resolvedRole === 'admin' && finalUsername.trim().toLowerCase() === 'admin';
       const nextRow: AppUser & { branchId: string; version?: number } = {
         ...existing,
         ...payload,
         id: existing ? existing.id : recordId,
         branchId: effectiveBranchId,
-        username: cleanUsername || existing?.username || '',
+        username: finalUsername,
         fullName: String(payload.fullName ?? existing?.fullName ?? ''),
         password: resolvedPassword,
         role: resolvedRole,
         isSuperAdmin:
           typeof payload.isSuperAdmin === 'boolean'
             ? payload.isSuperAdmin
-            : resolvedRole === 'super_admin' || (resolvedRole === 'admin' && existing?.isSuperAdmin !== false),
+            : resolvedRole === 'super_admin' || (isLegacyRootAdmin && existing?.isSuperAdmin !== false),
+        isCentral:
+          typeof payload.isCentral === 'boolean'
+            ? payload.isCentral
+            : existing?.isCentral ?? (resolvedRole === 'super_admin' || resolvedRole === 'main_admin_manager' || resolvedRole === 'supply_admin_manager'),
+        administrationId: String(payload.administrationId ?? existing?.administrationId ?? 'admin-mahalla-sector'),
         isActive: payload.isActive !== undefined ? payload.isActive !== false : existing?.isActive !== false,
         notes: String(payload.notes ?? existing?.notes ?? ''),
         departmentPermissions:
@@ -565,6 +616,9 @@ function upsertInStoreInternal(
             ? payload.allowedDepartments
             : existing?.allowedDepartments,
         createdAt: existing?.createdAt || payload.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: String(payload.updatedBy ?? existing?.updatedBy ?? ''),
+        lastLoginAt: payload.lastLoginAt ?? existing?.lastLoginAt,
         version: existing ? Number(existing.version || 1) + 1 : 1,
       };
       if (idx >= 0) store.app_users[idx] = nextRow;
@@ -1080,10 +1134,18 @@ export function fallbackAuthenticateUser(
 
 export function fallbackGetUserByIdAndBranch(branchId: string, userId: string): AppUser | null {
   const store = loadStore();
-  const found = store.app_users.find(
-    (u) => u.id === userId && (!branchId || u.branchId === branchId)
-  );
-  return found ? (sanitizeUserForClient(found) as AppUser) : null;
+  const found = store.app_users.find((u) => u.id === userId);
+  if (!found) return null;
+  if (
+    branchId &&
+    found.branchId !== branchId &&
+    !found.isSuperAdmin &&
+    !found.isCentral &&
+    !found.applyToAllBranches
+  ) {
+    return null;
+  }
+  return sanitizeUserForClient(found) as AppUser;
 }
 
 export function fallbackResetNonMahallaBranches(actorUsername = 'super_admin'): {

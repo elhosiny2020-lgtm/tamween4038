@@ -62,6 +62,35 @@ import {
   hasDepartmentPermission,
   isSuperAdmin as isUserSuperAdmin,
 } from './src/utils/departmentRbac.ts';
+import {
+  canUserManageBranchDepartments,
+  canUserManageBranchUsers,
+  isCentralUser,
+  isDepartmentVisibleInBranchConfig,
+} from './src/utils/rbacCatalog.ts';
+import {
+  authenticateUserUnified,
+  copyBranchDepartmentSettingsInDb,
+  createUserInDb,
+  deleteUserInDb,
+  ensureGovernanceSchemaAndSeeds,
+  generalizeDepartmentToBranchesInDb,
+  getBranchDepartmentsGovernanceInDb,
+  getBranchDepartmentsRawInDb,
+  getGovernanceOverviewInDb,
+  isDepartmentHiddenForBranchInDb,
+  listAdministrationsWithBranchesInDb,
+  listCentralDepartmentsInDb,
+  listRolesInDb,
+  listUsersScopedInDb,
+  resetUserPasswordInDb,
+  transferUserBranchInDb,
+  updateBranchDepartmentsGovernanceInDb,
+  updateOwnAccountInDb,
+  updateUserInDb,
+  upsertCentralDepartmentInDb,
+  upsertRoleInDb,
+} from './src/db/governanceRepository.ts';
 import type {
   AppUser,
   PermissionAction,
@@ -870,6 +899,7 @@ async function startServer() {
   const startupBootstrapPromise = (async () => {
     try {
       await ensurePostgresSchema();
+      await ensureGovernanceSchemaAndSeeds();
       await migrateAndVerifyLegacyJsonFilesToPostgres();
       let { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
         clientId: 'postgres-boot',
@@ -974,9 +1004,9 @@ async function startServer() {
     String(req.ip || req.socket?.remoteAddress || '127.0.0.1');
 
   const assertBranchAccess = (actor: AppUser, targetBranchId: string): boolean => {
-    if (isUserSuperAdmin(actor)) return true;
-    if (!actor.branchId) return true;
-    return actor.branchId === targetBranchId;
+    if (isUserSuperAdmin(actor) || isCentralUser(actor)) return true;
+    const assignedBranch = actor.branchId || DEFAULT_BRANCH_ID;
+    return assignedBranch === targetBranchId;
   };
 
   const failedLoginMap = new Map<string, { count: number; lockedUntil: number }>();
@@ -1111,11 +1141,17 @@ async function startServer() {
     action: PermissionAction
   ): boolean => {
     if (table === 'audit_logs') {
-      if (action === 'view' || action === 'delete') return isUserSuperAdmin(actor);
+      if (action === 'delete') return isUserSuperAdmin(actor);
+      if (action === 'view') return isUserSuperAdmin(actor) || isCentralUser(actor) || canUserManageBranchUsers(actor);
       return false;
     }
-    if (action === 'delete' && !isUserSuperAdmin(actor)) return false;
     if (isUserSuperAdmin(actor)) return true;
+    if (table === 'app_users') {
+      return canUserManageBranchUsers(actor);
+    }
+    if (table === 'system_config' && (action === 'view' || action === 'update')) {
+      return canUserManageBranchDepartments(actor);
+    }
     const scope = mapTableToAccessScope(table);
     if (scope === 'super_admin') return false;
     if (scope === 'shared') {
@@ -1181,7 +1217,7 @@ async function startServer() {
         return;
       }
 
-      const authRes = await authenticateUserInPostgres(branchId, username, password);
+      const authRes = await authenticateUserUnified(branchId, username, password);
       if (!authRes.ok || !authRes.user) {
         const nextCount = (lockState?.count || 0) + 1;
         failedLoginMap.set(lockoutKey, {
@@ -1191,7 +1227,7 @@ async function startServer() {
         await recordAuditLog(
           username,
           'LOGIN_FAILED',
-          `محاولة دخول فاشلة للمستخدم (${username})`,
+          `محاولة دخول فاشلة للمستخدم (${username}) — السبب: ${authRes.code || 'INVALID_CREDENTIALS'}`,
           ip,
           branchId,
           {
@@ -1201,22 +1237,20 @@ async function startServer() {
             result: 'DENIED',
           }
         ).catch(() => {});
-        const unifiedMsg =
-          authRes.status === 403
-            ? authRes.error || 'هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.'
-            : 'اسم المستخدم أو كلمة المرور غير صحيحة';
-        res.status(authRes.status === 403 ? 403 : 401).json({
+        res.status(authRes.status || 401).json({
           success: false,
-          error: unifiedMsg,
+          code: authRes.code || 'INVALID_CREDENTIALS',
+          error: authRes.error || 'اسم المستخدم أو كلمة المرور غير صحيحة.',
         });
         return;
       }
 
       failedLoginMap.delete(lockoutKey);
       const user = authRes.user;
+      const resolvedBranchId = authRes.resolvedBranchId || user.branchId || branchId;
       const token = createSessionToken({
         userId: user.id,
-        branchId: user.branchId || branchId,
+        branchId: resolvedBranchId,
         username: user.username,
         role: user.role,
         isSuperAdmin: isUserSuperAdmin(user),
@@ -1236,9 +1270,9 @@ async function startServer() {
       await recordAuditLog(
         user.username,
         'LOGIN_SUCCESS',
-        `تم تسجيل دخول المستخدم (${user.fullName} — ${user.username}) إلى الفرع (${branchId})`,
+        `تم تسجيل دخول المستخدم (${user.fullName} — ${user.username}) إلى الفرع (${resolvedBranchId})`,
         ip,
-        branchId,
+        resolvedBranchId,
         {
           username: user.username,
           department: 'auth',
@@ -1252,9 +1286,14 @@ async function startServer() {
         success: true,
         token,
         user,
+        resolvedBranchId,
       });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err?.message || 'فشل تسجيل الدخول.' });
+      res.status(500).json({
+        success: false,
+        code: 'LOGIN_SERVER_ERROR',
+        error: err?.message || 'حدث خطأ في الخادم أثناء تسجيل الدخول. يرجى المحاولة مرة أخرى.',
+      });
     }
   });
 
@@ -2326,16 +2365,31 @@ async function startServer() {
       }
 
       const boot = await getBootstrapFromPostgres(branchId);
+      const branchDepts = await getBranchDepartmentsRawInDb(branchId);
       const isSuper = isUserSuperAdmin(actorUser);
+      const bakeriesVisible = isSuper || isDepartmentVisibleInBranchConfig(branchDepts, 'bakeries');
+      const debtsVisible = isSuper || isDepartmentVisibleInBranchConfig(branchDepts, 'debts');
       const canSeeBakeries =
-        isSuper ||
-        hasDepartmentPermission(actorUser, 'bakeries', 'view') ||
-        hasDepartmentPermission(actorUser, 'debts', 'view') ||
-        hasDepartmentPermission(actorUser, 'reports', 'view');
+        bakeriesVisible &&
+        (isSuper ||
+          hasDepartmentPermission(actorUser, 'bakeries', 'view', branchDepts) ||
+          hasDepartmentPermission(actorUser, 'debts', 'view', branchDepts) ||
+          hasDepartmentPermission(actorUser, 'reports', 'view', branchDepts));
       const canSeeDebts =
-        isSuper ||
-        hasDepartmentPermission(actorUser, 'debts', 'view') ||
-        hasDepartmentPermission(actorUser, 'reports', 'view');
+        debtsVisible &&
+        (isSuper ||
+          hasDepartmentPermission(actorUser, 'debts', 'view', branchDepts) ||
+          hasDepartmentPermission(actorUser, 'reports', 'view', branchDepts));
+
+      const canManageUsersHere = isSuper || isCentralUser(actorUser) || canUserManageBranchUsers(actorUser);
+      const visibleUsers = canManageUsersHere
+        ? await listUsersScopedInDb({ actor: actorUser, branchId })
+        : sanitizeUsersForClient([actorUser]);
+
+      const mergedSystemConfig = {
+        ...(sanitizeSystemConfigForClient(boot.systemConfig) || {}),
+        branchDepartments: branchDepts,
+      };
 
       res.json({
         success: true,
@@ -2343,11 +2397,11 @@ async function startServer() {
         revision: liveRevision,
         timestamp: new Date().toISOString(),
         ...boot,
-        systemConfig: sanitizeSystemConfigForClient(boot.systemConfig),
+        systemConfig: mergedSystemConfig,
         bakeries: canSeeBakeries ? boot.bakeries : [],
         debts: canSeeDebts ? boot.debts : [],
         highDebtAlerts: canSeeDebts ? boot.highDebtAlerts : [],
-        users: isSuper ? sanitizeUsersForClient(boot.users) : sanitizeUsersForClient([actorUser]),
+        users: sanitizeUsersForClient(visibleUsers),
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'فشل تحميل البيانات من قاعدة البيانات.' });
@@ -2576,13 +2630,473 @@ async function startServer() {
     }
   });
 
+  // =========================================================================
+  // Unified Multi-Tenant Governance, 12 Dynamic Roles, Scoped Users & Account Setup APIs
+  // =========================================================================
+
+  app.get('/api/roles', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      const roles = await listRolesInDb(actor.authenticated ? actor.user : null);
+      if (!actor.authenticated || !actor.user) {
+        // Unauthenticated registration only sees active low-privilege roles
+        const safePublic = roles.filter((r) => r.isActive && r.hierarchyLevel <= 30);
+        res.json({ success: true, roles: safePublic });
+        return;
+      }
+      res.json({ success: true, roles });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحميل قائمة الأدوار من قاعدة البيانات.' });
+    }
+  });
+
+  app.post('/api/roles', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'roles',
+          'CREATE_ROLE',
+          'إضافة أو تعديل الأدوار مقتصر على مدير النظام الرئيسي فقط.'
+        );
+        return;
+      }
+      const result = await upsertRoleInDb(req.body || {}, actor.user.username, getClientIp(req));
+      if (!result.success) {
+        res.status(400).json(result);
+        return;
+      }
+      const roles = await listRolesInDb(actor.user);
+      res.json({ success: true, role: result.role, roles });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر حفظ الدور الوظيفي.' });
+    }
+  });
+
+  app.put('/api/roles/:code', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'roles',
+          'UPDATE_ROLE',
+          'تعديل الأدوار الوظيفية مقتصر على مدير النظام الرئيسي فقط.'
+        );
+        return;
+      }
+      const result = await upsertRoleInDb(
+        { ...(req.body || {}), code: req.params.code },
+        actor.user.username,
+        getClientIp(req)
+      );
+      if (!result.success) {
+        res.status(400).json(result);
+        return;
+      }
+      const roles = await listRolesInDb(actor.user);
+      res.json({ success: true, role: result.role, roles });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحديث الدور الوظيفي.' });
+    }
+  });
+
+  app.get('/api/administrations', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      const data = await listAdministrationsWithBranchesInDb();
+      if (actor.authenticated && actor.user && !isUserSuperAdmin(actor.user) && !isCentralUser(actor.user)) {
+        const myBranch = actor.user.branchId || DEFAULT_BRANCH_ID;
+        const filteredBranches = data.branches.filter((b) => b.id === myBranch);
+        const adminIds = new Set(filteredBranches.map((b) => b.administrationId).filter(Boolean));
+        const filteredAdmins = data.administrations.filter((a) => adminIds.has(a.id));
+        res.json({ success: true, administrations: filteredAdmins, branches: filteredBranches });
+        return;
+      }
+      res.json({ success: true, ...data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحميل الإدارات والفروع.' });
+    }
+  });
+
+  app.get('/api/users', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+          success: false,
+          error: 'يتطلب عرض المستخدمين جلسة دخول صالحة.',
+        });
+        return;
+      }
+      if (!canUserManageBranchUsers(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'users',
+          'LIST_USERS',
+          'ليس لديك صلاحية استعراض قائمة مستخدمي الفرع.'
+        );
+        return;
+      }
+      const requestedBranchId = req.query?.branchId ? String(req.query.branchId) : undefined;
+      if (
+        requestedBranchId &&
+        requestedBranchId !== 'ALL' &&
+        !assertBranchAccess(actor.user, requestedBranchId)
+      ) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'users',
+          'LIST_USERS_CROSS_BRANCH',
+          `ممنوع استعراض مستخدمي فرع آخر (${requestedBranchId}).`
+        );
+        return;
+      }
+      const users = await listUsersScopedInDb({
+        actor: actor.user,
+        branchId: requestedBranchId,
+        administrationId: req.query?.administrationId ? String(req.query.administrationId) : undefined,
+        role: req.query?.role ? String(req.query.role) : undefined,
+        search: req.query?.search ? String(req.query.search) : undefined,
+        status: (req.query?.status as 'all' | 'active' | 'disabled') || 'all',
+      });
+      res.json({ success: true, users: sanitizeUsersForClient(users), total: users.length });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحميل قائمة المستخدمين.' });
+    }
+  });
+
+  app.post('/api/users', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !canUserManageBranchUsers(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'users',
+          'CREATE_USER',
+          'إنشاء المستخدمين متاح فقط لمدير النظام أو مدير الفرع المخوّل بصلاحية إدارة المستخدمين.'
+        );
+        return;
+      }
+      const result = await createUserInDb({
+        actor: actor.user,
+        payload: req.body || {},
+        ipAddress: getClientIp(req),
+      });
+      if (!result.success || !result.user) {
+        res.status(result.status || 400).json({ success: false, error: result.error || 'تعذر حفظ المستخدم.' });
+        return;
+      }
+      liveRevision += 1;
+      const targetBranch = result.user.branchId || DEFAULT_BRANCH_ID;
+      await refreshCachedSnapshotFromPostgres(targetBranch, {
+        clientId: actor.user.username,
+        sqlOperation: 'INSERT',
+        affectedTable: 'app_users',
+      });
+      broadcastWs({
+        type: 'row_change',
+        table: 'app_users',
+        eventType: 'INSERT',
+        branchId: targetBranch,
+        newRow: result.user,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.status(201).json({ success: true, user: result.user, revision: liveRevision });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'حدث خطأ أثناء إنشاء المستخدم.' });
+    }
+  });
+
+  app.put('/api/users/:id', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !canUserManageBranchUsers(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'users',
+          'UPDATE_USER',
+          'تعديل بيانات المستخدمين متاح فقط للمخوّل بصلاحية إدارة المستخدمين.'
+        );
+        return;
+      }
+      const result = await updateUserInDb({
+        actor: actor.user,
+        userId: String(req.params.id),
+        payload: req.body || {},
+        ipAddress: getClientIp(req),
+      });
+      if (!result.success || !result.user) {
+        res.status(result.status || 400).json({ success: false, error: result.error || 'تعذر تحديث بيانات المستخدم.' });
+        return;
+      }
+      if (result.revokeTokens) {
+        revokeAllUserTokens(String(req.params.id));
+      }
+      liveRevision += 1;
+      const targetBranch = result.user.branchId || DEFAULT_BRANCH_ID;
+      await refreshCachedSnapshotFromPostgres(targetBranch, {
+        clientId: actor.user.username,
+        sqlOperation: 'UPDATE',
+        affectedTable: 'app_users',
+      });
+      broadcastWs({
+        type: 'row_change',
+        table: 'app_users',
+        eventType: 'UPDATE',
+        branchId: targetBranch,
+        newRow: result.user,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({ success: true, user: result.user, revision: liveRevision });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'حدث خطأ أثناء تحديث المستخدم.' });
+    }
+  });
+
+  app.post('/api/users/:id/reset-password', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !canUserManageBranchUsers(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'users',
+          'RESET_PASSWORD',
+          'إعادة تعيين كلمة المرور متاح فقط للمخوّل بصلاحية إدارة المستخدمين.'
+        );
+        return;
+      }
+      const newPassword = String(req.body?.newPassword || req.body?.password || '').trim();
+      const result = await resetUserPasswordInDb({
+        actor: actor.user,
+        userId: String(req.params.id),
+        newPassword,
+        ipAddress: getClientIp(req),
+      });
+      if (!result.success) {
+        res.status(result.status || 400).json({ success: false, error: result.error });
+        return;
+      }
+      revokeAllUserTokens(String(req.params.id));
+      res.json({ success: true, message: 'تم إعادة تعيين كلمة المرور بنجاح وإنهاء الجلسات السابقة للمستخدم.' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر إعادة تعيين كلمة المرور.' });
+    }
+  });
+
+  app.post('/api/users/:id/transfer-branch', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || (!isUserSuperAdmin(actor.user) && !isCentralUser(actor.user))) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'users',
+          'TRANSFER_BRANCH',
+          'نقل المستخدمين بين الفروع متاح لمدير النظام الرئيسي أو مدير الإدارة الرئيسية فقط.'
+        );
+        return;
+      }
+      const result = await transferUserBranchInDb({
+        actor: actor.user,
+        userId: String(req.params.id),
+        targetBranchId: String(req.body?.targetBranchId || ''),
+        targetAdministrationId: req.body?.targetAdministrationId ? String(req.body.targetAdministrationId) : undefined,
+        ipAddress: getClientIp(req),
+      });
+      if (!result.success || !result.user) {
+        res.status(result.status || 400).json({ success: false, error: result.error });
+        return;
+      }
+      revokeAllUserTokens(String(req.params.id));
+      liveRevision += 1;
+      res.json({ success: true, user: result.user, revision: liveRevision });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر نقل المستخدم إلى الفرع الجديد.' });
+    }
+  });
+
+  app.delete('/api/users/:id', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !canUserManageBranchUsers(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'users',
+          'DELETE_USER',
+          'حذف المستخدمين متاح فقط للمخوّل بصلاحية إدارة المستخدمين.'
+        );
+        return;
+      }
+      const result = await deleteUserInDb({
+        actor: actor.user,
+        userId: String(req.params.id),
+        ipAddress: getClientIp(req),
+      });
+      if (!result.success) {
+        res.status(result.status || 400).json({ success: false, error: result.error });
+        return;
+      }
+      revokeAllUserTokens(String(req.params.id));
+      liveRevision += 1;
+      res.json({ success: true, deletedId: String(req.params.id), revision: liveRevision });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر حذف المستخدم.' });
+    }
+  });
+
+  app.get('/api/account/me', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+          success: false,
+          error: 'يتطلب عرض إعدادات الحساب تسجيل دخول صالح.',
+        });
+        return;
+      }
+      const targetBranchId = String(req.query?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      const effectiveBranch = assertBranchAccess(actor.user, targetBranchId)
+        ? targetBranchId
+        : actor.user.branchId || DEFAULT_BRANCH_ID;
+      const [{ administrations, branches }, branchDepartments, roles] = await Promise.all([
+        listAdministrationsWithBranchesInDb(),
+        getBranchDepartmentsRawInDb(effectiveBranch),
+        listRolesInDb(actor.user),
+      ]);
+      const branch = branches.find((b) => b.id === effectiveBranch) || null;
+      const administration = administrations.find((a) => a.id === (actor.user?.administrationId || branch?.administrationId)) || null;
+      const roleObj = roles.find((r) => r.code === actor.user?.role) || null;
+      res.json({
+        success: true,
+        user: sanitizeUsersForClient([actor.user])[0],
+        branch,
+        administration,
+        role: roleObj,
+        branchDepartments,
+        capabilities: {
+          isSuperAdmin: isUserSuperAdmin(actor.user),
+          isCentral: isCentralUser(actor.user),
+          canManageUsers: canUserManageBranchUsers(actor.user),
+          canManageDepartments: canUserManageBranchDepartments(actor.user),
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحميل بيانات الحساب.' });
+    }
+  });
+
+  app.put('/api/account/me', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+          success: false,
+          error: 'يتطلب تحديث بيانات الحساب تسجيل دخول صالح.',
+        });
+        return;
+      }
+      const body = req.body || {};
+      const result = await updateOwnAccountInDb({
+        actor: actor.user,
+        fullName: body.fullName,
+        phone: body.phone,
+        jobTitle: body.jobTitle,
+        gmailEmail: body.gmailEmail,
+        currentPassword: body.currentPassword,
+        newPassword: body.newPassword,
+        ipAddress: getClientIp(req),
+      });
+      if (!result.success || !result.user) {
+        res.status(result.status || 400).json({ success: false, error: result.error || 'تعذر تحديث بيانات الحساب.' });
+        return;
+      }
+      res.json({
+        success: true,
+        user: result.user,
+        passwordChanged: Boolean(result.passwordChanged),
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر حفظ تعديلات الحساب.' });
+    }
+  });
+
+  app.get('/api/branches/:id/departments', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+          success: false,
+          error: 'يتطلب عرض أقسام الفرع تسجيل دخول صالح.',
+        });
+        return;
+      }
+      const branchId = String(req.params.id || actor.user.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'VIEW_BRANCH_DEPARTMENTS_CROSS_BRANCH',
+          `غير مصرح بعرض أقسام فرع آخر (${branchId}).`
+        );
+        return;
+      }
+      const data = await getBranchDepartmentsGovernanceInDb(branchId);
+      const canManage = canUserManageBranchDepartments(actor.user);
+      res.json({
+        success: true,
+        branchId,
+        departments: data.departments,
+        branchUsers: canManage ? sanitizeUsersForClient(data.branchUsers) : [],
+        canManage,
+        isSuperAdmin: isUserSuperAdmin(actor.user),
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحميل أقسام الفرع.' });
+    }
+  });
+
   app.put('/api/branches/:id/departments', async (req, res) => {
     try {
       const actor = await resolveAuthenticatedActor(req);
       const canManageDepts = Boolean(
         actor.authenticated &&
           actor.user &&
-          (isUserSuperAdmin(actor.user) || hasPermission(actor.user, 'MANAGE_DEPARTMENTS'))
+          (isUserSuperAdmin(actor.user) ||
+            hasPermission(actor.user, 'MANAGE_DEPARTMENTS') ||
+            canUserManageBranchDepartments(actor.user))
       );
       if (!actor.authenticated || !actor.user || !canManageDepts) {
         await denyUnauthorizedAndAudit(
@@ -2592,7 +3106,7 @@ async function startServer() {
           actor.authenticated ? 403 : 401,
           'branches',
           'UPDATE_BRANCH_DEPARTMENTS',
-          'إدارة الأقسام داخل الفرع مقصورة على مدير عام النظام أو المخوّل بصلاحية إدارة الأقسام فقط.'
+          'إدارة الأقسام داخل الفرع مقصورة على مدير عام النظام أو مدير الفرع المخوّل بصلاحية إدارة الأقسام فقط.'
         );
         return;
       }
@@ -2614,7 +3128,22 @@ async function startServer() {
         res.status(400).json({ success: false, error: 'قائمة الأقسام (departments) غير صالحة.' });
         return;
       }
-      const updated = await updateBranchDepartmentsInPostgres(branchId, departments, actor.user.username);
+      const userPermissionUpdates = Array.isArray(req.body?.userPermissionUpdates)
+        ? req.body.userPermissionUpdates
+        : undefined;
+      const updateRes = await updateBranchDepartmentsGovernanceInDb({
+        branchId,
+        departments,
+        actor: actor.user,
+        userPermissionUpdates,
+        ipAddress: getClientIp(req),
+      });
+      if (!updateRes.success) {
+        res.status(400).json({ success: false, error: updateRes.error || 'فشل تحديث أقسام الفرع.' });
+        return;
+      }
+      const updated = updateRes.departments;
+      const governanceData = await getBranchDepartmentsGovernanceInDb(branchId);
       liveRevision += 1;
       await refreshCachedSnapshotFromPostgres(branchId, {
         clientId: actor.user.username,
@@ -2632,10 +3161,187 @@ async function startServer() {
         success: true,
         branchId,
         departments: updated,
+        governanceDepartments: governanceData.departments,
+        branchUsers: sanitizeUsersForClient(governanceData.branchUsers),
         revision: liveRevision,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'فشل تحديث أقسام الفرع.' });
+    }
+  });
+
+  app.get('/api/admin/governance/overview', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || (!isUserSuperAdmin(actor.user) && !isCentralUser(actor.user))) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'governance',
+          'VIEW_OVERVIEW',
+          'اللوحة المركزية للحوكمة مقتصرة على مدير النظام الرئيسي والإدارة المركزية فقط.'
+        );
+        return;
+      }
+      const overview = await getGovernanceOverviewInDb(actor.user);
+      res.json({ success: true, ...overview });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحميل نظرة الحوكمة المركزية.' });
+    }
+  });
+
+  app.get('/api/admin/departments', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || (!isUserSuperAdmin(actor.user) && !isCentralUser(actor.user))) {
+        res.status(actor.authenticated ? 403 : 401).json({
+          success: false,
+          error: 'استعراض الكتالوج المركزي للأقسام مقتصر على الإدارة المركزية فقط.',
+        });
+        return;
+      }
+      const departments = await listCentralDepartmentsInDb();
+      res.json({ success: true, departments });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحميل الكتالوج المركزي للأقسام.' });
+    }
+  });
+
+  app.post('/api/admin/departments', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'governance',
+          'CREATE_CENTRAL_DEPARTMENT',
+          'إضافة قسم جديد للكتالوج المركزي مقتصر على مدير النظام الرئيسي فقط.'
+        );
+        return;
+      }
+      const result = await upsertCentralDepartmentInDb(req.body || {}, actor.user.username, getClientIp(req));
+      if (!result.success) {
+        res.status(400).json(result);
+        return;
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر حفظ القسم المركزي.' });
+    }
+  });
+
+  app.put('/api/admin/departments/:id', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'governance',
+          'UPDATE_CENTRAL_DEPARTMENT',
+          'تعديل القسم المركزي مقتصر على مدير النظام الرئيسي فقط.'
+        );
+        return;
+      }
+      const result = await upsertCentralDepartmentInDb(
+        { ...(req.body || {}), id: String(req.params.id) },
+        actor.user.username,
+        getClientIp(req)
+      );
+      if (!result.success) {
+        res.status(400).json(result);
+        return;
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحديث القسم المركزي.' });
+    }
+  });
+
+  app.post('/api/admin/departments/generalize', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'governance',
+          'GENERALIZE_DEPARTMENT',
+          'تعميم الأقسام على الفروع مقتصر على مدير النظام الرئيسي فقط.'
+        );
+        return;
+      }
+      const body = req.body || {};
+      const result = await generalizeDepartmentToBranchesInDb({
+        actor: actor.user,
+        department: body.department,
+        targetBranchIds: body.targetBranchIds === 'ALL' ? 'ALL' : Array.isArray(body.targetBranchIds) ? body.targetBranchIds : [],
+        allowedBySuperAdmin: body.allowedBySuperAdmin,
+        visible: body.visible,
+        ipAddress: getClientIp(req),
+      });
+      if (!result.success) {
+        res.status(400).json(result);
+        return;
+      }
+      liveRevision += 1;
+      broadcastWs({
+        type: 'branch_departments_generalized',
+        affectedBranches: result.affectedBranches,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({ ...result, revision: liveRevision });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تعميم القسم على الفروع.' });
+    }
+  });
+
+  app.post('/api/admin/branches/copy-departments', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'governance',
+          'COPY_BRANCH_DEPARTMENTS',
+          'نسخ إعدادات الأقسام بين الفروع مقتصر على مدير النظام الرئيسي فقط.'
+        );
+        return;
+      }
+      const body = req.body || {};
+      const result = await copyBranchDepartmentSettingsInDb({
+        actor: actor.user,
+        sourceBranchId: String(body.sourceBranchId || ''),
+        targetBranchId: String(body.targetBranchId || ''),
+        ipAddress: getClientIp(req),
+      });
+      if (!result.success) {
+        res.status(400).json(result);
+        return;
+      }
+      liveRevision += 1;
+      broadcastWs({
+        type: 'branch_departments_updated',
+        branchId: String(body.targetBranchId || ''),
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({ ...result, revision: liveRevision });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر نسخ إعدادات الأقسام.' });
     }
   });
 
@@ -3136,7 +3842,12 @@ async function startServer() {
   app.get('/api/audit-logs', async (req, res) => {
     try {
       const actor = await resolveAuthenticatedActor(req);
-      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      const canReadAudit = Boolean(
+        actor.authenticated &&
+          actor.user &&
+          (isUserSuperAdmin(actor.user) || isCentralUser(actor.user) || canUserManageBranchUsers(actor.user))
+      );
+      if (!actor.authenticated || !actor.user || !canReadAudit) {
         await denyUnauthorizedAndAudit(
           req,
           res,
@@ -3144,12 +3855,16 @@ async function startServer() {
           actor.authenticated ? 403 : 401,
           'audit_logs',
           'VIEW_AUDIT_LOGS',
-          'الاطلاع على سجل المراجعة والأمان متاح لمدير النظام الرئيسي (Super Admin) فقط.'
+          'الاطلاع على سجل المراجعة والأمان متاح لمدير النظام أو مدير الفرع فقط.'
         );
         return;
       }
+      const isCentralActor = isUserSuperAdmin(actor.user) || isCentralUser(actor.user);
+      const effectiveBranchId = isCentralActor
+        ? String(req.query?.branchId || 'ALL')
+        : actor.user.branchId || DEFAULT_BRANCH_ID;
       const result = await queryTablePaginated('audit_logs', {
-        branchId: String(req.query?.branchId || 'ALL'),
+        branchId: effectiveBranchId,
         search: req.query?.search ? String(req.query.search) : undefined,
         status: req.query?.status ? String(req.query.status) : undefined,
         page: req.query?.page ? Number(req.query.page) : 1,
@@ -3207,6 +3922,31 @@ async function startServer() {
           `محاولة عرض جدول (${table}) لفرع غير مصرح به (${targetBranchId}).`
         );
         return;
+      }
+      const readScope = mapTableToAccessScope(table);
+      if (
+        !isUserSuperAdmin(actor.user) &&
+        targetBranchId !== 'ALL' &&
+        (readScope === 'bakeries' || readScope === 'debts')
+      ) {
+        const hidden = await isDepartmentHiddenForBranchInDb(targetBranchId, readScope);
+        if (hidden) {
+          await recordAuditLog(
+            actor.user.username,
+            'HIDDEN_DEPARTMENT_BLOCKED',
+            `تم حظر الوصول المباشر لجدول (${table}) لأن القسم (${readScope}) مخفي في الفرع (${targetBranchId}).`,
+            getClientIp(req),
+            targetBranchId,
+            { username: actor.user.username, department: readScope, operation: 'VIEW', result: 'DENIED' }
+          ).catch(() => {});
+          res.status(403).json({
+            success: false,
+            blocked: true,
+            code: 'DEPARTMENT_HIDDEN_403',
+            error: 'هذا القسم مخفي حالياً من إعدادات الفرع ولا يمكن الوصول إليه مباشرة.',
+          });
+          return;
+        }
       }
       const result = await queryTablePaginated(table, {
         branchId: targetBranchId,
@@ -3290,6 +4030,30 @@ async function startServer() {
           `محاولة تعديل (${table}) لفرع غير مصرح به (${branchId}).`
         );
         return;
+      }
+      const writeScope = mapTableToAccessScope(table);
+      if (
+        !isUserSuperAdmin(actor.user) &&
+        (writeScope === 'bakeries' || writeScope === 'debts')
+      ) {
+        const hidden = await isDepartmentHiddenForBranchInDb(branchId, writeScope);
+        if (hidden) {
+          await recordAuditLog(
+            actor.user.username,
+            'HIDDEN_DEPARTMENT_BLOCKED',
+            `تم حظر الكتابة المباشرة في (${table}) لأن القسم (${writeScope}) مخفي في الفرع (${branchId}).`,
+            getClientIp(req),
+            branchId,
+            { username: actor.user.username, department: writeScope, operation: requestedOp.toUpperCase(), result: 'DENIED' }
+          ).catch(() => {});
+          res.status(403).json({
+            success: false,
+            blocked: true,
+            code: 'DEPARTMENT_HIDDEN_403',
+            error: 'هذا القسم مخفي حالياً من إعدادات الفرع ولا يمكن الإضافة أو التعديل به.',
+          });
+          return;
+        }
       }
       if (table === 'app_users') {
         const targetIsSuper =
@@ -3459,6 +4223,22 @@ async function startServer() {
         );
         return;
       }
+      const putScope = mapTableToAccessScope(table);
+      if (
+        !isUserSuperAdmin(actor.user) &&
+        (putScope === 'bakeries' || putScope === 'debts')
+      ) {
+        const hidden = await isDepartmentHiddenForBranchInDb(branchId, putScope);
+        if (hidden) {
+          res.status(403).json({
+            success: false,
+            blocked: true,
+            code: 'DEPARTMENT_HIDDEN_403',
+            error: 'هذا القسم مخفي حالياً من إعدادات الفرع ولا يمكن تعديل سجلاته.',
+          });
+          return;
+        }
+      }
       if (table === 'app_users') {
         if ((rowPayload?.role === 'super_admin' || rowPayload?.isSuperAdmin === true) && !isUserSuperAdmin(actor.user)) {
           await denyUnauthorizedAndAudit(
@@ -3620,6 +4400,22 @@ async function startServer() {
           `محاولة حذف (${table}/${req.params.id}) لفرع غير مصرح به (${branchId}).`
         );
         return;
+      }
+      const delScope = mapTableToAccessScope(table);
+      if (
+        !isUserSuperAdmin(actor.user) &&
+        (delScope === 'bakeries' || delScope === 'debts')
+      ) {
+        const hidden = await isDepartmentHiddenForBranchInDb(branchId, delScope);
+        if (hidden) {
+          res.status(403).json({
+            success: false,
+            blocked: true,
+            code: 'DEPARTMENT_HIDDEN_403',
+            error: 'هذا القسم مخفي حالياً من إعدادات الفرع ولا يمكن الحذف منه.',
+          });
+          return;
+        }
       }
       const clientId = String(req.query?.clientId || req.headers['x-tamween-client-id'] || '');
       const delRes = await deleteRowInPostgres(table, req.params.id, branchId);
@@ -4362,13 +5158,21 @@ async function startServer() {
     return { operationalDeleted, auditLogsDeletedCount };
   };
 
-  const filterModulePayloadByRbac = (payload: any, actor: AppUser): any => {
+  const filterModulePayloadByRbac = (
+    payload: any,
+    actor: AppUser,
+    branchDepts?: import('./src/types.ts').BranchDepartmentConfigItem[]
+  ): any => {
     if (!payload || typeof payload !== 'object') return payload;
     if (isUserSuperAdmin(actor)) return payload;
     const filtered: Record<string, any> = {};
     for (const [k, v] of Object.entries(payload)) {
       const dept = MODULE_SLICE_TO_DEPT[k];
-      if (!dept || hasDepartmentPermission(actor, dept, 'view')) {
+      if (
+        !dept ||
+        (hasDepartmentPermission(actor, dept, 'view', branchDepts) &&
+          (!branchDepts || isDepartmentVisibleInBranchConfig(branchDepts, dept)))
+      ) {
         filtered[k] = v;
       }
     }
@@ -4399,19 +5203,39 @@ async function startServer() {
       );
       return;
     }
+    const branchDepts = await getBranchDepartmentsRawInDb(branchId);
     const moduleKey = String(req.query?.moduleKey || 'all_modules').trim() || 'all_modules';
     const requestedDept = MODULE_SLICE_TO_DEPT[moduleKey];
-    if (requestedDept && !hasDepartmentPermission(actor.user, requestedDept, 'view')) {
-      await denyUnauthorizedAndAudit(
-        req,
-        res,
-        actor.user,
-        403,
-        requestedDept,
-        'VIEW',
-        `تم حظر قراءة القسم (${requestedDept}) للمستخدم (${actor.user.username}).`
-      );
-      return;
+    if (requestedDept && !isUserSuperAdmin(actor.user)) {
+      if (!isDepartmentVisibleInBranchConfig(branchDepts, requestedDept)) {
+        await recordAuditLog(
+          actor.user.username,
+          'HIDDEN_DEPARTMENT_BLOCKED',
+          `تم حظر الوصول المباشر للقسم المخفي (${requestedDept}) في الفرع (${branchId}).`,
+          getClientIp(req),
+          branchId,
+          { username: actor.user.username, department: requestedDept, operation: 'VIEW', result: 'DENIED' }
+        ).catch(() => {});
+        res.status(403).json({
+          success: false,
+          blocked: true,
+          code: 'DEPARTMENT_HIDDEN_403',
+          error: 'هذا القسم مخفي حالياً من إعدادات الفرع ولا يمكن الوصول إليه مباشرة.',
+        });
+        return;
+      }
+      if (!hasDepartmentPermission(actor.user, requestedDept, 'view', branchDepts)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          requestedDept,
+          'VIEW',
+          `تم حظر قراءة القسم (${requestedDept}) للمستخدم (${actor.user.username}).`
+        );
+        return;
+      }
     }
     const cacheKey = `${branchId}::${moduleKey}`;
     try {
@@ -4426,7 +5250,7 @@ async function startServer() {
           success: true,
           exists: true,
           branchId,
-          payload: filterModulePayloadByRbac(result.payload, actor.user),
+          payload: filterModulePayloadByRbac(result.payload, actor.user, branchDepts),
           version: result.version,
           updatedAt: result.updatedAt,
         });
@@ -4438,7 +5262,7 @@ async function startServer() {
           success: true,
           exists: true,
           branchId,
-          payload: filterModulePayloadByRbac(memCached.payload, actor.user),
+          payload: filterModulePayloadByRbac(memCached.payload, actor.user, branchDepts),
           version: memCached.version,
           updatedAt: memCached.updatedAt,
         });
@@ -4452,7 +5276,7 @@ async function startServer() {
           success: true,
           exists: true,
           branchId,
-          payload: filterModulePayloadByRbac(memCached.payload, actor.user),
+          payload: filterModulePayloadByRbac(memCached.payload, actor.user, branchDepts),
           version: memCached.version,
           updatedAt: memCached.updatedAt,
         });
@@ -4624,6 +5448,8 @@ async function startServer() {
       ? existingResult.payload
       : cachedBranchModules.get(cacheKey)?.payload || {};
 
+    const branchDeptsForPost = !isSuper ? await getBranchDepartmentsRawInDb(branchId) : [];
+
     let payload = rawPayload;
     if (!isSuper) {
       const mergedAuthorized: Record<string, any> =
@@ -4640,10 +5466,27 @@ async function startServer() {
         const prevJson = JSON.stringify(prevSlice);
         const sliceChanged = incomingJson !== prevJson;
         if (sliceChanged || targetSlice === deptKey) {
+          if (!isDepartmentVisibleInBranchConfig(branchDeptsForPost, deptKey)) {
+            await recordAuditLog(
+              actor.user.username,
+              'HIDDEN_DEPARTMENT_BLOCKED',
+              `تم حظر تعديل القسم المخفي (${deptKey}) في الفرع (${branchId}).`,
+              getClientIp(req),
+              branchId,
+              { username: actor.user.username, department: deptKey, operation: 'UPDATE', result: 'DENIED' }
+            ).catch(() => {});
+            res.status(403).json({
+              success: false,
+              blocked: true,
+              code: 'DEPARTMENT_HIDDEN_403',
+              error: 'هذا القسم مخفي حالياً من إعدادات الفرع ولا يمكن تعديل بياناته.',
+            });
+            return;
+          }
           const canMutate =
-            hasDepartmentPermission(actor.user, deptKey, 'insert') ||
-            hasDepartmentPermission(actor.user, deptKey, 'update') ||
-            hasDepartmentPermission(actor.user, deptKey, 'delete');
+            hasDepartmentPermission(actor.user, deptKey, 'insert', branchDeptsForPost) ||
+            hasDepartmentPermission(actor.user, deptKey, 'update', branchDeptsForPost) ||
+            hasDepartmentPermission(actor.user, deptKey, 'delete', branchDeptsForPost);
           if (!canMutate) {
             if (prevSlice === undefined && targetSlice !== deptKey) {
               continue;

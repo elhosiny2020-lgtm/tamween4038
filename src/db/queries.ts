@@ -123,6 +123,14 @@ let schemaInitialized = false;
 let schemaInitPromise: Promise<void> | null = null;
 let pgFallbackMode = !process.env.SQL_HOST;
 
+export function isPgFallbackMode(): boolean {
+  return pgFallbackMode;
+}
+
+export function setPgFallbackMode(enabled: boolean): void {
+  pgFallbackMode = enabled;
+}
+
 export async function ensurePostgresSchema(): Promise<void> {
   if (pgFallbackMode) return;
   if (schemaInitialized) return;
@@ -468,11 +476,14 @@ export function mapDbUserToApp(r: any): AppUser & { version?: number } {
     .filter(Boolean);
   const applyAll = rawPerms.includes('__all_branches');
   const cleanPerms = rawPerms.filter((p) => !p.startsWith('__dept:') && p !== '__all_branches');
-  const roleStr = String(r.role || 'inspector');
+  const roleStr = String(r.role || 'employee');
+  const unameStr = String(r.username || '');
+  const isLegacyRootAdmin = roleStr === 'admin' && unameStr.trim().toLowerCase() === 'admin';
   const mapped: AppUser & { version?: number } = {
     id: String(r.id),
     branchId: String(r.branch_id || DEFAULT_BRANCH_ID),
-    username: String(r.username || ''),
+    administrationId: String(r.administration_id || 'admin-mahalla-sector'),
+    username: unameStr,
     fullName: String(r.full_name || ''),
     hasPassword: Boolean(r.password_hash),
     role: roleStr,
@@ -488,10 +499,14 @@ export function mapDbUserToApp(r: any): AppUser & { version?: number } {
         ? (r.department_permissions as DepartmentPermissionsMap)
         : undefined,
     applyToAllBranches: applyAll || undefined,
+    isCentral: Boolean(r.is_central || applyAll || roleStr === 'super_admin' || roleStr === 'main_admin_manager' || roleStr === 'supply_admin_manager'),
     isActive: r.is_active !== false,
-    isSuperAdmin: Boolean(r.is_super_admin || roleStr === 'super_admin' || roleStr === 'admin'),
+    isSuperAdmin: Boolean(r.is_super_admin || roleStr === 'super_admin' || isLegacyRootAdmin),
     notes: String(r.notes || ''),
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
+    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+    updatedBy: r.updated_by ? String(r.updated_by) : undefined,
+    lastLoginAt: r.last_login_at ? new Date(r.last_login_at).toISOString() : undefined,
     version: Number(r.version || 1),
   };
   return sanitizeUserForClient(mapped) as AppUser & { version?: number };
@@ -1336,11 +1351,12 @@ export async function upsertRowWithClient(
         : existingUserRow?.password_hash
         ? String(existingUserRow.password_hash)
         : '';
-      const resolvedRole = String(u.role || existingUserRow?.role || 'inspector');
+      const resolvedRole = String(u.role || existingUserRow?.role || 'employee');
+      const isLegacyRootAdmin = resolvedRole === 'admin' && cleanUsername.trim().toLowerCase() === 'admin';
       const isSuper = Boolean(
         u.isSuperAdmin !== undefined
           ? u.isSuperAdmin
-          : resolvedRole === 'super_admin' || resolvedRole === 'admin'
+          : resolvedRole === 'super_admin' || isLegacyRootAdmin
       );
       const isActive = u.isActive !== undefined ? Boolean(u.isActive) : existingUserRow?.is_active !== false;
       const matrix = resolveUserDepartmentMatrix({

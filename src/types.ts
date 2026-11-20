@@ -278,8 +278,11 @@ export interface BranchDepartmentConfigItem {
   iconKey?: string;
   visible: boolean;
   enabled: boolean;
+  allowedBySuperAdmin?: boolean;
   order: number;
   defaultPermissions?: string[];
+  updatedAt?: string;
+  updatedBy?: string;
   subItems: BranchSubDepartmentItem[];
 }
 
@@ -308,14 +311,51 @@ export interface SystemConfig {
 
 export type UserRoleType =
   | 'super_admin'
+  | 'main_admin_manager'
+  | 'supply_admin_manager'
+  | 'branch_manager'
+  | 'deputy_branch_manager'
+  | 'system_officer'
+  | 'department_manager'
+  | 'department_head'
+  | 'department_officer'
+  | 'employee'
+  | 'auditor'
+  | 'custom_user'
   | 'admin'
   | 'supervisor'
   | 'inspector'
-  | 'auditor'
   | 'data_entry'
   | 'viewer'
   | 'reader'
   | string;
+
+export interface RoleRecord {
+  id: string;
+  code: string;
+  nameAr: string;
+  hierarchyLevel: number;
+  isCentral: boolean;
+  isSystem: boolean;
+  isActive: boolean;
+  badgeColor?: string;
+  description?: string;
+  defaultPermissions: string[];
+  canAssign?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AdministrationRecord {
+  id: string;
+  name: string;
+  governorateTitle: string;
+  directorateTitle: string;
+  isActive: boolean;
+  branches?: SupplyBranch[];
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 export interface AppUser {
   id: string;
@@ -324,7 +364,10 @@ export interface AppUser {
   password?: string;
   hasPassword?: boolean;
   role: UserRoleType;
+  roleNameAr?: string;
   isSuperAdmin?: boolean;
+  isCentral?: boolean;
+  administrationId?: string;
   jobTitle?: string;
   department?: string;
   phone?: string;
@@ -336,7 +379,11 @@ export interface AppUser {
   departmentPermissions?: DepartmentPermissionsMap;
   applyToAllBranches?: boolean;
   branchId?: string;
+  branchName?: string;
   createdAt?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  lastLoginAt?: string;
   isActive?: boolean;
   notes?: string;
 }
@@ -444,6 +491,7 @@ export interface DailyBakeryTask {
 export interface SupplyBranch {
   id: string;
   name: string; // مثال: إدارة تموين مركز المحلة الكبرى / إدارة تموين سمنود
+  administrationId?: string;
   governorateTitle: string;
   directorateTitle: string;
   governorate?: string;
@@ -451,6 +499,7 @@ export interface SupplyBranch {
   description?: string;
   createdAt: string;
   isDefault?: boolean;
+  isActive?: boolean;
 }
 
 export type { AppState } from './storage';

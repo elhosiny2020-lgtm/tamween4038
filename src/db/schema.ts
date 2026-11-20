@@ -12,17 +12,65 @@ import {
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
+export const administrations = pgTable('administrations', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  governorateTitle: text('governorate_title').notNull().default('محافظة الغربية'),
+  directorateTitle: text('directorate_title').notNull().default('مديرية التموين والتجارة الداخلية بالغربية'),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
 export const branches = pgTable('branches', {
   id: text('id').primaryKey(),
+  administrationId: text('administration_id').notNull().default('admin-mahalla-sector'),
   name: text('name').notNull(),
   governorateTitle: text('governorate_title').notNull().default('محافظة الغربية'),
   directorateTitle: text('directorate_title').notNull().default('مديرية التموين والتجارة الداخلية بالغربية'),
   description: text('description').notNull().default(''),
   isDefault: boolean('is_default').notNull().default(false),
+  isActive: boolean('is_active').notNull().default(true),
   version: integer('version').notNull().default(1),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
+
+export const roles = pgTable('roles', {
+  id: text('id').primaryKey(),
+  code: text('code').notNull().unique(),
+  nameAr: text('name_ar').notNull(),
+  hierarchyLevel: integer('hierarchy_level').notNull().default(20),
+  isCentral: boolean('is_central').notNull().default(false),
+  isSystem: boolean('is_system').notNull().default(true),
+  isActive: boolean('is_active').notNull().default(true),
+  badgeColor: text('badge_color').notNull().default('bg-slate-100 text-slate-900 border-slate-400'),
+  description: text('description').notNull().default(''),
+  defaultPermissions: jsonb('default_permissions').notNull().default([]),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+export const permissions = pgTable('permissions', {
+  code: text('code').primaryKey(),
+  nameAr: text('name_ar').notNull(),
+  category: text('category').notNull().default('عام'),
+  description: text('description').notNull().default(''),
+});
+
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    id: text('id').primaryKey(),
+    roleCode: text('role_code')
+      .notNull()
+      .references(() => roles.code, { onDelete: 'cascade' }),
+    permissionCode: text('permission_code')
+      .notNull()
+      .references(() => permissions.code, { onDelete: 'cascade' }),
+  },
+  (t) => [uniqueIndex('uq_role_permission').on(t.roleCode, t.permissionCode)]
+);
 
 export const villages = pgTable(
   'villages',
@@ -184,12 +232,14 @@ export const appUsers = pgTable(
     branchId: text('branch_id')
       .notNull()
       .references(() => branches.id, { onDelete: 'cascade' }),
+    administrationId: text('administration_id').notNull().default('admin-mahalla-sector'),
     username: text('username').notNull(),
     fullName: text('full_name').notNull(),
     passwordHash: text('password_hash').notNull(),
-    role: text('role').notNull().default('inspector'),
+    role: text('role').notNull().default('employee'),
     isActive: boolean('is_active').notNull().default(true),
     isSuperAdmin: boolean('is_super_admin').notNull().default(false),
+    isCentral: boolean('is_central').notNull().default(false),
     jobTitle: text('job_title').notNull().default(''),
     department: text('department').notNull().default(''),
     phone: text('phone').notNull().default(''),
@@ -199,6 +249,8 @@ export const appUsers = pgTable(
     notes: text('notes').notNull().default(''),
     customPermissions: jsonb('custom_permissions').default([]),
     departmentPermissions: jsonb('department_permissions').default({}),
+    lastLoginAt: timestamp('last_login_at'),
+    updatedBy: text('updated_by').notNull().default(''),
     version: integer('version').notNull().default(1),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
@@ -209,14 +261,83 @@ export const appUsers = pgTable(
   ]
 );
 
+export const userRoles = pgTable(
+  'user_roles',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => appUsers.id, { onDelete: 'cascade' }),
+    roleCode: text('role_code').notNull(),
+    branchId: text('branch_id'),
+    assignedBy: text('assigned_by').notNull().default('system'),
+    assignedAt: timestamp('assigned_at').defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_user_role_branch').on(t.userId, t.roleCode),
+    index('idx_user_roles_user').on(t.userId),
+  ]
+);
+
+export const userBranches = pgTable(
+  'user_branches',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => appUsers.id, { onDelete: 'cascade' }),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    isPrimary: boolean('is_primary').notNull().default(true),
+    assignedBy: text('assigned_by').notNull().default('system'),
+    assignedAt: timestamp('assigned_at').defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_user_branch').on(t.userId, t.branchId),
+    index('idx_user_branches_branch').on(t.branchId),
+  ]
+);
+
 export const appDepartments = pgTable('app_departments', {
   id: text('id').primaryKey(),
+  code: text('code').notNull().default(''),
   nameAr: text('name_ar').notNull(),
+  shortLabel: text('short_label').notNull().default(''),
+  iconKey: text('icon_key').notNull().default('folder'),
   description: text('description').notNull().default(''),
   sortOrder: integer('sort_order').notNull().default(0),
+  isSystem: boolean('is_system').notNull().default(true),
   isActive: boolean('is_active').notNull().default(true),
+  subItemsJson: jsonb('sub_items_json').notNull().default([]),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+export const branchDepartments = pgTable(
+  'branch_departments',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'cascade' }),
+    departmentId: text('department_id').notNull(),
+    departmentKey: text('department_key').notNull().default('bakeries'),
+    label: text('label').notNull(),
+    shortLabel: text('short_label').notNull().default(''),
+    iconKey: text('icon_key').notNull().default('folder'),
+    visible: boolean('visible').notNull().default(true),
+    enabled: boolean('enabled').notNull().default(true),
+    allowedBySuperAdmin: boolean('allowed_by_super_admin').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+    subItemsJson: jsonb('sub_items_json').notNull().default([]),
+    updatedBy: text('updated_by').notNull().default('system'),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_branch_department').on(t.branchId, t.departmentId),
+    index('idx_branch_departments_branch').on(t.branchId),
+  ]
+);
 
 export const userDepartmentPermissions = pgTable(
   'user_department_permissions',
@@ -232,11 +353,17 @@ export const userDepartmentPermissions = pgTable(
       .notNull()
       .references(() => appDepartments.id, { onDelete: 'cascade' }),
     canView: boolean('can_view').notNull().default(false),
+    canEnter: boolean('can_enter').notNull().default(true),
+    canHide: boolean('can_hide').notNull().default(false),
     canInsert: boolean('can_insert').notNull().default(false),
     canUpdate: boolean('can_update').notNull().default(false),
     canDelete: boolean('can_delete').notNull().default(false),
+    canApprove: boolean('can_approve').notNull().default(false),
     canPrint: boolean('can_print').notNull().default(false),
     canExport: boolean('can_export').notNull().default(false),
+    canManageUsers: boolean('can_manage_users').notNull().default(false),
+    canAssignPermissions: boolean('can_assign_permissions').notNull().default(false),
+    canDepartmentSettings: boolean('can_department_settings').notNull().default(false),
     updatedAt: timestamp('updated_at').defaultNow(),
   },
   (t) => [

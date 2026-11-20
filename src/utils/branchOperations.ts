@@ -304,8 +304,11 @@ export function cloneDefaultBranchDepartmentsStructure(
       iconKey: dept.iconKey ? String(dept.iconKey) : undefined,
       visible: dept.visible !== false,
       enabled: dept.enabled !== false,
+      allowedBySuperAdmin: dept.allowedBySuperAdmin !== false,
       order: Number.isFinite(Number(dept.order)) ? Number(dept.order) : dIdx + 1,
       defaultPermissions: Array.isArray(dept.defaultPermissions) ? [...dept.defaultPermissions] : undefined,
+      updatedAt: dept.updatedAt ? String(dept.updatedAt) : undefined,
+      updatedBy: dept.updatedBy ? String(dept.updatedBy) : undefined,
       subItems: (Array.isArray(dept.subItems) ? dept.subItems : [])
         .map((sub, sIdx) => ({
           id: String(sub.id),

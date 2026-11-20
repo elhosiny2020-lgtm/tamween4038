@@ -1,29 +1,47 @@
 import {
   SYSTEM_DEPARTMENT_KEYS,
   type AppUser,
+  type BranchDepartmentConfigItem,
   type DepartmentPermissionFlags,
   type DepartmentPermissionsMap,
   type DepartmentScopeId,
   type PermissionAction,
   type SystemDepartmentKey,
 } from '../types.ts';
+import {
+  buildExtendedFlagsFromRole,
+  isDepartmentVisibleInBranchConfig,
+  isTabVisibleInBranchConfig,
+} from './rbacCatalog.ts';
 
 export const FULL_DEPARTMENT_FLAGS: DepartmentPermissionFlags = {
   view: true,
+  enter: true,
+  hide: true,
   insert: true,
   update: true,
   delete: true,
+  approve: true,
   print: true,
   export: true,
+  manageUsers: true,
+  assignPermissions: true,
+  departmentSettings: true,
 };
 
 export const EMPTY_DEPARTMENT_FLAGS: DepartmentPermissionFlags = {
   view: false,
+  enter: false,
+  hide: false,
   insert: false,
   update: false,
   delete: false,
+  approve: false,
   print: false,
   export: false,
+  manageUsers: false,
+  assignPermissions: false,
+  departmentSettings: false,
 };
 
 /**
@@ -63,60 +81,18 @@ export function canAssignSuperAdmin(actor: AppUser | null | undefined): boolean 
 }
 
 /**
- * اشتقاق مصفوفة الصلاحيات الافتراضية لقسم بناءً على الدور الوظيفي (للتوافق مع الحسابات السابقة)
+ * اشتقاق مصفوفة الصلاحيات الافتراضية لقسم بناءً على الدور الوظيفي (يدعم الأدوار الـ 12 والأدوار السابقة)
  */
 export function buildDefaultFlagsForRole(role: string, customPermissions?: string[]): DepartmentPermissionFlags {
-  if (role === 'super_admin' || role === 'admin') {
-    return { ...FULL_DEPARTMENT_FLAGS };
-  }
+  const base = buildExtendedFlagsFromRole(role);
   const hasCustom = Array.isArray(customPermissions) && customPermissions.length > 0;
-  if (role === 'viewer' || role === 'reader') {
-    return {
-      view: true,
-      insert: false,
-      update: false,
-      delete: false,
-      print: hasCustom ? customPermissions!.includes('VIEW_REPORTS') : role === 'viewer',
-      export: hasCustom ? customPermissions!.includes('EXPORT_DATA') : role === 'viewer',
-    };
-  }
-  if (role === 'supervisor') {
-    return {
-      view: true,
-      insert: true,
-      update: true,
-      delete: true,
-      print: true,
-      export: true,
-    };
-  }
-  if (role === 'auditor') {
-    return {
-      view: true,
-      insert: true,
-      update: true,
-      delete: false,
-      print: true,
-      export: true,
-    };
-  }
-  if (role === 'inspector' || role === 'data_entry') {
-    return {
-      view: true,
-      insert: true,
-      update: true,
-      delete: false,
-      print: hasCustom ? customPermissions!.includes('VIEW_REPORTS') : true,
-      export: hasCustom ? customPermissions!.includes('EXPORT_DATA') : role === 'inspector',
-    };
-  }
+  if (!hasCustom) return base;
   return {
-    view: true,
-    insert: false,
-    update: false,
-    delete: false,
-    print: false,
-    export: false,
+    ...base,
+    print: base.print || customPermissions!.includes('VIEW_REPORTS') || customPermissions!.includes('PRINT_DATA'),
+    export: base.export || customPermissions!.includes('EXPORT_DATA'),
+    manageUsers: base.manageUsers || customPermissions!.includes('MANAGE_USERS'),
+    departmentSettings: base.departmentSettings || customPermissions!.includes('MANAGE_DEPARTMENTS'),
   };
 }
 
@@ -167,11 +143,17 @@ export function resolveUserDepartmentMatrix(user: AppUser | null | undefined): R
       matrix[dept] = f
         ? {
             view: Boolean(f.view),
+            enter: Boolean(f.view && (f.enter !== undefined ? f.enter : true)),
+            hide: Boolean(f.hide),
             insert: Boolean(f.view && f.insert),
             update: Boolean(f.view && f.update),
             delete: Boolean(f.view && f.delete),
+            approve: Boolean(f.view && f.approve),
             print: Boolean(f.view && f.print),
             export: Boolean(f.view && f.export),
+            manageUsers: Boolean(f.manageUsers),
+            assignPermissions: Boolean(f.assignPermissions),
+            departmentSettings: Boolean(f.departmentSettings),
           }
         : { ...EMPTY_DEPARTMENT_FLAGS };
     }
@@ -196,14 +178,23 @@ export function resolveUserDepartmentMatrix(user: AppUser | null | undefined): R
 }
 
 /**
- * فحص صلاحية عملية محددة داخل قسم محدد (view | insert | update | delete | print | export)
+ * فحص صلاحية عملية محددة داخل قسم محدد مع مراعاة إظهار/إخفاء القسم على مستوى الفرع
  */
 export function hasDepartmentPermission(
   user: AppUser | null | undefined,
   dept: SystemDepartmentKey | DepartmentScopeId,
-  action: PermissionAction = 'view'
+  action: PermissionAction = 'view',
+  branchDepartments?: BranchDepartmentConfigItem[] | null
 ): boolean {
   if (!user || user.isActive === false) return false;
+  if (
+    branchDepartments &&
+    dept !== 'all' &&
+    !isDepartmentVisibleInBranchConfig(branchDepartments, dept)
+  ) {
+    // القسم المخفي محجوب عن الدخول المباشر والتنفيذ حتى لمدير الفرع (مع بقاء البيانات والصلاحيات محفوظة)
+    if (!isSuperAdmin(user)) return false;
+  }
   if (isSuperAdmin(user)) return true;
   if (dept === 'all') return false;
 
@@ -211,43 +202,62 @@ export function hasDepartmentPermission(
   const flags = matrix[dept as SystemDepartmentKey];
   if (!flags) return false;
   if (action === 'view') return Boolean(flags.view);
+  if (action === 'enter') return Boolean(flags.view && (flags.enter !== undefined ? flags.enter : true));
+  if (action === 'hide' || action === 'manageUsers' || action === 'assignPermissions' || action === 'departmentSettings') {
+    return Boolean(flags[action]);
+  }
   return Boolean(flags.view && flags[action]);
 }
 
 /**
  * تحديد الأقسام المصرح للمستخدم بالوصول إليها (Fail-Closed لغير المدير العام).
  */
-export function getUserAllowedDepartments(user: AppUser | null | undefined): DepartmentScopeId[] {
+export function getUserAllowedDepartments(
+  user: AppUser | null | undefined,
+  branchDepartments?: BranchDepartmentConfigItem[] | null
+): DepartmentScopeId[] {
   if (!user || user.isActive === false) return [];
   if (isSuperAdmin(user)) return ['all'];
 
   const matrix = resolveUserDepartmentMatrix(user);
-  const permitted = SYSTEM_DEPARTMENT_KEYS.filter((k) => matrix[k]?.view);
+  const permitted = SYSTEM_DEPARTMENT_KEYS.filter(
+    (k) => matrix[k]?.view && (!branchDepartments || isDepartmentVisibleInBranchConfig(branchDepartments, k))
+  );
   return permitted;
 }
 
 export function canUserAccessDepartment(
   user: AppUser | null | undefined,
-  dept: DepartmentScopeId
+  dept: DepartmentScopeId,
+  branchDepartments?: BranchDepartmentConfigItem[] | null
 ): boolean {
   if (!user || user.isActive === false) return false;
+  if (
+    branchDepartments &&
+    dept !== 'all' &&
+    !isDepartmentVisibleInBranchConfig(branchDepartments, dept)
+  ) {
+    return false;
+  }
   if (isSuperAdmin(user)) return true;
   if (dept === 'all') return false;
-  return hasDepartmentPermission(user, dept, 'view');
+  return hasDepartmentPermission(user, dept, 'view', branchDepartments);
 }
 
 export function canUserPrintDepartment(
   user: AppUser | null | undefined,
-  dept: SystemDepartmentKey
+  dept: SystemDepartmentKey,
+  branchDepartments?: BranchDepartmentConfigItem[] | null
 ): boolean {
-  return hasDepartmentPermission(user, dept, 'print');
+  return hasDepartmentPermission(user, dept, 'print', branchDepartments);
 }
 
 export function canUserExportDepartment(
   user: AppUser | null | undefined,
-  dept: SystemDepartmentKey
+  dept: SystemDepartmentKey,
+  branchDepartments?: BranchDepartmentConfigItem[] | null
 ): boolean {
-  return hasDepartmentPermission(user, dept, 'export');
+  return hasDepartmentPermission(user, dept, 'export', branchDepartments);
 }
 
 export function isDepartmentRestrictedUser(user: AppUser | null | undefined): boolean {
@@ -294,7 +304,7 @@ export function getDepartmentForSidebarGroup(groupId: string): DepartmentScopeId
     case 'group-4':
       return 'admin_only';
     case 'group-5':
-      return 'admin_only';
+      return 'reports';
     case 'group-6':
       return 'commodities';
     case 'group-7':
@@ -304,14 +314,17 @@ export function getDepartmentForSidebarGroup(groupId: string): DepartmentScopeId
     case 'group-9':
       return 'hr';
     default:
-      return 'admin_only';
+      return 'shared';
   }
 }
 
-export function getDefaultTabForUser(user: AppUser | null | undefined): string {
+export function getDefaultTabForUser(
+  user: AppUser | null | undefined,
+  branchDepartments?: BranchDepartmentConfigItem[] | null
+): string {
   if (!user || user.isActive === false) return 'welcome';
   if (isSuperAdmin(user)) return 'welcome';
-  const allowed = getUserAllowedDepartments(user);
+  const allowed = getUserAllowedDepartments(user, branchDepartments);
   if (allowed.includes('bakeries')) return 'bakeries';
   if (allowed.includes('debts')) return 'debts';
   if (allowed.includes('commodities')) return 'commodities';
@@ -322,12 +335,19 @@ export function getDefaultTabForUser(user: AppUser | null | undefined): string {
   return 'welcome';
 }
 
-export function canUserAccessTab(user: AppUser | null | undefined, tabId: string): boolean {
+export function canUserAccessTab(
+  user: AppUser | null | undefined,
+  tabId: string,
+  branchDepartments?: BranchDepartmentConfigItem[] | null
+): boolean {
   if (!user || user.isActive === false) return false;
+  if (branchDepartments && !isTabVisibleInBranchConfig(branchDepartments, tabId)) {
+    return false;
+  }
   if (isSuperAdmin(user)) return true;
 
   const dept = getDepartmentForTab(tabId);
   if (dept === 'shared') return true;
   if (dept === 'admin_only') return false;
-  return hasDepartmentPermission(user, dept, 'view');
+  return hasDepartmentPermission(user, dept, 'view', branchDepartments);
 }
