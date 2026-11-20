@@ -47,7 +47,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
-  const [registerRole, setRegisterRole] = useState<UserRoleType>('viewer');
+  const [registerRole, setRegisterRole] = useState<UserRoleType>('employee');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -70,17 +70,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setError('يرجى إدخال الاسم بالكامل واسم المستخدم وكلمة المرور');
         return;
       }
+      if (trimmedUser.length < 3) {
+        setError('اسم المستخدم يجب أن يتكون من 3 أحرف على الأقل.');
+        return;
+      }
       if (
         normalizedInputPass.length < 8 ||
         !/[a-zA-Z\u0600-\u06FF]/.test(normalizedInputPass) ||
         !/\d/.test(normalizedInputPass)
       ) {
-        setError('كلمة المرور يجب أن تتكون من 8 أحرف على الأقل وتحتوي على أحرف وأرقام.');
+        setError('كلمة المرور يجب أن تتكون من 8 أحرف على الأقل وتحتوي على أحرف وأرقام (مثال: User2026).');
         return;
       }
 
       const safeRegisterRole: UserRoleType =
-        registerRole === 'super_admin' || registerRole === 'admin' ? 'viewer' : registerRole;
+        registerRole === 'super_admin' || registerRole === 'admin' ? 'employee' : registerRole;
 
       const isHttpOriginReg =
         typeof window !== 'undefined' &&
@@ -94,7 +98,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             credentials: 'same-origin',
             headers: getSecurityShieldHeaders(true),
             body: JSON.stringify({
-              branchId: activeBranchId || 'branch-mahalla',
+              branchId: activeBranchId || branches[0]?.id || 'branch-mahalla',
               username: username.trim(),
               fullName: fullName.trim(),
               password: trimmedPass,
@@ -107,9 +111,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           });
           const data = await resp.json().catch(() => null);
           if (resp.ok && data?.success && data?.user) {
+            const registeredUsername = String(data.user.username || username.trim());
             setPassword('');
             setFullName('');
-            setUsername('');
+            setUsername(registeredUsername);
             setShowPassword(false);
             if (onRegisterUser) {
               await onRegisterUser({
@@ -117,18 +122,23 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 password: '',
               });
             }
-            setSuccessMsg('تم إنشاء الحساب بنجاح وحفظه في قاعدة البيانات! يمكنك تسجيل الدخول الآن.');
+            setSuccessMsg(
+              `تم إنشاء الحساب (${registeredUsername}) وحفظه في قاعدة البيانات بنجاح! أدخل كلمة المرور الآن لتسجيل الدخول.`
+            );
             setMode('login');
             setIsSubmitting(false);
             return;
           }
-          if (resp.status >= 400 && resp.status < 500) {
-            setError(data?.error || 'تعذر إنشاء الحساب الجديد.');
+          setError(data?.error || `تعذر إنشاء الحساب الجديد (رمز الخطأ ${resp.status}).`);
+          setIsSubmitting(false);
+          return;
+        } catch {
+          if (typeof navigator !== 'undefined' && navigator.onLine !== false) {
+            setError('تعذر الاتصال بالخادم لتسجيل الحساب الجديد. يرجى المحاولة مرة أخرى.');
             setIsSubmitting(false);
             return;
           }
-        } catch {
-          // Offline fallback handled below
+          // Offline fallback handled below ONLY when truly offline
         } finally {
           setIsSubmitting(false);
         }
@@ -158,7 +168,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       }
       setPassword('');
       setFullName('');
-      setUsername('');
+      setUsername(newUser.username);
       setShowPassword(false);
       setSuccessMsg('تم إنشاء الحساب بنجاح! يمكنك تسجيل الدخول الآن.');
       setMode('login');
@@ -182,7 +192,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           credentials: 'same-origin',
           headers: getSecurityShieldHeaders(true),
           body: JSON.stringify({
-            branchId: activeBranchId || 'branch-mahalla',
+            branchId: activeBranchId || branches[0]?.id || 'branch-mahalla',
             username: username.trim(),
             password: trimmedPass,
           }),
@@ -199,18 +209,16 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           });
           return;
         }
-        if (
-          resp.status === 400 ||
-          resp.status === 401 ||
-          resp.status === 403 ||
-          resp.status === 429
-        ) {
+        setIsSubmitting(false);
+        setError(data?.error || 'اسم المستخدم أو كلمة المرور غير صحيحة');
+        return;
+      } catch {
+        if (typeof navigator !== 'undefined' && navigator.onLine !== false) {
+          setError('تعذر الاتصال بالخادم للتحقق من بيانات الدخول. يرجى المحاولة مرة أخرى.');
           setIsSubmitting(false);
-          setError(data?.error || 'اسم المستخدم أو كلمة المرور غير صحيحة');
           return;
         }
-      } catch {
-        // Fall through to offline fallback ONLY when network/server is unreachable
+        // Fall through to offline fallback ONLY when truly offline
       } finally {
         setIsSubmitting(false);
       }
@@ -455,15 +463,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                     onChange={(e) => setRegisterRole(e.target.value as UserRoleType)}
                     className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-slate-300 text-[#0A1628] font-black text-xs focus:outline-none focus:ring-2 focus:ring-[#0D9488] cursor-pointer"
                   >
-                    <option value="reader">قارئ فقط — Reader (عرض بدون تعديل)</option>
-                    <option value="viewer">مشاهد — Viewer (استعراض وطباعة فقط)</option>
-                    <option value="data_entry">مسئول إدخال بيانات — Data Entry</option>
+                    <option value="employee">موظف — Employee (إدخال ومتابعة العمل)</option>
+                    <option value="department_officer">مسؤول قسم — Department Officer</option>
                     <option value="inspector">مفتش رقابة وتموين — Inspector</option>
-                    <option value="auditor">مراجع حسابات ومديونيات — Auditor</option>
+                    <option value="auditor">مراقب ومراجع حسابات — Auditor</option>
+                    <option value="data_entry">مسئول إدخال بيانات — Data Entry</option>
                     <option value="supervisor">مشرف عام — Supervisor</option>
+                    <option value="viewer">مشاهد — Viewer (استعراض وطباعة فقط)</option>
+                    <option value="reader">قارئ فقط — Reader (عرض بدون تعديل)</option>
                   </select>
                   <p className="text-[10px] font-bold text-slate-500 mt-1">
-                    صلاحيات مدير النظام (Admin / Super Admin) يتم منحها من داخل لوحة المستخدمين بواسطة مدير عام النظام فقط.
+                    صلاحيات الإدارة العليا ومديري الفروع يتم منحها من داخل لوحة المستخدمين بواسطة مدير النظام المعتمد فقط.
                   </p>
                 </div>
               </div>
@@ -514,6 +524,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+              {mode === 'register' && (
+                <p className="text-[11px] font-bold text-slate-500 mt-1.5">
+                  شروط كلمة المرور: 8 أحرف على الأقل وتشمل حروفاً وأرقاماً (مثال: User2026)
+                </p>
+              )}
             </div>
 
             <div className="flex items-center justify-end pt-1">
@@ -539,11 +554,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
             <button
               type="submit"
+              disabled={isSubmitting}
               data-testid="login-submit-btn"
-              className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-l from-[#0A1628] via-[#0F1E36] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] text-white font-black text-sm shadow-xl shadow-[#0A1628]/20 border border-[#D4AF37]/40 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-l from-[#0A1628] via-[#0F1E36] to-[#0D9488] hover:from-[#0F1E36] hover:to-[#0F766E] disabled:opacity-60 disabled:cursor-not-allowed text-white font-black text-sm shadow-xl shadow-[#0A1628]/20 border border-[#D4AF37]/40 transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
               <LogIn className="w-5 h-5 text-[#D4AF37]" />
-              <span>{mode === 'login' ? 'دخول إلى المنظومة' : 'إنشاء الحساب وحفظه بالسحابة'}</span>
+              <span>
+                {isSubmitting
+                  ? mode === 'login'
+                    ? 'جاري التحقق من بيانات الدخول...'
+                    : 'جاري إنشاء الحساب وحفظه...'
+                  : mode === 'login'
+                  ? 'دخول إلى المنظومة'
+                  : 'إنشاء الحساب وحفظه في قاعدة البيانات'}
+              </span>
             </button>
 
 
