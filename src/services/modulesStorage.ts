@@ -30,7 +30,7 @@ import type {
   SparePartItem,
 } from '../types/modules';
 import type { VillageHierarchy } from '../types';
-import { getSecurityShieldHeaders, getSupabaseClient, SESSION_CLIENT_ID } from '../lib/supabase';
+import { getAuthSessionToken, getSecurityShieldHeaders, getSupabaseClient, SESSION_CLIENT_ID } from '../lib/supabase.ts';
 import {
   computeAttendanceMetrics,
   computeEmployeePayrollLine,
@@ -43,6 +43,7 @@ import {
 import { buildMay2026RationMerchantsList } from '../data/may2026RationMerchants';
 import { createInitialInternalTradeState } from '../data/internalTradeInitialData';
 import { buildGrainDepartmentCollections } from '../data/grainDepartmentInitialData';
+import { DEFAULT_BRANCH_ID } from '../utils/branchVaultUtils';
 
 const LOCAL_MODULES_STORAGE_PREFIX = 'tamween_branch_modules_v1::';
 
@@ -1344,10 +1345,119 @@ export function createInitialBranchModulesBundle(
     grainMaintenance: createInitialGrainMaintenanceState(branchId, branchName, villages),
     hr: createInitialHrState(branchId, branchName),
     updatedAt: new Date().toISOString(),
+    seedMeta: {
+      may2026MerchantsSeeded: true,
+      grainCollectionsSeeded: true,
+    },
   };
 }
 
-function upgradeModulesBundleIfNeeded(
+export function createEmptyBranchModulesBundle(
+  branchId: string,
+  branchName: string,
+  villages: VillageHierarchy[]
+): BranchModulesBundle {
+  const base = createInitialBranchModulesBundle(branchId, branchName, villages);
+  const nowIso = new Date().toISOString();
+  return {
+    ...base,
+    ration: {
+      ...base.ration,
+      merchants: [],
+      commodities: [],
+      priceHistory: [],
+      cards: [],
+      warehouses: [],
+      movements: [],
+      requisitions: [],
+      disbursements: [],
+      financialEntries: [],
+      inspections: [],
+      gasCylinders: [],
+      petroleumProducts: [],
+      rationOfficeAccounts: [],
+      merchantMonthlyArchives: [],
+      complaints: [],
+      auditLogs: [],
+    },
+    internalTrade: base.internalTrade
+      ? {
+          ...base.internalTrade,
+          establishments: [],
+          campaigns: [],
+          violations: [],
+          seizures: [],
+          complaints: [],
+          marketPrices: [],
+          lpgVillageCirculation: [],
+          petroleumVillageCirculation: [],
+          fuelStations: [],
+          fuelStationMovements: [],
+          lpgDepots: [],
+          lpgDistributors: [],
+          auditLogs: [],
+        }
+      : undefined,
+    grainMaintenance: {
+      ...base.grainMaintenance,
+      assets: [],
+      orders: [],
+      spareParts: [],
+      technicians: [],
+      grainMovements: [],
+      shunas: [],
+      wheatReceipts: [],
+      wheatIssues: [],
+      wheatLedgerMovements: [],
+      shunaReconciliations: [],
+      refrigerators: [],
+      refrigeratorRooms: [],
+      refrigeratorReceipts: [],
+      refrigeratorIssues: [],
+      refrigeratorAssets: [],
+      refrigeratorTempLogs: [],
+      refrigeratorMaintenance: [],
+      refrigeratorFinancials: [],
+      mills: [],
+      millLicenses: [],
+      millWheatReceipts: [],
+      millDailyOperations: [],
+      millProductions: [],
+      millMachinery: [],
+      millMaintenance: [],
+      millInspections: [],
+      millAssets: [],
+      flourQuotaMaster: [],
+      flourDailyDistributions: [],
+      flourMonthlyQuotas: [],
+      flourIssues: [],
+      flourQuotaAmendments: [],
+      millBakeryMappings: [],
+      millFlourStockBalances: [],
+      centralFinancialLedger: [],
+      auditLogs: [],
+    },
+    hr: {
+      ...base.hr,
+      employees: [],
+      attendance: [],
+      leaveBalances: [],
+      leaveRequests: [],
+      loans: [],
+      promotions: [],
+      payrollRuns: [],
+      auditLogs: [],
+    },
+    updatedAt: nowIso,
+    seedMeta: {
+      may2026MerchantsSeeded: true,
+      grainCollectionsSeeded: true,
+      factoryResetAt: nowIso,
+    },
+  };
+}
+
+export function upgradeModulesBundleIfNeeded(
   bundle: BranchModulesBundle,
   branchId: string,
   branchName: string,
@@ -1355,24 +1465,84 @@ function upgradeModulesBundleIfNeeded(
 ): { bundle: BranchModulesBundle; upgraded: boolean } {
   let upgraded = false;
   let nextRation = bundle.ration;
+  const nextSeedMeta = { ...(bundle.seedMeta || {}) };
 
-  const needsExpiryBackfill =
-    Array.isArray(nextRation.merchants) &&
-    nextRation.merchants.some((m) => !m.taxCardExpiryDate || !m.commercialRegExpiryDate);
-
-  if (!Array.isArray(nextRation.merchants) || nextRation.merchants.length < 116 || needsExpiryBackfill) {
-    const fullMayList = buildMay2026RationMerchantsList(branchId, branchName, villages);
-    const seedById = new Map(fullMayList.map((m) => [m.id, m]));
-    const existingById = new Map(
-      (nextRation.merchants || []).map((m) => [m.id, m])
+  const isDefaultBranch = branchId === DEFAULT_BRANCH_ID;
+  const wasFactoryReset = Boolean(nextSeedMeta.factoryResetAt);
+  const alreadyHasMay2026Archive =
+    Array.isArray(nextRation.merchantMonthlyArchives) &&
+    nextRation.merchantMonthlyArchives.some(
+      (a) =>
+        String(a?.id || '').includes('may2026') ||
+        String(a?.monthLabel || '').includes('مايو 2026')
     );
-    const baseList =
-      Array.isArray(nextRation.merchants) && nextRation.merchants.length >= 116
-        ? nextRation.merchants
-        : fullMayList.map((m) => existingById.get(m.id) || m);
+  const alreadySeededMerchants =
+    !isDefaultBranch ||
+    Boolean(nextSeedMeta.may2026MerchantsSeeded) ||
+    wasFactoryReset ||
+    alreadyHasMay2026Archive;
 
-    const mergedMerchants = baseList.map((m, idx) => {
-      const seededRef = seedById.get(m.id) || fullMayList[idx % fullMayList.length];
+  if (!alreadySeededMerchants && !nextSeedMeta.may2026MerchantsSeeded) {
+    // Only seed legacy default-branch bundles that have NEVER been seeded with May 2026 merchants
+    const currentMerchants = Array.isArray(nextRation.merchants) ? nextRation.merchants : [];
+    const shouldSeedLegacy = !Array.isArray(nextRation.merchants) || currentMerchants.length <= 3;
+
+    if (shouldSeedLegacy) {
+      const fullMayList = buildMay2026RationMerchantsList(branchId, branchName, villages);
+      const existingById = new Map(currentMerchants.map((m) => [m.id, m]));
+      const mergedMerchants = fullMayList.map((m) => existingById.get(m.id) || m);
+      nextRation = {
+        ...nextRation,
+        merchants: mergedMerchants,
+        merchantMonthlyArchives:
+          Array.isArray(nextRation.merchantMonthlyArchives) &&
+          nextRation.merchantMonthlyArchives.length > 0
+            ? nextRation.merchantMonthlyArchives
+            : [
+                {
+                  id: `${branchId}-arch-may2026`,
+                  monthLabel: 'تحديث بيانات التجار شهر مايو 2026 (النسخة الأصلية)',
+                  importedAt: '2026-05-01 09:00',
+                  importedBy: 'النظام الرئيسي',
+                  totalMerchants: mergedMerchants.length,
+                  activeCount: mergedMerchants.filter((m) => m.activityStatus === 'نشط').length,
+                  stoppedCount: mergedMerchants.filter(
+                    (m) => m.activityStatus === 'متوقف' || m.activityStatus === 'موقوف'
+                  ).length,
+                  onLeaveCount: mergedMerchants.filter((m) => m.activityStatus === 'إجازة').length,
+                  totalInsuranceAmount: mergedMerchants.reduce(
+                    (s, m) => s + (Number(m.cashInsuranceAmount) || 0),
+                    0
+                  ),
+                  summaryNotes:
+                    'النسخة المرجعية المعتمدة من ملف Excel «تحديث بيانات التجار شهر مايو 2026» بإجمالي 116 تاجراً تموينياً.',
+                  merchantsSnapshot: mergedMerchants,
+                },
+              ],
+      };
+      nextSeedMeta.may2026MerchantsSeeded = true;
+      upgraded = true;
+    } else {
+      nextSeedMeta.may2026MerchantsSeeded = true;
+      upgraded = true;
+    }
+  } else if (!nextSeedMeta.may2026MerchantsSeeded) {
+    nextSeedMeta.may2026MerchantsSeeded = true;
+    upgraded = true;
+  }
+
+  // Safely backfill missing expiry metadata ONLY on existing merchants — NEVER re-add deleted merchants!
+  if (
+    Array.isArray(nextRation.merchants) &&
+    nextRation.merchants.length > 0 &&
+    nextRation.merchants.some((m) => !m.taxCardExpiryDate || !m.commercialRegExpiryDate)
+  ) {
+    const fullMayList = isDefaultBranch
+      ? buildMay2026RationMerchantsList(branchId, branchName, villages)
+      : [];
+    const seedById = new Map(fullMayList.map((m) => [m.id, m]));
+    const backfilledMerchants = nextRation.merchants.map((m, idx) => {
+      const seededRef = seedById.get(m.id);
       return {
         ...m,
         traderCode: m.traderCode || seededRef?.traderCode || `TRD-16-${5001 + idx}`,
@@ -1385,171 +1555,121 @@ function upgradeModulesBundleIfNeeded(
         commercialRegExpiryDate: m.commercialRegExpiryDate || seededRef?.commercialRegExpiryDate || '2027-09-30',
       };
     });
-
     nextRation = {
       ...nextRation,
-      merchants: mergedMerchants,
-      merchantMonthlyArchives:
-        Array.isArray(nextRation.merchantMonthlyArchives) &&
-        nextRation.merchantMonthlyArchives.length > 0
-          ? nextRation.merchantMonthlyArchives
-          : [
-              {
-                id: `${branchId}-arch-may2026`,
-                monthLabel: 'تحديث بيانات التجار شهر مايو 2026 (النسخة الأصلية)',
-                importedAt: '2026-05-01 09:00',
-                importedBy: 'النظام الرئيسي',
-                totalMerchants: mergedMerchants.length,
-                activeCount: mergedMerchants.filter((m) => m.activityStatus === 'نشط').length,
-                stoppedCount: mergedMerchants.filter(
-                  (m) => m.activityStatus === 'متوقف' || m.activityStatus === 'موقوف'
-                ).length,
-                onLeaveCount: mergedMerchants.filter((m) => m.activityStatus === 'إجازة').length,
-                totalInsuranceAmount: mergedMerchants.reduce(
-                  (s, m) => s + (Number(m.cashInsuranceAmount) || 0),
-                  0
-                ),
-                summaryNotes:
-                  'النسخة المرجعية المعتمدة من ملف Excel «تحديث بيانات التجار شهر مايو 2026» بإجمالي 116 تاجراً تموينياً.',
-                merchantsSnapshot: mergedMerchants,
-              },
-            ],
+      merchants: backfilledMerchants,
     };
     upgraded = true;
   }
 
   let nextInternalTrade = bundle.internalTrade;
   if (!nextInternalTrade || !Array.isArray(nextInternalTrade.establishments)) {
-    nextInternalTrade = createInitialInternalTradeState(branchId, branchName, villages);
+    const baseInternal = createInitialInternalTradeState(branchId, branchName, villages);
+    nextInternalTrade =
+      !isDefaultBranch || wasFactoryReset
+        ? {
+            ...baseInternal,
+            establishments: [],
+            campaigns: [],
+            violations: [],
+            seizures: [],
+            complaints: [],
+            marketPrices: [],
+            lpgVillageCirculation: [],
+            petroleumVillageCirculation: [],
+            fuelStations: [],
+            fuelStationMovements: [],
+            lpgDepots: [],
+            lpgDistributors: [],
+            auditLogs: [],
+          }
+        : baseInternal;
     upgraded = true;
   }
 
   let nextGrain = bundle.grainMaintenance;
+  // ONLY populate collections that are literally undefined (not Arrays); NEVER overwrite intentionally emptied arrays []
+  // AND NEVER seed demo collections for non-Mahalla branches or factory-reset bundles!
   if (
-    !nextGrain.shunas ||
-    !nextGrain.wheatReceipts ||
-    !nextGrain.refrigerators ||
-    !nextGrain.mills ||
-    !nextGrain.flourQuotaMaster
+    !nextSeedMeta.grainCollectionsSeeded &&
+    (!Array.isArray(nextGrain.shunas) ||
+      !Array.isArray(nextGrain.wheatReceipts) ||
+      !Array.isArray(nextGrain.refrigerators) ||
+      !Array.isArray(nextGrain.mills) ||
+      !Array.isArray(nextGrain.flourQuotaMaster))
   ) {
-    const seeded = buildGrainDepartmentCollections(branchId, branchName, villages);
+    const seeded =
+      isDefaultBranch && !wasFactoryReset
+        ? buildGrainDepartmentCollections(branchId, branchName, villages)
+        : null;
     nextGrain = {
       ...nextGrain,
-      shunas: Array.isArray(nextGrain.shunas) && nextGrain.shunas.length > 0 ? nextGrain.shunas : seeded.shunas,
-      wheatReceipts:
-        Array.isArray(nextGrain.wheatReceipts) && nextGrain.wheatReceipts.length > 0
-          ? nextGrain.wheatReceipts
-          : seeded.wheatReceipts,
-      wheatIssues:
-        Array.isArray(nextGrain.wheatIssues) && nextGrain.wheatIssues.length > 0
-          ? nextGrain.wheatIssues
-          : seeded.wheatIssues,
-      wheatLedgerMovements:
-        Array.isArray(nextGrain.wheatLedgerMovements) && nextGrain.wheatLedgerMovements.length > 0
-          ? nextGrain.wheatLedgerMovements
-          : seeded.wheatLedgerMovements,
-      shunaReconciliations:
-        Array.isArray(nextGrain.shunaReconciliations) && nextGrain.shunaReconciliations.length > 0
-          ? nextGrain.shunaReconciliations
-          : seeded.shunaReconciliations,
-      refrigerators:
-        Array.isArray(nextGrain.refrigerators) && nextGrain.refrigerators.length > 0
-          ? nextGrain.refrigerators
-          : seeded.refrigerators,
-      refrigeratorRooms:
-        Array.isArray(nextGrain.refrigeratorRooms) && nextGrain.refrigeratorRooms.length > 0
-          ? nextGrain.refrigeratorRooms
-          : seeded.refrigeratorRooms,
-      refrigeratorReceipts:
-        Array.isArray(nextGrain.refrigeratorReceipts) && nextGrain.refrigeratorReceipts.length > 0
-          ? nextGrain.refrigeratorReceipts
-          : seeded.refrigeratorReceipts,
-      refrigeratorIssues:
-        Array.isArray(nextGrain.refrigeratorIssues) && nextGrain.refrigeratorIssues.length > 0
-          ? nextGrain.refrigeratorIssues
-          : seeded.refrigeratorIssues,
-      refrigeratorAssets:
-        Array.isArray(nextGrain.refrigeratorAssets) && nextGrain.refrigeratorAssets.length > 0
-          ? nextGrain.refrigeratorAssets
-          : seeded.refrigeratorAssets,
-      refrigeratorTempLogs:
-        Array.isArray(nextGrain.refrigeratorTempLogs) && nextGrain.refrigeratorTempLogs.length > 0
-          ? nextGrain.refrigeratorTempLogs
-          : seeded.refrigeratorTempLogs,
-      refrigeratorMaintenance:
-        Array.isArray(nextGrain.refrigeratorMaintenance) && nextGrain.refrigeratorMaintenance.length > 0
-          ? nextGrain.refrigeratorMaintenance
-          : seeded.refrigeratorMaintenance,
-      refrigeratorFinancials:
-        Array.isArray(nextGrain.refrigeratorFinancials) && nextGrain.refrigeratorFinancials.length > 0
-          ? nextGrain.refrigeratorFinancials
-          : seeded.refrigeratorFinancials,
-      mills:
-        Array.isArray(nextGrain.mills) && nextGrain.mills.length > 0 ? nextGrain.mills : seeded.mills,
-      millLicenses:
-        Array.isArray(nextGrain.millLicenses) && nextGrain.millLicenses.length > 0
-          ? nextGrain.millLicenses
-          : seeded.millLicenses,
-      millWheatReceipts:
-        Array.isArray(nextGrain.millWheatReceipts) && nextGrain.millWheatReceipts.length > 0
-          ? nextGrain.millWheatReceipts
-          : seeded.millWheatReceipts,
-      millDailyOperations:
-        Array.isArray(nextGrain.millDailyOperations) && nextGrain.millDailyOperations.length > 0
-          ? nextGrain.millDailyOperations
-          : seeded.millDailyOperations,
-      millProductions:
-        Array.isArray(nextGrain.millProductions) && nextGrain.millProductions.length > 0
-          ? nextGrain.millProductions
-          : seeded.millProductions,
-      millMachinery:
-        Array.isArray(nextGrain.millMachinery) && nextGrain.millMachinery.length > 0
-          ? nextGrain.millMachinery
-          : seeded.millMachinery,
-      millMaintenance:
-        Array.isArray(nextGrain.millMaintenance) && nextGrain.millMaintenance.length > 0
-          ? nextGrain.millMaintenance
-          : seeded.millMaintenance,
-      millInspections:
-        Array.isArray(nextGrain.millInspections) && nextGrain.millInspections.length > 0
-          ? nextGrain.millInspections
-          : seeded.millInspections,
-      millAssets:
-        Array.isArray(nextGrain.millAssets) && nextGrain.millAssets.length > 0
-          ? nextGrain.millAssets
-          : seeded.millAssets,
-      flourQuotaMaster:
-        Array.isArray(nextGrain.flourQuotaMaster) && nextGrain.flourQuotaMaster.length > 0
-          ? nextGrain.flourQuotaMaster
-          : seeded.flourQuotaMaster,
-      flourDailyDistributions:
-        Array.isArray(nextGrain.flourDailyDistributions) && nextGrain.flourDailyDistributions.length > 0
-          ? nextGrain.flourDailyDistributions
-          : seeded.flourDailyDistributions,
-      flourMonthlyQuotas:
-        Array.isArray(nextGrain.flourMonthlyQuotas) && nextGrain.flourMonthlyQuotas.length > 0
-          ? nextGrain.flourMonthlyQuotas
-          : seeded.flourMonthlyQuotas,
-      flourIssues:
-        Array.isArray(nextGrain.flourIssues) && nextGrain.flourIssues.length > 0
-          ? nextGrain.flourIssues
-          : seeded.flourIssues,
-      flourQuotaAmendments:
-        Array.isArray(nextGrain.flourQuotaAmendments) && nextGrain.flourQuotaAmendments.length > 0
-          ? nextGrain.flourQuotaAmendments
-          : seeded.flourQuotaAmendments,
-      millBakeryMappings:
-        Array.isArray(nextGrain.millBakeryMappings) && nextGrain.millBakeryMappings.length > 0
-          ? nextGrain.millBakeryMappings
-          : seeded.millBakeryMappings,
-      millFlourStockBalances:
-        Array.isArray(nextGrain.millFlourStockBalances) && nextGrain.millFlourStockBalances.length > 0
-          ? nextGrain.millFlourStockBalances
-          : seeded.millFlourStockBalances,
-      centralFinancialLedger:
-        Array.isArray(nextGrain.centralFinancialLedger) && nextGrain.centralFinancialLedger.length > 0
-          ? nextGrain.centralFinancialLedger
-          : seeded.centralFinancialLedger,
+      shunas: Array.isArray(nextGrain.shunas) ? nextGrain.shunas : seeded?.shunas || [],
+      wheatReceipts: Array.isArray(nextGrain.wheatReceipts) ? nextGrain.wheatReceipts : seeded?.wheatReceipts || [],
+      wheatIssues: Array.isArray(nextGrain.wheatIssues) ? nextGrain.wheatIssues : seeded?.wheatIssues || [],
+      wheatLedgerMovements: Array.isArray(nextGrain.wheatLedgerMovements)
+        ? nextGrain.wheatLedgerMovements
+        : seeded?.wheatLedgerMovements || [],
+      shunaReconciliations: Array.isArray(nextGrain.shunaReconciliations)
+        ? nextGrain.shunaReconciliations
+        : seeded?.shunaReconciliations || [],
+      refrigerators: Array.isArray(nextGrain.refrigerators) ? nextGrain.refrigerators : seeded?.refrigerators || [],
+      refrigeratorRooms: Array.isArray(nextGrain.refrigeratorRooms)
+        ? nextGrain.refrigeratorRooms
+        : seeded?.refrigeratorRooms || [],
+      refrigeratorReceipts: Array.isArray(nextGrain.refrigeratorReceipts)
+        ? nextGrain.refrigeratorReceipts
+        : seeded?.refrigeratorReceipts || [],
+      refrigeratorIssues: Array.isArray(nextGrain.refrigeratorIssues)
+        ? nextGrain.refrigeratorIssues
+        : seeded?.refrigeratorIssues || [],
+      refrigeratorAssets: Array.isArray(nextGrain.refrigeratorAssets)
+        ? nextGrain.refrigeratorAssets
+        : seeded?.refrigeratorAssets || [],
+      refrigeratorTempLogs: Array.isArray(nextGrain.refrigeratorTempLogs)
+        ? nextGrain.refrigeratorTempLogs
+        : seeded?.refrigeratorTempLogs || [],
+      refrigeratorMaintenance: Array.isArray(nextGrain.refrigeratorMaintenance)
+        ? nextGrain.refrigeratorMaintenance
+        : seeded?.refrigeratorMaintenance || [],
+      refrigeratorFinancials: Array.isArray(nextGrain.refrigeratorFinancials)
+        ? nextGrain.refrigeratorFinancials
+        : seeded?.refrigeratorFinancials || [],
+      mills: Array.isArray(nextGrain.mills) ? nextGrain.mills : seeded?.mills || [],
+      millLicenses: Array.isArray(nextGrain.millLicenses) ? nextGrain.millLicenses : seeded?.millLicenses || [],
+      millWheatReceipts: Array.isArray(nextGrain.millWheatReceipts)
+        ? nextGrain.millWheatReceipts
+        : seeded?.millWheatReceipts || [],
+      millDailyOperations: Array.isArray(nextGrain.millDailyOperations)
+        ? nextGrain.millDailyOperations
+        : seeded?.millDailyOperations || [],
+      millProductions: Array.isArray(nextGrain.millProductions) ? nextGrain.millProductions : seeded?.millProductions || [],
+      millMachinery: Array.isArray(nextGrain.millMachinery) ? nextGrain.millMachinery : seeded?.millMachinery || [],
+      millMaintenance: Array.isArray(nextGrain.millMaintenance) ? nextGrain.millMaintenance : seeded?.millMaintenance || [],
+      millInspections: Array.isArray(nextGrain.millInspections) ? nextGrain.millInspections : seeded?.millInspections || [],
+      millAssets: Array.isArray(nextGrain.millAssets) ? nextGrain.millAssets : seeded?.millAssets || [],
+      flourQuotaMaster: Array.isArray(nextGrain.flourQuotaMaster)
+        ? nextGrain.flourQuotaMaster
+        : seeded?.flourQuotaMaster || [],
+      flourDailyDistributions: Array.isArray(nextGrain.flourDailyDistributions)
+        ? nextGrain.flourDailyDistributions
+        : seeded?.flourDailyDistributions || [],
+      flourMonthlyQuotas: Array.isArray(nextGrain.flourMonthlyQuotas)
+        ? nextGrain.flourMonthlyQuotas
+        : seeded?.flourMonthlyQuotas || [],
+      flourIssues: Array.isArray(nextGrain.flourIssues) ? nextGrain.flourIssues : seeded?.flourIssues || [],
+      flourQuotaAmendments: Array.isArray(nextGrain.flourQuotaAmendments)
+        ? nextGrain.flourQuotaAmendments
+        : seeded?.flourQuotaAmendments || [],
+      millBakeryMappings: Array.isArray(nextGrain.millBakeryMappings)
+        ? nextGrain.millBakeryMappings
+        : seeded?.millBakeryMappings || [],
+      millFlourStockBalances: Array.isArray(nextGrain.millFlourStockBalances)
+        ? nextGrain.millFlourStockBalances
+        : seeded?.millFlourStockBalances || [],
+      centralFinancialLedger: Array.isArray(nextGrain.centralFinancialLedger)
+        ? nextGrain.centralFinancialLedger
+        : seeded?.centralFinancialLedger || [],
       settings: {
         defaultIndirectOverheadPct: nextGrain.settings?.defaultIndirectOverheadPct ?? 10,
         defaultTaxPct: nextGrain.settings?.defaultTaxPct ?? 14,
@@ -1568,6 +1688,22 @@ function upgradeModulesBundleIfNeeded(
           'لائحة تشغيل وصيانة الصوامع والشون والثلاجات والمطاحن وحصص الدقيق القابلة للتعديل',
       },
     };
+    nextSeedMeta.grainCollectionsSeeded = true;
+    upgraded = true;
+  } else if (!nextSeedMeta.grainCollectionsSeeded) {
+    nextSeedMeta.grainCollectionsSeeded = true;
+    upgraded = true;
+  }
+
+  // Clear pre-existing Shona wheat stock movement ledger data once (per user request) without blocking future additions
+  if (!nextSeedMeta.wheatLedgerClearedV1) {
+    if (Array.isArray(nextGrain.wheatLedgerMovements) && nextGrain.wheatLedgerMovements.length > 0) {
+      nextGrain = {
+        ...nextGrain,
+        wheatLedgerMovements: [],
+      };
+    }
+    nextSeedMeta.wheatLedgerClearedV1 = true;
     upgraded = true;
   }
 
@@ -1578,13 +1714,21 @@ function upgradeModulesBundleIfNeeded(
       ration: nextRation,
       internalTrade: nextInternalTrade,
       grainMaintenance: nextGrain,
+      seedMeta: nextSeedMeta,
     },
     upgraded: true,
   };
 }
 
+function parseBundleTimestampMs(bundle?: BranchModulesBundle | null): number {
+  if (!bundle?.updatedAt) return 0;
+  const ms = Date.parse(bundle.updatedAt);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 export function readLocalBranchModulesBundle(branchId: string): BranchModulesBundle | null {
   try {
+    if (typeof localStorage === 'undefined') return null;
     const raw = localStorage.getItem(`${LOCAL_MODULES_STORAGE_PREFIX}${branchId}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
@@ -1599,10 +1743,84 @@ export function readLocalBranchModulesBundle(branchId: string): BranchModulesBun
 
 export function writeLocalBranchModulesBundle(branchId: string, bundle: BranchModulesBundle): void {
   try {
+    if (typeof localStorage === 'undefined') return;
     localStorage.setItem(`${LOCAL_MODULES_STORAGE_PREFIX}${branchId}`, JSON.stringify(bundle));
   } catch {
-    // ignore storage quota overflow
+    // Quota fallback: strip redundant merchantsSnapshot inside monthly archives so deletions ALWAYS persist in localStorage
+    try {
+      const compactBundle: BranchModulesBundle = {
+        ...bundle,
+        ration: {
+          ...bundle.ration,
+          merchantMonthlyArchives: (bundle.ration?.merchantMonthlyArchives || []).map((arch) => ({
+            ...arch,
+            merchantsSnapshot: [],
+          })),
+          auditLogs: (bundle.ration?.auditLogs || []).slice(0, 80),
+        },
+        internalTrade: bundle.internalTrade
+          ? {
+              ...bundle.internalTrade,
+              auditLogs: (bundle.internalTrade.auditLogs || []).slice(0, 80),
+            }
+          : bundle.internalTrade,
+        grainMaintenance: {
+          ...bundle.grainMaintenance,
+          auditLogs: (bundle.grainMaintenance?.auditLogs || []).slice(0, 80),
+        },
+        hr: {
+          ...bundle.hr,
+          auditLogs: (bundle.hr?.auditLogs || []).slice(0, 80),
+        },
+      };
+      localStorage.setItem(`${LOCAL_MODULES_STORAGE_PREFIX}${branchId}`, JSON.stringify(compactBundle));
+    } catch {
+      // ignore if storage is completely unavailable
+    }
   }
+}
+
+export function clearLocalBranchModulesBundle(branchId: string): void {
+  try {
+    const existingTimer = pendingDebouncedBundleTimers.get(branchId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      pendingDebouncedBundleTimers.delete(branchId);
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(`${LOCAL_MODULES_STORAGE_PREFIX}${branchId}`);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * تصفير بيانات الأقسام (السلع التموينية، التجارة الداخلية، صيانة الحبوب، الموارد البشرية)
+ * للفرع المحدد فقط دون المساس بأي فرع آخر.
+ */
+export async function resetBranchModulesBundleForBranch(
+  branchId: string,
+  branchName: string,
+  villages: VillageHierarchy[],
+  updatedBy = 'مدير النظام'
+): Promise<BranchModulesBundle> {
+  const emptyBundle = createEmptyBranchModulesBundle(branchId, branchName, villages);
+  writeLocalBranchModulesBundle(branchId, emptyBundle);
+  try {
+    if (typeof fetch !== 'undefined') {
+      await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: {
+          ...getSecurityShieldHeaders(true),
+        },
+        body: JSON.stringify({ confirmPurge: true, branchId, clientId: SESSION_CLIENT_ID }),
+      }).catch(() => null);
+    }
+  } catch {}
+  await saveBranchModulesBundle(branchId, emptyBundle, updatedBy).catch(() => null);
+  return emptyBundle;
 }
 
 export interface ModuleSaveResult {
@@ -1618,68 +1836,79 @@ export async function loadBranchModulesBundle(
   villages: VillageHierarchy[]
 ): Promise<BranchModulesBundle> {
   const local = readLocalBranchModulesBundle(branchId);
+  const localTs = parseBundleTimestampMs(local);
 
-  try {
-    const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
-      headers: {
-        ...getSecurityShieldHeaders(),
-      },
-    });
-    if (resp.ok) {
-      const json = await resp.json();
-      if (json?.exists && json?.payload?.ration && json?.payload?.grainMaintenance && json?.payload?.hr) {
-        const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
-          json.payload as BranchModulesBundle,
-          branchId,
-          branchName,
-          villages
-        );
-        writeLocalBranchModulesBundle(branchId, bundle);
-        if (upgraded) {
-          void saveBranchModulesBundle(branchId, bundle, 'ترقية قاعدة بيانات مايو 2026 والتجارة الداخلية');
-        }
-        return bundle;
-      }
-    }
-  } catch {
-    // fallback cleanly to Supabase or local seed
-  }
+  let remoteCandidate: BranchModulesBundle | null = null;
 
-  // Check Supabase directly if configured
-  const sb = getSupabaseClient();
-  if (sb) {
+  if (typeof fetch !== 'undefined' && typeof window !== 'undefined') {
     try {
-      const { data } = await sb
-        .from('backup_snapshots')
-        .select('payload')
-        .eq('id', `mod__${branchId}__all_modules`)
-        .maybeSingle();
-      if (data?.payload?.ration && data?.payload?.grainMaintenance && data?.payload?.hr) {
-        const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
-          data.payload as BranchModulesBundle,
-          branchId,
-          branchName,
-          villages
-        );
-        writeLocalBranchModulesBundle(branchId, bundle);
-        if (upgraded) {
-          void saveBranchModulesBundle(branchId, bundle, 'ترقية قاعدة بيانات مايو 2026 والتجارة الداخلية');
+      const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}?_t=${Date.now()}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: {
+          ...getSecurityShieldHeaders(false),
+        },
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json?.exists && json?.payload?.ration && json?.payload?.grainMaintenance && json?.payload?.hr) {
+          remoteCandidate = json.payload as BranchModulesBundle;
         }
-        return bundle;
       }
     } catch {
-      // ignore if backup_snapshots doesn't have it
+      // fallback cleanly to Supabase or local seed
     }
   }
 
-  if (local) {
-    const { bundle } = upgradeModulesBundleIfNeeded(local, branchId, branchName, villages);
+  if (!remoteCandidate) {
+    const sb = getSupabaseClient();
+    if (sb) {
+      try {
+        const { data } = await sb
+          .from('backup_snapshots')
+          .select('payload')
+          .eq('id', `mod__${branchId}__all_modules`)
+          .maybeSingle();
+        if (data?.payload?.ration && data?.payload?.grainMaintenance && data?.payload?.hr) {
+          remoteCandidate = data.payload as BranchModulesBundle;
+        }
+      } catch {
+        // ignore if backup_snapshots doesn't have it
+      }
+    }
+  }
+
+  const remoteTs = parseBundleTimestampMs(remoteCandidate);
+
+  // Respect the most recent mutation timestamp so local deletions/edits are NEVER overwritten by stale remote copies
+  if (local && (!remoteCandidate || localTs >= remoteTs)) {
+    const { bundle, upgraded } = upgradeModulesBundleIfNeeded(local, branchId, branchName, villages);
     writeLocalBranchModulesBundle(branchId, bundle);
-    void saveBranchModulesBundle(branchId, bundle, 'مزامنة تلقائية');
+    if (upgraded || localTs > remoteTs) {
+      void saveBranchModulesBundle(branchId, bundle, 'مزامنة تلقائية لأحدث التعديلات');
+    }
     return bundle;
   }
 
-  const initial = createInitialBranchModulesBundle(branchId, branchName, villages);
+  if (remoteCandidate) {
+    const { bundle, upgraded } = upgradeModulesBundleIfNeeded(
+      remoteCandidate,
+      branchId,
+      branchName,
+      villages
+    );
+    writeLocalBranchModulesBundle(branchId, bundle);
+    if (upgraded) {
+      void saveBranchModulesBundle(branchId, bundle, 'تحديث هيكل بيانات الأقسام');
+    }
+    return bundle;
+  }
+
+  // Non-default branches ALWAYS initialize completely zeroed out (no mother-DB records)
+  const initial =
+    branchId === DEFAULT_BRANCH_ID
+      ? createInitialBranchModulesBundle(branchId, branchName, villages)
+      : createEmptyBranchModulesBundle(branchId, branchName, villages);
   writeLocalBranchModulesBundle(branchId, initial);
   void saveBranchModulesBundle(branchId, initial, 'النظام الرئيسي');
   return initial;
@@ -1696,21 +1925,36 @@ function getOrCreateBroadcastChannel(sb: any, branchId: string) {
 }
 
 let inFlightSavePromise: Promise<ModuleSaveResult> | null = null;
+const lastMonotonicTsByBranch = new Map<string, number>();
+
+function nextMonotonicIso(branchId: string, prevIso?: string): string {
+  const prevMs = Math.max(
+    lastMonotonicTsByBranch.get(branchId) || 0,
+    prevIso ? Date.parse(prevIso) || 0 : 0
+  );
+  const nextMs = Math.max(Date.now(), prevMs + 1);
+  lastMonotonicTsByBranch.set(branchId, nextMs);
+  return new Date(nextMs).toISOString();
+}
 
 export async function saveBranchModulesBundle(
   branchId: string,
   bundle: BranchModulesBundle,
   updatedBy = 'مستخدم المنظومة'
 ): Promise<ModuleSaveResult> {
-  const nowIso = new Date().toISOString();
+  const nowIso = nextMonotonicIso(branchId, bundle.updatedAt);
   const withTimestamp: BranchModulesBundle = {
     ...bundle,
     branchId,
     updatedAt: nowIso,
+    seedMeta: {
+      may2026MerchantsSeeded: true,
+      grainCollectionsSeeded: true,
+      ...(bundle.seedMeta || {}),
+    },
   };
-  setTimeout(() => {
-    writeLocalBranchModulesBundle(branchId, withTimestamp);
-  }, 0);
+  // Write synchronously to localStorage immediately so deletions/edits persist even on instant reload
+  writeLocalBranchModulesBundle(branchId, withTimestamp);
 
   const runSave = async (): Promise<ModuleSaveResult> => {
     let serverOk = false;
@@ -1718,29 +1962,31 @@ export async function saveBranchModulesBundle(
     let version = 1;
     let lastErr = '';
 
-    try {
-      const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getSecurityShieldHeaders(),
-        },
-        body: JSON.stringify({
-          moduleKey: 'all_modules',
-          payload: withTimestamp,
-          updatedBy,
-          clientId: SESSION_CLIENT_ID,
-        }),
-      });
-      if (resp.ok) {
-        const json = await resp.json();
-        serverOk = Boolean(json?.success);
-        if (typeof json?.version === 'number') version = json.version;
-      } else {
-        lastErr = `HTTP ${resp.status}`;
+    if (typeof fetch !== 'undefined' && (typeof window !== 'undefined' || getAuthSessionToken())) {
+      try {
+        const resp = await fetch(`/api/modules/${encodeURIComponent(branchId)}`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            ...getSecurityShieldHeaders(true),
+          },
+          body: JSON.stringify({
+            moduleKey: 'all_modules',
+            payload: withTimestamp,
+            updatedBy,
+            clientId: SESSION_CLIENT_ID,
+          }),
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          serverOk = Boolean(json?.success);
+          if (typeof json?.version === 'number') version = json.version;
+        } else {
+          lastErr = `HTTP ${resp.status}`;
+        }
+      } catch (e: any) {
+        lastErr = e?.message || 'تعذر الاتصال بالخادم';
       }
-    } catch (e: any) {
-      lastErr = e?.message || 'تعذر الاتصال بالخادم';
     }
 
     const sb = getSupabaseClient();
@@ -1758,7 +2004,6 @@ export async function saveBranchModulesBundle(
         if (!error) {
           supaOk = true;
         }
-        // Broadcast via reused Supabase Realtime channel for instant multi-device sync
         const ch = getOrCreateBroadcastChannel(sb, branchId);
         void ch.send({
           type: 'broadcast',
@@ -1784,12 +2029,46 @@ export async function saveBranchModulesBundle(
     };
   };
 
+  lastLocalSaveTimeByBranch.set(branchId, Date.now());
   if (inFlightSavePromise) {
     inFlightSavePromise = inFlightSavePromise.then(() => runSave(), () => runSave());
   } else {
     inFlightSavePromise = runSave();
   }
   return inFlightSavePromise;
+}
+
+const lastLocalSaveTimeByBranch = new Map<string, number>();
+const pendingDebouncedBundleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function saveBranchModulesBundleDebounced(
+  branchId: string,
+  bundle: BranchModulesBundle,
+  updatedBy = 'مدير النظام',
+  delayMs = 150
+): void {
+  const nowIso = new Date().toISOString();
+  const stamped: BranchModulesBundle = {
+    ...bundle,
+    branchId,
+    updatedAt: nowIso,
+    seedMeta: {
+      may2026MerchantsSeeded: true,
+      grainCollectionsSeeded: true,
+      ...(bundle.seedMeta || {}),
+    },
+  };
+  writeLocalBranchModulesBundle(branchId, stamped);
+  lastLocalSaveTimeByBranch.set(branchId, Date.now());
+  const existingTimer = pendingDebouncedBundleTimers.get(branchId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+  const timer = setTimeout(() => {
+    pendingDebouncedBundleTimers.delete(branchId);
+    void saveBranchModulesBundle(branchId, stamped, updatedBy);
+  }, delayMs);
+  pendingDebouncedBundleTimers.set(branchId, timer);
 }
 
 /**
@@ -1811,6 +2090,15 @@ export function subscribeBranchModulesRealtime(
     activeBroadcastChannels.delete(branchId);
   }
 
+  const shouldAcceptIncoming = (incoming: BranchModulesBundle | undefined): incoming is BranchModulesBundle => {
+    if (!incoming?.ration || !incoming?.grainMaintenance || !incoming?.hr) return false;
+    const local = readLocalBranchModulesBundle(branchId);
+    if (local && parseBundleTimestampMs(local) > parseBundleTimestampMs(incoming)) {
+      return false;
+    }
+    return true;
+  };
+
   const channel = sb
     .channel(`tamween-modules-${branchId}`)
     .on(
@@ -1820,7 +2108,7 @@ export function subscribeBranchModulesRealtime(
         const data = msg?.payload;
         if (!data || data.clientId === SESSION_CLIENT_ID || data.branchId !== branchId) return;
         const incoming = data.bundle as BranchModulesBundle;
-        if (incoming?.ration && incoming?.grainMaintenance && incoming?.hr) {
+        if (shouldAcceptIncoming(incoming)) {
           writeLocalBranchModulesBundle(branchId, incoming);
           onRemoteUpdate(incoming);
         }
@@ -1835,8 +2123,12 @@ export function subscribeBranchModulesRealtime(
         filter: `id=eq.${snapshotRowId}`,
       },
       (payload: any) => {
+        const lastSave = lastLocalSaveTimeByBranch.get(branchId) || 0;
+        if (Date.now() - lastSave < 2500) {
+          return;
+        }
         const incoming = payload?.new?.payload as BranchModulesBundle | undefined;
-        if (incoming?.ration && incoming?.grainMaintenance && incoming?.hr) {
+        if (shouldAcceptIncoming(incoming)) {
           writeLocalBranchModulesBundle(branchId, incoming);
           onRemoteUpdate(incoming);
         }
@@ -1880,8 +2172,200 @@ export function exportRowsToArabicCsv(
   URL.revokeObjectURL(url);
 }
 
+export const MINISTRY_LOGO_URL = '/assets/aistudio/images_a82c183a.jpeg';
+
+export interface GroupedSubtotalSummary {
+  localUnitColIdx: number;
+  villageColIdx: number;
+  localUnitTotals: Array<{
+    localUnit: string;
+    count: number;
+    columnSums: (number | string | null)[];
+  }>;
+  villageTotals: Array<{
+    village: string;
+    localUnit: string;
+    count: number;
+    columnSums: (number | string | null)[];
+  }>;
+  grandTotalRow: (string | number)[];
+}
+
 /**
- * طباعة رسمية A4 بهيدر وتذييل مديرية التموين والتجارة الداخلية بالغربية بدون window.open
+ * حساب صفوف الإجماليات المجمعة حسب الوحدة المحلية وحسب القرية تلقائياً لأي جدول تقارير
+ */
+export function computeReportSubtotalsByLocalUnitAndVillage(
+  headers: string[],
+  rows: (string | number)[][]
+): GroupedSubtotalSummary {
+  const localUnitColIdx = headers.findIndex((h) =>
+    /الوحدة المحلية|وحدة محلية|القطاع|المنطقة/i.test(String(h))
+  );
+  const villageColIdx = headers.findIndex((h) =>
+    /القرية|المدينة|العنوان|الموقع|الحي|المنطقة الفرعية/i.test(String(h))
+  );
+
+  const isCodeOrIdHeader = (h: string) =>
+    /كود|رقم البطاقة|رقم قومي|هاتف|موبايل|تليفون|تاريخ|مسلسل|^م$|ترخيص|سجل تجاري|ضريبي/i.test(h);
+
+  const parseNumericCell = (val: string | number | undefined, colIdx: number): number | null => {
+    if (colIdx === 0 || colIdx === localUnitColIdx || colIdx === villageColIdx) return null;
+    if (isCodeOrIdHeader(String(headers[colIdx] || ''))) return null;
+    if (typeof val === 'number' && Number.isFinite(val)) return val;
+    if (typeof val === 'string') {
+      const cleaned = val.replace(/,/g, '').replace(/[^\d.-]/g, '').trim();
+      if (!cleaned || cleaned.length > 11) return null;
+      const num = Number(cleaned);
+      return Number.isFinite(num) ? num : null;
+    }
+    return null;
+  };
+
+  // Determine which columns have numeric values across rows
+  const numericCols = headers.map((_, colIdx) => {
+    if (colIdx === 0 || colIdx === localUnitColIdx || colIdx === villageColIdx) return false;
+    if (isCodeOrIdHeader(String(headers[colIdx] || ''))) return false;
+    let numericCount = 0;
+    for (const r of rows) {
+      if (parseNumericCell(r[colIdx], colIdx) !== null) numericCount++;
+    }
+    return numericCount > 0 && numericCount >= Math.ceil(rows.length * 0.3);
+  });
+
+  const isPopOrBeneficiariesHeader = (h: string) =>
+    /population|سكان|مستفيد|beneficiar|أفراد|فراد/i.test(String(h || ''));
+
+  const popOrBenCols = headers.map((h) => isPopOrBeneficiariesHeader(h));
+
+  // Track raw row values per Local Unit so unified population/beneficiaries are NOT summed in Local Unit subtotal rows
+  const localUnitMap = new Map<
+    string,
+    { count: number; sums: number[]; popColValues: number[][] }
+  >();
+  const villageMap = new Map<
+    string,
+    { localUnit: string; count: number; sums: number[]; unitKeysSeen: Map<string, number[][]> }
+  >();
+
+  for (const r of rows) {
+    const lu =
+      localUnitColIdx >= 0
+        ? String(r[localUnitColIdx] ?? '').trim() || 'غير محدد'
+        : 'إجمالي الإدارة';
+    const vil =
+      villageColIdx >= 0
+        ? String(r[villageColIdx] ?? '').trim() || 'غير محدد'
+        : lu;
+
+    if (!localUnitMap.has(lu)) {
+      localUnitMap.set(lu, {
+        count: 0,
+        sums: headers.map(() => 0),
+        popColValues: headers.map(() => []),
+      });
+    }
+    const luEntry = localUnitMap.get(lu)!;
+    luEntry.count += 1;
+
+    const vilKey = `${lu}__${vil}`;
+    if (!villageMap.has(vilKey)) {
+      villageMap.set(vilKey, {
+        localUnit: lu,
+        count: 0,
+        sums: headers.map(() => 0),
+        unitKeysSeen: new Map(),
+      });
+    }
+    const vilEntry = villageMap.get(vilKey)!;
+    vilEntry.count += 1;
+    if (!vilEntry.unitKeysSeen.has(lu)) {
+      vilEntry.unitKeysSeen.set(lu, headers.map(() => []));
+    }
+    const vilUnitVals = vilEntry.unitKeysSeen.get(lu)!;
+
+    headers.forEach((_, colIdx) => {
+      if (!numericCols[colIdx]) return;
+      const n = parseNumericCell(r[colIdx], colIdx);
+      if (n !== null) {
+        if (popOrBenCols[colIdx]) {
+          if (n > 0) {
+            luEntry.popColValues[colIdx].push(n);
+            vilUnitVals[colIdx].push(n);
+          }
+        } else {
+          luEntry.sums[colIdx] += n;
+          vilEntry.sums[colIdx] += n;
+        }
+      }
+    });
+  }
+
+  const grandSums = headers.map(() => 0);
+
+  const localUnitTotals = Array.from(localUnitMap.entries()).map(([localUnit, data]) => {
+    const columnSums: (number | string | null)[] = headers.map((_, idx) => {
+      if (!numericCols[idx]) return null;
+      if (popOrBenCols[idx]) {
+        const vals = data.popColValues[idx];
+        const uniqueVals = Array.from(new Set(vals));
+        const unitVal = uniqueVals.length === 0 ? 0 : Math.max(...uniqueVals);
+        grandSums[idx] += unitVal;
+        // لا يُجمع عدد السكان ولا عدد المستفيدين داخل نفس الوحدة المحلية أبداً
+        return '—';
+      }
+      const rounded = Math.round(data.sums[idx] * 100) / 100;
+      grandSums[idx] += rounded;
+      return rounded;
+    });
+
+    return {
+      localUnit,
+      count: data.count,
+      columnSums,
+    };
+  });
+
+  const villageTotals = Array.from(villageMap.entries()).map(([key, data]) => {
+    const columnSums: (number | string | null)[] = headers.map((_, idx) => {
+      if (!numericCols[idx]) return null;
+      if (popOrBenCols[idx]) {
+        let villagePopTotal = 0;
+        data.unitKeysSeen.forEach((colArrays) => {
+          const vals = colArrays[idx];
+          const uniqueVals = Array.from(new Set(vals));
+          villagePopTotal += uniqueVals.length === 0 ? 0 : Math.max(...uniqueVals);
+        });
+        return Math.round(villagePopTotal * 100) / 100;
+      }
+      return Math.round(data.sums[idx] * 100) / 100;
+    });
+
+    return {
+      village: key.split('__')[1] || 'غير محدد',
+      localUnit: data.localUnit,
+      count: data.count,
+      columnSums,
+    };
+  });
+
+  const grandTotalRow: (string | number)[] = headers.map((_, idx) => {
+    if (idx === 0) return 'الإجمالي العام';
+    if (idx === 1 && !numericCols[1]) return `${rows.length} سجل`;
+    if (numericCols[idx]) return (Math.round(grandSums[idx] * 100) / 100).toLocaleString('ar-EG');
+    return '—';
+  });
+
+  return {
+    localUnitColIdx,
+    villageColIdx,
+    localUnitTotals,
+    villageTotals,
+    grandTotalRow,
+  };
+}
+
+/**
+ * طباعة رسمية A4 بهيدر وتذييل مديرية التموين والتجارة الداخلية بالغربية وشعار الوزارة المثبت وتجميع الإجماليات حسب الوحدة المحلية والقرية
  */
 export function printModuleReportA4(options: {
   title: string;
@@ -1893,7 +2377,16 @@ export function printModuleReportA4(options: {
   rows: (string | number)[][];
   summaryItems?: { label: string; value: string }[];
   preparedBy?: string;
+  totalsRow?: Array<string | number>;
 }): void {
+  const esc = (val: unknown): string =>
+    String(val ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
   iframe.style.right = '0';
@@ -1909,12 +2402,14 @@ export function printModuleReportA4(options: {
     return;
   }
 
+  const grouped = computeReportSubtotalsByLocalUnitAndVillage(options.headers, options.rows);
+
   const summaryHtml = (options.summaryItems || [])
     .map(
       (s) =>
         `<div style="border:1px solid #cbd5e1;border-radius:8px;padding:6px 10px;background:#f8fafc;">
-           <div style="font-size:10px;color:#475569;font-weight:700;">${s.label}</div>
-           <div style="font-size:13px;color:#0f172a;font-weight:900;">${s.value}</div>
+           <div style="font-size:10px;color:#475569;font-weight:700;">${esc(s.label)}</div>
+           <div style="font-size:13px;color:#0f172a;font-weight:900;font-variant-numeric:tabular-nums;">${esc(s.value)}</div>
          </div>`
     )
     .join('');
@@ -1925,7 +2420,7 @@ export function printModuleReportA4(options: {
         `<tr>${r
           .map(
             (c) =>
-              `<td style="border:1px solid #cbd5e1;padding:6px 8px;font-size:11px;text-align:center;">${String(
+              `<td style="border:1px solid #cbd5e1;padding:6px 8px;font-size:11px;text-align:center;font-variant-numeric:tabular-nums;">${esc(
                 c ?? ''
               )}</td>`
           )
@@ -1933,43 +2428,117 @@ export function printModuleReportA4(options: {
     )
     .join('');
 
+  const localUnitSubtotalsHtml =
+    grouped.localUnitColIdx >= 0 && grouped.localUnitTotals.length > 0
+      ? grouped.localUnitTotals
+          .map((lu) => {
+            const cells = options.headers.map((_, idx) => {
+              if (idx === 0) return `إجمالي الوحدة المحلية: ${lu.localUnit}`;
+              if (idx === grouped.localUnitColIdx) return lu.localUnit;
+              if (idx === 1 && lu.columnSums[1] === null) return `${lu.count} سجل`;
+              const cellVal = lu.columnSums[idx];
+              if (typeof cellVal === 'number') return cellVal.toLocaleString('ar-EG');
+              if (typeof cellVal === 'string') return cellVal;
+              return '—';
+            });
+            return `<tr style="background:#e0f2fe;color:#0c4a6e;font-weight:800;">${cells
+              .map(
+                (c) =>
+                  `<td style="border:1px solid #7dd3fc;padding:6px 8px;font-size:11px;text-align:center;font-weight:800;font-variant-numeric:tabular-nums;">${esc(
+                    c
+                  )}</td>`
+              )
+              .join('')}</tr>`;
+          })
+          .join('')
+      : '';
+
+  const villageSubtotalsHtml =
+    grouped.villageColIdx >= 0 && grouped.villageTotals.length > 0
+      ? grouped.villageTotals
+          .map((v) => {
+            const cells = options.headers.map((_, idx) => {
+              if (idx === 0) return `إجمالي القرية: ${v.village}`;
+              if (idx === grouped.localUnitColIdx) return v.localUnit;
+              if (idx === grouped.villageColIdx) return v.village;
+              if (idx === 1 && v.columnSums[1] === null) return `${v.count} سجل`;
+              const cellVal = v.columnSums[idx];
+              if (typeof cellVal === 'number') return cellVal.toLocaleString('ar-EG');
+              if (typeof cellVal === 'string') return cellVal;
+              return '—';
+            });
+            return `<tr style="background:#fef3c7;color:#78350f;font-weight:800;">${cells
+              .map(
+                (c) =>
+                  `<td style="border:1px solid #fcd34d;padding:6px 8px;font-size:11px;text-align:center;font-weight:800;font-variant-numeric:tabular-nums;">${esc(
+                    c
+                  )}</td>`
+              )
+              .join('')}</tr>`;
+          })
+          .join('')
+      : '';
+
+  const finalTotalsRow =
+    options.totalsRow && options.totalsRow.length > 0 ? options.totalsRow : grouped.grandTotalRow;
+
+  const totalsHtml =
+    finalTotalsRow && finalTotalsRow.length > 0
+      ? `<tfoot>
+          ${localUnitSubtotalsHtml}
+          ${villageSubtotalsHtml}
+          <tr style="background:#0f2342;color:#ffffff;font-weight:900;">${finalTotalsRow
+            .map(
+              (c) =>
+                `<td style="border:1px solid #1e3a8a;padding:7px 8px;font-size:11px;text-align:center;font-weight:900;font-variant-numeric:tabular-nums;">${esc(
+                  c ?? ''
+                )}</td>`
+            )
+            .join('')}</tr>
+        </tfoot>`
+      : '';
+
   doc.open();
   doc.write(`
     <!DOCTYPE html>
     <html lang="ar" dir="rtl">
     <head>
       <meta charset="utf-8" />
-      <title>${options.title}</title>
+      <title>${esc(options.title)}</title>
       <style>
         @page { size: A4 landscape; margin: 12mm; }
-        body { font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; margin: 0; }
+        body { font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         table { width: 100%; border-collapse: collapse; margin-top: 12px; }
         th { background: #0f2342; color: #ffffff; border: 1px solid #1e3a8a; padding: 7px 8px; font-size: 11px; }
-        tr:nth-child(even) td { background: #f8fafc; }
+        tbody tr:nth-child(even) td { background: #f8fafc; }
       </style>
     </head>
     <body>
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0f2342;padding-bottom:10px;margin-bottom:10px;">
-        <div>
-          <div style="font-size:12px;font-weight:900;">${options.governorateTitle || 'محافظة الغربية'}</div>
-          <div style="font-size:13px;font-weight:900;color:#0f2342;">${options.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية'}</div>
-          <div style="font-size:12px;font-weight:800;color:#0d9488;">${options.branchName}</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <img src="${MINISTRY_LOGO_URL}" alt="شعار وزارة التموين والتجارة الداخلية" style="width:62px;height:62px;object-fit:contain;border:1px solid #cbd5e1;border-radius:10px;padding:3px;background:#fff;" />
+          <div>
+            <div style="font-size:11px;font-weight:900;color:#475569;">جمهورية مصر العربية — وزارة التموين والتجارة الداخلية</div>
+            <div style="font-size:12px;font-weight:900;">${esc(options.governorateTitle || 'محافظة الغربية')} — ${esc(options.directorateTitle || 'مديرية التموين والتجارة الداخلية بالغربية')}</div>
+            <div style="font-size:12px;font-weight:800;color:#0d9488;">${esc(options.branchName)}</div>
+          </div>
         </div>
         <div style="text-align:center;">
-          <h1 style="margin:0;font-size:16px;font-weight:900;color:#0f2342;">${options.title}</h1>
-          <div style="font-size:11px;font-weight:700;color:#475569;">${options.subtitle}</div>
+          <h1 style="margin:0;font-size:16px;font-weight:900;color:#0f2342;">${esc(options.title)}</h1>
+          <div style="font-size:11px;font-weight:700;color:#475569;">${esc(options.subtitle)}</div>
         </div>
         <div style="text-align:left;font-size:10px;font-weight:700;">
-          <div>تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG')}</div>
-          <div>أعده: ${options.preparedBy || 'إدارة المنظومة'}</div>
+          <div>تاريخ الطباعة: ${esc(new Date().toLocaleDateString('ar-EG'))}</div>
+          <div>أعده: ${esc(options.preparedBy || 'إدارة المنظومة')}</div>
         </div>
       </div>
       ${summaryHtml ? `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;">${summaryHtml}</div>` : ''}
       <table>
         <thead>
-          <tr>${options.headers.map((h) => `<th>${h}</th>`).join('')}</tr>
+          <tr>${options.headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
+        ${totalsHtml}
       </table>
       <div style="margin-top:18px;display:flex;justify-content:space-between;font-size:11px;font-weight:800;border-top:1px dashed #94a3b8;padding-top:10px;">
         <span>توقيع المختص: ........................</span>

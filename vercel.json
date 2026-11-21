@@ -7,7 +7,7 @@
   "trailingSlash": false,
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!api/|ws/|assets/|favicon\\.svg|manifest\\.webmanifest).*)",
       "destination": "/index.html"
     }
   ],

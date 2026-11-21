@@ -24,7 +24,17 @@ import type {
   ShunaWheatIssueRecord,
   WheatLedgerMovementRecord,
 } from '../../../types/modules';
-import type { VillageHierarchy } from '../../../types';
+import type { AppUser, VillageHierarchy } from '../../../types';
+import type { ModulePermissions } from '../../../utils/moduleCrudHelpers';
+import { resolveModuleCrudPermissions } from '../../../utils/moduleCrudHelpers';
+import { groupRecordsByLocalUnit } from '../../../utils/tableGroupingHelpers';
+import {
+  ModuleRowActions,
+  LocalUnitSubtotalRow,
+  VillageGrandTotalRow,
+  ModuleRecordProfileModal,
+  ModuleDeleteConfirmModal,
+} from '../ModuleCrudShared';
 import {
   computeShunaBookBalanceAndValuation,
   computeShunaReconciliationVariance,
@@ -36,6 +46,8 @@ interface ShunasAndWheatReceiptsViewProps {
   state: GrainMaintenanceState;
   branchName: string;
   currentUserFullName: string;
+  currentUser?: AppUser | null;
+  permissions?: ModulePermissions;
   isViewer: boolean;
   canAdd?: boolean;
   canEdit?: boolean;
@@ -51,6 +63,8 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
   state,
   branchName,
   currentUserFullName,
+  currentUser,
+  permissions,
   isViewer,
   canAdd = !isViewer,
   canEdit = !isViewer,
@@ -61,6 +75,11 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
   onUpdateState,
   onNotify,
 }) => {
+  const effectivePermissions: ModulePermissions = useMemo(() => {
+    if (permissions) return permissions;
+    return resolveModuleCrudPermissions(currentUser || null, isViewer, 'grain_maintenance');
+  }, [permissions, currentUser, isViewer]);
+
   const [activeTab, setActiveTab] = useState<
     'shunas' | 'receipts_book' | 'issues_book' | 'ledger' | 'reconciliation'
   >(initialTab);
@@ -181,6 +200,329 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
       }),
     }));
   }, [shunas, wheatReceipts, wheatIssues, today]);
+
+  const [profileModal, setProfileModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    entityType: string;
+    subtitle?: string;
+    onEdit?: () => void;
+    fields: { label: string; value: React.ReactNode; mono?: boolean; badge?: boolean; badgeColor?: string; colSpan?: number }[];
+  } | null>(null);
+
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    entityType: 'shuna' | 'receipt' | 'issue' | 'reconciliation' | 'ledger';
+    entityId: string;
+    entityTitle: string;
+    recordSummary: { label: string; value: string | number }[];
+  } | null>(null);
+
+  const [editingShuna, setEditingShuna] = useState<ShunaRecord | null>(null);
+  const [editingSubRecord, setEditingSubRecord] = useState<{
+    type: 'receipt' | 'issue' | 'reconciliation';
+    title: string;
+    data: Record<string, any>;
+  } | null>(null);
+
+  // Add/Edit Wheat Stock Movement Ledger modal state (متاح الإضافة والتعديل والحذف في أي وقت)
+  const [ledgerModal, setLedgerModal] = useState<{
+    mode: 'add' | 'edit';
+    id?: string;
+    movementCode: string;
+    movementDate: string;
+    movementTime: string;
+    shunaCode: string;
+    movementType: WheatLedgerMovementRecord['movementType'];
+    referenceDocNumber: string;
+    balanceBeforeTons: number;
+    quantityTons: number;
+    tonPrice: number;
+    approvalStatus: ReceiptApprovalStatus;
+    performedBy: string;
+    notes: string;
+  } | null>(null);
+
+  const openAddLedgerModal = () => {
+    const defaultShuna = shunas[0];
+    setLedgerModal({
+      mode: 'add',
+      movementCode: `MOV-W-${100 + wheatLedgerMovements.length + 1}`,
+      movementDate: today,
+      movementTime: new Date().toTimeString().slice(0, 5),
+      shunaCode: defaultShuna?.shunaCode || 'SH-MHL-001',
+      movementType: 'وارد قمح معتمد',
+      referenceDocNumber: `DOC-${Date.now().toString().slice(-4)}`,
+      balanceBeforeTons: 0,
+      quantityTons: 0,
+      tonPrice: state.settings?.defaultWheatTonPrice || 13333.33,
+      approvalStatus: 'معتمد',
+      performedBy: currentUserFullName,
+      notes: '',
+    });
+  };
+
+  const openEditLedgerModal = (m: WheatLedgerMovementRecord) => {
+    setLedgerModal({
+      mode: 'edit',
+      id: m.id,
+      movementCode: m.movementCode,
+      movementDate: m.movementDate,
+      movementTime: m.movementTime,
+      shunaCode: m.shunaCode,
+      movementType: m.movementType,
+      referenceDocNumber: m.referenceDocNumber,
+      balanceBeforeTons: Number(m.balanceBeforeTons) || 0,
+      quantityTons: Number(m.quantityTons) || 0,
+      tonPrice: Number(m.tonPrice) || 13333.33,
+      approvalStatus: m.approvalStatus || 'معتمد',
+      performedBy: m.performedBy || currentUserFullName,
+      notes: m.notes || '',
+    });
+  };
+
+  const handleSaveLedgerModal = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ledgerModal) return;
+    const targetShuna = shunas.find((s) => s.shunaCode === ledgerModal.shunaCode);
+    const shunaName = targetShuna?.shunaName || ledgerModal.shunaCode;
+    const balanceBefore = Number(ledgerModal.balanceBeforeTons) || 0;
+    const qty = Number(ledgerModal.quantityTons) || 0;
+    const balanceAfter = Number((balanceBefore + qty).toFixed(3));
+    const tonPrice = Number(ledgerModal.tonPrice) || 0;
+    const totalValue = Math.round(Math.abs(qty) * tonPrice);
+
+    if (ledgerModal.mode === 'add') {
+      const created: WheatLedgerMovementRecord = {
+        id: `wlm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        movementCode: ledgerModal.movementCode.trim() || `MOV-W-${Date.now()}`,
+        movementDate: ledgerModal.movementDate || today,
+        movementTime: ledgerModal.movementTime || '09:00',
+        shunaCode: ledgerModal.shunaCode,
+        shunaName,
+        movementType: ledgerModal.movementType,
+        referenceDocNumber: ledgerModal.referenceDocNumber.trim() || '—',
+        balanceBeforeTons: balanceBefore,
+        quantityTons: qty,
+        balanceAfterTons: balanceAfter,
+        tonPrice,
+        totalValue,
+        approvalStatus: ledgerModal.approvalStatus,
+        performedBy: ledgerModal.performedBy.trim() || currentUserFullName,
+        notes: ledgerModal.notes.trim(),
+      };
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatLedgerMovements: [created, ...(prev.wheatLedgerMovements || [])],
+        }),
+        `إضافة حركة قمح بدفتر الأرصدة: ${created.movementCode}`
+      );
+      onNotify('ok', `تمت إضافة الحركة «${created.movementCode}» إلى دفتر حركة أرصدة القمح بنجاح.`);
+    } else if (ledgerModal.id) {
+      const targetId = ledgerModal.id;
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatLedgerMovements: (prev.wheatLedgerMovements || []).map((item) =>
+            item.id === targetId
+              ? {
+                  ...item,
+                  movementCode: ledgerModal.movementCode.trim() || item.movementCode,
+                  movementDate: ledgerModal.movementDate || item.movementDate,
+                  movementTime: ledgerModal.movementTime || item.movementTime,
+                  shunaCode: ledgerModal.shunaCode,
+                  shunaName,
+                  movementType: ledgerModal.movementType,
+                  referenceDocNumber: ledgerModal.referenceDocNumber.trim() || '—',
+                  balanceBeforeTons: balanceBefore,
+                  quantityTons: qty,
+                  balanceAfterTons: balanceAfter,
+                  tonPrice,
+                  totalValue,
+                  approvalStatus: ledgerModal.approvalStatus,
+                  performedBy: ledgerModal.performedBy.trim() || currentUserFullName,
+                  notes: ledgerModal.notes.trim(),
+                }
+              : item
+          ),
+        }),
+        `تعديل حركة قمح بدفتر الأرصدة: ${ledgerModal.movementCode}`
+      );
+      onNotify('ok', `تم تعديل الحركة «${ledgerModal.movementCode}» وحفظها بنجاح.`);
+    }
+    setLedgerModal(null);
+  };
+
+  const handleSaveSubRecord = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSubRecord) return;
+    const { type, data } = editingSubRecord;
+    const nowIso = new Date().toISOString();
+    if (type === 'receipt') {
+      const calc = computeWheatReceiptNetAndValue({
+        grossWeightKg: Number(data.grossWeightKg) || 0,
+        tareWeightKg: Number(data.tareWeightKg) || 0,
+        excludedWeightTons: Number(data.excludedWeightTons) || 0,
+        tonPrice: Number(data.tonPrice) || 13333.33,
+      });
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatReceipts: (prev.wheatReceipts || []).map((r) =>
+            r.id === data.id
+              ? {
+                  ...r,
+                  ...data,
+                  grossWeightKg: Number(data.grossWeightKg) || 0,
+                  tareWeightKg: Number(data.tareWeightKg) || 0,
+                  excludedWeightTons: Number(data.excludedWeightTons) || 0,
+                  tonPrice: Number(data.tonPrice) || r.tonPrice,
+                  netWeightKg: calc.netWeightKg,
+                  netWeightTons: calc.netWeightTons,
+                  acceptedNetWeightTons: calc.acceptedNetWeightTons,
+                  totalSupplyValue: calc.totalSupplyValue,
+                  updatedAt: nowIso,
+                }
+              : r
+          ),
+        }),
+        `تعديل إذن استلام قمح: ${data.receiptOrderNumber}`
+      );
+      onNotify('ok', `تم تعديل إذن الاستلام «${data.receiptOrderNumber}» وحفظه بنجاح.`);
+    } else if (type === 'issue') {
+      const issued = Number(data.issuedWeightTons) || 0;
+      const price = Number(data.tonPrice) || 13333.33;
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatIssues: (prev.wheatIssues || []).map((iss) =>
+            iss.id === data.id
+              ? {
+                  ...iss,
+                  ...data,
+                  issuedWeightTons: issued,
+                  totalIssuedValue: Math.round(issued * price),
+                  updatedAt: nowIso,
+                }
+              : iss
+          ),
+        }),
+        `تعديل إذن صرف قمح: ${data.issueOrderNumber}`
+      );
+      onNotify('ok', `تم تعديل إذن الصرف «${data.issueOrderNumber}» وحفظه بنجاح.`);
+    } else if (type === 'reconciliation') {
+      const phys = Number(data.physicalCountTons) || 0;
+      const book = Number(data.bookBalanceTons) || 0;
+      const variance = Number((phys - book).toFixed(3));
+      const status = variance === 0 ? 'مطابق' : variance < 0 ? 'عجز' : 'زيادة';
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          shunaReconciliations: (prev.shunaReconciliations || []).map((rec) =>
+            rec.id === data.id
+              ? {
+                  ...rec,
+                  ...data,
+                  physicalCountTons: phys,
+                  varianceTons: variance,
+                  reconciliationStatus: status,
+                  updatedAt: nowIso,
+                }
+              : rec
+          ),
+        }),
+        `تعديل محضر مطابقة جرد: ${data.reconciliationNumber}`
+      );
+      onNotify('ok', `تم تعديل محضر المطابقة «${data.reconciliationNumber}» وحفظه بنجاح.`);
+    }
+    setEditingSubRecord(null);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deleteModal) return;
+    const { entityType, entityId, entityTitle } = deleteModal;
+    if (entityType === 'shuna') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          shunas: (prev.shunas || []).filter((s) => s.id !== entityId && s.shunaCode !== entityId),
+        }),
+        `حذف شونة: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف الشونة «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'receipt') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatReceipts: (prev.wheatReceipts || []).filter((r) => r.id !== entityId && r.receiptOrderNumber !== entityId),
+        }),
+        `حذف إذن استلام قمح: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف إذن الاستلام «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'issue') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatIssues: (prev.wheatIssues || []).filter((i) => i.id !== entityId),
+        }),
+        `حذف إذن صرف قمح: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف إذن الصرف «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'reconciliation') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          shunaReconciliations: (prev.shunaReconciliations || []).filter((rec) => rec.id !== entityId),
+        }),
+        `حذف محضر مطابقة جرد: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف محضر المطابقة «${entityTitle}» بنجاح.`);
+    } else if (entityType === 'ledger') {
+      onUpdateState(
+        (prev) => ({
+          ...prev,
+          wheatLedgerMovements: (prev.wheatLedgerMovements || []).filter((m) => m.id !== entityId),
+        }),
+        `حذف حركة من دفتر أرصدة القمح: ${entityTitle}`
+      );
+      onNotify('ok', `تم حذف الحركة «${entityTitle}» من دفتر أرصدة القمح بالشون بنجاح.`);
+    }
+    setDeleteModal(null);
+  };
+
+  const handleSaveEditShuna = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingShuna) return;
+    onUpdateState(
+      (prev) => ({
+        ...prev,
+        shunas: (prev.shunas || []).map((s) => (s.id === editingShuna.id ? { ...editingShuna, updatedAt: new Date().toISOString() } : s)),
+      }),
+      `تعديل بيانات الشونة: ${editingShuna.shunaName}`
+    );
+    setEditingShuna(null);
+    onNotify('ok', `تم تعديل بيانات الشونة «${editingShuna.shunaName}» وحفظها بنجاح.`);
+  };
+
+  const shunaGroupsResult = useMemo(() => {
+    return groupRecordsByLocalUnit({
+      rows: shunasWithMetrics,
+      getLocalUnit: (x) => x.shuna.localUnit || x.shuna.village,
+      numericFields: [
+        { key: 'totalAreaSqm', getValue: (x) => x.shuna.totalAreaSqm },
+        { key: 'remainingAreaSqm', getValue: (x) => x.metrics.remainingAreaSqm },
+        { key: 'storageCapacityTons', getValue: (x) => x.shuna.storageCapacityTons },
+        { key: 'openingBalanceTons', getValue: (x) => x.metrics.openingBalanceTons },
+        { key: 'approvedInboundTons', getValue: (x) => x.metrics.approvedInboundTons },
+        { key: 'approvedOutboundTons', getValue: (x) => x.metrics.approvedOutboundTons },
+        { key: 'currentBookBalanceTons', getValue: (x) => x.metrics.currentBookBalanceTons },
+        { key: 'stockValuationAmount', getValue: (x) => x.metrics.stockValuationAmount },
+        { key: 'fixedAssetsValuationAmount', getValue: (x) => x.metrics.fixedAssetsValuationAmount },
+        { key: 'totalEstimatedShunaValue', getValue: (x) => x.metrics.totalEstimatedShunaValue },
+      ],
+    });
+  }, [shunasWithMetrics]);
 
   const liveReceiptCalc = useMemo(
     () =>
@@ -843,7 +1185,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">كود الشونة</th>
@@ -859,83 +1201,175 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                     <th className="p-3 text-center">قيمة الأصول والمعدات والميزان</th>
                     <th className="p-3 text-center">إجمالي القيمة التقديرية</th>
                     <th className="p-3 text-center">حالة الميزان والتشغيل</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {shunasWithMetrics.map(({ shuna, metrics }) => (
-                    <tr key={shuna.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-amber-800">{shuna.shunaCode}</td>
-                      <td className="p-3">
-                        <div className="font-black text-slate-900">{shuna.shunaName}</div>
-                        <div className="text-[11px] text-slate-500">
-                          {shuna.village} - وحدة {shuna.localUnit}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <div className="text-slate-800">{shuna.affiliatedEntity}</div>
-                        <div className="text-[11px] text-slate-500">
-                          {shuna.managerName} ({shuna.phone})
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div>{shuna.totalAreaSqm.toLocaleString('ar-EG')} م²</div>
-                        <div className="text-[11px] text-emerald-700">
-                          متبقي: {metrics.remainingAreaSqm.toLocaleString('ar-EG')} م²
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <div>{shuna.storageCapacityTons.toLocaleString('ar-EG')} طن</div>
-                        <div className="text-[10px] text-slate-500">
-                          إشغال {metrics.occupancyPct}%
-                        </div>
-                      </td>
-                      <td className="p-3 text-center">{metrics.openingBalanceTons.toLocaleString('ar-EG')}</td>
-                      <td className="p-3 text-center font-black text-emerald-700 bg-emerald-50/60">
-                        +{metrics.approvedInboundTons.toLocaleString('ar-EG')} طن
-                        <div className="text-[10px] text-slate-500">
-                          ({metrics.approvedReceiptsCount} إذن معتمد)
-                        </div>
-                      </td>
-                      <td className="p-3 text-center font-black text-amber-800 bg-amber-50/60">
-                        -{metrics.approvedOutboundTons.toLocaleString('ar-EG')} طن
-                      </td>
-                      <td className="p-3 text-center bg-sky-50/80">
-                        <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-900 text-white font-black text-xs">
-                          <Lock className="w-3 h-3 text-sky-300" />
-                          <span>{metrics.currentBookBalanceTons.toLocaleString('ar-EG')} طن</span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          متاح للتخزين: {metrics.availableCapacityTons.toLocaleString('ar-EG')} طن
-                        </div>
-                      </td>
-                      <td className="p-3 text-center font-black text-emerald-800">
-                        {metrics.stockValuationAmount.toLocaleString('ar-EG')} ج.م
-                      </td>
-                      <td className="p-3 text-center text-slate-700">
-                        <div>{metrics.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م</div>
-                        <div className="text-[10px] text-slate-500">
-                          ميزان: {shuna.scaleValue.toLocaleString('ar-EG')} ج.م
-                        </div>
-                      </td>
-                      <td className="p-3 text-center font-black text-indigo-900">
-                        {metrics.totalEstimatedShunaValue.toLocaleString('ar-EG')} ج.م
-                      </td>
-                      <td className="p-3 text-center space-y-1">
-                        <span
-                          className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-black ${
-                            shuna.operationalStatus === 'تعمل'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : shuna.operationalStatus === 'تحت الصيانة'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-rose-100 text-rose-800'
-                          }`}
-                        >
-                          {shuna.operationalStatus}
-                        </span>
-                        <div className="text-[10px] text-slate-600">{shuna.scaleStatus}</div>
-                      </td>
-                    </tr>
+                  {shunaGroupsResult.groups.map((group) => (
+                    <React.Fragment key={group.localUnit}>
+                      {group.rows.map(({ shuna, metrics }) => (
+                        <tr key={shuna.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-mono font-black text-amber-800">{shuna.shunaCode}</td>
+                          <td className="p-3">
+                            <div className="font-black text-slate-900">{shuna.shunaName}</div>
+                            <div className="text-[11px] text-slate-500">
+                              {shuna.village} - وحدة {shuna.localUnit}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="text-slate-800">{shuna.affiliatedEntity}</div>
+                            <div className="text-[11px] text-slate-500">
+                              {shuna.managerName} ({shuna.phone})
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div>{shuna.totalAreaSqm.toLocaleString('ar-EG')} م²</div>
+                            <div className="text-[11px] text-emerald-700">
+                              متبقي: {metrics.remainingAreaSqm.toLocaleString('ar-EG')} م²
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div>{shuna.storageCapacityTons.toLocaleString('ar-EG')} طن</div>
+                            <div className="text-[10px] text-slate-500">
+                              إشغال {metrics.occupancyPct}%
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">{metrics.openingBalanceTons.toLocaleString('ar-EG')}</td>
+                          <td className="p-3 text-center font-black text-emerald-700 bg-emerald-50/60">
+                            +{metrics.approvedInboundTons.toLocaleString('ar-EG')} طن
+                            <div className="text-[10px] text-slate-500">
+                              ({metrics.approvedReceiptsCount} إذن معتمد)
+                            </div>
+                          </td>
+                          <td className="p-3 text-center font-black text-amber-800 bg-amber-50/60">
+                            -{metrics.approvedOutboundTons.toLocaleString('ar-EG')} طن
+                          </td>
+                          <td className="p-3 text-center bg-sky-50/80">
+                            <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-900 text-white font-black text-xs">
+                              <Lock className="w-3 h-3 text-sky-300" />
+                              <span>{metrics.currentBookBalanceTons.toLocaleString('ar-EG')} طن</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              متاح للتخزين: {metrics.availableCapacityTons.toLocaleString('ar-EG')} طن
+                            </div>
+                          </td>
+                          <td className="p-3 text-center font-black text-emerald-800">
+                            {metrics.stockValuationAmount.toLocaleString('ar-EG')} ج.م
+                          </td>
+                          <td className="p-3 text-center text-slate-700">
+                            <div>{metrics.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م</div>
+                            <div className="text-[10px] text-slate-500">
+                              ميزان: {shuna.scaleValue.toLocaleString('ar-EG')} ج.م
+                            </div>
+                          </td>
+                          <td className="p-3 text-center font-black text-indigo-900">
+                            {metrics.totalEstimatedShunaValue.toLocaleString('ar-EG')} ج.م
+                          </td>
+                          <td className="p-3 text-center space-y-1">
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-black ${
+                                shuna.operationalStatus === 'تعمل'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : shuna.operationalStatus === 'تحت الصيانة'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {shuna.operationalStatus}
+                            </span>
+                            <div className="text-[10px] text-slate-600">{shuna.scaleStatus}</div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <ModuleRowActions
+                              entityLabel={shuna.shunaName}
+                              updatedAt={shuna.updatedAt}
+                              permissions={effectivePermissions}
+                              testIdPrefix={`shuna-row-${shuna.id}`}
+                              onView={() =>
+                                setProfileModal({
+                                  isOpen: true,
+                                  title: `بطاقة الشونة: ${shuna.shunaName}`,
+                                  subtitle: `كود ${shuna.shunaCode} — ${shuna.affiliatedEntity}`,
+                                  entityType: 'بيانات تفصيلية لشونة معتمدة',
+                                  onEdit: () => setEditingShuna(shuna),
+                                  fields: [
+                                    { label: 'كود الشونة', value: shuna.shunaCode, mono: true },
+                                    { label: 'اسم الشونة', value: shuna.shunaName },
+                                    { label: 'القرية / المركز', value: `${shuna.village} — وحدة ${shuna.localUnit}` },
+                                    { label: 'الجهة التابعة', value: shuna.affiliatedEntity },
+                                    { label: 'أمين / مدير الشونة', value: `${shuna.managerName} (${shuna.phone || 'بدون هاتف'})` },
+                                    { label: 'المساحة الكلية', value: `${shuna.totalAreaSqm.toLocaleString()} م²` },
+                                    { label: 'المساحة المتبقية', value: `${metrics.remainingAreaSqm.toLocaleString()} م²` },
+                                    { label: 'السعة التخزينية القصوى', value: `${shuna.storageCapacityTons.toLocaleString()} طن` },
+                                    { label: 'الرصيد الافتتاحي المعتمد', value: `${metrics.openingBalanceTons.toLocaleString()} طن` },
+                                    { label: 'إجمالي الوارد المعتمد', value: `+${metrics.approvedInboundTons.toLocaleString()} طن` },
+                                    { label: 'إجمالي المنصرف المعتمد للمطاحن', value: `-${metrics.approvedOutboundTons.toLocaleString()} طن` },
+                                    { label: 'الرصيد الدفتري الحالي', value: `${metrics.currentBookBalanceTons.toLocaleString()} طن`, mono: true },
+                                    { label: 'قيمة المخزون السلعي (القمح)', value: `${metrics.stockValuationAmount.toLocaleString()} ج.م` },
+                                    { label: 'قيمة الأصول الثابتة والمعدات', value: `${metrics.fixedAssetsValuationAmount.toLocaleString()} ج.م` },
+                                    { label: 'إجمالي القيمة التقديرية للشونة', value: `${metrics.totalEstimatedShunaValue.toLocaleString()} ج.م` },
+                                    { label: 'حالة الميزان', value: shuna.scaleStatus, badge: true, badgeColor: 'teal' },
+                                    { label: 'الحالة التشغيلية', value: shuna.operationalStatus, badge: true, badgeColor: 'green' },
+                                    { label: 'تاريخ آخر تقييم فني', value: shuna.valuationDate || '2026-05-01' },
+                                  ],
+                                })
+                              }
+                              onEdit={() => setEditingShuna(shuna)}
+                              onDelete={() =>
+                                setDeleteModal({
+                                  isOpen: true,
+                                  entityType: 'shuna',
+                                  entityId: shuna.id,
+                                  entityTitle: shuna.shunaName,
+                                  recordSummary: [
+                                    { label: 'كود الشونة', value: shuna.shunaCode },
+                                    { label: 'اسم الشونة', value: shuna.shunaName },
+                                    { label: 'السعة التخزينية', value: `${shuna.storageCapacityTons} طن` },
+                                    { label: 'الرصيد الحالي', value: `${metrics.currentBookBalanceTons} طن` },
+                                  ],
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <LocalUnitSubtotalRow
+                        unitName={group.localUnit}
+                        recordCount={group.count}
+                        labelColSpan={3}
+                        metricCells={[
+                          { content: `${group.subtotals.totalAreaSqm?.toLocaleString('ar-EG')} م² (متبقي ${group.subtotals.remainingAreaSqm?.toLocaleString('ar-EG')})`, align: 'center' },
+                          { content: `${group.subtotals.storageCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                          { content: `${group.subtotals.openingBalanceTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                          { content: `+${group.subtotals.approvedInboundTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                          { content: `-${group.subtotals.approvedOutboundTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                          { content: `${group.subtotals.currentBookBalanceTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
+                          { content: `${group.subtotals.stockValuationAmount?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                          { content: `${group.subtotals.fixedAssetsValuationAmount?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                          { content: `${group.subtotals.totalEstimatedShunaValue?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                          { content: '—', align: 'center', colSpan: 2 },
+                        ]}
+                      />
+                    </React.Fragment>
                   ))}
+                  {shunaGroupsResult.groups.length > 0 && (
+                    <VillageGrandTotalRow
+                      totalCount={shunaGroupsResult.grandTotalCount}
+                      labelColSpan={3}
+                      metricCells={[
+                        { content: `${shunaGroupsResult.grandTotals.totalAreaSqm?.toLocaleString('ar-EG')} م² (متبقي ${shunaGroupsResult.grandTotals.remainingAreaSqm?.toLocaleString('ar-EG')})`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.storageCapacityTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.openingBalanceTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                        { content: `+${shunaGroupsResult.grandTotals.approvedInboundTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                        { content: `-${shunaGroupsResult.grandTotals.approvedOutboundTons?.toLocaleString('ar-EG')} طن`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.currentBookBalanceTons?.toLocaleString('ar-EG')} طن`, align: 'center', mono: true },
+                        { content: `${shunaGroupsResult.grandTotals.stockValuationAmount?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.fixedAssetsValuationAmount?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                        { content: `${shunaGroupsResult.grandTotals.totalEstimatedShunaValue?.toLocaleString('ar-EG')} ج.م`, align: 'center' },
+                        { content: '—', align: 'center', colSpan: 2 },
+                      ]}
+                    />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1151,7 +1585,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-2.5">م</th>
@@ -1260,22 +1694,76 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                       </td>
                       <td className="p-2.5 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          {canPrint && (
-                            <button
-                              type="button"
-                              onClick={() => handlePrintOfficialReceiptVoucher(r)}
-                              title="طباعة إذن استلام قمح رسمي A4"
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <ModuleRowActions
+                            entityLabel={r.receiptOrderNumber}
+                            updatedAt={r.updatedAt}
+                            permissions={effectivePermissions}
+                            testIdPrefix={`receipt-row-${r.id}`}
+                            onView={() =>
+                              setProfileModal({
+                                isOpen: true,
+                                title: `إذن استلام قمح رقم: ${r.receiptOrderNumber}`,
+                                subtitle: `${r.shunaName} (${r.shunaCode}) — حالة الاعتماد: ${r.approvalStatus}`,
+                                entityType: 'بيانات تفصيلية لإذن استلام القمح',
+                                onEdit: () =>
+                                  setEditingSubRecord({
+                                    type: 'receipt',
+                                    title: `تعديل إذن استلام القمح: ${r.receiptOrderNumber}`,
+                                    data: { ...r },
+                                  }),
+                                fields: [
+                                  { label: 'رقم إذن الاستلام', value: r.receiptOrderNumber, mono: true },
+                                  { label: 'تاريخ ووقت الاستلام', value: `${r.receiptDate} ${r.receiptTime}` },
+                                  { label: 'الشونة المستلمة', value: `${r.shunaName} (${r.shunaCode})` },
+                                  { label: 'المورد / المزارع', value: r.supplierName },
+                                  { label: 'الرقم القومي / الكود', value: r.supplierNationalIdOrCode, mono: true },
+                                  { label: 'نوع القمح والموسم', value: `${r.wheatType} — ${r.agriculturalSeason}` },
+                                  { label: 'بيانات النقل', value: `سيارة ${r.vehicleNumber} (سائق: ${r.driverName})` },
+                                  { label: 'الميزان المستخدم', value: r.scaleNumber },
+                                  { label: 'الوزن القائم / الفارغ', value: `${r.grossWeightKg.toLocaleString()} كجم / ${r.tareWeightKg.toLocaleString()} كجم` },
+                                  { label: 'صافي الوزن القائم', value: `${r.netWeightKg.toLocaleString()} كجم (${r.netWeightTons} طن)` },
+                                  { label: 'الرطوبة / الشوائب', value: `رطوبة ${r.moisturePct}% | شوائب ${r.impuritiesPct}%` },
+                                  { label: 'رتبة النظافة والجودة', value: `${r.cleanlinessGrade} — ${r.qualityGrade}` },
+                                  { label: 'الوزن المستبعد المعتمد', value: `${r.excludedWeightTons} طن` },
+                                  { label: 'الوزن الصافي المقبول المعتمد', value: `${r.acceptedNetWeightTons} طن`, mono: true },
+                                  { label: 'سعر الطن المعتمد', value: `${r.tonPrice.toLocaleString()} ج.م` },
+                                  { label: 'إجمالي قيمة التوريد', value: `${r.totalSupplyValue.toLocaleString()} ج.م`, mono: true },
+                                  { label: 'محضر الفحص والفرز', value: r.inspectionReportNumber },
+                                  { label: 'أمين الشونة وعضو اللجنة', value: `${r.shunaKeeperName} | ${r.committeeMemberName}` },
+                                  { label: 'حالة الاعتماد', value: r.approvalStatus, badge: true, badgeColor: r.approvalStatus === 'معتمد' ? 'green' : 'amber' },
+                                ],
+                              })
+                            }
+                            onEdit={() =>
+                              setEditingSubRecord({
+                                type: 'receipt',
+                                title: `تعديل إذن استلام القمح: ${r.receiptOrderNumber}`,
+                                data: { ...r },
+                              })
+                            }
+                            onPrint={() => handlePrintOfficialReceiptVoucher(r)}
+                            onDelete={() =>
+                              setDeleteModal({
+                                isOpen: true,
+                                entityType: 'receipt',
+                                entityId: r.id,
+                                entityTitle: r.receiptOrderNumber,
+                                recordSummary: [
+                                  { label: 'رقم الإذن', value: r.receiptOrderNumber },
+                                  { label: 'الشونة', value: r.shunaName },
+                                  { label: 'المورد', value: r.supplierName },
+                                  { label: 'الكمية', value: `${r.acceptedNetWeightTons} طن` },
+                                  { label: 'الحالة', value: r.approvalStatus },
+                                ],
+                              })
+                            }
+                          />
                           {canEdit && r.approvalStatus !== 'معتمد' && (
                             <button
                               type="button"
                               onClick={() => handleApproveOrReverseReceipt(r, 'معتمد')}
                               title="اعتماد الإذن وترحيله لرصيد الشونة"
-                              className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black flex items-center gap-1"
+                              className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black flex items-center gap-1 cursor-pointer"
                             >
                               <CheckCircle2 className="w-3 h-3" />
                               <span>اعتماد</span>
@@ -1286,7 +1774,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                               type="button"
                               onClick={() => handleApproveOrReverseReceipt(r, 'ملغي')}
                               title="إلغاء بعكس قيد محاسبي (يمنع الحذف المباشر للأذون المعتمدة)"
-                              className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-black flex items-center gap-1"
+                              className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-black flex items-center gap-1 cursor-pointer"
                             >
                               <XCircle className="w-3 h-3" />
                               <span>عكس قيد</span>
@@ -1366,7 +1854,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم إذن الصرف</th>
@@ -1380,49 +1868,115 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                     <th className="p-3 text-center">إجمالي القيمة</th>
                     <th className="p-3">السيارة والسائق والمستلم</th>
                     <th className="p-3 text-center">الحالة</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {wheatIssues.map((iss) => (
-                    <tr key={iss.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-amber-800">
-                        {iss.issueOrderNumber}
-                      </td>
-                      <td className="p-3">
-                        {iss.issueDate} | {iss.issueTime}
-                      </td>
-                      <td className="p-3">
-                        <div className="font-black text-slate-900">{iss.shunaName}</div>
-                        <div className="text-[10px] text-slate-500">{iss.shunaCode}</div>
-                      </td>
-                      <td className="p-3">
-                        <div className="font-black text-indigo-900">{iss.beneficiaryMillName}</div>
-                        <div className="text-[10px] text-slate-500">{iss.beneficiaryMillCode}</div>
-                      </td>
-                      <td className="p-3 text-center">{iss.wheatType}</td>
-                      <td className="p-3 text-center">{iss.balanceBeforeIssueTons} طن</td>
-                      <td className="p-3 text-center font-black text-amber-800 bg-amber-50/70">
-                        {iss.issuedWeightTons} طن
-                      </td>
-                      <td className="p-3 text-center font-black text-emerald-800">
-                        {iss.balanceAfterIssueTons} طن
-                      </td>
-                      <td className="p-3 text-center">
-                        {iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م
-                      </td>
-                      <td className="p-3">
-                        <div>
-                          {iss.vehicleNumber} - {iss.driverName}
-                        </div>
-                        <div className="text-[10px] text-slate-500">المستلم: {iss.receiverName}</div>
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[11px] font-black">
-                          {iss.approvalStatus}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {wheatIssues.map((iss) => {
+                    const openEditIssue = () =>
+                      setEditingSubRecord({
+                        type: 'issue',
+                        title: `تعديل إذن صرف القمح: ${iss.issueOrderNumber}`,
+                        data: { ...iss },
+                      });
+                    return (
+                      <tr key={iss.id} className="hover:bg-slate-50">
+                        <td className="p-3 font-mono font-black text-amber-800">
+                          {iss.issueOrderNumber}
+                        </td>
+                        <td className="p-3">
+                          {iss.issueDate} | {iss.issueTime}
+                        </td>
+                        <td className="p-3">
+                          <div className="font-black text-slate-900">{iss.shunaName}</div>
+                          <div className="text-[10px] text-slate-500">{iss.shunaCode}</div>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-black text-indigo-900">{iss.beneficiaryMillName}</div>
+                          <div className="text-[10px] text-slate-500">{iss.beneficiaryMillCode}</div>
+                        </td>
+                        <td className="p-3 text-center">{iss.wheatType}</td>
+                        <td className="p-3 text-center">{iss.balanceBeforeIssueTons} طن</td>
+                        <td className="p-3 text-center font-black text-amber-800 bg-amber-50/70">
+                          {iss.issuedWeightTons} طن
+                        </td>
+                        <td className="p-3 text-center font-black text-emerald-800">
+                          {iss.balanceAfterIssueTons} طن
+                        </td>
+                        <td className="p-3 text-center">
+                          {iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م
+                        </td>
+                        <td className="p-3">
+                          <div>
+                            {iss.vehicleNumber} - {iss.driverName}
+                          </div>
+                          <div className="text-[10px] text-slate-500">المستلم: {iss.receiverName}</div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[11px] font-black">
+                            {iss.approvalStatus}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <ModuleRowActions
+                            entityLabel={iss.issueOrderNumber}
+                            updatedAt={(iss as unknown as { updatedAt?: string }).updatedAt}
+                            permissions={effectivePermissions}
+                            testIdPrefix={`issue-row-${iss.id}`}
+                            onView={() =>
+                              setProfileModal({
+                                isOpen: true,
+                                title: `إذن صرف قمح للمطحن: ${iss.issueOrderNumber}`,
+                                subtitle: `${iss.shunaName} → ${iss.beneficiaryMillName}`,
+                                entityType: 'إذن صرف قمح لمطحن تمويني',
+                                onEdit: openEditIssue,
+                                fields: [
+                                  { label: 'رقم إذن الصرف', value: iss.issueOrderNumber, mono: true },
+                                  { label: 'التاريخ والوقت', value: `${iss.issueDate} | ${iss.issueTime}` },
+                                  { label: 'الشونة الموردة', value: `${iss.shunaName} (${iss.shunaCode})` },
+                                  { label: 'المطحن المستفيد', value: `${iss.beneficiaryMillName} (${iss.beneficiaryMillCode})` },
+                                  { label: 'نوع القمح', value: iss.wheatType },
+                                  { label: 'الرصيد قبل الصرف', value: `${iss.balanceBeforeIssueTons} طن` },
+                                  { label: 'الكمية المنصرفة', value: `${iss.issuedWeightTons} طن`, mono: true },
+                                  { label: 'الرصيد بعد الصرف', value: `${iss.balanceAfterIssueTons} طن` },
+                                  { label: 'إجمالي القيمة المالية', value: `${iss.totalIssuedValue.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                  { label: 'السيارة والسائق', value: `${iss.vehicleNumber} — ${iss.driverName}` },
+                                  { label: 'المستلم بالمطحن', value: iss.receiverName },
+                                  { label: 'الحالة', value: iss.approvalStatus },
+                                ],
+                              })
+                            }
+                            onEdit={openEditIssue}
+                            onDelete={() =>
+                              setDeleteModal({
+                                isOpen: true,
+                                entityType: 'issue',
+                                entityId: iss.id,
+                                entityTitle: iss.issueOrderNumber,
+                                recordSummary: [
+                                  { label: 'رقم إذن الصرف', value: iss.issueOrderNumber },
+                                  { label: 'الشونة', value: iss.shunaName },
+                                  { label: 'المطحن', value: iss.beneficiaryMillName },
+                                  { label: 'الكمية المنصرفة', value: `${iss.issuedWeightTons} طن` },
+                                ],
+                              })
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <VillageGrandTotalRow
+                    totalCount={wheatIssues.length}
+                    labelColSpan={6}
+                    title="الإجمالي العام للمنصرف من الشون للمطاحن TOTAL"
+                    metricCells={[
+                      { content: `${Number(wheatIssues.reduce((s, i) => s + (i.issuedWeightTons || 0), 0).toFixed(3))} طن`, mono: true },
+                      { content: '—' },
+                      { content: `${wheatIssues.reduce((s, i) => s + (i.totalIssuedValue || 0), 0).toLocaleString('ar-EG')} ج.م`, mono: true },
+                      { content: '—', colSpan: 3 },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -1433,18 +1987,29 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
       {/* 4. دفتر حركة أرصدة القمح بالشون */}
       {activeTab === 'ledger' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+          <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-black text-slate-900">
-                دفتر حركة أرصدة القمح بالشون (سجل الرقابة المحاسبية غير القابل للحذف)
+                دفتر حركة أرصدة القمح بالشون (متاح الإضافة والتعديل والحذف في أي وقت)
               </h3>
               <p className="text-xs font-bold text-slate-500">
-                يوثق الرصيد قبل وبعد كل حركة (رصيد افتتاحي، وارد معتمد، صرف لمطحن، تسوية جرد، عكس قيد)
+                يوثق الرصيد قبل وبعد كل حركة (رصيد افتتاحي، وارد معتمد، صرف لمطحن، تسوية جرد، عكس قيد) مع إتاحة الإضافة والتعديل والحذف المباشر
               </p>
             </div>
+            {canAdd && (
+              <button
+                type="button"
+                data-testid="btn-add-wheat-ledger"
+                onClick={openAddLedgerModal}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>إضافة حركة جديدة بالدفتر</span>
+              </button>
+            )}
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-right">
+            <table className="w-full text-xs text-right compact-erp-table">
               <thead className="bg-[#0f2342] text-white font-black">
                 <tr>
                   <th className="p-3">رقم الحركة</th>
@@ -1457,6 +2022,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                   <th className="p-3 text-center">الرصيد بعد الحركة</th>
                   <th className="p-3 text-center">القيمة المالية</th>
                   <th className="p-3">المسؤول والبيان</th>
+                  <th className="p-3 text-center">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 font-bold">
@@ -1497,8 +2063,70 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                       <div>{m.performedBy}</div>
                       <div className="text-[10px] text-slate-500">{m.notes}</div>
                     </td>
+                    <td className="p-3 text-center">
+                      <ModuleRowActions
+                        entityLabel={m.movementCode}
+                        permissions={effectivePermissions}
+                        testIdPrefix={`ledger-row-${m.id}`}
+                        onView={() =>
+                          setProfileModal({
+                            isOpen: true,
+                            title: `حركة دفتر أرصدة القمح: ${m.movementCode}`,
+                            subtitle: `${m.shunaName} — ${m.movementType}`,
+                            entityType: 'قيد رقابي بدفتر أرصدة القمح',
+                            onEdit: () => openEditLedgerModal(m),
+                            fields: [
+                              { label: 'كود الحركة', value: m.movementCode, mono: true },
+                              { label: 'التاريخ والوقت', value: `${m.movementDate} | ${m.movementTime}` },
+                              { label: 'الشونة', value: m.shunaName },
+                              { label: 'نوع الحركة', value: m.movementType },
+                              { label: 'المستند المرجعي', value: m.referenceDocNumber, mono: true },
+                              { label: 'الرصيد قبل الحركة', value: `${m.balanceBeforeTons} طن` },
+                              { label: 'الكمية', value: `${m.quantityTons} طن`, mono: true },
+                              { label: 'الرصيد بعد الحركة', value: `${m.balanceAfterTons} طن`, mono: true },
+                              { label: 'القيمة المالية', value: `${m.totalValue.toLocaleString('ar-EG')} ج.م` },
+                              { label: 'المنفذ', value: m.performedBy },
+                              { label: 'البيان', value: m.notes || '—' },
+                            ],
+                          })
+                        }
+                        onEdit={() => openEditLedgerModal(m)}
+                        onDelete={() =>
+                          setDeleteModal({
+                            isOpen: true,
+                            entityType: 'ledger',
+                            entityId: m.id,
+                            entityTitle: m.movementCode,
+                            recordSummary: [
+                              { label: 'كود الحركة', value: m.movementCode },
+                              { label: 'الشونة', value: m.shunaName },
+                              { label: 'نوع الحركة', value: m.movementType },
+                              { label: 'الكمية', value: `${m.quantityTons} طن` },
+                            ],
+                          })
+                        }
+                      />
+                    </td>
                   </tr>
                 ))}
+                {wheatLedgerMovements.length === 0 && (
+                  <tr>
+                    <td colSpan={11} className="p-8 text-center text-slate-500 font-bold">
+                      لا توجد حركات مسجلة في دفتر حركة أرصدة القمح بالشون حالياً — يمكنك إضافة حركة جديدة في أي وقت.
+                    </td>
+                  </tr>
+                )}
+                <VillageGrandTotalRow
+                  totalCount={wheatLedgerMovements.length}
+                  labelColSpan={6}
+                  title="الإجمالي العام لحركات دفتر أرصدة القمح TOTAL"
+                  metricCells={[
+                    { content: `${Number(wheatLedgerMovements.reduce((s, m) => s + (m.quantityTons || 0), 0).toFixed(3))} طن صافي`, mono: true },
+                    { content: '—' },
+                    { content: `${wheatLedgerMovements.reduce((s, m) => s + (m.totalValue || 0), 0).toLocaleString('ar-EG')} ج.م`, mono: true },
+                    { content: '—', colSpan: 2 },
+                  ]}
+                />
               </tbody>
             </table>
           </div>
@@ -1531,7 +2159,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     <th className="p-3">رقم محضر المطابقة</th>
@@ -1543,52 +2171,115 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
                     <th className="p-3 text-center">حالة المطابقة</th>
                     <th className="p-3">لجنة الجرد</th>
                     <th className="p-3">تفسير الفرق والإجراء المتخذ</th>
+                    <th className="p-3 text-center">إدارة السجل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {shunaReconciliations.map((rec) => (
-                    <tr key={rec.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-black text-indigo-900">
-                        {rec.reconciliationNumber}
-                      </td>
-                      <td className="p-3">{rec.reconciliationDate}</td>
-                      <td className="p-3 font-black text-slate-900">{rec.shunaName}</td>
-                      <td className="p-3 text-center">{rec.bookBalanceTons} طن</td>
-                      <td className="p-3 text-center font-black">{rec.physicalCountTons} طن</td>
-                      <td
-                        className={`p-3 text-center font-black ${
-                          rec.varianceTons < 0
-                            ? 'text-rose-700 bg-rose-50'
-                            : rec.varianceTons > 0
-                            ? 'text-emerald-700 bg-emerald-50'
-                            : 'text-slate-700'
-                        }`}
-                      >
-                        {rec.varianceTons > 0 ? `+${rec.varianceTons}` : rec.varianceTons} طن
-                      </td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${
-                            rec.reconciliationStatus === 'مطابق'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : rec.reconciliationStatus === 'عجز'
-                              ? 'bg-rose-100 text-rose-800'
-                              : 'bg-teal-100 text-teal-800'
+                  {shunaReconciliations.map((rec) => {
+                    const openEditRecon = () =>
+                      setEditingSubRecord({
+                        type: 'reconciliation',
+                        title: `تعديل محضر مطابقة الجرد: ${rec.reconciliationNumber}`,
+                        data: { ...rec },
+                      });
+                    return (
+                      <tr key={rec.id} className="hover:bg-slate-50">
+                        <td className="p-3 font-mono font-black text-indigo-900">
+                          {rec.reconciliationNumber}
+                        </td>
+                        <td className="p-3">{rec.reconciliationDate}</td>
+                        <td className="p-3 font-black text-slate-900">{rec.shunaName}</td>
+                        <td className="p-3 text-center">{rec.bookBalanceTons} طن</td>
+                        <td className="p-3 text-center font-black">{rec.physicalCountTons} طن</td>
+                        <td
+                          className={`p-3 text-center font-black ${
+                            rec.varianceTons < 0
+                              ? 'text-rose-700 bg-rose-50'
+                              : rec.varianceTons > 0
+                              ? 'text-emerald-700 bg-emerald-50'
+                              : 'text-slate-700'
                           }`}
                         >
-                          {rec.reconciliationStatus}
-                        </span>
-                      </td>
-                      <td className="p-3">
-                        <div className="font-black">{rec.committeeHead}</div>
-                        <div className="text-[10px] text-slate-500">{rec.committeeMembers}</div>
-                      </td>
-                      <td className="p-3">
-                        <div>{rec.reasonOrExplanation}</div>
-                        <div className="text-[10px] text-indigo-700">{rec.actionTaken}</div>
-                      </td>
-                    </tr>
-                  ))}
+                          {rec.varianceTons > 0 ? `+${rec.varianceTons}` : rec.varianceTons} طن
+                        </td>
+                        <td className="p-3 text-center">
+                          <span
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${
+                              rec.reconciliationStatus === 'مطابق'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : rec.reconciliationStatus === 'عجز'
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-teal-100 text-teal-800'
+                            }`}
+                          >
+                            {rec.reconciliationStatus}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-black">{rec.committeeHead}</div>
+                          <div className="text-[10px] text-slate-500">{rec.committeeMembers}</div>
+                        </td>
+                        <td className="p-3">
+                          <div>{rec.reasonOrExplanation}</div>
+                          <div className="text-[10px] text-indigo-700">{rec.actionTaken}</div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <ModuleRowActions
+                            entityLabel={rec.reconciliationNumber}
+                            updatedAt={(rec as unknown as { updatedAt?: string }).updatedAt}
+                            permissions={effectivePermissions}
+                            testIdPrefix={`recon-row-${rec.id}`}
+                            onView={() =>
+                              setProfileModal({
+                                isOpen: true,
+                                title: `محضر مطابقة جرد: ${rec.reconciliationNumber}`,
+                                subtitle: `${rec.shunaName} — ${rec.reconciliationStatus}`,
+                                entityType: 'محضر جرد ومطابقة شونة',
+                                onEdit: openEditRecon,
+                                fields: [
+                                  { label: 'رقم محضر المطابقة', value: rec.reconciliationNumber, mono: true },
+                                  { label: 'تاريخ الجرد', value: rec.reconciliationDate },
+                                  { label: 'الشونة', value: rec.shunaName },
+                                  { label: 'الرصيد الدفتري المحسوب', value: `${rec.bookBalanceTons} طن`, mono: true },
+                                  { label: 'الرصيد الفعلي بالجرد', value: `${rec.physicalCountTons} طن`, mono: true },
+                                  { label: 'فرق الجرد', value: `${rec.varianceTons} طن`, mono: true },
+                                  { label: 'حالة المطابقة', value: rec.reconciliationStatus },
+                                  { label: 'رئيس اللجنة', value: rec.committeeHead },
+                                  { label: 'أعضاء اللجنة', value: rec.committeeMembers },
+                                  { label: 'التفسير والإجراء', value: `${rec.reasonOrExplanation} — ${rec.actionTaken}` },
+                                ],
+                              })
+                            }
+                            onEdit={openEditRecon}
+                            onDelete={() =>
+                              setDeleteModal({
+                                isOpen: true,
+                                entityType: 'reconciliation',
+                                entityId: rec.id,
+                                entityTitle: rec.reconciliationNumber,
+                                recordSummary: [
+                                  { label: 'رقم المحضر', value: rec.reconciliationNumber },
+                                  { label: 'الشونة', value: rec.shunaName },
+                                  { label: 'فرق الجرد', value: `${rec.varianceTons} طن` },
+                                ],
+                              })
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <VillageGrandTotalRow
+                    totalCount={shunaReconciliations.length}
+                    labelColSpan={3}
+                    title="الإجمالي العام لمحاضر الجرد والمطابقة TOTAL"
+                    metricCells={[
+                      { content: `${Number(shunaReconciliations.reduce((s, r) => s + (r.bookBalanceTons || 0), 0).toFixed(3))} طن`, mono: true },
+                      { content: `${Number(shunaReconciliations.reduce((s, r) => s + (r.physicalCountTons || 0), 0).toFixed(3))} طن`, mono: true },
+                      { content: `${Number(shunaReconciliations.reduce((s, r) => s + (r.varianceTons || 0), 0).toFixed(3))} طن`, mono: true },
+                      { content: '—', colSpan: 4 },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -1598,7 +2289,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة إضافة شونة جديدة */}
       {showAddShunaModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6">
             <h3 className="text-lg font-black text-slate-900 mb-4">
               تسجيل شونة جديدة وتقييم أصولها ومعداتها
@@ -1760,7 +2451,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة تسجيل إذن استلام قمح يومي جديد (27 حقلاً) */}
       {showAddReceiptModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
             <h3 className="text-lg font-black text-slate-900 mb-1">
               تسجيل إذن استلام قمح جديد في دفتر الاستلام اليومي
@@ -2075,7 +2766,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة تسجيل إذن صرف قمح من الشونة لمطحن */}
       {showAddIssueModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل إذن صرف قمح من الشونة إلى مطحن تمويني
@@ -2196,7 +2887,7 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
 
       {/* نافذة تسجيل محضر مطابقة جرد شونة */}
       {showAddReconModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل محضر مطابقة وجرد فعلي للشونة
@@ -2299,6 +2990,359 @@ export const ShunasAndWheatReceiptsView: React.FC<ShunasAndWheatReceiptsViewProp
             </form>
           </div>
         </div>
+      )}
+
+      {/* نافذة تعديل بيانات الشونة */}
+      {editingShuna && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6">
+            <h3 className="text-lg font-black text-slate-900 mb-3">
+              تعديل بيانات الشونة: {editingShuna.shunaName}
+            </h3>
+            <form onSubmit={handleSaveEditShuna} className="space-y-4 text-xs font-bold">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block mb-1 text-slate-700">اسم الشونة</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingShuna.shunaName}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, shunaName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الجهة التابعة</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingShuna.affiliatedEntity}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, affiliatedEntity: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">أمين / مدير الشونة</label>
+                  <input
+                    type="text"
+                    value={editingShuna.managerName}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, managerName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">رقم الهاتف</label>
+                  <input
+                    type="text"
+                    value={editingShuna.phone}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, phone: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">السعة التخزينية (طن)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editingShuna.storageCapacityTons}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, storageCapacityTons: Number(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">حالة الميزان</label>
+                  <select
+                    value={editingShuna.scaleStatus}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, scaleStatus: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  >
+                    <option value="يعمل ومعاير">يعمل ومعاير</option>
+                    <option value="يحتاج معايرة">يحتاج معايرة</option>
+                    <option value="معطل">معطل</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الحالة التشغيلية</label>
+                  <select
+                    value={editingShuna.operationalStatus}
+                    onChange={(e) => setEditingShuna({ ...editingShuna, operationalStatus: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  >
+                    <option value="تعمل">تعمل</option>
+                    <option value="تحت الصيانة">تحت الصيانة</option>
+                    <option value="متوقفة">متوقفة</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditingShuna(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-600 text-white font-black"
+                >
+                  حفظ التعديلات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة إضافة / تعديل حركة بدفتر أرصدة القمح بالشون */}
+      {ledgerModal && (
+        <div
+          className="fixed inset-0 z-[9980] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+          dir="rtl"
+          onClick={() => setLedgerModal(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border-2 border-[#0A1628] w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-black text-slate-900 mb-3">
+              {ledgerModal.mode === 'add'
+                ? 'إضافة حركة جديدة بدفتر أرصدة القمح بالشون'
+                : `تعديل حركة دفتر الأرصدة: ${ledgerModal.movementCode}`}
+            </h3>
+            <form onSubmit={handleSaveLedgerModal} className="space-y-4 text-xs font-bold">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block mb-1 text-slate-700">رقم / كود الحركة *</label>
+                  <input
+                    type="text"
+                    required
+                    data-testid="ledger-form-code"
+                    value={ledgerModal.movementCode}
+                    onChange={(e) => setLedgerModal({ ...ledgerModal, movementCode: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الشونة</label>
+                  <select
+                    value={ledgerModal.shunaCode}
+                    onChange={(e) => setLedgerModal({ ...ledgerModal, shunaCode: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  >
+                    {shunas.map((s) => (
+                      <option key={s.shunaCode} value={s.shunaCode}>
+                        {s.shunaName} ({s.shunaCode})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">تاريخ الحركة</label>
+                  <input
+                    type="date"
+                    required
+                    value={ledgerModal.movementDate}
+                    onChange={(e) => setLedgerModal({ ...ledgerModal, movementDate: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">نوع الحركة</label>
+                  <select
+                    value={ledgerModal.movementType}
+                    onChange={(e) =>
+                      setLedgerModal({
+                        ...ledgerModal,
+                        movementType: e.target.value as WheatLedgerMovementRecord['movementType'],
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  >
+                    <option value="رصيد افتتاحي">رصيد افتتاحي</option>
+                    <option value="وارد قمح معتمد">وارد قمح معتمد</option>
+                    <option value="صرف قمح لمطحن">صرف قمح لمطحن</option>
+                    <option value="تحويل وارد">تحويل وارد</option>
+                    <option value="تحويل صادر">تحويل صادر</option>
+                    <option value="تسوية جرد معتمدة">تسوية جرد معتمدة</option>
+                    <option value="عكس قيد">عكس قيد</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">المستند المرجعي</label>
+                  <input
+                    type="text"
+                    value={ledgerModal.referenceDocNumber}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, referenceDocNumber: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الرصيد قبل الحركة (طن)</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={ledgerModal.balanceBeforeTons}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, balanceBeforeTons: Number(e.target.value) || 0 })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الكمية (طن — موجب للوارد وسالب للمنصرف)</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    required
+                    data-testid="ledger-form-qty"
+                    value={ledgerModal.quantityTons}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, quantityTons: Number(e.target.value) || 0 })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">سعر الطن (ج.م)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={ledgerModal.tonPrice}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, tonPrice: Number(e.target.value) || 0 })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">المسؤول / المنفذ</label>
+                  <input
+                    type="text"
+                    value={ledgerModal.performedBy}
+                    onChange={(e) =>
+                      setLedgerModal({ ...ledgerModal, performedBy: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">ملاحظات وبيان الحركة</label>
+                  <input
+                    type="text"
+                    value={ledgerModal.notes}
+                    onChange={(e) => setLedgerModal({ ...ledgerModal, notes: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+              </div>
+              <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs font-black text-slate-700">
+                <span>
+                  الرصيد المحسوب بعد الحركة:{' '}
+                  {(Number(ledgerModal.balanceBeforeTons || 0) + Number(ledgerModal.quantityTons || 0)).toFixed(3)} طن
+                </span>
+                <span>
+                  القيمة المالية:{' '}
+                  {Math.round(Math.abs(Number(ledgerModal.quantityTons || 0)) * Number(ledgerModal.tonPrice || 0)).toLocaleString('ar-EG')} ج.م
+                </span>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setLedgerModal(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  data-testid="ledger-form-submit"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 text-white font-black cursor-pointer"
+                >
+                  {ledgerModal.mode === 'add' ? 'إضافة الحركة وحفظها' : 'حفظ التعديلات'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة تعديل أذون الاستلام / الصرف / المطابقة */}
+      {editingSubRecord && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-black text-slate-900 mb-3">{editingSubRecord.title}</h3>
+            <form onSubmit={handleSaveSubRecord} className="space-y-4 text-xs font-bold">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Object.entries(editingSubRecord.data)
+                  .filter(([k]) => !['id', 'updatedAt', 'netWeightKg', 'netWeightTons', 'acceptedNetWeightTons', 'totalSupplyValue', 'totalIssuedValue', 'varianceTons'].includes(k))
+                  .map(([key, val]) => (
+                    <div key={key}>
+                      <label className="block mb-1 text-slate-700 font-mono text-[11px]">{key}</label>
+                      <input
+                        type={typeof val === 'number' ? 'number' : 'text'}
+                        step={typeof val === 'number' ? 'any' : undefined}
+                        value={val ?? ''}
+                        onChange={(e) =>
+                          setEditingSubRecord({
+                            ...editingSubRecord,
+                            data: {
+                              ...editingSubRecord.data,
+                              [key]: typeof val === 'number' ? Number(e.target.value) : e.target.value,
+                            },
+                          })
+                        }
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                      />
+                    </div>
+                  ))}
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditingSubRecord(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 text-white font-black"
+                >
+                  حفظ التعديلات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة بطاقة السجل للقراءة فقط */}
+      {profileModal && (
+        <ModuleRecordProfileModal
+          isOpen={profileModal.isOpen}
+          title={profileModal.title}
+          subtitle={profileModal.subtitle}
+          entityType={profileModal.entityType}
+          fields={profileModal.fields}
+          canEdit={effectivePermissions.canEdit}
+          onEdit={profileModal.onEdit}
+          onClose={() => setProfileModal(null)}
+        />
+      )}
+
+      {/* نافذة تأكيد الحذف */}
+      {deleteModal && (
+        <ModuleDeleteConfirmModal
+          isOpen={deleteModal.isOpen}
+          entityTitle={deleteModal.entityTitle}
+          recordSummary={deleteModal.recordSummary}
+          canDelete={effectivePermissions.canDelete !== false}
+          onClose={() => setDeleteModal(null)}
+          onConfirmDelete={handleConfirmDelete}
+        />
       )}
     </div>
   );

@@ -61,7 +61,7 @@ import {
   readTamweenFileFromStorage,
   deleteTamweenFileFromStorage,
   UnifiedStorageFileInfo,
-} from '../lib/supabase';
+} from '../lib/supabase.ts';
 import { DEFAULT_OFFICIAL_LOGO } from '../defaultData';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import {
@@ -110,15 +110,25 @@ export interface GoogleDriveAccountEntry {
 
 const loadStoredDriveAccounts = (): GoogleDriveAccountEntry[] => {
   try {
+    // Scrub any legacy plaintext Drive passwords from localStorage
+    const keysToScrub: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('TAMWEEN_DRIVE_PASS_')) {
+        keysToScrub.push(k);
+      }
+    }
+    keysToScrub.forEach((k) => localStorage.removeItem(k));
+
     const raw = localStorage.getItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS');
     if (raw !== null) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        const filtered = parsed.filter((acc) => !isProtectedOwnerEmail(acc?.email));
-        if (filtered.length !== parsed.length) {
-          localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(filtered));
-        }
-        return filtered;
+        const sanitized = parsed
+          .filter((acc) => !isProtectedOwnerEmail(acc?.email))
+          .map(({ password: _droppedPassword, ...rest }) => rest);
+        localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(sanitized));
+        return sanitized;
       }
     }
   } catch (e) {
@@ -275,13 +285,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     () => localStorage.getItem('TAMWEEN_LAST_GOOGLE_DRIVE_CLOUD_SYNC') || null
   );
 
-  // Dedicated Google Drive Accounts Management (Add with password, delete any email, clear active)
+  // Dedicated Google Drive Accounts Management (Email & notes only — zero password saving, OAuth 2.0 only)
   const [driveAccounts, setDriveAccounts] = useState<GoogleDriveAccountEntry[]>(loadStoredDriveAccounts);
   const [newAccEmail, setNewAccEmail] = useState('');
-  const [newAccPassword, setNewAccPassword] = useState('');
   const [newAccNotes, setNewAccNotes] = useState('');
-  const [showNewAccPassword, setShowNewAccPassword] = useState(false);
-  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
 
   const handleAddOrUpdateDriveAccount = () => {
     const cleanEmail = newAccEmail.trim();
@@ -299,28 +306,27 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       updated = driveAccounts.map((a, idx) =>
         idx === existingIdx
           ? {
-              ...a,
-              password: newAccPassword.trim() || a.password,
+              id: a.id,
+              email: a.email,
               notes: newAccNotes.trim() || a.notes,
               addedAt: new Date().toLocaleDateString('ar-EG'),
             }
           : a
       );
       setStatusMsg({
-        text: `تم بنجاح تحديث بيانات وكلمة مرور الحساب (${cleanEmail}) في قائمة Google Drive!`,
+        text: `تم بنجاح تحديث بيانات الحساب (${cleanEmail}) في قائمة Google Drive (يتم الدخول عبر OAuth فقط دون حفظ كلمات مرور)!`,
         type: 'success',
       });
     } else {
       const newEntry: GoogleDriveAccountEntry = {
         id: `drive-acc-${Date.now()}`,
         email: cleanEmail,
-        password: newAccPassword.trim(),
         notes: newAccNotes.trim() || 'حساب إضافي لـ Google Drive',
         addedAt: new Date().toLocaleDateString('ar-EG'),
       };
       updated = [newEntry, ...driveAccounts];
       setStatusMsg({
-        text: `تم بنجاح إضافة الإيميل (${cleanEmail}) مع كلمة المرور إلى قائمة Google Drive وتفعيله!`,
+        text: `تم بنجاح إضافة الإيميل (${cleanEmail}) إلى قائمة Google Drive وتفعيله (بدون تخزين أي كلمة مرور)!`,
         type: 'success',
       });
     }
@@ -329,11 +335,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     localStorage.setItem('TAMWEEN_GOOGLE_DRIVE_ACCOUNTS', JSON.stringify(updated));
     setGmailEmail(cleanEmail);
     localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', cleanEmail);
-    if (newAccPassword.trim()) {
-      localStorage.setItem(`TAMWEEN_DRIVE_PASS_${cleanEmail.toLowerCase()}`, newAccPassword.trim());
-    }
+    localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${cleanEmail.toLowerCase()}`);
     setNewAccEmail('');
-    setNewAccPassword('');
     setNewAccNotes('');
   };
 
@@ -408,9 +411,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleSelectActiveDriveAccount = (acc: GoogleDriveAccountEntry) => {
     setGmailEmail(acc.email);
     localStorage.setItem('TAMWEEN_GMAIL_DRIVE_EMAIL', acc.email);
-    if (acc.password) {
-      localStorage.setItem(`TAMWEEN_DRIVE_PASS_${acc.email.toLowerCase()}`, acc.password);
-    }
+    localStorage.removeItem(`TAMWEEN_DRIVE_PASS_${acc.email.toLowerCase()}`);
     setStatusMsg({
       text: `تم تفعيل وتعيين الإيميل (${acc.email}) كحساب نشط حالياً لـ Google Drive.`,
       type: 'success',
@@ -1335,15 +1336,20 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       });
       return;
     }
+    const targetBranchId = currentState.activeBranchId || 'branch-mahalla';
+    const targetBranchName = currentState.systemConfig.administrationTitle || 'الفرع الحالي';
     setPendingActionConfirm({
-      title: 'تأكيد المسح الشامل لقاعدة بيانات Supabase وبدء التسجيل من جديد',
-      message: 'هل أنت متأكد من تنفيذ مسح شامل لجميع قواعد البيانات الموجودة حالياً على Supabase والذاكرة المحلية لتسجيل وكتابة البيانات من أول وجديد؟',
-      confirmLabel: 'مسح شامل والبدء من جديد',
+      title: `تأكيد تصفير بيانات الفرع الحالي فقط (${targetBranchName})`,
+      message: `هل أنت متأكد من تنفيذ مسح وتصفير بيانات الفرع الحالي فقط «${targetBranchName}»؟ لن يتم المساس ببيانات أي فرع آخر في المنظومة.`,
+      confirmLabel: 'تصفير بيانات هذا الفرع فقط',
       variant: 'danger',
       onConfirm: async () => {
         setIsProcessing(true);
-        setStatusMsg({ text: 'جاري المسح الشامل لكافة قواعد البيانات على Supabase وتصفير الجداول...', type: 'info' });
-        const res = await clearSupabaseDatabaseData();
+        setStatusMsg({
+          text: `جاري تصفير بيانات الفرع الحالي (${targetBranchName}) فقط مع الحفاظ على باقي الفروع...`,
+          type: 'info',
+        });
+        const res = await clearSupabaseDatabaseData(targetBranchId);
         try {
           await onFactoryReset();
         } catch {}
@@ -1555,19 +1561,21 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       });
       return;
     }
+    const targetBranchId = currentState.activeBranchId || 'branch-mahalla';
+    const targetBranchName = currentState.systemConfig.administrationTitle || 'الفرع الحالي';
     setFactoryResetModalStep(0);
     setIsProcessing(true);
     setStatusMsg({
-      text: 'جاري مسح كافة البيانات المدخلة وتصفير المنظومة وقواعد البيانات وإعادة ضبط المصنع...',
+      text: `جاري استعادة ضبط المصنع ومسح البيانات داخل الفرع الحالي فقط «${targetBranchName}» مع الحفاظ الكامل على جميع الفروع الأخرى...`,
       type: 'info',
     });
 
     try {
-      await clearSupabaseDatabaseData().catch(() => {});
+      await clearSupabaseDatabaseData(targetBranchId).catch(() => {});
       await onFactoryReset();
       setResetStep(0);
       setStatusMsg({
-        text: 'تمت إعادة ضبط المصنع ومسح كافة البيانات المدخلة واستعادة الحالة الأولية بنجاح.',
+        text: `تمت استعادة ضبط المصنع ومسح بيانات الفرع الحالي فقط «${targetBranchName}» بنجاح دون المساس ببقية الفروع.`,
         type: 'success',
       });
       setTimeout(() => {
@@ -1575,7 +1583,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       }, 1200);
     } catch (err: any) {
       setStatusMsg({
-        text: `فشل إعادة ضبط المصنع: ${err.message || 'خطأ غير معروف'}`,
+        text: `فشل إعادة ضبط المصنع للفرع الحالي: ${err.message || 'خطأ غير معروف'}`,
         type: 'error',
       });
     } finally {
@@ -2710,7 +2718,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 <div className="flex items-center gap-2">
                   <Key className="w-4 h-4 text-cyan-300" />
                   <span className="text-xs font-black text-cyan-200">
-                    إدارة حسابات Google Drive (إضافة أي إيميل مع كلمة المرور أو مسح أي إيميل) 🔐
+                    إدارة حسابات النسخ الاحتياطي السريع (إضافة بريد Gmail — بدون تخزين أي كلمات مرور 🔐)
                   </span>
                 </div>
                 <span className="text-[10px] font-bold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-500/40">
@@ -2718,7 +2726,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
                 {/* Email Input */}
                 <div>
                   <label className="block text-[10px] font-black text-slate-300 mb-1">
@@ -2730,34 +2738,9 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     value={newAccEmail}
                     onChange={(e) => setNewAccEmail(e.target.value)}
                     placeholder="user@gmail.com"
+                    autoComplete="off"
                     className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-bold focus:border-cyan-400 outline-none"
                   />
-                </div>
-
-                {/* Password Input with show/hide toggle */}
-                <div>
-                  <label className="block text-[10px] font-black text-slate-300 mb-1">
-                    كلمة المرور / كلمة مرور التطبيق (App Password)
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showNewDrivePass ? 'text' : 'password'}
-                      dir="ltr"
-                      value={newAccPassword}
-                      onChange={(e) => setNewAccPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      autoComplete="new-password"
-                      className="w-full px-3 py-1.5 pl-9 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-cyan-400 outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewDrivePass((prev) => !prev)}
-                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
-                      title={showNewDrivePass ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
-                    >
-                      {showNewDrivePass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
                 </div>
 
                 {/* Account Notes */}
@@ -2782,7 +2765,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   className="py-1.5 px-4 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer shadow transition"
                 >
                   <PlusCircle className="w-3.5 h-3.5" />
-                  <span>إضافة / حفظ الإيميل في Google Drive 💾</span>
+                  <span>إضافة / حفظ الإيميل 💾</span>
                 </button>
               </div>
 
@@ -2794,7 +2777,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                   {driveAccounts.map((acc) => {
                     const isActive = gmailEmail.toLowerCase() === acc.email.toLowerCase();
-                    const isPassRevealed = !!revealedPasswords[acc.id];
                     return (
                       <div
                         key={acc.id}
@@ -2815,14 +2797,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                           )}
                           {acc.notes && (
                             <span className="text-[10px] text-slate-400">({acc.notes})</span>
-                          )}
-                          {acc.password ? (
-                            <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-700 text-[10px]">
-                              <span className="text-slate-400">كلمة المرور:</span>
-                              <span className="font-mono text-emerald-400">•••••••• (محمي)</span>
-                            </div>
-                          ) : (
-                            <span className="text-[10px] text-slate-500">بدون كلمة مرور</span>
                           )}
                         </div>
 
@@ -3281,18 +3255,26 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   </div>
                 )}
 
-                <p className="text-[11px] text-red-900 font-bold leading-relaxed">
-                  مسح وتفريغ كافة البيانات والمدخلات (المخابز، المديونيات، والرسائل المدخلة) من الجهاز والسحابة وإعادة المنظومة لحالتها الأولى.
-                </p>
+                <div className="p-2.5 bg-white border border-red-200 rounded-xl text-[11px] text-red-950 font-bold leading-relaxed">
+                  <span className="font-black text-red-700">نطاق استعادة ضبط المصنع (مخصص للفرع الحالي فقط):</span>{' '}
+                  سيتم مسح وتفريغ البيانات داخل الفرع النشط حالياً فقط:{' '}
+                  <strong className="text-[#0A1628] underline">
+                    «{currentState.systemConfig.administrationTitle}»
+                  </strong>{' '}
+                  (المخابز، المديونيات، التجارة الداخلية، السلع التموينية، صيانة الحبوب، الموارد البشرية) دون أي مساس ببيانات الفروع الأخرى في المنظومة.
+                </div>
 
                 {resetStep === 0 && (
                   <button
                     type="button"
+                    data-testid="branch-factory-reset-btn"
                     onClick={() => setResetStep(1)}
                     className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black transition shadow-sm flex items-center gap-2 cursor-pointer border border-red-400"
                   >
                     <Trash2 className="w-4 h-4 text-red-200" />
-                    <span>طلب إعادة ضبط المصنع ومسح البيانات المدخلة 🗑️</span>
+                    <span>
+                      استعادة ضبط المصنع ومسح بيانات الفرع الحالي فقط ({currentState.systemConfig.administrationTitle})
+                    </span>
                   </button>
                 )}
 
@@ -3301,10 +3283,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <div className="p-3.5 bg-red-100/90 border-2 border-red-500 rounded-xl space-y-2.5 text-xs animate-fadeIn">
                 <div className="flex items-center gap-2 font-black text-red-950 text-xs">
                   <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 icon-animated" />
-                  <span>⚠️ تحذير رقم (1 من 3): طلب مسح كافة البيانات المدخلة وإعادة ضبط المصنع</span>
+                  <span>⚠️ تحذير رقم (1 من 3): استعادة ضبط المصنع للفرع الحالي فقط «{currentState.systemConfig.administrationTitle}»</span>
                 </div>
                 <p className="text-[11.5px] text-red-900 font-bold leading-relaxed">
-                  تنبيه هام جداً! أنت على وشك مسح كافة البيانات المدخلة في المنظومة (سجلات المخابز والمديونيات والمهام والرسائل) وتصفير القاعدة بالكامل من هذا الجهاز ومن السحابة. هل تريد البدء في استكمال إجراءات المسح الحتمي؟
+                  تنبيه هام جداً! أنت على وشك مسح كافة البيانات المدخلة داخل الفرع النشط فقط «{currentState.systemConfig.administrationTitle}» (المخابز، المديونيات، السلع التموينية، التجارة الداخلية، صيانة الحبوب، الموارد البشرية) مع الإبقاء التام على جميع الفروع الأخرى سليمة دون أي تغيير. هل تريد المتابعة؟
                 </p>
                 <div className="flex items-center gap-2 pt-1">
                   <button
@@ -3330,10 +3312,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <div className="p-3.5 bg-gradient-to-r from-red-900 to-rose-950 text-white border-2 border-amber-400 rounded-xl space-y-2.5 text-xs animate-pulse">
                 <div className="flex items-center gap-2 font-black text-amber-300 text-xs">
                   <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>🚨 تحذير صارم رقم (2 من 3): تأكيد إضافي لحماية بياناتك من الحذف بالخطأ!</span>
+                  <span>🚨 تحذير صارم رقم (2 من 3): تأكيد مسح بيانات فرع «{currentState.systemConfig.administrationTitle}» فقط!</span>
                 </div>
                 <p className="text-[11.5px] text-red-100 font-bold leading-relaxed">
-                  تحذير خطير! هذا الإجراء سيقوم بحذف وإزالة جميع بيانات المخابز والمديونيات والتعديلات المسجلة نهائياً ولا يمكن استرجاعها إطلاقاً بعد المسح الإجباري! هل تريد الاستمرار بحذف كافة البيانات المدخلة؟
+                  تحذير خطير! هذا الإجراء سيحذف جميع بيانات هذا الفرع «{currentState.systemConfig.administrationTitle}» نهائياً ولن يمس بيانات أي فرع آخر. هل تريد الاستمرار؟
                 </p>
                 <div className="flex items-center gap-2 pt-1">
                   <button
@@ -3359,10 +3341,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <div className="p-4 bg-red-950 text-[#FEE2E2] border-4 border-red-600 rounded-2xl space-y-3 text-xs animate-fadeIn shadow-2xl">
                 <div className="flex items-center gap-2 font-black text-amber-300 text-sm">
                   <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 icon-animated" />
-                  <span>🔥 التحذير الأخير والتأكيد النهائي (3 من 3): هل تأذن بالنقر النهائي ومسح كافة البيانات الآن؟</span>
+                  <span>🔥 التحذير الأخير والتأكيد النهائي (3 من 3): مسح بيانات فرع «{currentState.systemConfig.administrationTitle}» فقط</span>
                 </div>
                 <p className="text-[12px] text-rose-100 font-black leading-relaxed bg-red-900/60 p-2.5 rounded-xl border border-red-700">
-                  القرار النهائي والإنذار الأخير! بالنقر على الزر الأحمر أدناه، ستبدأ العملية المباشرة لمسح كافة البيانات المدخلة وتصفير المنظومة فوراً وتفريغها من هذا الجهاز ومن السحابة المشتركة. هل تؤكد المسح النهائي الحتمي وتصفير القاعدة؟
+                  القرار النهائي! بالنقر على الزر الأحمر أدناه سيتم مسح وتصفير كافة البيانات داخل الفرع الحالي فقط «{currentState.systemConfig.administrationTitle}» مع بقاء كافة الفروع الأخرى محفوظة بالكامل.
                 </p>
                 <div className="flex items-center gap-2 pt-1">
                   <button
@@ -3372,7 +3354,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     className="px-5 py-2 bg-gradient-to-r from-red-600 via-rose-700 to-red-800 hover:from-red-500 hover:to-rose-600 text-white rounded-xl text-xs font-black shadow-xl transition border-2 border-amber-300 flex items-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     <Trash2 className="w-4 h-4 text-amber-300" />
-                    <span>🔥 نعم، نفذ المسح الشامل النهائي وتصفير البيانات الآن 🗑️</span>
+                    <span>نعم، نفذ استعادة ضبط المصنع لهذا الفرع فقط الآن</span>
                   </button>
                   <button
                     type="button"
@@ -3469,15 +3451,17 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           <div className="bg-white border-2 border-red-500 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
             <div className="flex items-center gap-2 text-red-700 font-black text-sm">
               <ShieldAlert className="w-5 h-5 shrink-0" />
-              <span>تحذير إعادة ضبط المصنع ({factoryResetModalStep} من 3)</span>
+              <span>
+                تحذير استعادة ضبط المصنع للفرع الحالي فقط ({factoryResetModalStep} من 3)
+              </span>
             </div>
             <p className="text-xs font-bold text-slate-700 leading-relaxed">
               {factoryResetModalStep === 1 &&
-                'تحذير رقم (1 من 3): هل أنت متأكد تماماً من رغبتك في مسح كافة البيانات المدخلة وإعادة ضبط المصنع؟ سيتم تصفير المخابز والمديونيات والرسائل نهائياً!'}
+                `تحذير رقم (1 من 3): هل أنت متأكد من مسح البيانات داخل الفرع الحالي فقط «${currentState.systemConfig.administrationTitle}»؟ سيتم تصفير بيانات هذا الفرع فقط ولن تتأثر أي فروع أخرى!`}
               {factoryResetModalStep === 2 &&
-                'تحذير صارم رقم (2 من 3): تأكيد ثانٍ للحماية! هذا الإجراء سيقوم بحذف وإزالة جميع بيانات المخابز والمديونيات والرسائل المدخلة من هذا الجهاز ومن السحابة نهائياً ولا يمكن استرجاعها! هل تريد الاستمرار؟'}
+                `تحذير صارم رقم (2 من 3): تأكيد ثانٍ! سيحذف هذا الإجراء بيانات فرع «${currentState.systemConfig.administrationTitle}» فقط (المخابز والمديونيات والأقسام التموينية بالفرع) دون المساس بأي فرع آخر. هل تريد الاستمرار؟`}
               {factoryResetModalStep === 3 &&
-                'التحذير الأخير والنهائي رقم (3 من 3): القرار النهائي الحتمي! هل تؤكد وتأذن بالنقر النهائي ومسح كافة البيانات المدخلة وتصفير المنظومة بالكامل والبدء من جديد؟'}
+                `التحذير النهائي رقم (3 من 3): بالنقر أدناه سيتم تنفيذ استعادة ضبط المصنع لفرع «${currentState.systemConfig.administrationTitle}» فقط مع إبقاء كافة الفروع الأخرى سليمة تماماً.`}
             </p>
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
@@ -3501,7 +3485,9 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 }}
                 className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-black cursor-pointer"
               >
-                {factoryResetModalStep < 3 ? `متابعة (${factoryResetModalStep}/3)` : 'تنفيذ المسح الشامل نهائياً'}
+                {factoryResetModalStep < 3
+                  ? `متابعة (${factoryResetModalStep}/3)`
+                  : 'تنفيذ مسح بيانات هذا الفرع فقط'}
               </button>
             </div>
           </div>

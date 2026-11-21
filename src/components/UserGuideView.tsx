@@ -5,22 +5,48 @@ import {
   Pause,
   RotateCcw,
   CheckCircle2,
-  Database,
   ShieldCheck,
-  Wheat,
-  Scale,
-  FileBarChart,
   Search,
-  ArrowLeft,
-  Sparkles,
-  RefreshCw,
   Printer,
-  Building2,
-  Layers,
+  FileDown,
+  HardDrive,
+  FolderOpen,
+  FlaskConical,
+  Calculator,
+  LayoutGrid,
+  MousePointerClick,
   Video,
-  Image as ImageIcon,
-  HelpCircle,
+  AlertTriangle,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  ArrowLeft,
+  RefreshCw,
 } from 'lucide-react';
+import { MINISTRY_LOGO_URL } from '../services/modulesStorage';
+import { ErrorBoundary } from './ErrorBoundary';
+import { Button } from './common/Button';
+import {
+  LOCAL_PARTITION_OPTIONS,
+  MANUAL_DEPARTMENTS,
+  MANUAL_EQUATION_GROUPS,
+  ManualScope,
+  buildManualPdfFilename,
+  buildUserManualPrintableHtml,
+  filterManualButtons,
+  filterManualDepartments,
+  filterManualEquations,
+  getManualStatsSummary,
+} from '../utils/userManualData';
+import {
+  FileSystemDirectoryHandleLike,
+  PartitionReadinessReport,
+  generateHtmlStringToPdfBlob,
+  pickLocalPartitionDirectory,
+  printHtmlStringA4,
+  savePdfBlobToPartitionOrDownload,
+  testLocalPartitionReadiness,
+} from '../utils/pdfHelper';
 
 import guideBakeriesImg from '../assets/images/guide_bakeries_management_1794698515009.jpg';
 import guideDebtsImg from '../assets/images/guide_debts_installments_1794698514622.jpg';
@@ -42,6 +68,10 @@ export interface UserGuideViewProps {
   bakeriesCount: number;
   debtsCount: number;
   villagesCount: number;
+  logoBase64?: string;
+  administrationTitle?: string;
+  directorateTitle?: string;
+  preparedBy?: string;
 }
 
 interface VideoChapter {
@@ -56,300 +86,94 @@ interface VideoChapter {
   metricsPreview: Array<{ label: string; value: string }>;
 }
 
-interface IllustratedGuideSection {
-  id: string;
-  category: 'bakeries' | 'debts' | 'sync' | 'reports' | 'admin';
-  categoryLabel: string;
-  title: string;
-  subtitle: string;
-  imageSrc: string;
-  imageCaption: string;
-  steps: Array<{
-    stepNumber: string;
-    heading: string;
-    detail: string;
-  }>;
-  formulaOrRuleTitle: string;
-  formulaOrRuleItems: string[];
-  actionLabel: string;
-  onTriggerAction: (
-    onNavigateTab: UserGuideViewProps['onNavigateTab'],
-    onOpenModal?: UserGuideViewProps['onOpenModal']
-  ) => void;
-}
-
 const VIDEO_CHAPTERS: VideoChapter[] = [
   {
     id: 'ch-bakeries',
     number: '01',
-    title: 'تسجيل المخابز والحصص التموينية والحسابات التلقائية',
+    title: 'تسجيل المخابز والحصص التموينية والمعادلات السبع',
     durationSec: 18,
     summary:
-      'شرح عملي لكيفية إضافة مخبز جديد، ربطه بالوحدة المحلية والقرية، وحساب الحصة التأمينية وعدد الأرغفة ومتوسط نصيب الفرد آلياً.',
+      'شرح عملي لكيفية إضافة مخبز جديد، ربطه بالوحدة المحلية والقرية، وحساب الحصة التأمينية والأرغفة ومتوسط نصيب الفرد آلياً.',
     voiceoverSteps: [
-      '1. من القائمة الجانبية، اختر «إضافة مخبز جديد» أو انتقل إلى سجل المخابز.',
+      '1. من القائمة الجانبية، اختر «إضافة مخبز جديد» أو انتقل إلى سجل بيانات المخابز.',
       '2. أدخل رقم الماكينة واسم صاحب المخبز وحدد القرية والوحدة المحلية التابع لها.',
-      '3. بمجرد كتابة المبلغ التأميني وسعر الشيكارة، يحسب النظام الحصة التأمينية تلقائياً = (المبلغ ÷ السعر) ÷ 3.',
-      '4. عند إدخال الحصة الفعلية وعدد السكان والمستفيدين (2023 و2024 و2025)، يحسب النظام عدد الأرغفة ومتوسط الفرد وفروق المتوسطات فوراً.',
+      '3. بمجرد كتابة المبلغ التأميني وسعر الشيكارة، يحسب النظام الحصة التأمينية = (التأمين ÷ السعر) ÷ 3.',
+      '4. عند إدخال الحصة الفعلية وعدد السكان والمستفيدين، يحسب النظام الأرغفة والمتوسطات والفروق فوراً.',
     ],
-    accentColor: '#10b981',
+    accentColor: '#0d9488',
     imageSrc: guideBakeriesImg,
     metricsPreview: [
-      { label: 'معادلة الحصة التأمينية', value: '(التأمين ÷ السعر) ÷ 3' },
-      { label: 'معادلة الأرغفة اليومية', value: 'الحصة الفعلية × 1250' },
-      { label: 'متوسط نصيب الفرد', value: 'الأرغفة ÷ عدد السكان' },
+      { label: 'الحصة التأمينية', value: '(التأمين ÷ السعر) ÷ 3' },
+      { label: 'الأرغفة اليومية', value: 'الحصة الفعلية × 1250' },
+      { label: 'متوسط الفرد', value: 'الأرغفة ÷ المستفيدين' },
     ],
   },
   {
     id: 'ch-debts',
     number: '02',
-    title: 'إدارة المديونيات والمخالفات وتحصيل الأقساط الأسبوعية',
+    title: 'إدارة المديونيات وغرامات نقص الوزن وتحصيل الأقساط',
     durationSec: 18,
     summary:
-      'طريقة تسجيل المخالفات وفروق الأسعار وشيكارات التصرف، وجدولة وتحصيل الأقساط الأسبوعية مع خصمها الفوري من الرصيد المتبقي.',
+      'طريقة تسجيل المخالفات وشيكارات التصرف وحساب غرامة نقص وزن الرغيف وتحصيل الأقساط الأسبوعية.',
     voiceoverSteps: [
-      '1. افتح قسم «سجل المديونيات والتحصيل» أو اضغط «إضافة مديونية جديدة» من القائمة الجانبية.',
-      '2. اختر المخبز برقم الماكينة أو الاسم ليتم جلب بيانات القرية والوحدة المحلية تلقائياً.',
-      '3. سجل أصل المخالفات أو شيكارات التصرف، وسيحسب النظام الإجمالي والمتبقي الصافي آلياً.',
-      '4. عند سداد قسط أسبوعي، اضغط «تحصيل قسط» ليتم خصم المبلغ فوراً وتحديث نسبة التحصيل في كافة التقارير.',
+      '1. افتح «قسم سجل المديونيات» أو اضغط «إضافة مديونية أو جدولة سداد» من القائمة الجانبية.',
+      '2. اختر المخبز برقم الماكينة ليتم جلب القرية والوحدة المحلية تلقائياً.',
+      '3. استخدم حاسبة غرامات نقص وزن الرغيف لتطبيق شرائح لائحة 5 نوفمبر 2024 بدقة.',
+      '4. عند سداد قسط، اضغط «تحصيل قسط» للخصم الفوري وتحديث نسبة التحصيل في كافة التقارير.',
     ],
-    accentColor: '#f59e0b',
+    accentColor: '#d97706',
     imageSrc: guideDebtsImg,
     metricsPreview: [
-      { label: 'قيمة التصرف التمويني', value: 'الشيكارات × السعر × المضاعف' },
-      { label: 'صافي المديونية المتبقية', value: 'إجمالي المستحقات − المسدد' },
-      { label: 'تحديث الأقساط', value: 'خصم فوري وتوثيق بالتاريخ' },
+      { label: 'قيمة التصرف', value: 'الشيكارات × السعر × المضاعف' },
+      { label: 'صافي المديونية', value: 'إجمالي المستحقات − المسدد' },
+      { label: 'تنبيه التأخير', value: 'أكثر من 14 يوماً أو > 20 ألف' },
     ],
   },
   {
     id: 'ch-sync',
     number: '03',
-    title: 'المزامنة الفورية بين الأجهزة والحماية الدائمة للبيانات عند تغيير الخادم',
-    durationSec: 20,
+    title: 'المزامنة الفورية بين الأجهزة وسجل التغييرات التاريخي',
+    durationSec: 18,
     summary:
-      'كيف يعمل نظام Supabase Realtime لنقل التعديلات في نفس اللحظة بين جميع الأجهزة، وكيف يحتفظ النظام بالبيانات المسجلة للأبد حتى عند تغيير الخادم.',
+      'آلية المزامنة اللحظية عبر Supabase وحفظ سجل التغييرات التاريخي للمخابز القابل للبحث بالاسم والتاريخ.',
     voiceoverSteps: [
-      '1. أي عملية إضافة أو تعديل على جهازك تُرسل فوراً عبر قناة Supabase Realtime وخادم المزامنة اللحظية.',
-      '2. تظهر التعديلات على جميع الأجهزة الأخرى المفتوح عليها النظام خلال أجزاء من الثانية دون الحاجة لعمل Refresh.',
-      '3. يحتفظ النظام بنسخة محمية دائمة (Permanent Safety Vault) لكافة المخابز والمديونيات والفروع.',
-      '4. عند تغيير خادم Supabase في أي وقت، يقوم النظام تلقائياً بدمج وترحيل كافة البيانات المسجلة إلى الخادم الجديد دون حذف أي سجل.',
+      '1. أي تعديل على مخبز يُسجل تلقائياً في اللوحة الجانبية «سجل التغييرات التاريخي للمخابز».',
+      '2. يمكن البحث في التعديلات باسم صاحب المخبز وبتاريخ التعديل أو نطاق زمني محدد.',
+      '3. تُرسل التحديثات لحظياً لجميع الأجهزة عبر Supabase Realtime دون الحاجة لتحديث الصفحة.',
+      '4. تحمي خزنة الأمان قسم الحفظ والنسخ والنسخ الاحتياطي والاستعادة.',
     ],
-    accentColor: '#0ea5e9',
+    accentColor: '#0284c7',
     imageSrc: guideCloudSyncImg,
     metricsPreview: [
-      { label: 'زمن المزامنة بين الأجهزة', value: 'أقل من 1 ثانية (Realtime)' },
-      { label: 'حماية البيانات المسجلة', value: 'منع الحذف النهائي 100%' },
-      { label: 'تغيير الخادم (Migration)', value: 'نقل تلقائي للخادم الجديد' },
+      { label: 'المزامنة اللحظية', value: 'Supabase Realtime' },
+      { label: 'السجل التاريخي', value: 'بحث بالاسم والتاريخ' },
+      { label: 'توحيد السكان', value: 'علامة — في الوحدة المحلية' },
     ],
   },
   {
     id: 'ch-reports',
     number: '04',
-    title: 'مركز التقارير، إجماليات الوحدات المحلية، والطباعة وتصدير Excel',
+    title: 'التقارير الرسمية بشعار الوزارة وتصدير PDF واختيار البارتيشن',
     durationSec: 16,
     summary:
-      'استعراض الجداول التموينية، صف إجمالي الوحدة المحلية المميز باللون الأسود، وصف الإجماليات العام، مع الطباعة الرسمية والتصدير.',
+      'استخدام شريط التقارير الموحد ReportToolbar وإصدار تقارير PDF وA4 مرتبطة تلقائياً بشعار وزارة التموين.',
     voiceoverSteps: [
-      '1. في جدول المخابز، يتم تجميع كل وحدة محلية بصف «إجمالي الوحدة المحلية» مع ذكر اسم الوحدة المحلية بوضوح.',
-      '2. يظهر الصف النهائي «الإجماليات (TOTAL)» كمجموع شامل لصفوف الوحدات المحلية على مستوى القرية بالكامل.',
-      '3. الخانات الوصفية من عمود «نوع المخابز» حتى نهاية الصف في صفوف الإجماليات تظهر باللون الأسود الصافي بدون قيم رقمية.',
-      '4. يمكنك تصدير أي جدول أو تقرير إلى ملف Excel رسمي أو طباعته مباشرة بضغطة زر واحدة.',
+      '1. في صف إجمالي الوحدة المحلية، إذا كان عدد السكان أو المستفيدين موحداً يظهر الرمز (—) ولا يتكرر جمعه.',
+      '2. في صف إجمالي القرية والإجمالي العام تُجمع القيمة الموحدة مرة واحدة لكل وحدة محلية بدقة.',
+      '3. جميع تقارير الطباعة وPDF مرتبطة تلقائياً بشعار وزارة التموين بالترويسة الرسمية.',
+      '4. يمكنك تصدير دليل المستخدم أو التقارير بصيغة PDF واختيار واختبار بارتيشن الحفظ على جهازك.',
     ],
-    accentColor: '#8b5cf6',
+    accentColor: '#0f2342',
     imageSrc: guideReportsImg,
     metricsPreview: [
-      { label: 'صف إجمالي الوحدة المحلية', value: 'تجميع تلقائي + اسم الوحدة' },
-      { label: 'صف الإجماليات العام', value: 'مجموع الوحدات المحلية' },
-      { label: 'التصدير والطباعة', value: 'Excel + PDF + HTML' },
+      { label: 'شعار الوزارة', value: 'مربوط بكل التقارير' },
+      { label: 'شريط ReportToolbar', value: 'PDF + طباعة A4 + Excel' },
+      { label: 'حماية الجداول', value: 'ErrorBoundary + Button' },
     ],
   },
 ];
 
-const ILLUSTRATED_SECTIONS: IllustratedGuideSection[] = [
-  {
-    id: 'sec-bakeries',
-    category: 'bakeries',
-    categoryLabel: 'إدارة المخابز والحصص',
-    title: 'دليل تسجيل المخابز والحسابات التموينية التلقائية',
-    subtitle:
-      'إدارة شاملة لبيانات المخابز البلدية والسياحية، حصص الدقيق التأمينية والفعلية، وبيانات السكان والمستفيدين لأعوام 2023 و2024 و2025.',
-    imageSrc: guideBakeriesImg,
-    imageCaption: 'شاشة سجل المخابز والحصص التموينية مع الحساب الآلي للحصة التأمينية والأرغفة ومتوسط الفرد',
-    steps: [
-      {
-        stepNumber: '1',
-        heading: 'فتح نافذة إضافة أو تعديل مخبز',
-        detail:
-          'اضغط على «إضافة مخبز جديد» من القائمة الجانبية اليمنى أو من أعلى جدول المخابز، أو اضغط على أيقونة التعديل بجوار أي مخبز مسجل.',
-      },
-      {
-        stepNumber: '2',
-        heading: 'تحديد الموقع الإداري (القرية والوحدة المحلية)',
-        detail:
-          'اختر القرية والوحدة المحلية من القوائم المعتمدة. يقوم النظام بتجميع المخابز تلقائياً تحت كل وحدة محلية وعرض صف «إجمالي الوحدة المحلية» متبوعاً باسمها.',
-      },
-      {
-        stepNumber: '3',
-        heading: 'إدخال التأمين والحصة الفعلية وعدد المستفيدين',
-        detail:
-          'أدخل المبلغ التأميني وسعر الشيكارة والحصة الفعلية وعدد السكان والمستفيدين، وسيقوم النظام بحساب كافة المتوسطات والفروق آلياً وبدقة.',
-      },
-      {
-        stepNumber: '4',
-        heading: 'صفوف الإجماليات المعتمدة باللون الأسود',
-        detail:
-          'يظهر صف إجمالي الوحدة المحلية وصف الإجماليات الكلي (TOTAL) مع تلوين الأعمدة من «نوع المخابز» حتى نهاية الصف باللون الأسود الكامل دون إظهار قيم بها حسب التعليمات الرسمية.',
-      },
-    ],
-    formulaOrRuleTitle: 'المعادلات الحسابية التلقائية في سجل المخابز',
-    formulaOrRuleItems: [
-      'الحصة التأمينية = (المبلغ التأميني ÷ سعر الشيكارة) ÷ 3',
-      'عدد الأرغفة اليومية = الحصة الفعلية × 1250 رغيف',
-      'متوسط نصيب الفرد بالقرية = عدد الأرغفة ÷ عدد سكان القرية',
-      'متوسط نصيب الفرد (2023 / 2024 / 2025) = عدد الأرغفة ÷ عدد المستفيدين للسنة',
-      'فرق المتوسط = متوسط 2024 − متوسط 2023',
-    ],
-    actionLabel: 'انتقل إلى سجل المخابز الآن',
-    onTriggerAction: (onNavigateTab) => onNavigateTab('bakeries'),
-  },
-  {
-    id: 'sec-debts',
-    category: 'debts',
-    categoryLabel: 'المديونيات والأقساط',
-    title: 'دليل إدارة المديونيات والمخالفات وتحصيل الأقساط الأسبوعية',
-    subtitle:
-      'متابعة دقيقة لأصل المخالفات، المبالغ المضافة، شيكارات التصرف، والأقساط الأسبوعية المحصلة مع إشعارات المديونيات المرتفعة.',
-    imageSrc: guideDebtsImg,
-    imageCaption: 'شاشة متابعة المديونيات وجدولة الأقساط الأسبوعية وحساب المتبقي الصافي تلقائياً',
-    steps: [
-      {
-        stepNumber: '1',
-        heading: 'تسجيل مديونية أو مخالفة جديدة على مخبز',
-        detail:
-          'من القائمة الجانبية، اختر «إضافة مديونية جديدة» وحدد المخبز ليتم ربط المديونية برقم الماكينة والوحدة المحلية تلقائياً.',
-      },
-      {
-        stepNumber: '2',
-        heading: 'حساب قيمة شيكارات التصرف والمخالفات السابقة',
-        detail:
-          'أدخل عدد شيكارات التصرف وسعر الشيكارة ومضاعف الغرامة، ليحسب النظام قيمة التصرف ويضيفها إلى إجمالي المستحقات.',
-      },
-      {
-        stepNumber: '3',
-        heading: 'تحصيل الأقساط الأسبوعية وتحديث الرصيد فوراً',
-        detail:
-          'اضغط على زر «تحصيل قسط» أمام المخبز لتسجيل المبلغ المدفوع وطريقة السداد، ليتم خصمه فوراً من صافي المديونية المتبقية على كافة الأجهزة.',
-      },
-      {
-        stepNumber: '4',
-        heading: 'تنبيهات المديونيات المرتفعة اللحظية',
-        detail:
-          'يرسل النظام إشعاراً فورياً في جرس التنبيهات العلوي عند تجاوز مديونية أي مخبز الحد التحذيري المعتمد.',
-      },
-    ],
-    formulaOrRuleTitle: 'قواعد حساب المديونيات والأقساط',
-    formulaOrRuleItems: [
-      'إجمالي المخالفات = أصل المخالفة الحالية + المخالفات السابقة',
-      'المتبقي من المخالفات = إجمالي المخالفات − المسدد من المخالفات',
-      'قيمة التصرف = عدد شيكارات التصرف × سعر الشيكارة × المضاعف',
-      'صافي المديونية المتبقية = متبقي المخالفات + متبقي المضاف + متبقي التصرف',
-    ],
-    actionLabel: 'انتقل إلى سجل المديونيات الآن',
-    onTriggerAction: (onNavigateTab) => onNavigateTab('debts'),
-  },
-  {
-    id: 'sec-sync',
-    category: 'sync',
-    categoryLabel: 'المزامنة وحماية البيانات',
-    title: 'دليل المزامنة اللحظية بين الأجهزة والحفاظ الدائم على البيانات المسجلة',
-    subtitle:
-      'ربط مباشر مع قاعدة بيانات Supabase وقناة البث اللحظي WebSocket مع خزنة الأمان الدائمة التي تمنع حذف أي بيانات وتنقلها تلقائياً لأي خادم جديد.',
-    imageSrc: guideCloudSyncImg,
-    imageCaption: 'منظومة المزامنة الفورية عبر Supabase Realtime والاحتفاظ الدائم بالبيانات عند تغيير الخادم',
-    steps: [
-      {
-        stepNumber: '1',
-        heading: 'مزامنة تلقائية فورية بين جميع الأجهزة في نفس اللحظة',
-        detail:
-          'بمجرد تسجيل أو تعديل أي مخبز أو مديونية أو قرية على جهازك، يتم بث التحديث فوراً عبر Supabase Realtime وWebSocket ليظهر على جميع الأجهزة الأخرى تلقائياً بدون تحديث الصفحة.',
-      },
-      {
-        stepNumber: '2',
-        heading: 'الاحتفاظ الدائم بالبيانات وعدم حذفها تحت أي ظرف',
-        detail:
-          'تُحفظ كافة السجلات في قاعدة بيانات Supabase وفي خزنة الأمان الدائمة (Permanent Safety Vault)، ويمنع النظام المسح الشامل للبيانات المسجلة مهما حدث.',
-      },
-      {
-        stepNumber: '3',
-        heading: 'الترحيل التلقائي للبيانات عند تغيير الخادم (Server Migration)',
-        detail:
-          'إذا قمت بتغيير رابط أو مفاتيح خادم Supabase من نافذة «إعدادات المزامنة والنسخ الاحتياطي»، يقوم النظام بدمج البيانات المسجلة وترحيلها تلقائياً إلى الخادم الجديد دون فقدان أي سجل.',
-      },
-      {
-        stepNumber: '4',
-        heading: 'العمل أثناء انقطاع الإنترنت (Offline Queue)',
-        detail:
-          'في حال انقطاع الإنترنت مؤقتاً، يحتفظ النظام بالتعديلات في قائمة انتظار آمنة ويعيد إرسالها ومزامنتها تلقائياً فور عودة الاتصال.',
-      },
-    ],
-    formulaOrRuleTitle: 'ضمانات حماية البيانات والمزامنة اللحظية',
-    formulaOrRuleItems: [
-      'بث فوري مزدوج: Supabase Realtime + خادم المزامنة اللحظية (/api/supabase/live-db)',
-      'فحص مراجعات تلقائي كل 2.5 ثانية لضمان وصول التحديثات حتى عبر الشبكات المقيدة',
-      'حماية صارمة ضد الحذف: الاحتفاظ الدائم ببيانات المخابز والمديونيات والفروع',
-      'ترحيل ذكي غير إتلافي (Non-Destructive Migration) عند الانتقال إلى أي خادم جديد',
-    ],
-    actionLabel: 'فتح إعدادات المزامنة وخادم Supabase',
-    onTriggerAction: (_onNavigateTab, onOpenModal) => {
-      if (onOpenModal) onOpenModal('backup-sync');
-    },
-  },
-  {
-    id: 'sec-reports',
-    category: 'reports',
-    categoryLabel: 'التقارير والطباعة',
-    title: 'دليل مركز التقارير والرسوم البيانية والطباعة الرسمية وتصدير Excel',
-    subtitle:
-      'إصدار كشوف حصر المخابز، تقارير المديونيات، مقارنات الأعوام 2023 و2024 و2025، والرسوم البيانية التفاعلية.',
-    imageSrc: guideReportsImg,
-    imageCaption: 'لوحة المؤشرات والرسوم البيانية ومركز التقارير الرسمية القابلة للطباعة والتصدير',
-    steps: [
-      {
-        stepNumber: '1',
-        heading: 'استعراض لوحة التحكم والرسوم البيانية',
-        detail:
-          'اضغط على «لوحة التحكم» أو «الرسوم البيانية» من القائمة الجانبية لمشاهدة توزيع المخابز والحصص ونسب التحصيل حسب كل وحدة محلية.',
-      },
-      {
-        stepNumber: '2',
-        heading: 'تخصيص وفلترة التقارير في مركز التقارير',
-        detail:
-          'انتقل إلى «مركز التقارير» لاختيار نوع التقرير (مخابز، مديونيات، وحدات محلية، مقارنات مستفيدين) وتحديد القرية أو حالة النشاط.',
-      },
-      {
-        stepNumber: '3',
-        heading: 'تصدير الكشوف إلى Excel والطباعة الورقية المعتمدة',
-        detail:
-          'استخدم أزرار «تصدير Excel» أو «طباعة التقرير» للحصول على كشوف رسمية منسقة بترويسة مديرية التموين والتجارة الداخلية جاهزة للاعتماد.',
-      },
-      {
-        stepNumber: '4',
-        heading: 'إدارة الفروع والوحدات المحلية والصلاحيات',
-        detail:
-          'من القائمة الجانبية، يمكنك إدارة القرى والوحدات المحلية، التبديل بين الفروع التموينية، ومراجعة سجل المراقبة (Audit Log) لكافة العمليات.',
-      },
-    ],
-    formulaOrRuleTitle: 'مميزات التقارير والكشوف الرسمية',
-    formulaOrRuleItems: [
-      'إظهار صف إجمالي الوحدة المحلية مع اسم الوحدة المحلية وتلوين الخانات الوصفية بالأسود',
-      'إظهار صف الإجماليات الكلي (TOTAL) كمجموع شامل لكافة الوحدات المحلية بالقرية',
-      'تصدير مباشر بصيغ Excel (.xlsx) وملف منظومة مستقل (HTML) ونسخ احتياطية JSON',
-      'ترويسة رسمية قابلة للتخصيص باسم المديرية والإدارة التموينية',
-    ],
-    actionLabel: 'انتقل إلى مركز التقارير الآن',
-    onTriggerAction: (onNavigateTab) => onNavigateTab('reports'),
-  },
-];
+type GuideActiveTab = 'departments' | 'buttons' | 'equations' | 'video';
 
 export const UserGuideView: React.FC<UserGuideViewProps> = ({
   onNavigateTab,
@@ -357,23 +181,87 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({
   bakeriesCount,
   debtsCount,
   villagesCount,
+  logoBase64,
+  administrationTitle = 'إدارة تموين مركز المحلة الكبرى',
+  directorateTitle = 'مديرية التموين والتجارة الداخلية بالغربية',
+  preparedBy = 'مسؤول المنظومة التموينية',
 }) => {
+  const manualStats = useMemo(() => getManualStatsSummary(), []);
+  const effectiveLogo = logoBase64 || MINISTRY_LOGO_URL;
+
+  const [activeGuideTab, setActiveGuideTab] = useState<GuideActiveTab>('departments');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>('all');
+  const [selectedEqGroupFilter, setSelectedEqGroupFilter] = useState<string>('all');
+  const [expandedDeptIds, setExpandedDeptIds] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(MANUAL_DEPARTMENTS.map((d) => [d.id, true]))
+  );
+
+  const [showPartitionPanel, setShowPartitionPanel] = useState<boolean>(true);
+  const [selectedPartitionId, setSelectedPartitionId] = useState<string>(LOCAL_PARTITION_OPTIONS[0].id);
+  const [selectedDirHandle, setSelectedDirHandle] = useState<FileSystemDirectoryHandleLike | null>(null);
+  const [selectedDirName, setSelectedDirName] = useState<string | null>(null);
+  const [manualScope, setManualScope] = useState<ManualScope>('full');
+  const [paperSize, setPaperSize] = useState<'a4' | 'a3'>('a4');
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [customFilename, setCustomFilename] = useState<string>(() =>
+    buildManualPdfFilename('', 'full')
+  );
+
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [isTestingPartition, setIsTestingPartition] = useState<boolean>(false);
+  const [exportStatusMsg, setExportStatusMsg] = useState<{
+    type: 'info' | 'success' | 'warning' | 'error';
+    text: string;
+  } | null>(null);
+  const [partitionReport, setPartitionReport] = useState<PartitionReadinessReport | null>(null);
+
   const [selectedChapterIdx, setSelectedChapterIdx] = useState<number>(0);
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [elapsedSec, setElapsedSec] = useState<number>(0);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
-  const [activeCategory, setActiveCategory] = useState<
-    'all' | 'bakeries' | 'debts' | 'sync' | 'reports'
-  >('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const loadedImagesRef = useRef<Record<string, HTMLImageElement>>({});
+  const partitionPanelRef = useRef<HTMLDivElement | null>(null);
+
+  const selectedPartition = useMemo(
+    () =>
+      LOCAL_PARTITION_OPTIONS.find((p) => p.id === selectedPartitionId) ||
+      LOCAL_PARTITION_OPTIONS[0],
+    [selectedPartitionId]
+  );
+
+  const effectiveFilename = useMemo(
+    () => buildManualPdfFilename(customFilename, manualScope),
+    [customFilename, manualScope]
+  );
+
+  const targetPathPreview = useMemo(() => {
+    if (selectedDirName) {
+      return `${selectedPartition.driveLetter}${selectedDirName}\\${effectiveFilename}`;
+    }
+    return `${selectedPartition.defaultFolder}\\${effectiveFilename}`;
+  }, [selectedDirName, selectedPartition, effectiveFilename]);
+
+  const filteredDepartments = useMemo(
+    () => filterManualDepartments(searchQuery, selectedDeptFilter),
+    [searchQuery, selectedDeptFilter]
+  );
+
+  const filteredButtonGroups = useMemo(
+    () => filterManualButtons(searchQuery),
+    [searchQuery]
+  );
+
+  const filteredEquationGroups = useMemo(
+    () => filterManualEquations(searchQuery, selectedEqGroupFilter),
+    [searchQuery, selectedEqGroupFilter]
+  );
 
   const currentChapter = VIDEO_CHAPTERS[selectedChapterIdx] || VIDEO_CHAPTERS[0];
 
-  // Preload chapter images for smooth 60fps HTML5 canvas video rendering
   useEffect(() => {
+    if (activeGuideTab !== 'video') return;
     VIDEO_CHAPTERS.forEach((ch) => {
       if (!loadedImagesRef.current[ch.id]) {
         const img = new Image();
@@ -383,17 +271,15 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({
         };
       }
     });
-  }, []);
+  }, [activeGuideTab]);
 
-  // Advance video playback timer
   useEffect(() => {
-    if (!isPlaying) return;
-    const intervalMs = 100;
+    if (activeGuideTab !== 'video' || !isPlaying) return;
+    const intervalMs = 120;
     const timer = setInterval(() => {
       setElapsedSec((prev) => {
         const next = prev + (intervalMs / 1000) * playbackSpeed;
         if (next >= currentChapter.durationSec) {
-          // Automatically advance to next chapter
           setSelectedChapterIdx((idx) => (idx + 1) % VIDEO_CHAPTERS.length);
           return 0;
         }
@@ -401,10 +287,10 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({
       });
     }, intervalMs);
     return () => clearInterval(timer);
-  }, [isPlaying, playbackSpeed, currentChapter.durationSec]);
+  }, [activeGuideTab, isPlaying, playbackSpeed, currentChapter.durationSec]);
 
-  // Render animated tutorial video frames onto the HTML5 Canvas
   useEffect(() => {
+    if (activeGuideTab !== 'video') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -419,14 +305,12 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({
     );
     const activeVoiceover = currentChapter.voiceoverSteps[stepIndex] || '';
 
-    // 1. Deep navy slate background
     const grad = ctx.createLinearGradient(0, 0, width, height);
-    grad.addColorStop(0, '#090d16');
+    grad.addColorStop(0, '#0a1628');
     grad.addColorStop(1, '#111827');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
 
-    // 2. Draw illustrated feature visual on the right half (RTL layout) with subtle Ken Burns motion
     const img = loadedImagesRef.current[currentChapter.id];
     const imgBoxX = 36;
     const imgBoxY = 74;
@@ -435,54 +319,26 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({
 
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(imgBoxX, imgBoxY, imgBoxW, imgBoxH, 12);
+    ctx.roundRect(imgBoxX, imgBoxY, imgBoxW, imgBoxH, 10);
     ctx.clip();
-
     if (img && img.complete && img.naturalWidth > 0) {
-      const zoom = 1 + progress * 0.06;
+      const zoom = 1 + progress * 0.05;
       const drawW = imgBoxW * zoom;
       const drawH = imgBoxH * zoom;
-      const offsetX = imgBoxX - (drawW - imgBoxW) / 2;
-      const offsetY = imgBoxY - (drawH - imgBoxH) / 2;
-      ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+      ctx.drawImage(img, imgBoxX - (drawW - imgBoxW) / 2, imgBoxY - (drawH - imgBoxH) / 2, drawW, drawH);
     } else {
       ctx.fillStyle = '#1e293b';
       ctx.fillRect(imgBoxX, imgBoxY, imgBoxW, imgBoxH);
     }
-
-    // Subtle dark gradient overlay at bottom of image
-    const imgOverlay = ctx.createLinearGradient(0, imgBoxY + imgBoxH - 90, 0, imgBoxY + imgBoxH);
-    imgOverlay.addColorStop(0, 'rgba(9, 13, 22, 0)');
-    imgOverlay.addColorStop(1, 'rgba(9, 13, 22, 0.88)');
-    ctx.fillStyle = imgOverlay;
-    ctx.fillRect(imgBoxX, imgBoxY + imgBoxH - 90, imgBoxW, 90);
     ctx.restore();
 
-    // Border around image frame
     ctx.strokeStyle = currentChapter.accentColor;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.roundRect(imgBoxX, imgBoxY, imgBoxW, imgBoxH, 12);
+    ctx.roundRect(imgBoxX, imgBoxY, imgBoxW, imgBoxH, 10);
     ctx.stroke();
 
-    // Animated spotlight pulse on image showing active step
-    const pulseX = imgBoxX + 90 + ((stepIndex * 135) % (imgBoxW - 180));
-    const pulseY = imgBoxY + 95 + ((stepIndex * 65) % (imgBoxH - 160));
-    const pulseRadius = 18 + Math.sin(elapsedSec * 5) * 5;
-    ctx.save();
-    ctx.strokeStyle = currentChapter.accentColor;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(pulseX, pulseY, pulseRadius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = currentChapter.accentColor;
-    ctx.beginPath();
-    ctx.arc(pulseX, pulseY, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // 3. Top Header Bar inside Video Frame
-    ctx.fillStyle = 'rgba(30, 41, 59, 0.85)';
+    ctx.fillStyle = 'rgba(15, 35, 66, 0.92)';
     ctx.fillRect(0, 0, width, 54);
     ctx.fillStyle = currentChapter.accentColor;
     ctx.fillRect(0, 52, width, 2);
@@ -491,376 +347,592 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({
     ctx.textAlign = 'right';
     ctx.fillStyle = '#f8fafc';
     ctx.font = 'bold 18px Cairo, sans-serif';
-    ctx.fillText(
-      `الفصل ${currentChapter.number}: ${currentChapter.title}`,
-      width - 24,
-      34
-    );
+    ctx.fillText(`الفصل ${currentChapter.number}: ${currentChapter.title}`, width - 24, 34);
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#94a3b8';
     ctx.font = 'bold 13px Cairo, sans-serif';
-    ctx.fillText(
-      `شرح تفاعلي مصور بالفيديو • خطوة ${stepIndex + 1} من ${currentChapter.voiceoverSteps.length}`,
-      24,
-      33
-    );
+    ctx.fillText(`خطوة ${stepIndex + 1} من ${currentChapter.voiceoverSteps.length}`, 24, 33);
 
-    // 4. Right column (in canvas coordinates: x from 600 to width - 24) showing live steps & formulas
     const rightColX = width - 24;
     const rightColW = width - 620;
-
     ctx.direction = 'rtl';
     ctx.textAlign = 'right';
 
     currentChapter.voiceoverSteps.forEach((stepText, idx) => {
       const boxY = 74 + idx * 70;
       const isCurrent = idx === stepIndex;
-      const isDone = idx < stepIndex;
-
       ctx.save();
-      ctx.fillStyle = isCurrent
-        ? 'rgba(16, 185, 129, 0.16)'
-        : isDone
-        ? 'rgba(30, 41, 59, 0.75)'
-        : 'rgba(15, 23, 42, 0.65)';
-      ctx.strokeStyle = isCurrent
-        ? currentChapter.accentColor
-        : isDone
-        ? 'rgba(148, 163, 184, 0.35)'
-        : 'rgba(51, 65, 85, 0.5)';
+      ctx.fillStyle = isCurrent ? 'rgba(13, 148, 136, 0.22)' : 'rgba(15, 23, 42, 0.7)';
+      ctx.strokeStyle = isCurrent ? currentChapter.accentColor : 'rgba(51, 65, 85, 0.6)';
       ctx.lineWidth = isCurrent ? 2 : 1;
       ctx.beginPath();
-      ctx.roundRect(width - rightColW - 24, boxY, rightColW, 60, 10);
+      ctx.roundRect(width - rightColW - 24, boxY, rightColW, 60, 8);
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = isCurrent ? '#ffffff' : isDone ? '#cbd5e1' : '#94a3b8';
+      ctx.fillStyle = isCurrent ? '#ffffff' : '#cbd5e1';
       ctx.font = isCurrent ? 'bold 13.5px Cairo, sans-serif' : '13px Cairo, sans-serif';
-
-      // Wrap step text into 2 lines max
       const words = stepText.split(' ');
       let line1 = '';
       let line2 = '';
       for (const w of words) {
-        if ((line1 + ' ' + w).length <= 58) {
-          line1 = (line1 + ' ' + w).trim();
-        } else {
-          line2 = (line2 + ' ' + w).trim();
-        }
+        if ((line1 + ' ' + w).length <= 56) line1 = (line1 + ' ' + w).trim();
+        else line2 = (line2 + ' ' + w).trim();
       }
       ctx.fillText(line1, rightColX - 14, boxY + 26);
-      if (line2) {
-        ctx.fillText(line2, rightColX - 14, boxY + 46);
-      }
+      if (line2) ctx.fillText(line2, rightColX - 14, boxY + 46);
       ctx.restore();
     });
 
-    // 5. Bottom Subtitle / Voiceover Bar
-    ctx.save();
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(24, height - 78, width - 48, 56, 10);
-    ctx.fill();
-    ctx.stroke();
-
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.96)';
+    ctx.fillRect(24, height - 76, width - 48, 54);
     ctx.direction = 'rtl';
     ctx.textAlign = 'right';
-    ctx.fillStyle = currentChapter.accentColor;
-    ctx.font = 'bold 13px Cairo, sans-serif';
-    ctx.fillText('الشرح الصوتي النصي المباشر:', width - 42, height - 54);
-
+    ctx.fillStyle = '#5eead4';
+    ctx.font = 'bold 12px Cairo, sans-serif';
+    ctx.fillText('الشرح النصي للخطوة الحالية:', width - 40, height - 54);
     ctx.fillStyle = '#f8fafc';
-    ctx.font = 'bold 14.5px Cairo, sans-serif';
-    ctx.fillText(activeVoiceover, width - 42, height - 32);
-    ctx.restore();
+    ctx.font = 'bold 14px Cairo, sans-serif';
+    ctx.fillText(activeVoiceover, width - 40, height - 32);
 
-    // 6. Bottom Progress Bar
     ctx.fillStyle = '#1e293b';
     ctx.fillRect(0, height - 6, width, 6);
     ctx.fillStyle = currentChapter.accentColor;
     ctx.fillRect(0, height - 6, width * progress, 6);
-  }, [elapsedSec, currentChapter]);
+  }, [activeGuideTab, elapsedSec, currentChapter]);
 
-  const filteredSections = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return ILLUSTRATED_SECTIONS.filter((sec) => {
-      if (activeCategory !== 'all' && sec.category !== activeCategory) return false;
-      if (!q) return true;
-      const haystack = [
-        sec.title,
-        sec.subtitle,
-        sec.categoryLabel,
-        ...sec.steps.map((s) => `${s.heading} ${s.detail}`),
-        ...sec.formulaOrRuleItems,
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(q);
+  const handlePickNativeFolder = async () => {
+    setExportStatusMsg({ type: 'info', text: 'جاري فتح مستعرض البارتيشن والمجلدات على جهازك...' });
+    const res = await pickLocalPartitionDirectory();
+    if (res.ok && res.handle) {
+      setSelectedDirHandle(res.handle);
+      setSelectedDirName(res.folderName);
+      setExportStatusMsg({
+        type: 'success',
+        text: `تم اختيار المجلد المحلي بنجاح: (${res.folderName}). يمكنك الآن إجراء اختبار الجاهزية أو حفظ ملف PDF مباشرة بداخله.`,
+      });
+    } else {
+      setExportStatusMsg({
+        type: 'warning',
+        text: res.reason || 'لم يتم تحديد مجلد؛ سيتم تنزيل ملف PDF مباشرة إلى جهازك المحلي.',
+      });
+    }
+  };
+
+  const handleTestPartitionReadiness = async () => {
+    setIsTestingPartition(true);
+    setExportStatusMsg({
+      type: 'info',
+      text: `جاري اختبار جاهزية البارتيشن (${selectedDirName || selectedPartition.driveLetter}) ومساحة التخزين للتحميل...`,
     });
-  }, [activeCategory, searchQuery]);
+    try {
+      const report = await testLocalPartitionReadiness(selectedDirHandle, targetPathPreview);
+      setPartitionReport(report);
+      setExportStatusMsg({
+        type: report.status === 'error' ? 'error' : report.status === 'ready' ? 'success' : 'info',
+        text: report.summary,
+      });
+    } finally {
+      setIsTestingPartition(false);
+    }
+  };
 
-  const handleSelectChapter = (idx: number) => {
-    setSelectedChapterIdx(idx);
-    setElapsedSec(0);
-    setIsPlaying(true);
+  const handlePrintUserManual = () => {
+    const html = buildUserManualPrintableHtml({
+      logoUrl: effectiveLogo,
+      administrationTitle,
+      directorateTitle,
+      preparedBy,
+      scope: manualScope,
+      targetPartitionLabel: targetPathPreview,
+      stats: { bakeriesCount, debtsCount, villagesCount },
+    });
+    printHtmlStringA4(html, `دليل المستخدم الشامل - ${administrationTitle}`, {
+      paperSize,
+      orientation,
+      margins: 'normal',
+      fontClass: 'report-font-standard',
+    });
+    setExportStatusMsg({
+      type: 'success',
+      text: `تم تجهيز نسخة الطباعة الرسمية (${paperSize.toUpperCase()} — ${orientation === 'portrait' ? 'عمودي' : 'أفقي'}) بشعار وزارة التموين وفتح نافذة الطباعة.`,
+    });
+  };
+
+  const handleExportUserManualPdf = async (useSaveAsPicker: boolean = true) => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    setExportStatusMsg({
+      type: 'info',
+      text: 'جاري تجميع فصول الدليل والمعادلات الحسابية وتحويلها إلى ملف PDF عربي...',
+    });
+
+    try {
+      const html = buildUserManualPrintableHtml({
+        logoUrl: effectiveLogo,
+        administrationTitle,
+        directorateTitle,
+        preparedBy,
+        scope: manualScope,
+        targetPartitionLabel: targetPathPreview,
+        stats: { bakeriesCount, debtsCount, villagesCount },
+      });
+
+      const pdfBlob = await generateHtmlStringToPdfBlob(html, {
+        filename: effectiveFilename,
+        title: `دليل المستخدم الشامل - ${administrationTitle}`,
+        paperSize,
+        orientation,
+        margins: 'normal',
+        onProgress: (stage) => setExportStatusMsg({ type: 'info', text: stage }),
+      });
+
+      if (pdfBlob && pdfBlob.size > 0) {
+        const saved = await savePdfBlobToPartitionOrDownload(pdfBlob, {
+          filename: effectiveFilename,
+          directoryHandle: selectedDirHandle,
+          useSaveAsPicker,
+        });
+        setExportStatusMsg({
+          type: saved.ok ? 'success' : 'warning',
+          text: saved.message,
+        });
+      } else {
+        printHtmlStringA4(html, `دليل المستخدم الشامل - ${administrationTitle}`, {
+          paperSize,
+          orientation,
+          margins: 'normal',
+        });
+        setExportStatusMsg({
+          type: 'warning',
+          text: 'تم فتح نافذة الطباعة الرسمية لحفظ دليل المستخدم كملف PDF مباشرة على أي بارتيشن بجهازك (اختر Save as PDF).',
+        });
+      }
+    } catch (err) {
+      console.error('User manual PDF export error:', err);
+      setExportStatusMsg({
+        type: 'error',
+        text: 'حدث خطأ أثناء تحويل الدليل إلى PDF. يمكنك استخدام زر «طباعة دليل المستخدم» واختيار الحفظ كـ PDF.',
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const handleScopeChange = (nextScope: ManualScope) => {
+    setManualScope(nextScope);
+    setCustomFilename(buildManualPdfFilename('', nextScope));
+  };
+
+  const toggleDeptExpand = (deptId: string) => {
+    setExpandedDeptIds((prev) => ({ ...prev, [deptId]: !prev[deptId] }));
   };
 
   return (
-    <div className="space-y-6 pb-12" dir="rtl">
-      {/* Top Banner & Quick Overview */}
-      <div className="bg-slate-900 text-white rounded-xl border border-slate-800 p-6 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-          <div className="space-y-2 max-w-3xl">
-            <div className="inline-flex items-center gap-2 text-emerald-400 text-xs font-bold tracking-wide">
-              <BookOpen className="w-4 h-4" />
-              <span>الدليل الإرشادي الشامل — تعليمات مصورة وشرح بالفيديو خطوة بخطوة</span>
+    <div className="space-y-5 pb-12" dir="rtl" data-testid="user-guide-root">
+      {/* Official Header Bar with Ministry Logo & Primary Actions */}
+      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+        <div className="flex items-start gap-4 min-w-0">
+          <div className="w-14 h-14 rounded-lg border border-slate-200 bg-slate-50 p-1.5 flex items-center justify-center shrink-0">
+            <img
+              src={effectiveLogo}
+              alt="شعار وزارة التموين والتجارة الداخلية"
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-contain"
+            />
+          </div>
+          <div className="min-w-0 flex-1 space-y-1 text-start">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
+              <span>وزارة التموين والتجارة الداخلية</span>
+              <span aria-hidden="true">·</span>
+              <span>{directorateTitle}</span>
+              <span aria-hidden="true">·</span>
+              <span className="text-[#0D9488]">{administrationTitle}</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">
-              دليل المستخدم المصور والفيديو لمنظومة إدارة المخابز والمديونيات
+            <h1 className="text-xl sm:text-2xl font-black text-[#0F2342] leading-snug">
+              دليل المستخدم الشامل والمرجع الحسابي للمنظومة
             </h1>
-            <p className="text-slate-300 text-sm leading-relaxed">
-              يوضح هذا الدليل بالصور التوضيحية والفيديو التفاعلي كيفية استخدام كافة مميزات المنظومة:
-              تسجيل المخابز والحصص التموينية، إدارة المديونيات والأقساط الأسبوعية، المزامنة الفورية
-              بين جميع الأجهزة عبر <span className="text-emerald-300 font-bold">Supabase Realtime</span>،
-              والحماية الدائمة للبيانات المسجلة حتى عند تغيير الخادم.
+            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+              تعريف كامل لكل قسم وتبويبة ووظيفة وزر داخل المنظومة، وشرح تفصيلي لجميع المعادلات الحسابية المعتمدة
+              مع إمكانية التحويل الفوري إلى ملف PDF وتصديره على الجهاز المحلي واختيار واختبار بارتيشن الحفظ والطباعة الرسمية.
             </p>
           </div>
+        </div>
 
-          {/* Live System Counter Summary */}
-          <div className="grid grid-cols-3 gap-3 shrink-0">
-            <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-4 py-3 text-center">
-              <div className="text-xs text-slate-400 font-bold">المخابز المسجلة</div>
-              <div className="text-xl font-black text-emerald-400 tabular-nums mt-0.5">
-                {bakeriesCount}
-              </div>
-              <div className="text-[11px] text-slate-400">محفوظة دائماً</div>
-            </div>
-            <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-4 py-3 text-center">
-              <div className="text-xs text-slate-400 font-bold">سجلات المديونيات</div>
-              <div className="text-xl font-black text-amber-400 tabular-nums mt-0.5">
-                {debtsCount}
-              </div>
-              <div className="text-[11px] text-slate-400">مزامنة لحظية</div>
-            </div>
-            <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-4 py-3 text-center">
-              <div className="text-xs text-slate-400 font-bold">القرى والوحدات</div>
-              <div className="text-xl font-black text-sky-400 tabular-nums mt-0.5">
-                {villagesCount}
-              </div>
-              <div className="text-[11px] text-slate-400">مرتبطة سحابياً</div>
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-2.5 pt-3 border-t border-slate-100">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="primary"
+              size="md"
+              data-testid="manual-export-pdf-top-btn"
+              onClick={() => handleExportUserManualPdf(true)}
+              disabled={isExportingPdf}
+              className="bg-[#0F2342] hover:bg-[#1E3A8A] text-white"
+            >
+              {isExportingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileDown className="w-4 h-4" />
+              )}
+              <span>{isExportingPdf ? 'جاري إنشاء PDF...' : 'تصدير PDF للجهاز المحلي'}</span>
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="md"
+              data-testid="manual-print-top-btn"
+              onClick={handlePrintUserManual}
+            >
+              <Printer className="w-4 h-4 text-[#0D9488]" />
+              <span>طباعة دليل المستخدم</span>
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="md"
+              data-testid="manual-toggle-partition-btn"
+              onClick={() => {
+                setShowPartitionPanel((prev) => !prev);
+                setTimeout(() => {
+                  partitionPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }, 60);
+              }}
+            >
+              <HardDrive className="w-4 h-4 text-amber-600" />
+              <span>اختيار واختبار البارتيشن</span>
+              {showPartitionPanel ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </Button>
+          </div>
+
+          <div className="text-xs font-bold text-slate-500">
+            إصدار موثّق يشمل {manualStats.departmentsCount} أقسام · {manualStats.tabsCount} تبويبة · {manualStats.equationsCount} معادلة
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Section 1: Interactive Video Tutorial Player */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="border-b border-slate-200 bg-slate-50 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-sm">
-              <Video className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-black text-slate-900">
-                الفيديو التفاعلي المصور لشرح المنظومة (4 فصول تدريبية)
+      {/* Unified 4-Card KPI Grid */}
+      <section aria-label="إحصائيات محتوى دليل المستخدم" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-start">
+          <div className="text-xs font-bold text-slate-500">الأقسام الرئيسية بالقائمة</div>
+          <div className="mt-1.5 text-2xl font-black text-[#0F2342] tabular-nums">
+            {manualStats.departmentsCount}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">مرتبة من المخابز حتى الحفظ والنسخ</div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-start">
+          <div className="text-xs font-bold text-slate-500">التبويبات والوظائف المشروحة</div>
+          <div className="mt-1.5 text-2xl font-black text-[#0D9488] tabular-nums">
+            {manualStats.tabsCount}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">تغطية كاملة لكل شاشات المنظومة</div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-start">
+          <div className="text-xs font-bold text-slate-500">الأزرار وعناصر التحكم</div>
+          <div className="mt-1.5 text-2xl font-black text-[#1E3A8A] tabular-nums">
+            {manualStats.buttonsCount}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">أزرار الصفوف وشريط التقارير والتصدير</div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-start">
+          <div className="text-xs font-bold text-slate-500">المعادلات الحسابية الموثقة</div>
+          <div className="mt-1.5 text-2xl font-black text-amber-700 tabular-nums">
+            {manualStats.equationsCount}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">موزعة على 7 محركات حسابية بأمثلة</div>
+        </div>
+      </section>
+
+      {/* Local Device PDF Export & Partition Selection / Testing Panel */}
+      {showPartitionPanel && (
+        <section
+          ref={partitionPanelRef}
+          aria-label="إعدادات تصدير PDF واختيار واختبار بارتيشن الحفظ"
+          data-testid="manual-partition-panel"
+          className="bg-white rounded-xl border border-slate-200 p-5 space-y-4"
+        >
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-slate-200 pb-3.5">
+            <div className="text-start">
+              <h2 className="text-base font-black text-[#0F2342]">
+                إعدادات تصدير PDF واختيار واختبار بارتيشن التحميل على الجهاز المحلي
               </h2>
-              <p className="text-xs text-slate-600 font-medium">
-                اختر الفصل التدريبي لمشاهدة خطوات العمل الفعلية والمعادلات الحسابية والمزامنة اللحظية بين الأجهزة
+              <p className="text-xs text-slate-600 mt-0.5">
+                حدد البارتيشن أو المجلد المستهدف، اختبر جاهزية القرص للتحميل، واضبط نطاق الدليل ومقاس الطباعة قبل التصدير.
               </p>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsPlaying((p) => !p)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-sm cursor-pointer"
-            >
-              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-              <span>{isPlaying ? 'إيقاف مؤقت' : 'تشغيل فيديو الشرح'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setElapsedSec(0);
-                setIsPlaying(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg font-bold text-xs bg-slate-200 hover:bg-slate-300 text-slate-800 transition cursor-pointer"
-              title="إعادة تشغيل الفصل الحالي"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>إعادة</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setPlaybackSpeed((s) => (s === 1 ? 1.5 : 1))}
-              className="px-3 py-2 rounded-lg font-bold text-xs bg-slate-900 text-white hover:bg-slate-800 transition tabular-nums cursor-pointer"
-            >
-              السرعة: {playbackSpeed}x
-            </button>
-          </div>
-        </div>
-
-        <div className="p-6 grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-          {/* Video Canvas Player (8 cols on XL) */}
-          <div className="xl:col-span-8 space-y-4">
-            <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950 shadow-md">
-              <canvas
-                ref={canvasRef}
-                width={1120}
-                height={500}
-                onClick={() => setIsPlaying((p) => !p)}
-                className="w-full h-auto block cursor-pointer"
-              />
-            </div>
-
-            {/* Scrubber & Metrics Bar */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                <span>
-                  الفصل الحالي: {currentChapter.number} — {currentChapter.title}
-                </span>
-                <span className="tabular-nums text-slate-500">
-                  {Math.floor(elapsedSec)} ثانية / {currentChapter.durationSec} ثانية
-                </span>
-              </div>
-
-              <input
-                type="range"
-                min={0}
-                max={currentChapter.durationSec}
-                step={0.2}
-                value={elapsedSec}
-                onChange={(e) => setElapsedSec(Number(e.target.value))}
-                className="w-full accent-emerald-600 cursor-pointer"
-              />
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                {currentChapter.metricsPreview.map((m, i) => (
-                  <div
-                    key={i}
-                    className="bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center justify-between"
-                  >
-                    <span className="text-xs font-bold text-slate-500">{m.label}:</span>
-                    <span className="text-xs font-black text-slate-900">{m.value}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="manual-pick-folder-btn"
+                onClick={handlePickNativeFolder}
+              >
+                <FolderOpen className="w-4 h-4 text-[#0D9488]" />
+                <span>اختيار مجلد / بارتيشن من الجهاز</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="manual-test-partition-btn"
+                onClick={handleTestPartitionReadiness}
+                disabled={isTestingPartition}
+              >
+                {isTestingPartition ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <FlaskConical className="w-4 h-4 text-amber-600" />
+                )}
+                <span>اختبار جاهزية البارتيشن للتحميل</span>
+              </Button>
             </div>
           </div>
 
-          {/* Chapters Playlist (4 cols on XL) */}
-          <div className="xl:col-span-4 space-y-3">
-            <div className="text-sm font-black text-slate-900 flex items-center justify-between">
-              <span>فصول الفيديو التعليمي (اضغط للتشغيل)</span>
-              <span className="text-xs font-bold text-emerald-700">4 فصول كاملة</span>
+          {/* Partition Presets Grid */}
+          <div className="space-y-2">
+            <div className="text-xs font-bold text-slate-700 text-start">
+              اختر البارتيشن المستهدف على الجهاز المحلي (Drive / Partition):
             </div>
-
-            <div className="space-y-2.5">
-              {VIDEO_CHAPTERS.map((ch, idx) => {
-                const isSelected = idx === selectedChapterIdx;
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {LOCAL_PARTITION_OPTIONS.map((part) => {
+                const isSelected = part.id === selectedPartitionId;
                 return (
                   <button
-                    key={ch.id}
+                    key={part.id}
                     type="button"
-                    onClick={() => handleSelectChapter(idx)}
-                    className={`w-full text-right p-3.5 rounded-xl border transition flex items-start gap-3 cursor-pointer ${
+                    data-testid={`partition-option-${part.id}`}
+                    onClick={() => setSelectedPartitionId(part.id)}
+                    className={`text-start p-3 rounded-lg border transition cursor-pointer ${
                       isSelected
-                        ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                        : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200'
+                        ? 'bg-slate-900 text-white border-slate-900'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
                     }`}
                   >
-                    <div
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 mt-0.5 tabular-nums ${
-                        isSelected
-                          ? 'bg-emerald-500 text-slate-950'
-                          : 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {ch.number}
-                    </div>
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="font-black text-sm leading-snug">{ch.title}</div>
-                      <p
-                        className={`text-xs leading-relaxed line-clamp-2 ${
-                          isSelected ? 'text-slate-300' : 'text-slate-500'
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-black text-sm tabular-nums" dir="ltr">
+                        {part.driveLetter}
+                      </span>
+                      <span
+                        className={`text-[11px] font-bold ${
+                          isSelected ? 'text-emerald-300' : 'text-slate-500'
                         }`}
                       >
-                        {ch.summary}
-                      </p>
-                      <div
-                        className={`text-[11px] font-bold flex items-center gap-2 pt-0.5 ${
-                          isSelected ? 'text-emerald-400' : 'text-slate-400'
-                        }`}
-                      >
-                        <Play className="w-3 h-3" />
-                        <span>المدة: {ch.durationSec} ثانية • 4 خطوات عملية</span>
-                      </div>
+                        {isSelected ? 'محدد حالياً' : 'تحديد'}
+                      </span>
                     </div>
+                    <div className={`text-xs font-bold mt-1 ${isSelected ? 'text-slate-100' : 'text-slate-800'}`}>
+                      {part.label}
+                    </div>
+                    <p className={`text-[11px] mt-1 leading-relaxed ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                      {part.description}
+                    </p>
                   </button>
                 );
               })}
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Guarantee Banner for Cross-Device Sync & Permanent Data Retention */}
-      <div className="bg-emerald-950 text-white rounded-xl border border-emerald-800 p-5 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-start gap-3.5">
-            <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center shrink-0 text-emerald-300">
-              <ShieldCheck className="w-6 h-6" />
+          {/* PDF Options Form Controls */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5 pt-1">
+            <div className="text-start">
+              <label htmlFor="manual-scope-select" className="block text-xs font-bold text-slate-700 mb-1">
+                نطاق محتوى ملف PDF والطباعة
+              </label>
+              <select
+                id="manual-scope-select"
+                value={manualScope}
+                onChange={(e) => handleScopeChange(e.target.value as ManualScope)}
+                className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0F2342]"
+              >
+                <option value="full">الدليل الكامل (الأقسام + التبويبات + الأزرار + المعادلات)</option>
+                <option value="departments_buttons">الأقسام والتبويبات والأزرار فقط</option>
+                <option value="equations_only">المرجع الحسابي لجميع المعادلات فقط</option>
+              </select>
             </div>
-            <div className="space-y-1">
-              <h3 className="text-base font-black text-white">
-                ضمان المزامنة اللحظية بين جميع الأجهزة والاحتفاظ الدائم بالبيانات المسجلة
-              </h3>
-              <p className="text-xs text-emerald-100 leading-relaxed max-w-4xl">
-                تم تزويد المنظومة بنظام مزامنة فوري مزدوج (Supabase Realtime + WebSocket + فحص التحديثات كل 2.5 ثانية)
-                بحيث تظهر أي بيانات تسجلها على جهازك في نفس اللحظة على كافة الأجهزة الأخرى دون تحديث الصفحة. كما تم
-                تفعيل <span className="font-black text-amber-300">خزنة الأمان الدائمة (Permanent Safety Vault)</span> التي
-                تمنع حذف البيانات المسجلة نهائياً وتنقلها تلقائياً إلى أي خادم جديد عند تغيير الإعدادات.
-              </p>
+
+            <div className="text-start">
+              <label htmlFor="manual-paper-select" className="block text-xs font-bold text-slate-700 mb-1">
+                مقاس الورق
+              </label>
+              <select
+                id="manual-paper-select"
+                value={paperSize}
+                onChange={(e) => setPaperSize(e.target.value as 'a4' | 'a3')}
+                className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0F2342]"
+              >
+                <option value="a4">A4 قياسي رسمي</option>
+                <option value="a3">A3 عريض</option>
+              </select>
+            </div>
+
+            <div className="text-start">
+              <label htmlFor="manual-orient-select" className="block text-xs font-bold text-slate-700 mb-1">
+                اتجاه الصفحات
+              </label>
+              <select
+                id="manual-orient-select"
+                value={orientation}
+                onChange={(e) => setOrientation(e.target.value as 'portrait' | 'landscape')}
+                className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0F2342]"
+              >
+                <option value="portrait">عمودي (Portrait — مناسب للكتب والأدلة)</option>
+                <option value="landscape">أفقي (Landscape — جداول عريضة)</option>
+              </select>
+            </div>
+
+            <div className="text-start">
+              <label htmlFor="manual-filename-input" className="block text-xs font-bold text-slate-700 mb-1">
+                اسم ملف PDF المحلي
+              </label>
+              <input
+                id="manual-filename-input"
+                type="text"
+                value={customFilename}
+                onChange={(e) => setCustomFilename(e.target.value)}
+                placeholder="دليل_المستخدم_الشامل.pdf"
+                className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-[#0F2342]"
+              />
             </div>
           </div>
-          {onOpenModal && (
-            <button
-              type="button"
-              onClick={() => onOpenModal('backup-sync')}
-              className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition cursor-pointer"
-            >
-              <RefreshCw className="w-4 h-4" />
-              <span>إعدادات خادم Supabase والمزامنة</span>
-            </button>
-          )}
-        </div>
-      </div>
 
-      {/* Section 2: Search & Filter Bar for Illustrated Guides */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-2">
+          {/* Target Path Preview & Execute Actions */}
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+            <div className="text-start min-w-0 flex-1 space-y-1">
+              <div className="text-xs font-bold text-slate-500">
+                المسار المستهدف للتحميل والحفظ {selectedDirName ? '(مجلد متصل مباشرة)' : '(حسب اختيار البارتيشن)'}:
+              </div>
+              <div
+                className="text-xs font-mono font-bold text-[#0F2342] bg-white border border-slate-200 rounded-md px-2.5 py-1.5 break-all text-left"
+                dir="ltr"
+                title={targetPathPreview}
+                data-testid="manual-target-path-preview"
+              >
+                {targetPathPreview}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button
+                variant="primary"
+                size="md"
+                data-testid="manual-export-pdf-saveas-btn"
+                onClick={() => handleExportUserManualPdf(true)}
+                disabled={isExportingPdf}
+                className="bg-[#0D9488] hover:bg-[#0F766E] text-white"
+              >
+                {isExportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+                <span>تصدير PDF وحفظ على البارتيشن</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="md"
+                data-testid="manual-print-panel-btn"
+                onClick={handlePrintUserManual}
+              >
+                <Printer className="w-4 h-4" />
+                <span>طباعة دليل المستخدم</span>
+              </Button>
+            </div>
+          </div>
+
+          {/* Live Status Feedback Banner */}
+          {exportStatusMsg && (
+            <div
+              role="status"
+              data-testid="manual-export-status"
+              className={`rounded-lg border px-4 py-3 text-xs font-bold flex items-start gap-2.5 text-start ${
+                exportStatusMsg.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : exportStatusMsg.type === 'warning'
+                  ? 'bg-amber-50 border-amber-200 text-amber-900'
+                  : exportStatusMsg.type === 'error'
+                  ? 'bg-rose-50 border-rose-200 text-rose-900'
+                  : 'bg-sky-50 border-sky-200 text-sky-900'
+              }`}
+            >
+              {exportStatusMsg.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              ) : exportStatusMsg.type === 'error' || exportStatusMsg.type === 'warning' ? (
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              ) : (
+                <Loader2 className="w-4 h-4 text-sky-600 shrink-0 mt-0.5 animate-spin" />
+              )}
+              <span className="leading-relaxed">{exportStatusMsg.text}</span>
+            </div>
+          )}
+
+          {/* Partition Readiness Diagnostic Report */}
+          {partitionReport && (
+            <div
+              data-testid="manual-partition-test-results"
+              className="rounded-lg border border-slate-200 bg-white p-4 space-y-2.5 text-start"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                <div className="flex items-center gap-2 text-xs font-black text-[#0F2342]">
+                  <ShieldCheck className="w-4 h-4 text-[#0D9488]" />
+                  <span>نتيجة اختبار جاهزية البارتيشن والقرص المحلي</span>
+                </div>
+                <span className="text-[11px] font-bold text-slate-500 tabular-nums">
+                  وقت الفحص: {partitionReport.checkedAt}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                {partitionReport.checks.map((chk, i) => (
+                  <div
+                    key={i}
+                    className={`rounded-lg border p-3 text-xs ${
+                      chk.ok
+                        ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+                        : 'bg-amber-50/70 border-amber-200 text-amber-950'
+                    }`}
+                  >
+                    <div className="font-black flex items-center gap-1.5">
+                      {chk.ok ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      )}
+                      <span>{chk.label}</span>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed opacity-90">{chk.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Navigation Tabs + Instant Arabic Search Bar */}
+      <section className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div
+          role="tablist"
+          aria-label="أقسام دليل المستخدم"
+          className="flex flex-nowrap overflow-x-auto items-center gap-1.5 p-1 bg-slate-100 rounded-lg"
+        >
           {[
-            { id: 'all', label: 'جميع الأقسام المصورة', icon: Layers },
-            { id: 'bakeries', label: 'إدارة المخابز والحصص', icon: Wheat },
-            { id: 'debts', label: 'المديونيات والأقساط', icon: Scale },
-            { id: 'sync', label: 'المزامنة وحماية البيانات', icon: Database },
-            { id: 'reports', label: 'التقارير والطباعة', icon: FileBarChart },
+            { id: 'departments', label: 'الأقسام والتبويبات (9)', icon: LayoutGrid },
+            { id: 'buttons', label: `دليل الأزرار (${manualStats.buttonsCount})`, icon: MousePointerClick },
+            { id: 'equations', label: `المعادلات الحسابية (${manualStats.equationsCount})`, icon: Calculator },
+            { id: 'video', label: 'الفيديو التفاعلي (4 فصول)', icon: Video },
           ].map((tab) => {
             const Icon = tab.icon;
-            const active = activeCategory === tab.id;
+            const isActive = activeGuideTab === tab.id;
             return (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveCategory(tab.id as any)}
-                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  active
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                role="tab"
+                aria-selected={isActive}
+                data-testid={`manual-tab-${tab.id}`}
+                onClick={() => setActiveGuideTab(tab.id as GuideActiveTab)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-xs font-bold whitespace-nowrap shrink-0 transition cursor-pointer ${
+                  isActive
+                    ? 'bg-white text-[#0F2342] shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Icon className="w-3.5 h-3.5" />
@@ -870,180 +942,447 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({
           })}
         </div>
 
-        <div className="relative min-w-[260px]">
-          <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ابحث في التعليمات المصورة أو المعادلات..."
-            className="w-full pr-9 pl-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900"
-          />
-        </div>
-      </div>
-
-      {/* Section 3: Detailed Illustrated Step-by-Step Guide Cards */}
-      <div className="space-y-6">
-        {filteredSections.map((section) => (
-          <div
-            key={section.id}
-            className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"
-          >
-            {/* Card Header */}
-            <div className="border-b border-slate-200 bg-slate-50/80 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-2 text-xs font-bold text-emerald-700">
-                  <ImageIcon className="w-3.5 h-3.5" />
-                  <span>{section.categoryLabel}</span>
-                </div>
-                <h3 className="text-lg font-black text-slate-900">{section.title}</h3>
-                <p className="text-xs text-slate-600 font-medium">{section.subtitle}</p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => section.onTriggerAction(onNavigateTab, onOpenModal)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition cursor-pointer"
+        {activeGuideTab !== 'video' && (
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            {activeGuideTab === 'departments' && (
+              <select
+                aria-label="تصفية حسب القسم"
+                value={selectedDeptFilter}
+                onChange={(e) => setSelectedDeptFilter(e.target.value)}
+                className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#0F2342]"
               >
-                <span>{section.actionLabel}</span>
-                <ArrowLeft className="w-3.5 h-3.5" />
-              </button>
+                <option value="all">جميع الأقسام التسعة</option>
+                {MANUAL_DEPARTMENTS.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.title}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {activeGuideTab === 'equations' && (
+              <select
+                aria-label="تصفية حسب مجموعة المعادلات"
+                value={selectedEqGroupFilter}
+                onChange={(e) => setSelectedEqGroupFilter(e.target.value)}
+                className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#0F2342]"
+              >
+                <option value="all">جميع المحركات الحسابية (7)</option>
+                {MANUAL_EQUATION_GROUPS.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.title}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <div className="relative min-w-[240px] flex-1 sm:flex-initial">
+              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                aria-label="بحث في دليل المستخدم والمعادلات"
+                data-testid="manual-search-input"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="ابحث عن تبويبة، زر، أو معادلة..."
+                className="w-full pr-9 pl-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#0F2342]"
+              />
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* TAB 1: All 9 Departments & Every Tab */}
+      {activeGuideTab === 'departments' && (
+        <ErrorBoundary fallbackTitle="تعذر عرض جدول الأقسام والتبويبات مؤقتاً">
+          <div className="space-y-4" data-testid="manual-departments-list">
+            {filteredDepartments.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 p-8 text-center space-y-2">
+                <p className="text-sm font-black text-slate-800">لا توجد نتائج مطابقة للبحث الحالي</p>
+                <p className="text-xs text-slate-500">جرّب مسح كلمة البحث أو اختيار «جميع الأقسام التسعة».</p>
+                <Button variant="secondary" size="sm" onClick={() => { setSearchQuery(''); setSelectedDeptFilter('all'); }}>
+                  إعادة ضبط البحث
+                </Button>
+              </div>
+            ) : (
+              filteredDepartments.map((dept) => {
+                const isExpanded = expandedDeptIds[dept.id] ?? true;
+                return (
+                  <article
+                    key={dept.id}
+                    className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleDeptExpand(dept.id)}
+                      aria-expanded={isExpanded}
+                      className="w-full px-5 py-4 bg-slate-50 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between gap-4 text-start transition cursor-pointer"
+                    >
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-base font-black text-[#0F2342]">{dept.title}</h3>
+                          <span className="text-xs font-bold text-[#0D9488] tabular-nums">
+                            · {dept.tabs.length} تبويبة
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600">{dept.subtitle}</p>
+                      </div>
+                      {isExpanded ? (
+                        <ChevronUp className="w-4 h-4 text-slate-500 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+                      )}
+                    </button>
+
+                    {isExpanded && (
+                      <div className="p-5 space-y-4">
+                        <div className="text-start space-y-1">
+                          <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">{dept.overview}</p>
+                          <p className="text-xs font-bold text-slate-500">ملاحظة الصلاحية والتشغيل: {dept.accessNote}</p>
+                        </div>
+
+                        <div className="overflow-x-auto rounded-lg border border-slate-200">
+                          <table className="w-full text-xs text-start border-collapse min-w-[680px]">
+                            <thead>
+                              <tr className="bg-[#0F2342] text-white">
+                                <th className="py-2.5 px-3 font-black text-start w-[26%] border-l border-slate-700">
+                                  اسم التبويبة
+                                </th>
+                                <th className="py-2.5 px-3 font-black text-start w-[44%] border-l border-slate-700">
+                                  الوظيفة والتعريف التشغيلي
+                                </th>
+                                <th className="py-2.5 px-3 font-black text-start w-[30%]">
+                                  أبرز الأزرار والإجراءات المتاحة
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                              {dept.tabs.map((tab, idx) => (
+                                <tr
+                                  key={tab.id}
+                                  className={idx % 2 === 0 ? 'bg-white hover:bg-slate-50' : 'bg-slate-50/60 hover:bg-slate-100/70'}
+                                >
+                                  <td className="py-2.5 px-3 font-black text-[#0F2342] align-top border-l border-slate-200">
+                                    {tab.label}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-slate-700 leading-relaxed align-top border-l border-slate-200">
+                                    {tab.purpose}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-slate-600 leading-relaxed align-top">
+                                    {tab.keyActions.join(' · ')}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </article>
+                );
+              })
+            )}
+          </div>
+        </ErrorBoundary>
+      )}
+
+      {/* TAB 2: Complete Buttons & Controls Reference */}
+      {activeGuideTab === 'buttons' && (
+        <ErrorBoundary fallbackTitle="تعذر عرض دليل الأزرار والإجراءات مؤقتاً">
+          <div className="space-y-4" data-testid="manual-buttons-list">
+            {filteredButtonGroups.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 p-8 text-center space-y-2">
+                <p className="text-sm font-black text-slate-800">لا توجد أزرار مطابقة للبحث</p>
+                <Button variant="secondary" size="sm" onClick={() => setSearchQuery('')}>
+                  عرض كل الأزرار
+                </Button>
+              </div>
+            ) : (
+              filteredButtonGroups.map((group) => (
+                <article
+                  key={group.id}
+                  className="bg-white rounded-xl border border-slate-200 p-5 space-y-3.5 text-start"
+                >
+                  <div>
+                    <h3 className="text-base font-black text-[#0F2342]">{group.title}</h3>
+                    <p className="text-xs text-slate-600 mt-0.5">{group.description}</p>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="w-full text-xs text-start border-collapse min-w-[720px]">
+                      <thead>
+                        <tr className="bg-[#0F2342] text-white">
+                          <th className="py-2.5 px-3 font-black text-start w-[22%] border-l border-slate-700">
+                            اسم الزر
+                          </th>
+                          <th className="py-2.5 px-3 font-black text-start w-[20%] border-l border-slate-700">
+                            مكانه بالواجهة
+                          </th>
+                          <th className="py-2.5 px-3 font-black text-start w-[34%] border-l border-slate-700">
+                            وظيفته عند النقر
+                          </th>
+                          <th className="py-2.5 px-3 font-black text-start w-[24%]">
+                            سلوك الحماية والتشغيل
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {group.buttons.map((btn, idx) => (
+                          <tr
+                            key={btn.id}
+                            className={idx % 2 === 0 ? 'bg-white hover:bg-slate-50' : 'bg-slate-50/60 hover:bg-slate-100/70'}
+                          >
+                            <td className="py-2.5 px-3 font-black text-[#0F2342] align-top border-l border-slate-200">
+                              {btn.name}
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-[#0D9488] align-top border-l border-slate-200">
+                              {btn.location}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-700 leading-relaxed align-top border-l border-slate-200">
+                              {btn.functionDesc}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 leading-relaxed align-top">
+                              {btn.behaviorNote}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </ErrorBoundary>
+      )}
+
+      {/* TAB 3: Comprehensive Mathematical Equations Reference */}
+      {activeGuideTab === 'equations' && (
+        <ErrorBoundary fallbackTitle="تعذر عرض دليل المعادلات الحسابية مؤقتاً">
+          <div className="space-y-5" data-testid="manual-equations-list">
+            {filteredEquationGroups.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 p-8 text-center space-y-2">
+                <p className="text-sm font-black text-slate-800">لا توجد معادلات مطابقة للبحث</p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedEqGroupFilter('all');
+                  }}
+                >
+                  عرض جميع المعادلات
+                </Button>
+              </div>
+            ) : (
+              filteredEquationGroups.map((group) => (
+                <article
+                  key={group.id}
+                  className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 text-start"
+                >
+                  <div className="border-b border-slate-200 pb-3">
+                    <h3 className="text-base font-black text-[#0F2342]">{group.title}</h3>
+                    <p className="text-xs text-slate-600 mt-0.5">{group.subtitle}</p>
+                  </div>
+
+                  <div className="space-y-3.5">
+                    {group.equations.map((eq) => (
+                      <div
+                        key={eq.id}
+                        className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-2.5"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-black text-[#0D9488] tabular-nums">
+                              {eq.code}
+                            </span>
+                            <span aria-hidden="true" className="text-slate-300">·</span>
+                            <h4 className="text-sm font-black text-[#0F2342]">{eq.name}</h4>
+                          </div>
+                          <span className="text-xs font-bold text-slate-500">{eq.department}</span>
+                        </div>
+
+                        <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3.5 py-2.5 text-xs sm:text-sm font-black text-[#0F2342] leading-relaxed tabular-nums">
+                          {eq.formula}
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs pt-0.5">
+                          <div>
+                            <div className="font-black text-slate-700 mb-0.5">شرح المتغيرات:</div>
+                            <p className="text-slate-600 leading-relaxed">{eq.variables}</p>
+                          </div>
+                          <div>
+                            <div className="font-black text-emerald-800 mb-0.5">مثال رقمي محلول:</div>
+                            <p className="text-slate-700 leading-relaxed tabular-nums">{eq.workedExample}</p>
+                          </div>
+                          <div>
+                            <div className="font-black text-slate-700 mb-0.5">ضابط الحماية والدقة:</div>
+                            <p className="text-slate-600 leading-relaxed">{eq.guardRule}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </ErrorBoundary>
+      )}
+
+      {/* TAB 4: Interactive Canvas Video Player */}
+      {activeGuideTab === 'video' && (
+        <section className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="manual-video-section">
+          <div className="border-b border-slate-200 bg-slate-50 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-start">
+              <h2 className="text-base font-black text-[#0F2342]">
+                الشرح التفاعلي المصور (4 فصول تدريبية)
+              </h2>
+              <p className="text-xs text-slate-600">
+                اختر أي فصل تدريبي لمشاهدة خطوات التشغيل الفعلية وتطبيق المعادلات والتقارير
+              </p>
             </div>
 
-            {/* Card Body: Illustrated Visual + Step-by-Step Instructions */}
-            <div className="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Illustrated Diagram (5 cols) */}
-              <div className="lg:col-span-5 space-y-3">
-                <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-950 shadow-sm">
-                  <img
-                    src={section.imageSrc}
-                    alt={section.title}
-                    className="w-full h-64 object-cover block"
-                  />
-                  <div className="bg-slate-900 text-slate-200 px-4 py-2.5 text-xs font-bold border-t border-slate-800">
-                    {section.imageCaption}
-                  </div>
-                </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setIsPlaying((p) => !p)}
+                className="bg-[#0D9488] hover:bg-[#0F766E] text-white"
+              >
+                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                <span>{isPlaying ? 'إيقاف مؤقت' : 'تشغيل الشرح'}</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setElapsedSec(0);
+                  setIsPlaying(true);
+                }}
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>إعادة</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPlaybackSpeed((s) => (s === 1 ? 1.5 : 1))}
+              >
+                <span className="tabular-nums">السرعة {playbackSpeed}x</span>
+              </Button>
+            </div>
+          </div>
 
-                {/* Formula / Rule Reference Box */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5">
-                  <div className="flex items-center gap-2 text-xs font-black text-slate-900">
-                    <Sparkles className="w-4 h-4 text-amber-600" />
-                    <span>{section.formulaOrRuleTitle}</span>
-                  </div>
-                  <ul className="space-y-1.5">
-                    {section.formulaOrRuleItems.map((item, idx) => (
-                      <li
-                        key={idx}
-                        className="text-xs font-bold text-slate-700 flex items-start gap-2"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+          <div className="p-5 grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+            <div className="xl:col-span-8 space-y-3">
+              <div className="rounded-lg overflow-hidden border border-slate-800 bg-slate-950">
+                <canvas
+                  ref={canvasRef}
+                  width={1120}
+                  height={500}
+                  onClick={() => setIsPlaying((p) => !p)}
+                  className="w-full h-auto block cursor-pointer"
+                />
               </div>
 
-              {/* Numbered Step-by-Step Instructions (7 cols) */}
-              <div className="lg:col-span-7 space-y-3">
-                <div className="text-xs font-black text-slate-500 uppercase tracking-wider">
-                  خطوات الاستخدام التفصيلية ({section.steps.length} خطوات):
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span>
+                    الفصل {currentChapter.number} — {currentChapter.title}
+                  </span>
+                  <span className="tabular-nums text-slate-500">
+                    {Math.floor(elapsedSec)} ثانية / {currentChapter.durationSec} ثانية
+                  </span>
                 </div>
-
-                <div className="grid grid-cols-1 gap-3">
-                  {section.steps.map((st) => (
+                <input
+                  type="range"
+                  aria-label="شريط التقدم الزمني للفصل"
+                  min={0}
+                  max={currentChapter.durationSec}
+                  step={0.2}
+                  value={elapsedSec}
+                  onChange={(e) => setElapsedSec(Number(e.target.value))}
+                  className="w-full accent-[#0D9488] cursor-pointer"
+                />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {currentChapter.metricsPreview.map((m, i) => (
                     <div
-                      key={st.stepNumber}
-                      className="border border-slate-200 rounded-xl p-4 bg-white hover:bg-slate-50/60 transition flex items-start gap-3.5"
+                      key={i}
+                      className="bg-white border border-slate-200 rounded-md px-3 py-2 flex items-center justify-between text-xs"
                     >
-                      <div className="w-8 h-8 rounded-lg bg-slate-900 text-white font-black text-xs flex items-center justify-center shrink-0 tabular-nums mt-0.5">
-                        {st.stepNumber}
-                      </div>
-                      <div className="space-y-1">
-                        <h4 className="text-sm font-black text-slate-900">{st.heading}</h4>
-                        <p className="text-xs text-slate-600 leading-relaxed font-medium">
-                          {st.detail}
-                        </p>
-                      </div>
+                      <span className="font-bold text-slate-500">{m.label}:</span>
+                      <span className="font-black text-[#0F2342]">{m.value}</span>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
+
+            <div className="xl:col-span-4 space-y-2.5">
+              {VIDEO_CHAPTERS.map((ch, idx) => {
+                const isSelected = idx === selectedChapterIdx;
+                return (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedChapterIdx(idx);
+                      setElapsedSec(0);
+                      setIsPlaying(true);
+                    }}
+                    className={`w-full text-start p-3.5 rounded-lg border transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#0F2342] text-white border-[#0F2342]'
+                        : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs font-black">
+                      <span>{ch.title}</span>
+                      <span className="tabular-nums opacity-75">{ch.number}</span>
+                    </div>
+                    <p className={`text-xs mt-1 leading-relaxed ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                      {ch.summary}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        ))}
-      </div>
+        </section>
+      )}
 
-      {/* Section 4: Quick Shortcuts Grid to All System Tools */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-        <div className="flex items-center gap-2">
-          <HelpCircle className="w-5 h-5 text-slate-800" />
-          <h3 className="text-base font-black text-slate-900">
-            اختصارات الوصول السريع لكافة نوافذ وأقسام المنظومة
-          </h3>
+      {/* Quick Direct Navigation Footer Strip */}
+      <section className="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs font-bold text-slate-600 flex flex-wrap items-center gap-2">
+          <BookOpen className="w-4 h-4 text-[#0D9488]" />
+          <span>انتقال سريع للتطبيق العملي:</span>
+          <span className="tabular-nums text-slate-500">
+            ({bakeriesCount} مخبز · {debtsCount} مديونية · {villagesCount} قرية)
+          </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <button
-            type="button"
-            onClick={() => onNavigateTab('bakeries')}
-            className="p-4 rounded-xl border border-slate-200 hover:border-slate-900 text-right transition flex items-center justify-between group cursor-pointer"
-          >
-            <div>
-              <div className="text-xs font-black text-slate-900">سجل المخابز والحصص</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                إدارة المخابز وإجماليات الوحدات المحلية
-              </div>
-            </div>
-            <Wheat className="w-5 h-5 text-emerald-600 group-hover:scale-110 transition" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onNavigateTab('debts')}
-            className="p-4 rounded-xl border border-slate-200 hover:border-slate-900 text-right transition flex items-center justify-between group cursor-pointer"
-          >
-            <div>
-              <div className="text-xs font-black text-slate-900">سجل المديونيات والأقساط</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                تسجيل المخالفات وتحصيل الأقساط الأسبوعية
-              </div>
-            </div>
-            <Scale className="w-5 h-5 text-amber-600 group-hover:scale-110 transition" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onNavigateTab('reports')}
-            className="p-4 rounded-xl border border-slate-200 hover:border-slate-900 text-right transition flex items-center justify-between group cursor-pointer"
-          >
-            <div>
-              <div className="text-xs font-black text-slate-900">مركز التقارير والطباعة</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                تقارير رسمية وتصدير Excel مباشر
-              </div>
-            </div>
-            <Printer className="w-5 h-5 text-purple-600 group-hover:scale-110 transition" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (onOpenModal) onOpenModal('villages-units');
-            }}
-            className="p-4 rounded-xl border border-slate-200 hover:border-slate-900 text-right transition flex items-center justify-between group cursor-pointer"
-          >
-            <div>
-              <div className="text-xs font-black text-slate-900">القرى والوحدات المحلية</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                إضافة وتعديل القرى والوحدات المحلية
-              </div>
-            </div>
-            <Building2 className="w-5 h-5 text-sky-600 group-hover:scale-110 transition" />
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => onNavigateTab('bakeries')}>
+            <span>سجل المخابز</span>
+            <ArrowLeft className="w-3.5 h-3.5" />
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => onNavigateTab('debts')}>
+            <span>سجل المديونيات</span>
+            <ArrowLeft className="w-3.5 h-3.5" />
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => onNavigateTab('reports')}>
+            <span>مركز التقارير</span>
+            <ArrowLeft className="w-3.5 h-3.5" />
+          </Button>
+          {onOpenModal && (
+            <Button variant="secondary" size="sm" onClick={() => onOpenModal('backup-sync')}>
+              <RefreshCw className="w-3.5 h-3.5 text-[#0D9488]" />
+              <span>النسخ الاحتياطي والمزامنة</span>
+            </Button>
+          )}
         </div>
-      </div>
+      </section>
     </div>
   );
 };

@@ -2054,4 +2054,10 @@ export interface BranchModulesBundle {
   grainMaintenance: GrainMaintenanceState;
   hr: HrModuleState;
   updatedAt: string;
+  seedMeta?: {
+    may2026MerchantsSeeded?: boolean;
+    grainCollectionsSeeded?: boolean;
+    wheatLedgerClearedV1?: boolean;
+    factoryResetAt?: string;
+  };
 }

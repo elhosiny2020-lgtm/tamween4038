@@ -1,12 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Store,
-  Search,
   Plus,
   Printer,
   Download,
   Upload,
-  Eye,
   Edit3,
   CheckCircle2,
   AlertTriangle,
@@ -38,7 +37,21 @@ import { buildMay2026RationMerchantsList } from '../../data/may2026RationMerchan
 import { resolveModuleCrudPermissions } from '../../utils/moduleCrudHelpers';
 import { isSuperAdmin } from '../../utils/departmentRbac';
 import { groupRecordsByLocalUnit } from '../../utils/tableGroupingHelpers';
-import { LocalUnitSubtotalRow, VillageGrandTotalRow } from './ModuleCrudShared';
+import { matchesSmartSearch, paginateRecords } from '../../utils/tableSmartHelpers';
+import {
+  sanitizeNationalIdInput,
+  sanitizePhoneInput,
+  validateExactNationalId,
+  validateExactPhone,
+} from '../../utils/fieldValidation';
+import {
+  LocalUnitSubtotalRow,
+  VillageGrandTotalRow,
+  ModuleDeleteConfirmModal,
+  ModuleRowActions,
+  SmartTableSearchBar,
+  TablePaginationBar,
+} from './ModuleCrudShared';
 
 interface Props {
   state: RationModuleState;
@@ -91,6 +104,24 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   const [selectedMerchantId, setSelectedMerchantId] = useState<string | null>(null);
   const [showAddOrEditModal, setShowAddOrEditModal] = useState(false);
   const [editingMerchant, setEditingMerchant] = useState<RationMerchant | null>(null);
+  const [deleteConfirmMerchant, setDeleteConfirmMerchant] = useState<RationMerchant | null>(null);
+
+  useEffect(() => {
+    if (!selectedMerchantId && !showAddOrEditModal) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selectedMerchantId) setSelectedMerchantId(null);
+        else if (showAddOrEditModal) setShowAddOrEditModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedMerchantId, showAddOrEditModal]);
 
   const [selectedReportId, setSelectedReportId] = useState<ReportTypeId>('RPT_ALL');
   const [pageSize, setPageSize] = useState<number>(25);
@@ -101,6 +132,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   const [pendingDiffResult, setPendingDiffResult] = useState<MerchantMonthlyDiffResult | null>(null);
   const [pendingIncomingMerchants, setPendingIncomingMerchants] = useState<RationMerchant[] | null>(null);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Form state for Add/Edit Merchant
   const [formState, setFormState] = useState({
@@ -202,7 +234,6 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   }, [merchants, villageFilter]);
 
   const filteredMerchants = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
     return merchants.filter((m) => {
       if (villageFilter !== 'ALL' && m.village !== villageFilter) return false;
       if (localUnitFilter !== 'ALL' && m.localUnit !== localUnitFilter) return false;
@@ -220,33 +251,35 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       if (reviewFilter !== 'ALL' && (m.reviewStatus || 'تمت المراجعة') !== reviewFilter) {
         return false;
       }
-      if (!q) return true;
-      return (
-        m.merchantName.toLowerCase().includes(q) ||
-        (m.ownerName || '').toLowerCase().includes(q) ||
-        (m.nationalId || '').toLowerCase().includes(q) ||
-        (m.phone || '').toLowerCase().includes(q) ||
-        (m.posMachineNumber || '').toLowerCase().includes(q) ||
-        (m.traderCode || m.activityCardNumber || '').toLowerCase().includes(q) ||
-        (m.commercialRegNumber || '').toLowerCase().includes(q) ||
-        (m.licenseNumber || '').toLowerCase().includes(q) ||
-        (m.internalCode || '').toLowerCase().includes(q) ||
-        (m.detailedAddress || '').toLowerCase().includes(q) ||
-        (m.village || '').toLowerCase().includes(q)
+      return matchesSmartSearch(
+        [
+          m.serialNo,
+          m.merchantName,
+          m.ownerName,
+          m.nationalId,
+          m.phone,
+          m.posMachineNumber,
+          m.traderCode,
+          m.activityCardNumber,
+          m.commercialRegNumber,
+          m.licenseNumber,
+          m.taxCardNumber,
+          m.internalCode,
+          m.detailedAddress,
+          m.village,
+          m.localUnit,
+        ],
+        searchQuery
       );
     });
   }, [merchants, searchQuery, villageFilter, localUnitFilter, statusFilter, reviewFilter]);
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredMerchants.length / pageSize)),
-    [filteredMerchants.length, pageSize]
+  const merchantsPagination = useMemo(
+    () => paginateRecords(filteredMerchants, currentPage, pageSize),
+    [filteredMerchants, currentPage, pageSize]
   );
-
-  const paginatedMerchants = useMemo(() => {
-    const safePage = Math.min(currentPage, totalPages);
-    const start = (safePage - 1) * pageSize;
-    return filteredMerchants.slice(start, start + pageSize);
-  }, [filteredMerchants, currentPage, pageSize, totalPages]);
+  const totalPages = merchantsPagination.totalPages;
+  const paginatedMerchants = merchantsPagination.items;
 
   const openAddMerchant = () => {
     setEditingMerchant(null);
@@ -271,16 +304,18 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       reviewStatus: 'تمت المراجعة',
       notes: '',
     });
+    setFormError(null);
     setShowAddOrEditModal(true);
   };
 
   const openEditMerchant = (m: RationMerchant) => {
     setEditingMerchant(m);
+    setFormError(null);
     setFormState({
       merchantName: m.merchantName,
-      nationalId: m.nationalId || '',
+      nationalId: sanitizeNationalIdInput(m.nationalId || ''),
       detailedAddress: m.detailedAddress || '',
-      phone: m.phone || '',
+      phone: sanitizePhoneInput(m.phone || ''),
       cashInsuranceAmount: String(m.cashInsuranceAmount || 0),
       activityStatus: m.activityStatus === 'موقوف' ? 'متوقف' : m.activityStatus,
       posMachineNumber: m.posMachineNumber || '',
@@ -300,8 +335,19 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
   };
 
   const handleSaveMerchantForm = () => {
+    setFormError(null);
     if (!formState.merchantName.trim()) {
-      setBannerMessage('يرجى إدخال اسم التاجر التمويني.');
+      setFormError('يرجى إدخال اسم التاجر التمويني.');
+      return;
+    }
+    const nidCheck = validateExactNationalId(formState.nationalId, true);
+    if (!nidCheck.valid) {
+      setFormError(nidCheck.error || 'الرقم القومي يجب أن يتكون من 14 رقماً بالضبط.');
+      return;
+    }
+    const phoneCheck = validateExactPhone(formState.phone, true);
+    if (!phoneCheck.valid) {
+      setFormError(phoneCheck.error || 'رقم التليفون يجب أن يتكون من 11 رقماً بالضبط.');
       return;
     }
     // Prevent duplicate POS or Trader Code on other merchants
@@ -312,7 +358,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         m.posMachineNumber === formState.posMachineNumber.trim()
     );
     if (dupPos) {
-      setBannerMessage(`رقم الماكينة (${formState.posMachineNumber}) مسجل بالفعل للتاجر: ${dupPos.merchantName}`);
+      setFormError(`رقم الماكينة (${formState.posMachineNumber}) مسجل بالفعل للتاجر: ${dupPos.merchantName}`);
       return;
     }
 
@@ -325,9 +371,9 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         ...editingMerchant,
         merchantName: formState.merchantName.trim(),
         ownerName: formState.merchantName.trim(),
-        nationalId: formState.nationalId.trim(),
+        nationalId: nidCheck.normalized,
         detailedAddress: formState.detailedAddress.trim(),
-        phone: formState.phone.trim(),
+        phone: phoneCheck.normalized,
         cashInsuranceAmount: Math.max(0, Number(formState.cashInsuranceAmount) || 0),
         activityStatus: formState.activityStatus,
         posMachineNumber: formState.posMachineNumber.trim(),
@@ -378,8 +424,8 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         village: formState.village,
         localUnit: formState.localUnit,
         detailedAddress: formState.detailedAddress.trim(),
-        phone: formState.phone.trim(),
-        nationalId: formState.nationalId.trim(),
+        phone: phoneCheck.normalized,
+        nationalId: nidCheck.normalized,
         commercialRegNumber: formState.commercialRegNumber.trim() || `CR-${30000 + nextSerial}`,
         taxCardNumber: formState.taxCardNumber.trim() || `TX-400-${100 + nextSerial}-16`,
         licenseNumber: formState.licenseNumber.trim() || `LIC-TM-${2000 + nextSerial}`,
@@ -1011,7 +1057,7 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       )}
 
       {/* 10 Automatic KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
         <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs">
           <div className="text-[11px] font-bold text-slate-500">إجمالي التجار</div>
           <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">{stats.total}</div>
@@ -1073,166 +1119,173 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
       </div>
 
       {/* Visual Distribution by Village & Status */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <h4 className="text-xs font-black text-[#0A1931]">
+      <div
+        className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs"
+        data-testid="may26-village-distribution"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3.5">
+          <h4 className="text-sm font-black text-[#0A1931]">
             التوزيع الإحصائي للتجار ومبالغ التأمين حسب قرى مركز المحلة الكبرى
           </h4>
-          <span className="text-[11px] font-bold text-slate-500">
-            اضغط على أي قرية لتصفية الجدول مباشرة
+          <span className="text-xs font-bold text-slate-600">
+            اضغط على أي قرية لتصفية الجدول مباشرة ({stats.byVillageList.length} قرية)
           </span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2">
-          {stats.byVillageList.map((item) => (
-            <button
-              key={item.village}
-              type="button"
-              onClick={() =>
-                setVillageFilter((prev) => (prev === item.village ? 'ALL' : item.village))
-              }
-              className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer ${
-                villageFilter === item.village
-                  ? 'bg-[#0A1931] text-white border-[#0A1931]'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-900 border-slate-200'
-              }`}
-            >
-              <div className="text-xs font-black truncate">{item.village}</div>
-              <div className="text-sm font-black font-mono tabular-nums mt-0.5">
-                {item.count} تاجر
-              </div>
-              <div
-                className={`text-[10px] font-mono tabular-nums ${
-                  villageFilter === item.village ? 'text-amber-300' : 'text-slate-500'
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {stats.byVillageList.map((item) => {
+            const isSelected = villageFilter === item.village;
+            return (
+              <button
+                key={item.village}
+                type="button"
+                onClick={() =>
+                  setVillageFilter((prev) => (prev === item.village ? 'ALL' : item.village))
+                }
+                className={`p-3.5 rounded-xl border text-right transition-all cursor-pointer flex flex-col justify-between gap-2.5 min-h-[104px] overflow-hidden ${
+                  isSelected
+                    ? 'bg-[#0A1931] text-white border-[#0A1931] shadow-sm'
+                    : 'bg-slate-50/90 hover:bg-teal-50/60 hover:border-teal-400 text-slate-900 border-slate-200'
                 }`}
               >
-                {item.insurance.toLocaleString()} ج.م
-              </div>
-            </button>
-          ))}
+                <div
+                  className={`text-[13px] font-black leading-snug break-words ${
+                    isSelected ? 'text-white' : 'text-[#0A1931]'
+                  }`}
+                >
+                  {item.village}
+                </div>
+                <div className="flex flex-col gap-1 pt-2 border-t border-current/10 w-full">
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`text-[11px] font-bold ${
+                        isSelected ? 'text-slate-300' : 'text-slate-500'
+                      }`}
+                    >
+                      عدد التجار
+                    </span>
+                    <span
+                      className={`text-sm font-black font-mono tabular-nums ${
+                        isSelected ? 'text-emerald-300' : 'text-teal-800'
+                      }`}
+                    >
+                      {item.count.toLocaleString()} تاجر
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`text-[11px] font-bold ${
+                        isSelected ? 'text-slate-300' : 'text-slate-500'
+                      }`}
+                    >
+                      إجمالي التأمين
+                    </span>
+                    <span
+                      className={`text-xs font-extrabold font-mono tabular-nums ${
+                        isSelected ? 'text-amber-300' : 'text-slate-800'
+                      }`}
+                    >
+                      {item.insurance.toLocaleString()} ج.م
+                    </span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {subTab === 'table' && (
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-4">
-          {/* Search & Multi-Filter Controls */}
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-2.5">
-            <div className="md:col-span-2 relative">
-              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="بحث بالاسم، الرقم القومي، التليفون، رقم الماكينة، كود التاجر، العنوان..."
-                className="w-full pr-9 pl-3 py-2 rounded-xl border border-slate-300 text-xs font-bold focus:outline-none focus:border-[#0A1931]"
-              />
-            </div>
+          {/* Smart Search & Multi-Filter Controls */}
+          <SmartTableSearchBar
+            searchQuery={searchQuery}
+            onSearchChange={(v) => {
+              setSearchQuery(v);
+              setCurrentPage(1);
+            }}
+            placeholder="بحث ذكي بالاسم، الرقم القومي، التليفون، رقم الماكينة، كود التاجر، القرية، أو العنوان..."
+            filteredCount={filteredMerchants.length}
+            totalCount={merchants.length}
+            testId="may26-merchants-search"
+            extraControls={
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  aria-label="تصفية حسب القرية"
+                  value={villageFilter}
+                  onChange={(e) => {
+                    setVillageFilter(e.target.value);
+                    setLocalUnitFilter('ALL');
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold bg-white"
+                >
+                  <option value="ALL">كل القرى ({stats.villagesCount})</option>
+                  {stats.byVillageList.map((v) => (
+                    <option key={v.village} value={v.village}>
+                      {v.village} ({v.count})
+                    </option>
+                  ))}
+                </select>
 
-            <select
-              aria-label="تصفية حسب القرية"
-              value={villageFilter}
-              onChange={(e) => {
-                setVillageFilter(e.target.value);
-                setLocalUnitFilter('ALL');
-              }}
-              className="px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold bg-white"
-            >
-              <option value="ALL">كل القرى ({stats.villagesCount})</option>
-              {stats.byVillageList.map((v) => (
-                <option key={v.village} value={v.village}>
-                  {v.village} ({v.count})
-                </option>
-              ))}
-            </select>
+                <select
+                  aria-label="تصفية حسب الوحدة المحلية"
+                  value={localUnitFilter}
+                  onChange={(e) => {
+                    setLocalUnitFilter(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold bg-white"
+                >
+                  <option value="ALL">كل الوحدات المحلية</option>
+                  {availableUnits.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
 
-            <select
-              aria-label="تصفية حسب الوحدة المحلية"
-              value={localUnitFilter}
-              onChange={(e) => setLocalUnitFilter(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold bg-white"
-            >
-              <option value="ALL">كل الوحدات المحلية</option>
-              {availableUnits.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
+                <select
+                  aria-label="تصفية حسب حالة التاجر"
+                  value={statusFilter}
+                  onChange={(e) => {
+                    setStatusFilter(e.target.value as any);
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold bg-white"
+                >
+                  <option value="ALL">كل الحالات</option>
+                  <option value="نشط">نشط ({stats.active})</option>
+                  <option value="متوقف">متوقف ({stats.stopped})</option>
+                  <option value="إجازة">إجازة ({stats.onLeave})</option>
+                </select>
 
-            <select
-              aria-label="تصفية حسب حالة التاجر"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold bg-white"
-            >
-              <option value="ALL">كل حالات التجار (نشط / متوقف / إجازة)</option>
-              <option value="نشط">نشط ({stats.active})</option>
-              <option value="متوقف">متوقف ({stats.stopped})</option>
-              <option value="إجازة">إجازة ({stats.onLeave})</option>
-            </select>
-
-            <select
-              aria-label="تصفية حسب حالة المراجعة"
-              value={reviewFilter}
-              onChange={(e) => setReviewFilter(e.target.value as any)}
-              className="px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold bg-white"
-            >
-              <option value="ALL">كل حالات المراجعة</option>
-              <option value="تمت المراجعة">تمت المراجعة</option>
-              <option value="تحتاج مراجعة">تحتاج مراجعة</option>
-              <option value="بيانات غير مكتملة">بيانات غير مكتملة</option>
-            </select>
-          </div>
+                <select
+                  aria-label="تصفية حسب حالة المراجعة"
+                  value={reviewFilter}
+                  onChange={(e) => {
+                    setReviewFilter(e.target.value as any);
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold bg-white"
+                >
+                  <option value="ALL">كل المراجعة</option>
+                  <option value="تمت المراجعة">تمت المراجعة</option>
+                  <option value="تحتاج مراجعة">تحتاج مراجعة</option>
+                  <option value="بيانات غير مكتملة">بيانات غير مكتملة</option>
+                </select>
+              </div>
+            }
+          />
 
           {/* Action Toolbar */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
-            <div className="flex flex-wrap items-center gap-3 text-xs font-black text-slate-700">
+            <div className="text-xs font-black text-slate-700">
               <span>
-                عدد السجلات المعروضة:{' '}
-                <span className="text-[#0A1931] font-mono">{paginatedMerchants.length}</span> من أصل{' '}
-                <span className="text-[#0A1931] font-mono">{filteredMerchants.length}</span> (إجمالي:{' '}
-                <span className="font-mono">{merchants.length}</span> تاجر تمويني)
+                السجلات المعروضة:{' '}
+                <span className="text-[#0A1931] font-mono tabular-nums">{paginatedMerchants.length}</span> من أصل{' '}
+                <span className="text-[#0A1931] font-mono tabular-nums">{filteredMerchants.length}</span> (إجمالي:{' '}
+                <span className="font-mono tabular-nums">{merchants.length}</span> تاجر)
               </span>
-              <div className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-lg">
-                <span className="text-[11px] text-slate-600">حجم الصفحة:</span>
-                {[25, 50, 150].map((sz) => (
-                  <button
-                    key={sz}
-                    type="button"
-                    onClick={() => {
-                      setPageSize(sz);
-                      setCurrentPage(1);
-                    }}
-                    className={`px-2 py-0.5 rounded text-[11px] font-black cursor-pointer ${
-                      pageSize === sz ? 'bg-[#0A1931] text-white' : 'text-slate-700 hover:bg-slate-200'
-                    }`}
-                  >
-                    {sz === 150 ? 'الكل' : sz}
-                  </button>
-                ))}
-              </div>
-              {totalPages > 1 && (
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    disabled={currentPage <= 1}
-                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-[11px] font-black cursor-pointer"
-                  >
-                    السابق
-                  </button>
-                  <span className="font-mono text-[11px] px-1.5">
-                    صفحة {currentPage} / {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={currentPage >= totalPages}
-                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-[11px] font-black cursor-pointer"
-                  >
-                    التالي
-                  </button>
-                </div>
-              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {canWrite && (
@@ -1354,21 +1407,21 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
           </div>
 
           {/* Main Paginated Merchants Table */}
-          <div className="overflow-x-auto border border-slate-200 rounded-xl enlarged-bold-table">
-            <table className="w-full text-xs border-collapse">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-xs border-collapse compact-erp-table">
               <thead className="bg-[#0A1931] text-white sticky top-0 z-10">
                 <tr>
-                  <th className="p-2.5 text-center font-black">مسلسل</th>
-                  <th className="p-2.5 text-right font-black">اسم التاجر</th>
-                  <th className="p-2.5 text-center font-black">الرقم القومي</th>
-                  <th className="p-2.5 text-center font-black">كود التاجر</th>
-                  <th className="p-2.5 text-center font-black">رقم ماكينة التاجر</th>
-                  <th className="p-2.5 text-right font-black">العنوان بالتفصيل</th>
-                  <th className="p-2.5 text-center font-black">مبلغ التأمين بالجنيه</th>
-                  <th className="p-2.5 text-center font-black">السجل التجاري / الترخيص</th>
-                  <th className="p-2.5 text-center font-black">انتهاء الرخصة / الضريبية / السجل</th>
-                  <th className="p-2.5 text-center font-black">حالة التاجر</th>
-                  <th className="p-2.5 text-center font-black">إجراءات الملف</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">مسلسل</th>
+                  <th className="p-2.5 !text-right font-black min-w-[190px]">اسم التاجر</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">الرقم القومي</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">كود التاجر</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">رقم ماكينة التاجر</th>
+                  <th className="p-2.5 !text-right font-black min-w-[175px]">العنوان بالتفصيل</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">مبلغ التأمين بالجنيه</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">السجل التجاري / الترخيص</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">انتهاء الرخصة / الضريبية / السجل</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">حالة التاجر</th>
+                  <th className="p-2.5 text-center font-black whitespace-nowrap">إجراءات الملف</th>
                 </tr>
               </thead>
               <tbody>
@@ -1396,41 +1449,43 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                                 key={m.id}
                                 className="border-b border-slate-200 hover:bg-slate-50 transition-colors"
                               >
-                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
+                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931] whitespace-nowrap">
                                   {m.serialNo}
                                 </td>
-                                <td className="p-2.5 font-black text-slate-900">
+                                <td className="p-2.5 !text-right font-black text-slate-900 min-w-[190px]">
                                   <button
                                     type="button"
                                     onClick={() => setSelectedMerchantId(m.id)}
-                                    className="text-right hover:text-teal-700 hover:underline cursor-pointer"
+                                    className="text-right hover:text-teal-700 hover:underline cursor-pointer block w-full leading-snug"
                                   >
                                     {m.merchantName}
                                   </button>
-                                  <div className="text-[10px] text-slate-500 font-bold">
+                                  <div className="text-[11px] text-slate-500 font-bold mt-0.5 leading-snug">
                                     {m.village} · {m.localUnit} {m.phone ? `· ${m.phone}` : ''}
                                   </div>
                                 </td>
-                                <td className="p-2.5 text-center font-mono tabular-nums text-slate-700">
+                                <td className="p-2.5 text-center font-mono tabular-nums text-slate-700 whitespace-nowrap">
                                   {m.nationalId || (
                                     <span className="text-rose-600 font-black">غير مسجل</span>
                                   )}
                                 </td>
-                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-teal-800">
+                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-teal-800 whitespace-nowrap">
                                   {m.traderCode || m.activityCardNumber || '-'}
                                 </td>
-                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-slate-800">
+                                <td className="p-2.5 text-center font-mono tabular-nums font-black text-slate-800 whitespace-nowrap">
                                   {m.posMachineNumber}
                                 </td>
-                                <td className="p-2.5 text-slate-700 font-bold">{m.detailedAddress}</td>
-                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931]">
+                                <td className="p-2.5 !text-right text-slate-700 font-bold min-w-[175px] leading-snug">
+                                  {m.detailedAddress}
+                                </td>
+                                <td className="p-2.5 text-center font-black font-mono tabular-nums text-[#0A1931] whitespace-nowrap">
                                   {m.cashInsuranceAmount.toLocaleString()} ج.م
                                 </td>
-                                <td className="p-2.5 text-center font-mono text-[11px] font-bold text-slate-700">
+                                <td className="p-2.5 text-center font-mono text-[11px] font-bold text-slate-700 whitespace-nowrap">
                                   <div>سجل: {m.commercialRegNumber || '—'}</div>
                                   <div className="text-teal-800">رخصة: {m.licenseNumber || '—'}</div>
                                 </td>
-                                <td className="p-2.5 text-center font-mono text-[10px] font-bold">
+                                <td className="p-2.5 text-center font-mono text-[11px] font-bold whitespace-nowrap">
                                   <div>رخصة: {m.licenseExpiryDate || '—'}</div>
                                   <div>ضريبية: {m.taxCardExpiryDate || '—'}</div>
                                   <div>سجل: {m.commercialRegExpiryDate || '—'}</div>
@@ -1442,50 +1497,24 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                                     {m.activityStatus === 'موقوف' ? 'متوقف' : m.activityStatus}
                                   </span>
                                 </td>
-                                <td className="p-2.5 text-center">
-                                  <div className="flex items-center justify-center gap-1 flex-wrap">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedMerchantId(m.id)}
-                                      title="العين السحرية — عرض ملف التاجر"
-                                      data-testid={`may26-view-${m.id}`}
-                                      className="px-2.5 py-1 rounded-lg bg-teal-600 text-white text-[11px] font-black hover:bg-teal-700 cursor-pointer flex items-center gap-1"
-                                    >
-                                      <Eye className="w-3 h-3" />
-                                      عرض
-                                    </button>
-                                    {canWrite && (
-                                      <button
-                                        type="button"
-                                        onClick={() => openEditMerchant(m)}
-                                        title="تعديل بيانات التاجر"
-                                        data-testid={`may26-edit-${m.id}`}
-                                        className="px-2 py-1 rounded-lg bg-[#0A1931] hover:bg-slate-800 text-white text-[11px] font-black cursor-pointer flex items-center gap-1"
-                                      >
-                                        <Edit3 className="w-3 h-3 text-[#D4AF37]" />
-                                        تعديل
-                                      </button>
-                                    )}
-                                    {(canDelete || adminUser) && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const nextList = merchants.filter((x) => x.id !== m.id);
-                                          onUpdateMerchants(
-                                            nextList,
-                                            archives,
-                                            `حذف التاجر (${m.merchantName}) بصلاحية مدير النظام`
-                                          );
-                                          setBannerMessage(`تم حذف التاجر (${m.merchantName}) بصلاحية مدير النظام.`);
-                                        }}
-                                        title="حذف (الإدمن فقط)"
-                                        data-testid={`may26-delete-${m.id}`}
-                                        className="px-2 py-1 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 text-[11px] font-black cursor-pointer"
-                                      >
-                                        حذف
-                                      </button>
-                                    )}
-                                  </div>
+                                <td className="p-2 text-center">
+                                  <ModuleRowActions
+                                    entityLabel={m.merchantName}
+                                    permissions={{
+                                      canView: true,
+                                      canAdd: canWrite,
+                                      canEdit: canWrite,
+                                      canDelete: canDelete || adminUser,
+                                      canPrint,
+                                      canExport,
+                                      isReadOnly: !canWrite,
+                                    }}
+                                    isSuperAdmin={canDelete || adminUser}
+                                    testIdPrefix={`may26-${m.id}`}
+                                    onView={() => setSelectedMerchantId(m.id)}
+                                    onEdit={() => openEditMerchant(m)}
+                                    onDelete={() => setDeleteConfirmMerchant(m)}
+                                  />
                                 </td>
                               </tr>
                             );
@@ -1517,6 +1546,20 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </tbody>
             </table>
           </div>
+          <TablePaginationBar
+            page={merchantsPagination.page}
+            totalPages={merchantsPagination.totalPages}
+            pageSize={merchantsPagination.pageSize}
+            totalCount={merchantsPagination.totalCount}
+            startIndex={merchantsPagination.startIndex}
+            endIndex={merchantsPagination.endIndex}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={(sz) => {
+              setPageSize(sz);
+              setCurrentPage(1);
+            }}
+            testIdPrefix="may26-merchants"
+          />
         </div>
       )}
 
@@ -1812,8 +1855,8 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                     مقارنة الحقل السابق بالحقل الجديد
                   </span>
                 </h6>
-                <div className="overflow-x-auto enlarged-bold-table">
-                  <table className="w-full text-[11px] border-collapse">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse compact-erp-table">
                     <thead className="bg-[#0A1931] text-white sticky top-0">
                       <tr>
                         <th className="p-2 text-right">اسم التاجر التمويني</th>
@@ -2030,8 +2073,8 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </div>
               <h4 className="text-sm font-black text-[#0A1931] mt-1">{activeReportPayload.title}</h4>
             </div>
-            <div className="overflow-x-auto enlarged-bold-table">
-              <table className="w-full text-xs border-collapse bg-white">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse bg-white compact-erp-table">
                 <thead className="bg-[#0A1931] text-white sticky top-0">
                   <tr>
                     {activeReportPayload.headers.map((h, i) => (
@@ -2058,10 +2101,19 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Merchant Profile Modal (صفحة الملف الشخصي للتاجر) */}
-      {selectedMerchant && (
-        <div className="fixed inset-0 bg-slate-950/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 p-6 space-y-5">
+      {/* Merchant Profile Modal (صفحة الملف الشخصي للتاجر — تظهر فوراً أمام المستخدم عبر Portal) */}
+      {selectedMerchant &&
+        createPortal(
+          <div
+            dir="rtl"
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-[9990] flex items-center justify-center p-4"
+            data-testid="may26-profile-modal"
+            onClick={() => setSelectedMerchantId(null)}
+          >
+            <div
+              className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border-2 border-[#0A1931] p-6 space-y-5"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
               <div>
                 <div className="text-xs font-bold text-teal-700">
@@ -2086,12 +2138,13 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 {canWrite && (
                   <button
                     type="button"
+                    data-testid="may26-magic-eye-edit-btn"
                     onClick={() => {
                       const target = selectedMerchant;
                       setSelectedMerchantId(null);
                       openEditMerchant(target);
                     }}
-                    className="px-3.5 py-2 rounded-xl bg-teal-700 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                    className="px-3.5 py-2 rounded-xl bg-[#D4AF37] hover:bg-amber-400 text-[#0A1931] text-xs font-black flex items-center gap-1.5 cursor-pointer"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
                     تعديل البيانات
@@ -2220,16 +2273,23 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Add / Edit Merchant Modal */}
-      {showAddOrEditModal && (
-        <div
-          className="fixed inset-0 bg-slate-950/60 z-50 flex items-center justify-center p-4 overflow-y-auto"
-          data-testid="ration-merchant-may2026-modal"
-        >
-          <div className="bg-white rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 my-auto max-h-[92vh] overflow-y-auto">
+      {showAddOrEditModal &&
+        createPortal(
+          <div
+            dir="rtl"
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-[9992] flex items-center justify-center p-4 overflow-y-auto"
+            data-testid="ration-merchant-may2026-modal"
+            onClick={() => setShowAddOrEditModal(false)}
+          >
+            <div
+              className="bg-white rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 my-auto max-h-[92vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div>
                 <h4 className="text-sm font-black text-[#0A1931]">
@@ -2248,23 +2308,52 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </button>
             </div>
 
+            {formError && (
+              <div
+                data-testid="merchant-form-error"
+                className="p-3 rounded-xl bg-rose-50 border border-rose-400 text-rose-900 text-xs font-black flex items-center gap-2"
+              >
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               <div className="sm:col-span-2">
                 <label className="block font-black text-slate-700 mb-1">اسم التاجر التمويني *</label>
                 <input
                   type="text"
+                  data-testid="merchant-form-name"
                   value={formState.merchantName}
-                  onChange={(e) => setFormState((p) => ({ ...p, merchantName: e.target.value }))}
+                  onChange={(e) => {
+                    setFormState((p) => ({ ...p, merchantName: e.target.value }));
+                    if (formError) setFormError(null);
+                  }}
                   placeholder="الاسم الرباعي للتاجر التمويني"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold"
                 />
               </div>
               <div>
-                <label className="block font-black text-slate-700 mb-1">الرقم القومي (14 رقماً)</label>
+                <label className="flex items-center justify-between font-black text-slate-700 mb-1">
+                  <span>الرقم القومي (14 رقماً) *</span>
+                  <span
+                    className={`text-[10px] font-mono tabular-nums ${
+                      formState.nationalId.length === 14 ? 'text-emerald-700' : 'text-rose-600'
+                    }`}
+                  >
+                    {formState.nationalId.length} / 14
+                  </span>
+                </label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  maxLength={14}
+                  data-testid="merchant-form-national-id"
                   value={formState.nationalId}
-                  onChange={(e) => setFormState((p) => ({ ...p, nationalId: e.target.value }))}
+                  onChange={(e) => {
+                    setFormState((p) => ({ ...p, nationalId: sanitizeNationalIdInput(e.target.value) }));
+                    if (formError) setFormError(null);
+                  }}
                   placeholder="28501011601234"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
                 />
@@ -2309,11 +2398,26 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
                 />
               </div>
               <div>
-                <label className="block font-black text-slate-700 mb-1">رقم التليفون</label>
+                <label className="flex items-center justify-between font-black text-slate-700 mb-1">
+                  <span>رقم التليفون (11 رقماً) *</span>
+                  <span
+                    className={`text-[10px] font-mono tabular-nums ${
+                      formState.phone.length === 11 ? 'text-emerald-700' : 'text-rose-600'
+                    }`}
+                  >
+                    {formState.phone.length} / 11
+                  </span>
+                </label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  maxLength={11}
+                  data-testid="merchant-form-phone"
                   value={formState.phone}
-                  onChange={(e) => setFormState((p) => ({ ...p, phone: e.target.value }))}
+                  onChange={(e) => {
+                    setFormState((p) => ({ ...p, phone: sanitizePhoneInput(e.target.value) }));
+                    if (formError) setFormError(null);
+                  }}
                   placeholder="01012345678"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
                 />
@@ -2441,7 +2545,35 @@ export const RationMerchantsDatabaseMay2026: React.FC<Props> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
+      )}
+
+      {deleteConfirmMerchant && (
+        <ModuleDeleteConfirmModal
+          isOpen={true}
+          entityTitle={`حذف التاجر التمويني: ${deleteConfirmMerchant.merchantName}`}
+          recordSummary={[
+            { label: 'الاسم', value: deleteConfirmMerchant.merchantName },
+            { label: 'كود التاجر', value: deleteConfirmMerchant.traderCode || deleteConfirmMerchant.activityCardNumber || '—' },
+            { label: 'رقم الماكينة POS', value: deleteConfirmMerchant.posMachineNumber },
+            { label: 'القرية / الوحدة المحلية', value: `${deleteConfirmMerchant.village} — ${deleteConfirmMerchant.localUnit}` },
+            { label: 'التأمين النقدي', value: `${deleteConfirmMerchant.cashInsuranceAmount.toLocaleString()} ج.م` },
+          ]}
+          canDelete={true}
+          onClose={() => setDeleteConfirmMerchant(null)}
+          onConfirmDelete={() => {
+            const target = deleteConfirmMerchant;
+            const nextList = merchants.filter((x) => x.id !== target.id);
+            onUpdateMerchants(
+              nextList,
+              archives,
+              `حذف التاجر (${target.merchantName}) بصلاحية مدير النظام`
+            );
+            setBannerMessage(`تم حذف التاجر (${target.merchantName}) من قاعدة البيانات بنجاح.`);
+            setDeleteConfirmMerchant(null);
+          }}
+        />
       )}
     </div>
   );

@@ -8,15 +8,19 @@ export type UserAction =
   | 'EDIT_DEBT'
   | 'DELETE_DEBT'
   | 'MANAGE_USERS'
+  | 'MANAGE_DEPARTMENTS'
   | 'MANAGE_SYSTEM_CONFIG'
   | 'MANAGE_COLUMN_TITLES'
   | 'MANAGE_VILLAGES'
   | 'MANAGE_ACTIVITIES'
   | 'VIEW_REPORTS'
+  | 'PRINT_DATA'
   | 'VIEW_CHARTS'
   | 'EXPORT_DATA'
   | 'AUDIT_MATH'
   | 'USE_FINES_CALCULATOR'
+  | 'FACTORY_RESET_SECTION'
+  | 'FACTORY_RESET_BRANCH'
   | 'OPEN_BAKERY_MODAL'
   | 'OPEN_DEBT_MODAL'
   | 'OPEN_DAILY_TASKS_MODAL'
@@ -76,6 +80,13 @@ export const ALL_PERMISSIONS_LIST: PermissionDefinition[] = [
     description: 'حذف قيد مديونية أو مخالفة من سجل المديونيات',
   },
   {
+    id: 'PRINT_DATA',
+    label: 'طباعة الكشوف والتقارير الرسمية',
+    category: 'التقارير والإحصاء (بيانات)',
+    level: 'data',
+    description: 'طباعة الجداول وكشوف المخابز والمديونيات والتقارير الرسمية A4',
+  },
+  {
     id: 'EXPORT_DATA',
     label: 'تصدير كشوف Excel / CSV',
     category: 'التقارير والإحصاء (بيانات)',
@@ -88,6 +99,27 @@ export const ALL_PERMISSIONS_LIST: PermissionDefinition[] = [
     category: 'الإدارة العليا (بيانات)',
     level: 'data',
     description: 'تشغيل الفحص الآلي لمعادلات الأرغفة والمديونيات',
+  },
+  {
+    id: 'MANAGE_DEPARTMENTS',
+    label: 'إدارة الأقسام داخل الفرع',
+    category: 'الإدارة العليا (بيانات)',
+    level: 'data',
+    description: 'إضافة وحذف وإظهار وإخفاء وإعادة تسمية وترتيب وتعطيل الأقسام داخل الفرع',
+  },
+  {
+    id: 'FACTORY_RESET_SECTION',
+    label: 'إعادة ضبط المصنع لبيانات القسم',
+    category: 'الإدارة العليا (بيانات)',
+    level: 'data',
+    description: 'مسح البيانات التشغيلية لقسم واحد فقط داخل الفرع مع بقاء الهيكل والإعدادات',
+  },
+  {
+    id: 'FACTORY_RESET_BRANCH',
+    label: 'تصفير جميع بيانات الفرع (تأكيد مزدوج)',
+    category: 'الإدارة العليا (بيانات)',
+    level: 'data',
+    description: 'تصفير جميع البيانات التشغيلية للفرع مع بقاء الأقسام والمستخدمين والإعدادات',
   },
 
   // صلاحيات على مستوى المودالات والنوافذ (Modals Level)
@@ -185,8 +217,14 @@ export const ALL_PERMISSIONS_LIST: PermissionDefinition[] = [
 ];
 
 export function getDefaultPermissionsForRole(role: UserRoleType | string): UserAction[] {
-  if (role === 'super_admin' || role === 'admin') {
+  if (role === 'super_admin') {
     return ALL_PERMISSIONS_LIST.map((p) => p.id);
+  }
+  if (role === 'admin') {
+    // مدير النظام يحصل على صلاحيات الإدارة التشغيلية دون تصفير الفرع التلقائي إلا بمنح صريح من Super Admin
+    return ALL_PERMISSIONS_LIST.map((p) => p.id).filter(
+      (id) => id !== 'FACTORY_RESET_BRANCH'
+    );
   }
   if (role === 'supervisor') {
     return [
@@ -196,6 +234,7 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
       'EDIT_DEBT',
       'USE_FINES_CALCULATOR',
       'VIEW_REPORTS',
+      'PRINT_DATA',
       'VIEW_CHARTS',
       'EXPORT_DATA',
       'MANAGE_VILLAGES',
@@ -214,6 +253,7 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
       'EDIT_DEBT',
       'USE_FINES_CALCULATOR',
       'VIEW_REPORTS',
+      'PRINT_DATA',
       'VIEW_CHARTS',
       'EXPORT_DATA',
       'AUDIT_MATH',
@@ -229,6 +269,7 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
       'ADD_DEBT',
       'USE_FINES_CALCULATOR',
       'VIEW_REPORTS',
+      'PRINT_DATA',
       'VIEW_CHARTS',
       'EXPORT_DATA',
       'OPEN_BAKERY_MODAL',
@@ -244,14 +285,18 @@ export function getDefaultPermissionsForRole(role: UserRoleType | string): UserA
       'EDIT_DEBT',
       'USE_FINES_CALCULATOR',
       'VIEW_REPORTS',
+      'PRINT_DATA',
       'VIEW_CHARTS',
       'OPEN_BAKERY_MODAL',
       'OPEN_DEBT_MODAL',
       'OPEN_DAILY_TASKS_MODAL',
     ];
   }
+  if (role === 'reader') {
+    return ['VIEW_REPORTS', 'VIEW_CHARTS'];
+  }
   // viewer
-  return ['VIEW_REPORTS', 'VIEW_CHARTS', 'EXPORT_DATA'];
+  return ['VIEW_REPORTS', 'PRINT_DATA', 'VIEW_CHARTS', 'EXPORT_DATA'];
 }
 
 export function getDefaultRolePermissionsMap(): Record<UserRoleType, UserAction[]> {
@@ -263,6 +308,7 @@ export function getDefaultRolePermissionsMap(): Record<UserRoleType, UserAction[
     inspector: getDefaultPermissionsForRole('inspector'),
     data_entry: getDefaultPermissionsForRole('data_entry'),
     viewer: getDefaultPermissionsForRole('viewer'),
+    reader: getDefaultPermissionsForRole('reader'),
   };
 }
 
@@ -275,14 +321,18 @@ export function hasPermission(
   const role = user.role;
   if (user.isSuperAdmin === true || role === 'super_admin') return true;
 
-  // Restricted-department admins cannot access global user/system admin unless explicitly permitted
+  // الحساب الجذري الافتراضي فقط (admin) دون ترقية تلقائية لحسابات admin المضافة يدوياً
+  const isLegacyRootAdmin =
+    role === 'admin' &&
+    user.isSuperAdmin !== false &&
+    String(user.username || '').trim().toLowerCase() === 'admin';
   const hasDeptRestriction =
     (Array.isArray(user.allowedDepartments) &&
       user.allowedDepartments.length > 0 &&
       !user.allowedDepartments.includes('all')) ||
     (user.departmentPermissions && Object.keys(user.departmentPermissions).length > 0);
 
-  if (role === 'admin' && !hasDeptRestriction && user.isSuperAdmin !== false) return true;
+  if (isLegacyRootAdmin && !hasDeptRestriction) return true;
 
   // 1. If customPermissions array is explicitly configured on the specific user, respect it
   if (Array.isArray(user.customPermissions) && user.customPermissions.length > 0) {
@@ -301,13 +351,15 @@ export function hasPermission(
 
 export function getRoleNameArabic(role: UserRoleType | string, systemConfig?: SystemConfig | null): string {
   if (role === 'super_admin') return 'مدير عام النظام (Super Admin — صلاحيات كاملة ومراقبة)';
-  if (role === 'admin') return 'مدير نظام (تحكم كامل في المنظومة 100%)';
+  if (role === 'admin') return 'مدير نظام (Admin — إدارة تشغيلية وصلاحيات محددة)';
   if (role === 'supervisor') return 'مشرف عام رقابة ومخابز (صلاحيات إشرافية موسعة)';
   if (role === 'auditor') return 'مراجع حسابات ومديونيات وتحصيل';
   if (role === 'inspector') return 'مفتش رقابة وتموين ميداني';
-  if (role === 'data_entry') return 'مسئول إدخال وتحديث بيانات';
-  if (role === 'viewer') return 'مشاهد / قارئ فقط (تصفح وطباعة بدون تعديلات)';
+  if (role === 'data_entry') return 'مسئول إدخال وتحديث بيانات (Data Entry)';
+  if (role === 'viewer') return 'مشاهد (Viewer — تصفح وطباعة بدون تعديلات)';
+  if (role === 'reader') return 'قارئ فقط (Reader — قراءة الجداول والتقارير بدون تعديل)';
+  if (role === 'custom_role') return 'دور مخصص (Custom Role)';
   const foundCustom = systemConfig?.customRoles?.find((r) => r.id === role || r.title === role);
   if (foundCustom) return foundCustom.fullTitle || foundCustom.title;
-  return role || 'مستخدم منظومة';
+  return role || 'دور مخصص (Custom Role)';
 }

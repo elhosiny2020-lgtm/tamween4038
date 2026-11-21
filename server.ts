@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -23,18 +25,37 @@ import {
   queryTablePaginated,
   recordAuditDeletionSecurityLog,
   recordAuditLog,
+  resetBranchSectionInPostgres,
   resetNonMahallaBranchesInPostgres,
   syncFullBranchStateToPostgres,
   syncHighDebtAlertsToPostgres,
+  updateBranchDepartmentsInPostgres,
   upsertRowInPostgres,
   upsertStorageFileInPostgres,
   getBranchModuleStateFromPostgres,
   upsertBranchModuleStateInPostgres,
+  verifyVaultCredentialsInPostgres,
+  updateVaultCredentialsInPostgres,
   type NormalizedTableName,
 } from './src/db/queries.ts';
 import {
+  computeBranchSidebarCounts,
+  type ResettableSectionKey,
+} from './src/utils/branchOperations.ts';
+import { hasPermission } from './src/permissions.ts';
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_MS,
   createSessionToken,
+  getDbIntegritySecret,
+  getSessionSigningSecret,
+  normalizeDigits,
+  parseCookieHeader,
+  revokeAllUserTokens,
+  revokeSessionToken,
+  sanitizeSystemConfigForClient,
   sanitizeUsersForClient,
+  validatePasswordComplexity,
   verifySessionToken,
 } from './src/utils/serverAuth.ts';
 import {
@@ -54,15 +75,20 @@ import {
   INITIAL_DAILY_TASKS,
   INITIAL_INBOX_MESSAGES,
 } from './src/defaultData.ts';
+import { applySecurityMiddlewares, isAllowedOrigin } from './src/services/securityConfig.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SNAPSHOT_PRIMARY_PATH = path.resolve(__dirname, 'tamween_latest_backup.json');
 const SNAPSHOT_TMP_PATH = '/tmp/tamween_latest_backup.json';
 
-// Security Shield Token & HMAC Secret for API & Database Protection
-const API_SECURITY_SHIELD_TOKEN = 'TAMWEEN-GOV-SHIELD-2026-V5';
-const DB_INTEGRITY_HMAC_SECRET = process.env.TAMWEEN_DB_HMAC_SECRET || 'tamween-gharbia-sovereign-db-seal-2026';
+const IS_PRODUCTION =
+  process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+
+// Fail-fast in production if required cryptographic secrets are absent or weak
+const SESSION_SIGNING_SECRET = getSessionSigningSecret();
+const DB_INTEGRITY_HMAC_SECRET = getDbIntegritySecret();
+void SESSION_SIGNING_SECRET;
 
 interface SecurityAuditEvent {
   id: string;
@@ -78,6 +104,16 @@ interface SecurityAuditEvent {
 const securityAuditLog: SecurityAuditEvent[] = [];
 let blockedIntrusionsCount = 0;
 let preventedWipeAttemptsCount = 0;
+
+function maskAuditIp(rawIp: string): string {
+  const clean = String(rawIp || '').trim();
+  if (!clean || clean === '127.0.0.1' || clean === '::1') return 'internal';
+  if (clean.includes('.')) {
+    const parts = clean.split('.');
+    if (parts.length === 4) return `${parts[0]}.${parts[1]}.x.x`;
+  }
+  return 'masked';
+}
 
 function recordSecurityAudit(
   entry: Omit<SecurityAuditEvent, 'id' | 'timestamp'>
@@ -117,7 +153,6 @@ function writeProtectedDatabaseFile(filePath: string, content: string): void {
     try {
       fs.chmodSync(filePath, 0o600);
     } catch {}
-    // Also maintain a redundant .bak protected vault file
     const bakPath = `${filePath}.bak`;
     fs.writeFileSync(bakPath, content, { encoding: 'utf-8', mode: 0o600 });
     try {
@@ -126,18 +161,34 @@ function writeProtectedDatabaseFile(filePath: string, content: string): void {
   } catch {}
 }
 
+function hasPrototypePollutionKey(value: unknown, depth = 0): boolean {
+  if (depth > 16 || !value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => hasPrototypePollutionKey(item, depth + 1));
+  }
+  for (const key of Object.keys(value)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      return true;
+    }
+    if (hasPrototypePollutionKey((value as Record<string, unknown>)[key], depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const CLEAN_START_RESET_EPOCH = '2026-11-15-FRESH-DB-V1';
 
 /**
  * Server-Side Anti-Wipe Guard:
- * Protects against unauthenticated or malformed wipe payloads while allowing
- * authenticated client operations (including starting from scratch or deleting records).
+ * Fails closed on malformed payloads and blocks wiping non-empty bakeries/debts
+ * unless explicitly requested by an authorized Super Admin with __allowEmptyReset.
  */
 function guardDatabaseAgainstWipe(
   existingData: any,
   incomingData: any,
   clientIp = 'ws',
-  isAuthenticatedClient = true
+  isAuthorizedSuperAdmin = false
 ): {
   safeData: any;
   wipePrevented: boolean;
@@ -149,36 +200,29 @@ function guardDatabaseAgainstWipe(
     return { safeData: existingData, wipePrevented: true };
   }
 
-  // If the request is from an authenticated client with valid security shield token,
-  // honor the client's exact state (including fresh registration or record deletion).
-  if (isAuthenticatedClient) {
-    return {
-      safeData: {
-        ...existingData,
-        ...incomingData,
-        bakeries: Array.isArray(incomingData.bakeries) ? incomingData.bakeries : [],
-        debts: Array.isArray(incomingData.debts) ? incomingData.debts : [],
-      },
-      wipePrevented: false,
-    };
-  }
-
   let wipePrevented = false;
   const safeData = { ...existingData, ...incomingData };
+  const allowEmptyReset = isAuthorizedSuperAdmin && Boolean(incomingData.__allowEmptyReset);
 
   const exBakeries = Array.isArray(existingData.bakeries) ? existingData.bakeries : [];
-  const incBakeries = Array.isArray(incomingData.bakeries) ? incomingData.bakeries : [];
-  if (exBakeries.length > 0 && incBakeries.length === 0) {
+  if (!Array.isArray(incomingData.bakeries)) {
+    safeData.bakeries = exBakeries;
+    if (exBakeries.length > 0) wipePrevented = true;
+  } else if (exBakeries.length > 0 && incomingData.bakeries.length === 0 && !allowEmptyReset) {
     safeData.bakeries = exBakeries;
     wipePrevented = true;
   }
 
   const exDebts = Array.isArray(existingData.debts) ? existingData.debts : [];
-  const incDebts = Array.isArray(incomingData.debts) ? incomingData.debts : [];
-  if (exDebts.length > 0 && incDebts.length === 0) {
+  if (!Array.isArray(incomingData.debts)) {
+    safeData.debts = exDebts;
+    if (exDebts.length > 0) wipePrevented = true;
+  } else if (exDebts.length > 0 && incomingData.debts.length === 0 && !allowEmptyReset) {
     safeData.debts = exDebts;
     wipePrevented = true;
   }
+
+  delete safeData.__allowEmptyReset;
 
   if (wipePrevented) {
     recordSecurityAudit({
@@ -196,80 +240,151 @@ function guardDatabaseAgainstWipe(
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 1);
   const httpServer = http.createServer(app);
-  const PORT = Number(process.env.PORT) || 3000;
+  const nginxOwnsEnvPort =
+    Boolean(process.env.NGINX_PORT) &&
+    String(process.env.PORT || '') === String(process.env.NGINX_PORT);
+  const PORT = nginxOwnsEnvPort
+    ? Number(process.env.DEFAULT_APP_PORT) || 3000
+    : Number(process.env.PORT) || Number(process.env.DEFAULT_APP_PORT) || 3000;
 
   // WebSocket Server attached to port 3000 for genuine sub-50ms cross-device real-time sync
   const wss = new WebSocketServer({ server: httpServer, path: '/ws/supabase-realtime' });
   wss.on('error', (err) => {
     console.warn('WebSocket server event:', (err as Error)?.message || err);
   });
+  interface RealtimeClientMeta {
+    user: AppUser;
+    branchId: string;
+    isSuperAdmin: boolean;
+  }
+  const wsClientMeta = new Map<WebSocket, RealtimeClientMeta>();
   const sseClients = new Set<express.Response>();
+  const sseClientMeta = new Map<express.Response, RealtimeClientMeta>();
+
+  const sanitizeBroadcastPayload = (
+    payload: Record<string, any>,
+    meta?: RealtimeClientMeta
+  ): Record<string, any> => {
+    if (!payload || typeof payload !== 'object') return payload;
+    const copy = { ...payload };
+    if (copy.data && typeof copy.data === 'object') {
+      copy.data = {
+        ...copy.data,
+        ...(copy.data.users
+          ? { users: meta?.isSuperAdmin ? sanitizeUsersForClient(copy.data.users) : [] }
+          : {}),
+        ...(copy.data.systemConfig
+          ? { systemConfig: sanitizeSystemConfigForClient(copy.data.systemConfig) }
+          : {}),
+      };
+    }
+    if (copy.snapshot && typeof copy.snapshot === 'object' && copy.snapshot.data) {
+      copy.snapshot = {
+        ...copy.snapshot,
+        data: {
+          ...copy.snapshot.data,
+          ...(copy.snapshot.data.users
+            ? {
+                users: meta?.isSuperAdmin
+                  ? sanitizeUsersForClient(copy.snapshot.data.users)
+                  : [],
+              }
+            : {}),
+          ...(copy.snapshot.data.systemConfig
+            ? { systemConfig: sanitizeSystemConfigForClient(copy.snapshot.data.systemConfig) }
+            : {}),
+        },
+      };
+    }
+    return copy;
+  };
 
   const broadcastWs = (payload: Record<string, any>) => {
-    const encoded = JSON.stringify(payload);
+    const targetBranch = String(
+      payload?.branchId || payload?.snapshot?.data?.activeBranchId || ''
+    ).trim();
+
     wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        try {
-          client.send(encoded);
-        } catch {}
+      if (client.readyState !== WebSocket.OPEN) return;
+      const meta = wsClientMeta.get(client);
+      if (!meta) return;
+      if (targetBranch && !meta.isSuperAdmin && meta.branchId !== targetBranch) {
+        return;
       }
-    });
-    sseClients.forEach((res) => {
       try {
-        res.write(`data: ${encoded}\n\n`);
+        client.send(JSON.stringify(sanitizeBroadcastPayload(payload, meta)));
+      } catch {}
+    });
+
+    sseClients.forEach((res) => {
+      const meta = sseClientMeta.get(res);
+      if (!meta) return;
+      if (targetBranch && !meta.isSuperAdmin && meta.branchId !== targetBranch) {
+        return;
+      }
+      try {
+        res.write(`data: ${JSON.stringify(sanitizeBroadcastPayload(payload, meta))}\n\n`);
       } catch {
         sseClients.delete(res);
+        sseClientMeta.delete(res);
       }
     });
   };
 
-  // 1. Sovereign Security Headers & CORS Middleware
-  app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.header(
-      'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Tamween-Security-Token, X-Tamween-Client-Id, X-Simulated-Attack'
-    );
-    res.header('X-Content-Type-Options', 'nosniff');
-    res.header('X-XSS-Protection', '1; mode=block');
-    res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.header('X-Permitted-Cross-Domain-Policies', 'none');
-    res.header('X-Tamween-Database-Shield', 'ACTIVE-SHA256-0600');
-    if (req.method === 'OPTIONS') {
-      res.sendStatus(204);
-      return;
-    }
-    next();
-  });
+  // 1. Sovereign Security & CORS Middlewares via securityConfig.ts
+  applySecurityMiddlewares(app);
 
   // 2. Direct Database File & Sensitive Config Access Blocker (Anti-Leakage Shield)
   app.use((req, res, next) => {
-    const rawUrl = decodeURIComponent(req.originalUrl || req.url || '');
+    let rawUrl = String(req.originalUrl || req.url || '');
+    try {
+      rawUrl = decodeURIComponent(rawUrl);
+    } catch {
+      res.status(400).json({ success: false, error: 'رابط الطلب غير صالح.' });
+      return;
+    }
+    const cleanPathOnly = rawUrl.split('?')[0];
+    const normalizedPath = path.posix.normalize(cleanPathOnly);
     const lowerUrl = rawUrl.toLowerCase();
+    const cleanPathLower = cleanPathOnly.toLowerCase();
+    const normalizedLower = normalizedPath.toLowerCase();
     const isForbiddenFileRequest =
       rawUrl.includes('..') ||
+      normalizedPath.includes('..') ||
       lowerUrl.includes('.tamween_live_db') ||
       lowerUrl.includes('.tamween_alerts_db') ||
       lowerUrl.includes('supabase_config.json') ||
       lowerUrl.includes('tamween_latest_backup') ||
+      lowerUrl.includes('tamween_pg_fallback_store') ||
       lowerUrl.includes('.env') ||
       lowerUrl.includes('.git') ||
       lowerUrl.endsWith('.sqlite') ||
       lowerUrl.endsWith('.db') ||
       lowerUrl.endsWith('.bak') ||
       lowerUrl.endsWith('.sql') ||
-      lowerUrl.endsWith('/server.ts');
+      cleanPathLower === '/server.ts' ||
+      cleanPathLower === '/package.json' ||
+      cleanPathLower === '/package-lock.json' ||
+      cleanPathLower === '/tsconfig.json' ||
+      cleanPathLower === '/drizzle.config.ts' ||
+      cleanPathLower === '/firestore.rules' ||
+      cleanPathLower === '/firebase-blueprint.json' ||
+      normalizedLower.startsWith('/src/db/') ||
+      normalizedLower === '/src/utils/serverauth.ts' ||
+      normalizedLower === '/src/services/securityconfig.ts' ||
+      normalizedLower.startsWith('/supabase/') ||
+      normalizedLower.startsWith('/scripts/');
 
     if (isForbiddenFileRequest) {
       const evt = recordSecurityAudit({
-        ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'),
+        ip: String(req.ip || req.socket.remoteAddress || 'unknown'),
         method: req.method,
-        path: rawUrl,
+        path: cleanPathOnly,
         threatType: 'DIRECT_DATABASE_FILE_ACCESS',
         actionTaken: 'BLOCKED_403',
-        detail: `تم حظر محاولة وصول مباشر غير مصرح به لملف قاعدة البيانات أو الإعدادات (${rawUrl})`,
+        detail: `تم حظر محاولة وصول مباشر غير مصرح به لملف قاعدة البيانات أو الإعدادات (${cleanPathOnly})`,
       });
       res.status(403).json({
         success: false,
@@ -283,51 +398,82 @@ async function startServer() {
     next();
   });
 
-  // 3. Per-IP Rate Limiter against Brute-Force & Flood Attacks on /api/*
-  const ipRateMap = new Map<string, { count: number; windowStart: number }>();
-  app.use('/api', (req, res, next) => {
-    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'local');
-    const now = Date.now();
-    const entry = ipRateMap.get(ip);
-    if (!entry || now - entry.windowStart > 60_000) {
-      ipRateMap.set(ip, { count: 1, windowStart: now });
-    } else {
-      entry.count += 1;
-      if (entry.count > 360) {
-        const evt = recordSecurityAudit({
-          ip,
-          method: req.method,
-          path: req.originalUrl,
-          threatType: 'RATE_LIMIT_FLOOD_ATTEMPT',
-          actionTaken: 'RATE_LIMITED_429',
-          detail: `تم إيقاف سيل طلبات مفرط (${entry.count} طلب/دقيقة) لحماية الخادم من هجمات DDoS`,
-        });
-        res.status(429).json({
-          success: false,
-          blocked: true,
-          eventId: evt.id,
-          error: 'تم تجاوز الحد الآمن للطلبات في الدقيقة. تم تفعيل درع الحماية المؤقت.',
-        });
-        return;
-      }
-    }
-    next();
+  // 3. Per-IP Rate Limiters via express-rate-limit (RFC Retry-After headers)
+  const apiLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 360,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+      const evt = recordSecurityAudit({
+        ip: String(req.ip || req.socket.remoteAddress || 'local'),
+        method: req.method,
+        path: req.originalUrl,
+        threatType: 'RATE_LIMIT_FLOOD_ATTEMPT',
+        actionTaken: 'RATE_LIMITED_429',
+        detail: 'تم إيقاف سيل طلبات مفرط لحماية الخادم من هجمات DDoS',
+      });
+      res.status(429).json({
+        success: false,
+        blocked: true,
+        eventId: evt.id,
+        error: 'تم تجاوز الحد الآمن للطلبات في الدقيقة. تم تفعيل درع الحماية المؤقت.',
+      });
+    },
+  });
+  app.use('/api', apiLimiter);
+
+  const loginLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+      const evt = recordSecurityAudit({
+        ip: String(req.ip || req.socket.remoteAddress || 'local'),
+        method: req.method,
+        path: req.originalUrl,
+        threatType: 'LOGIN_RATE_LIMIT_EXCEEDED',
+        actionTaken: 'RATE_LIMITED_429',
+        detail: 'تم تفعيل الحظر المؤقت لمحاولات تسجيل الدخول المتكررة',
+      });
+      res.status(429).json({
+        success: false,
+        blocked: true,
+        eventId: evt.id,
+        error: 'تم تجاوز عدد محاولات تسجيل الدخول المسموحة. يرجى الانتظار دقيقة واحدة.',
+      });
+    },
   });
 
-  app.use(express.json({ limit: '50mb' }));
+  // Conditional JSON Body Limits: strict 1MB default, 15MB only on batch/sync/module endpoints
+  const jsonParser1Mb = express.json({ limit: '1mb' });
+  const jsonParser15Mb = express.json({ limit: '15mb' });
+  app.use((req, res, next) => {
+    const p = req.path || '';
+    const isLargePayloadRoute =
+      p === '/api/db/batch' ||
+      p === '/api/supabase/live-db' ||
+      p === '/api/publish' ||
+      /^\/api\/modules\/[^/]+$/.test(p);
+    if (isLargePayloadRoute) {
+      jsonParser15Mb(req, res, next);
+    } else {
+      jsonParser1Mb(req, res, next);
+    }
+  });
 
-  // 4. API Payload Firewall (Anti-SQLi, Anti-XSS, Anti-Prototype-Pollution & Unauthorized Intrusion Blocker)
+  // 4. API Payload Firewall (Anti-SQLi, Anti-XSS & Recursive Prototype-Pollution Shield)
   app.use('/api', (req, res, next) => {
-    // Allow explicit security shield test endpoint to handle its own simulation report
     if (req.path === '/security/test-shield' || req.path === '/security/status') {
       next();
       return;
     }
 
-    const simulatedAttack = String(req.headers['x-simulated-attack'] || '').toLowerCase() === 'true';
+    const simulatedAttack =
+      !IS_PRODUCTION && String(req.headers['x-simulated-attack'] || '').toLowerCase() === 'true';
+    const hasPrototypePollution = hasPrototypePollutionKey(req.body);
     const rawBodyStr = req.body && Object.keys(req.body).length > 0 ? JSON.stringify(req.body) : '';
-    const hasPrototypePollution =
-      rawBodyStr.includes('"__proto__"') || rawBodyStr.includes('"prototype"');
     const hasSqlDropAttack =
       /(\bDROP\s+TABLE\b|\bTRUNCATE\s+TABLE\b|\bDELETE\s+FROM\s+bakeries\s+WHERE\s+1\s*=\s*1)/i.test(
         rawBodyStr
@@ -344,7 +490,7 @@ async function startServer() {
         : 'XSS_SCRIPT_INJECTION_ATTEMPT';
 
       const evt = recordSecurityAudit({
-        ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'),
+        ip: String(req.ip || req.socket.remoteAddress || 'unknown'),
         method: req.method,
         path: req.originalUrl,
         threatType: threatLabel,
@@ -810,22 +956,71 @@ async function startServer() {
   });
 
   // =========================================================================
-  // Real Server Authentication, Bearer Session Verification & Granular RBAC
+  // Real Server Authentication, Bearer/Cookie Session Verification & Granular RBAC
   // =========================================================================
   const extractBearerToken = (req: express.Request): string => {
     const authHeader = String(req.headers.authorization || '').trim();
     if (authHeader.toLowerCase().startsWith('bearer ')) {
       return authHeader.slice(7).trim();
     }
+    const cookies = parseCookieHeader(req.headers.cookie);
+    if (cookies[SESSION_COOKIE_NAME]) {
+      return cookies[SESSION_COOKIE_NAME];
+    }
     return '';
   };
 
   const getClientIp = (req: express.Request): string =>
-    String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1');
+    String(req.ip || req.socket?.remoteAddress || '127.0.0.1');
+
+  const assertBranchAccess = (actor: AppUser, targetBranchId: string): boolean => {
+    if (isUserSuperAdmin(actor)) return true;
+    if (!actor.branchId) return true;
+    return actor.branchId === targetBranchId;
+  };
+
+  const failedLoginMap = new Map<string, { count: number; lockedUntil: number }>();
+  const MAX_LOGIN_FAILURES = 5;
+  const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+
+  const loginSchema = z.object({
+    branchId: z.string().trim().min(1).max(120).optional(),
+    username: z.string().trim().min(1, 'يرجى إدخال اسم المستخدم.').max(120),
+    password: z.string().min(1, 'يرجى إدخال كلمة المرور.').max(256),
+  });
+
+  const supabaseConfigSchema = z.object({
+    url: z.string().trim().max(500).optional().default(''),
+    anonKey: z.string().trim().max(2048).optional().default(''),
+  });
+
+  const vaultVerifySchema = z.object({
+    branchId: z.string().trim().min(1).max(120).optional(),
+    username: z.string().trim().max(120).optional().default(''),
+    passcode: z.string().min(1, 'يرجى إدخال الرقم السري لبوابة الحماية.').max(128),
+  });
+
+  const vaultUpdateSchema = z.object({
+    targetScope: z.string().trim().min(1).max(120).default('all'),
+    currentBranchId: z.string().trim().min(1).max(120).optional(),
+    currentUsername: z.string().trim().max(120).optional().default(''),
+    currentPasscode: z.string().min(1, 'يرجى إدخال الرقم السري الحالي.').max(128),
+    newUsername: z.string().trim().min(2, 'اسم المستخدم الجديد قصير جداً.').max(120),
+    newPasscode: z.string().min(4, 'الرقم السري الجديد يجب أن لا يقل عن 4 أحرف/أرقام.').max(128),
+  });
+
+  const SAFE_STORAGE_FILENAME_REGEX = /^[a-zA-Z0-9._\-\u0600-\u06FF]+$/;
+  const ALLOWED_STORAGE_MIME_TYPES = new Set([
+    'application/json',
+    'text/csv',
+    'text/plain',
+    'application/octet-stream',
+  ]);
+  const MAX_STORAGE_FILE_BYTES = 5 * 1024 * 1024;
 
   const resolveAuthenticatedActor = async (
     req: express.Request
-  ): Promise<{ authenticated: boolean; user: AppUser | null; reason?: string }> => {
+  ): Promise<{ authenticated: boolean; user: AppUser | null; reason?: string; token?: string }> => {
     const token = extractBearerToken(req);
     if (!token) {
       return { authenticated: false, user: null, reason: 'NO_TOKEN' };
@@ -844,7 +1039,7 @@ async function startServer() {
     if (liveUser.isActive === false) {
       return { authenticated: false, user: null, reason: 'USER_SUSPENDED' };
     }
-    return { authenticated: true, user: liveUser };
+    return { authenticated: true, user: liveUser, token };
   };
 
   const denyUnauthorizedAndAudit = async (
@@ -953,18 +1148,14 @@ async function startServer() {
     return hasDepartmentPermission(actor, scope, action);
   };
 
-  app.post('/api/auth/login', async (req, res) => {
+  app.post('/api/auth/login', loginLimiter, async (req, res) => {
     try {
       await Promise.race([
         startupBootstrapPromise,
         new Promise((resolve) => setTimeout(resolve, 2500)),
       ]);
-      const branchId = String(req.body?.branchId || DEFAULT_BRANCH_ID);
-      const username = String(req.body?.username || '').trim();
-      const password = String(req.body?.password || '');
-      const ip = getClientIp(req);
-
-      if (!username || !password) {
+      const parsed = loginSchema.safeParse(req.body || {});
+      if (!parsed.success) {
         res.status(400).json({
           success: false,
           error: 'يرجى إدخال اسم المستخدم وكلمة المرور.',
@@ -972,12 +1163,35 @@ async function startServer() {
         return;
       }
 
+      const branchId = parsed.data.branchId || DEFAULT_BRANCH_ID;
+      const username = parsed.data.username;
+      const password = parsed.data.password;
+      const ip = getClientIp(req);
+      const lockoutKey = `${ip}::${username.toLowerCase()}::${branchId}`;
+      const lockState = failedLoginMap.get(lockoutKey);
+      const now = Date.now();
+      if (lockState && lockState.lockedUntil > now) {
+        const retryAfterSec = Math.max(1, Math.ceil((lockState.lockedUntil - now) / 1000));
+        res.setHeader('Retry-After', String(retryAfterSec));
+        res.status(429).json({
+          success: false,
+          blocked: true,
+          error: 'تم قفل المحاولة مؤقتاً لكثرة محاولات الدخول الخاطئة. يرجى المحاولة بعد 15 دقيقة.',
+        });
+        return;
+      }
+
       const authRes = await authenticateUserInPostgres(branchId, username, password);
       if (!authRes.ok || !authRes.user) {
+        const nextCount = (lockState?.count || 0) + 1;
+        failedLoginMap.set(lockoutKey, {
+          count: nextCount,
+          lockedUntil: nextCount >= MAX_LOGIN_FAILURES ? now + LOGIN_LOCKOUT_MS : 0,
+        });
         await recordAuditLog(
           username,
           'LOGIN_FAILED',
-          `محاولة دخول فاشلة للمستخدم (${username}): ${authRes.error || 'بيانات غير صحيحة'}`,
+          `محاولة دخول فاشلة للمستخدم (${username})`,
           ip,
           branchId,
           {
@@ -987,13 +1201,18 @@ async function startServer() {
             result: 'DENIED',
           }
         ).catch(() => {});
-        res.status(authRes.status || 401).json({
+        const unifiedMsg =
+          authRes.status === 403
+            ? authRes.error || 'هذا الحساب موقوف حالياً. يرجى مراجعة مدير النظام.'
+            : 'اسم المستخدم أو كلمة المرور غير صحيحة';
+        res.status(authRes.status === 403 ? 403 : 401).json({
           success: false,
-          error: authRes.error || 'اسم المستخدم أو كلمة المرور غير صحيحة',
+          error: unifiedMsg,
         });
         return;
       }
 
+      failedLoginMap.delete(lockoutKey);
       const user = authRes.user;
       const token = createSessionToken({
         userId: user.id,
@@ -1001,6 +1220,17 @@ async function startServer() {
         username: user.username,
         role: user.role,
         isSuperAdmin: isUserSuperAdmin(user),
+      });
+
+      const isSecureTransport =
+        req.secure ||
+        String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+      res.cookie(SESSION_COOKIE_NAME, token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: isSecureTransport,
+        maxAge: SESSION_TTL_MS,
+        path: '/',
       });
 
       await recordAuditLog(
@@ -1028,6 +1258,160 @@ async function startServer() {
     }
   });
 
+  app.post('/api/auth/register', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const branchId = String(body.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const username = normalizeDigits(String(body.username || '')).trim();
+      const fullName = String(body.fullName || '').trim();
+      const password = String(body.password || '');
+      const requestedRole = String(body.role || 'viewer').trim() || 'viewer';
+      const jobTitle = String(body.jobTitle || '').trim();
+      const department = String(body.department || '').trim();
+      const phone = String(body.phone || '').trim();
+      const applyToAllBranches = Boolean(body.applyToAllBranches);
+
+      if (!username || username.length < 3 || !fullName || !password) {
+        res.status(400).json({
+          success: false,
+          error: 'يرجى إدخال الاسم الكامل واسم المستخدم (3 أحرف فأكثر) وكلمة المرور.',
+        });
+        return;
+      }
+
+      const complexity = validatePasswordComplexity(password);
+      if (!complexity.valid) {
+        res.status(400).json({
+          success: false,
+          error: complexity.error || 'كلمة المرور يجب أن تتكون من 8 أحرف وتشمل حروفاً وأرقاماً.',
+        });
+        return;
+      }
+
+      const actor = await resolveAuthenticatedActor(req);
+      const isPrivilegedCaller = Boolean(actor.authenticated && actor.user && isUserSuperAdmin(actor.user));
+
+      if ((requestedRole === 'super_admin' || requestedRole === 'admin') && !isPrivilegedCaller) {
+        await recordAuditLog(
+          username,
+          'PRIVILEGED_REGISTRATION_BLOCKED',
+          `محاولة غير مصرح بها للتسجيل بصلاحية (${requestedRole}) دون جلسة مدير عام`,
+          getClientIp(req),
+          branchId,
+          { username, department: 'auth', operation: 'REGISTER', result: 'DENIED' }
+        ).catch(() => {});
+        res.status(403).json({
+          success: false,
+          error: 'إنشاء حساب بصلاحية مدير عام (Super Admin) أو مدير نظام مقتصر على مدير النظام المعتمد فقط.',
+        });
+        return;
+      }
+
+      const allowedSelfRoles = new Set([
+        'reader',
+        'viewer',
+        'data_entry',
+        'inspector',
+        'auditor',
+        'supervisor',
+      ]);
+      const finalRole = isPrivilegedCaller
+        ? requestedRole
+        : allowedSelfRoles.has(requestedRole)
+        ? requestedRole
+        : 'viewer';
+
+      const existing = await queryTablePaginated('app_users', {
+        branchId,
+        page: 1,
+        pageSize: 500,
+      });
+      const dup = existing.rows.find(
+        (u: any) => String(u.username || '').trim().toLowerCase() === username.toLowerCase()
+      );
+      if (dup) {
+        res.status(409).json({
+          success: false,
+          error: 'اسم المستخدم مسجل بالفعل داخل هذا الفرع. يرجى اختيار اسم مستخدم آخر.',
+        });
+        return;
+      }
+
+      const newUserId = `u-${branchId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const isSuper = finalRole === 'super_admin' || (finalRole === 'admin' && isPrivilegedCaller && Boolean(body.isSuperAdmin));
+      const newUserPayload: Partial<AppUser> = {
+        id: newUserId,
+        branchId,
+        username,
+        fullName,
+        password,
+        role: finalRole,
+        isSuperAdmin: isSuper,
+        jobTitle: jobTitle || (finalRole === 'reader' ? 'قارئ فقط' : finalRole === 'viewer' ? 'مشاهد' : 'مستخدم منظومة'),
+        department: department || 'التموين والتجارة الداخلية',
+        phone,
+        isActive: true,
+        applyToAllBranches: isPrivilegedCaller ? applyToAllBranches : false,
+        allowedDepartments: isSuper ? ['all'] : ['bakeries', 'debts', 'commodities', 'internal_trade', 'grain_maintenance', 'hr', 'reports'],
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+
+      const saved = await upsertRowInPostgres('app_users', branchId, newUserPayload);
+      if (!saved.success || !saved.row) {
+        res.status(400).json({ success: false, error: saved.error || 'تعذر إنشاء الحساب.' });
+        return;
+      }
+
+      const createdUser = saved.row as AppUser;
+      await recordAuditLog(
+        createdUser.username,
+        'USER_REGISTERED',
+        `تسجيل حساب جديد (${createdUser.fullName} — ${createdUser.username}) بدور (${finalRole}) في الفرع (${branchId})`,
+        getClientIp(req),
+        branchId,
+        {
+          username: createdUser.username,
+          department: 'auth',
+          operation: 'REGISTER',
+          recordId: createdUser.id,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+
+      const issuedToken = !actor.authenticated
+        ? createSessionToken({
+            userId: createdUser.id,
+            branchId: createdUser.branchId || branchId,
+            username: createdUser.username,
+            role: createdUser.role,
+            isSuperAdmin: isUserSuperAdmin(createdUser),
+          })
+        : undefined;
+
+      if (issuedToken) {
+        const isSecureTransport =
+          req.secure ||
+          String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+        res.cookie(SESSION_COOKIE_NAME, issuedToken, {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: isSecureTransport,
+          maxAge: SESSION_TTL_MS,
+          path: '/',
+        });
+      }
+
+      res.json({
+        success: true,
+        token: issuedToken,
+        user: createdUser,
+        message: 'تم إنشاء الحساب وتفعيله بنجاح في قاعدة البيانات.',
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل إنشاء الحساب الجديد.' });
+    }
+  });
+
   app.get('/api/auth/me', async (req, res) => {
     try {
       const actor = await resolveAuthenticatedActor(req);
@@ -1035,6 +1419,7 @@ async function startServer() {
         const status = actor.reason === 'USER_SUSPENDED' ? 403 : 401;
         res.status(status).json({
           success: false,
+          authenticated: false,
           code: actor.reason || 'UNAUTHORIZED',
           error:
             actor.reason === 'USER_SUSPENDED'
@@ -1043,7 +1428,7 @@ async function startServer() {
         });
         return;
       }
-      res.json({ success: true, user: actor.user });
+      res.json({ success: true, authenticated: true, user: actor.user });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
     }
@@ -1051,7 +1436,20 @@ async function startServer() {
 
   app.post('/api/auth/logout', async (req, res) => {
     try {
+      const rawToken = extractBearerToken(req);
       const actor = await resolveAuthenticatedActor(req);
+      if (rawToken) {
+        revokeSessionToken(rawToken);
+      }
+      const isSecureTransport =
+        req.secure ||
+        String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+      res.clearCookie(SESSION_COOKIE_NAME, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: isSecureTransport,
+        path: '/',
+      });
       if (actor.authenticated && actor.user) {
         await recordAuditLog(
           actor.user.username,
@@ -1074,14 +1472,27 @@ async function startServer() {
     }
   });
 
-  // Security & Database File Protection Status Endpoint
-  app.get('/api/security/status', (_req, res) => {
+  // Security & Database File Protection Status Endpoint (Super Admin only)
+  app.get('/api/security/status', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.authenticated ? 403 : 401,
+        'security',
+        'VIEW',
+        'الاطلاع على حالة درع الأمان مقتصر على مدير النظام الرئيسي فقط.'
+      );
+      return;
+    }
     const dbData = cachedLiveSnapshot?.data || {};
     const integrityHash = cachedLiveSnapshot?.integrityHash || computeDatabaseIntegrityHash(dbData);
     res.json({
       success: true,
       apiLocked: true,
-      shieldVersion: API_SECURITY_SHIELD_TOKEN,
+      shieldVersion: '5.1-hardened',
       databaseProtection: {
         filePermissions: '0600 (Owner Read/Write Only)',
         directHttpAccessBlocked: true,
@@ -1102,15 +1513,31 @@ async function startServer() {
         activeWsClients: wss.clients.size,
         activeSseClients: sseClients.size,
       },
-      auditLog: securityAuditLog.slice(0, 25),
+      auditLog: securityAuditLog.slice(0, 25).map((item) => ({
+        ...item,
+        ip: maskAuditIp(item.ip),
+      })),
       timestamp: new Date().toISOString(),
     });
   });
 
-  // Interactive Security Shield Verification Endpoint (Simulates & Blocks Intrusion / SQLi / Wipe Attack)
-  app.post('/api/security/test-shield', (req, res) => {
+  // Interactive Security Shield Verification Endpoint (Super Admin only)
+  app.post('/api/security/test-shield', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.authenticated ? 403 : 401,
+        'security',
+        'TEST_SHIELD',
+        'تشغيل فحص درع الحماية مقتصر على مدير النظام فقط.'
+      );
+      return;
+    }
     const attackType = String(req.body?.attackType || 'SQL_INJECTION_AND_UNAUTHORIZED_API_ACCESS');
-    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1');
+    const ip = getClientIp(req);
     const evt = recordSecurityAudit({
       ip,
       method: 'POST',
@@ -1125,7 +1552,7 @@ async function startServer() {
       success: true,
       attackBlocked: true,
       httpStatusSimulated: 403,
-      blockedEvent: evt,
+      blockedEvent: { ...evt, ip: maskAuditIp(evt.ip) },
       blockedIntrusionsCount,
       preventedWipeAttemptsCount,
       integrityHash,
@@ -1133,8 +1560,21 @@ async function startServer() {
     });
   });
 
-  // Server-side backup snapshot endpoint (Legacy JSON backups disabled per user requirement - Supabase exclusive sync)
-  app.post('/api/backup/snapshot', (_req, res) => {
+  // Server-side backup snapshot endpoint (Super Admin only)
+  app.post('/api/backup/snapshot', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.authenticated ? 403 : 401,
+        'backup',
+        'WRITE',
+        'إدارة لقطات النسخ الاحتياطي مقتصرة على مدير النظام فقط.'
+      );
+      return;
+    }
     try {
       if (fs.existsSync(SNAPSHOT_PRIMARY_PATH)) { try { fs.unlinkSync(SNAPSHOT_PRIMARY_PATH); } catch {} }
       if (fs.existsSync(SNAPSHOT_TMP_PATH)) { try { fs.unlinkSync(SNAPSHOT_TMP_PATH); } catch {} }
@@ -1147,10 +1587,151 @@ async function startServer() {
     }
   });
 
-  app.get('/api/backup/snapshot', (_req, res) => {
+  app.get('/api/backup/snapshot', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.authenticated ? 403 : 401,
+        'backup',
+        'VIEW',
+        'عرض لقطات النسخ الاحتياطي مقتصر على مدير النظام فقط.'
+      );
+      return;
+    }
     if (fs.existsSync(SNAPSHOT_PRIMARY_PATH)) { try { fs.unlinkSync(SNAPSHOT_PRIMARY_PATH); } catch {} }
     if (fs.existsSync(SNAPSHOT_TMP_PATH)) { try { fs.unlinkSync(SNAPSHOT_TMP_PATH); } catch {} }
     res.json({ success: true, exists: false, snapshot: null });
+  });
+
+  // Server-Side Branch Vault Security Gate Endpoints
+  app.post('/api/vault/verify', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          'vault',
+          'VERIFY',
+          'التحقق من بوابة الحماية السرية يتطلب جلسة دخول صالحة.'
+        );
+        return;
+      }
+      const parsed = vaultVerifySchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        res.status(400).json({ success: false, error: parsed.error.issues[0]?.message || 'بيانات غير صالحة.' });
+        return;
+      }
+      const targetBranchId = parsed.data.branchId || actor.user.branchId || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, targetBranchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'vault',
+          'VERIFY',
+          `محاولة تحقق من بوابة الحماية لفرع غير مصرح به (${targetBranchId}).`
+        );
+        return;
+      }
+      const verified = await verifyVaultCredentialsInPostgres({
+        branchId: targetBranchId,
+        enteredUsername: parsed.data.username,
+        enteredPassword: parsed.data.passcode,
+      });
+      await recordAuditLog(
+        actor.user.username,
+        verified ? 'VAULT_UNLOCK_SUCCESS' : 'VAULT_UNLOCK_FAILED',
+        verified
+          ? `تم فتح بوابة الحماية السرية للفرع (${targetBranchId}) بنجاح`
+          : `فشل التحقق من بوابة الحماية السرية للفرع (${targetBranchId})`,
+        getClientIp(req),
+        targetBranchId,
+        {
+          username: actor.user.username,
+          department: 'vault',
+          operation: 'VERIFY',
+          result: verified ? 'SUCCESS' : 'DENIED',
+        }
+      ).catch(() => {});
+      if (!verified) {
+        res.status(401).json({
+          success: false,
+          verified: false,
+          error: 'اسم المستخدم (Username) أو الرقم السري (Password) غير صحيح! الدخول محظور تماماً لغير المصرح لهم.',
+        });
+        return;
+      }
+      res.json({ success: true, verified: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر التحقق من بوابة الحماية.' });
+    }
+  });
+
+  app.post('/api/vault/credentials', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'vault',
+          'UPDATE_CREDENTIALS',
+          'تغيير بيانات بوابة الحماية السرية مقتصر حصرياً على مدير النظام فقط.'
+        );
+        return;
+      }
+      const parsed = vaultUpdateSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        res.status(400).json({ success: false, error: parsed.error.issues[0]?.message || 'بيانات غير صالحة.' });
+        return;
+      }
+      const verifyBranchId =
+        parsed.data.targetScope === 'all' || parsed.data.targetScope === 'ALL'
+          ? parsed.data.currentBranchId || DEFAULT_BRANCH_ID
+          : parsed.data.targetScope;
+      const currentOk = await verifyVaultCredentialsInPostgres({
+        branchId: verifyBranchId,
+        enteredUsername: parsed.data.currentUsername,
+        enteredPassword: parsed.data.currentPasscode,
+      });
+      if (!currentOk) {
+        res.status(401).json({
+          success: false,
+          error: 'اسم المستخدم أو الرقم السري الحالي غير صحيح!',
+        });
+        return;
+      }
+      const result = await updateVaultCredentialsInPostgres({
+        targetScope: parsed.data.targetScope,
+        newUsername: parsed.data.newUsername,
+        newPassword: parsed.data.newPasscode,
+      });
+      await recordAuditLog(
+        actor.user.username,
+        'VAULT_CREDENTIALS_UPDATED',
+        `تم تحديث بيانات بوابة الحماية السرية للنطاق (${parsed.data.targetScope})`,
+        getClientIp(req),
+        verifyBranchId,
+        {
+          username: actor.user.username,
+          department: 'vault',
+          operation: 'UPDATE',
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+      res.json({ success: true, updatedBranches: result.updatedBranches });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر تحديث بيانات الحماية.' });
+    }
   });
 
   // Server-side 15-second keep-alive heartbeat to prevent Cloud Run / reverse-proxy 1006 idle disconnects
@@ -1166,16 +1747,77 @@ async function startServer() {
     });
   }, 15000);
 
-  wss.on('connection', (socket, req) => {
+  wss.on('connection', async (socket, req) => {
     socket.on('error', () => {
       // Prevent unhandled socket transport errors on proxy handoff
     });
 
+    const reqOrigin = req?.headers?.origin ? String(req.headers.origin) : undefined;
+    const reqHost = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '');
+    if (reqOrigin && !isAllowedOrigin(reqOrigin, reqHost)) {
+      socket.close(4003, 'Forbidden Origin');
+      return;
+    }
+
+    // Authenticate WebSocket using HttpOnly session cookie, Authorization header, or Sec-WebSocket-Protocol
+    let wsToken = '';
+    const authHdr = String(req?.headers?.authorization || '').trim();
+    if (authHdr.toLowerCase().startsWith('bearer ')) {
+      wsToken = authHdr.slice(7).trim();
+    }
+    if (!wsToken) {
+      const cookies = parseCookieHeader(req?.headers?.cookie);
+      if (cookies[SESSION_COOKIE_NAME]) {
+        wsToken = cookies[SESSION_COOKIE_NAME];
+      }
+    }
+    if (!wsToken && req?.headers?.['sec-websocket-protocol']) {
+      const protocols = String(req.headers['sec-websocket-protocol'])
+        .split(',')
+        .map((s) => s.trim());
+      const bearerProto = protocols.find((p) => p.startsWith('tamween-bearer.'));
+      if (bearerProto) {
+        wsToken = bearerProto.slice('tamween-bearer.'.length);
+      }
+    }
+
+    const verifiedWs = verifySessionToken(wsToken);
+    if (!verifiedWs) {
+      socket.close(4001, 'Unauthorized');
+      return;
+    }
+    const wsLiveUser = await getUserByIdAndBranchFromPostgres(
+      verifiedWs.branchId,
+      verifiedWs.userId
+    ).catch(() => null);
+    if (!wsLiveUser || wsLiveUser.isActive === false) {
+      socket.close(4001, 'Unauthorized');
+      return;
+    }
+
     let wsBranchId = DEFAULT_BRANCH_ID;
     try {
       const reqUrl = new URL(req?.url || '/', 'http://localhost');
-      wsBranchId = reqUrl.searchParams.get('branchId') || DEFAULT_BRANCH_ID;
-    } catch {}
+      wsBranchId = reqUrl.searchParams.get('branchId') || wsLiveUser.branchId || DEFAULT_BRANCH_ID;
+    } catch {
+      wsBranchId = wsLiveUser.branchId || DEFAULT_BRANCH_ID;
+    }
+
+    if (!assertBranchAccess(wsLiveUser, wsBranchId)) {
+      socket.close(4003, 'Branch Access Forbidden');
+      return;
+    }
+
+    const clientMeta: RealtimeClientMeta = {
+      user: wsLiveUser,
+      branchId: wsBranchId,
+      isSuperAdmin: isUserSuperAdmin(wsLiveUser),
+    };
+    wsClientMeta.set(socket, clientMeta);
+
+    socket.on('close', () => {
+      wsClientMeta.delete(socket);
+    });
 
     // Send fresh authoritative PostgreSQL state immediately upon WebSocket connect/reconnect
     buildLiveSnapshotFromPostgres(wsBranchId, {
@@ -1186,33 +1828,29 @@ async function startServer() {
       .then(({ snapshot }) => {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(
-            JSON.stringify({
-              type: 'init',
-              timestamp: snapshot.timestamp,
-              snapshot,
-              alertsState: cachedAlertsState,
-            })
+            JSON.stringify(
+              sanitizeBroadcastPayload(
+                {
+                  type: 'init',
+                  branchId: wsBranchId,
+                  timestamp: snapshot.timestamp,
+                  snapshot,
+                  alertsState: cachedAlertsState,
+                },
+                clientMeta
+              )
+            )
           );
         }
       })
-      .catch(() => {
-        try {
-          if (cachedLiveSnapshot && socket.readyState === WebSocket.OPEN) {
-            socket.send(
-              JSON.stringify({
-                type: 'init',
-                timestamp: new Date().toISOString(),
-                snapshot: cachedLiveSnapshot,
-                alertsState: cachedAlertsState,
-              })
-            );
-          }
-        } catch {}
-      });
+      .catch(() => {});
 
     socket.on('message', (raw) => {
       try {
         const msg = JSON.parse(String(raw || '{}'));
+        if (hasPrototypePollutionKey(msg)) {
+          return;
+        }
         if (msg?.type === 'ping') {
           socket.send(
             JSON.stringify({
@@ -1224,6 +1862,7 @@ async function startServer() {
         } else if (msg?.type === 'diagnostic_ping') {
           broadcastWs({
             type: 'diagnostic_pong',
+            branchId: clientMeta.branchId,
             pingId: msg.pingId || `ping-${Date.now()}`,
             clientId: msg.clientId || '',
             sentAt: msg.sentAt || Date.now(),
@@ -1238,21 +1877,51 @@ async function startServer() {
             timestamp: new Date().toISOString(),
           });
         } else if (msg?.type === 'client_push_state' && msg?.data) {
+          const targetBranchId = String(msg.data?.activeBranchId || clientMeta.branchId || DEFAULT_BRANCH_ID);
+          if (!assertBranchAccess(clientMeta.user, targetBranchId)) {
+            return;
+          }
+          const incomingState = { ...msg.data };
+          if (!clientMeta.isSuperAdmin) {
+            delete incomingState.users;
+            delete incomingState.branches;
+            delete incomingState.systemConfig;
+            if (
+              !hasDepartmentPermission(clientMeta.user, 'bakeries', 'update') &&
+              !hasDepartmentPermission(clientMeta.user, 'bakeries', 'insert')
+            ) {
+              delete incomingState.bakeries;
+            }
+            if (
+              !hasDepartmentPermission(clientMeta.user, 'debts', 'update') &&
+              !hasDepartmentPermission(clientMeta.user, 'debts', 'insert')
+            ) {
+              delete incomingState.debts;
+            }
+          }
           const { safeData } = guardDatabaseAgainstWipe(
             cachedLiveSnapshot?.data,
-            msg.data,
+            incomingState,
             'websocket',
-            true
+            clientMeta.isSuperAdmin
           );
           const timestamp = msg.timestamp || new Date().toISOString();
           const clientId = msg.clientId || '';
           const sqlOperation = msg.sqlOperation || 'UPDATE';
           const affectedTable = msg.affectedTable || 'bakeries';
           const sentAt = Number(msg.sentAt) || Date.now();
-          const targetBranchId = String(safeData?.activeBranchId || DEFAULT_BRANCH_ID);
-          syncFullBranchStateToPostgres(targetBranchId, safeData, { pruneRemoved: true }).catch(() => {});
+          syncFullBranchStateToPostgres(targetBranchId, safeData, {
+            pruneRemoved: clientMeta.isSuperAdmin && Boolean(msg.pruneRemoved),
+          }).catch(() => {});
           liveRevision += 1;
-          const integrityHash = computeDatabaseIntegrityHash(safeData);
+          const sanitizedData = {
+            ...safeData,
+            users: sanitizeUsersForClient(safeData?.users),
+            ...(safeData?.systemConfig
+              ? { systemConfig: sanitizeSystemConfigForClient(safeData.systemConfig) }
+              : {}),
+          };
+          const integrityHash = computeDatabaseIntegrityHash(sanitizedData);
           const snapshot = {
             version: '5.0-supabase-realtime-shield',
             cleanStartEpoch: CLEAN_START_RESET_EPOCH,
@@ -1263,13 +1932,14 @@ async function startServer() {
             affectedTable,
             sentAt,
             integrityHash,
-            bakeriesCount: Array.isArray(safeData?.bakeries) ? safeData.bakeries.length : 0,
-            debtsCount: Array.isArray(safeData?.debts) ? safeData.debts.length : 0,
-            data: safeData,
+            bakeriesCount: Array.isArray(sanitizedData?.bakeries) ? sanitizedData.bakeries.length : 0,
+            debtsCount: Array.isArray(sanitizedData?.debts) ? sanitizedData.debts.length : 0,
+            data: sanitizedData,
           };
           cachedLiveSnapshot = snapshot;
           broadcastWs({
             type: 'state_update',
+            branchId: targetBranchId,
             clientId,
             timestamp,
             revision: liveRevision,
@@ -1281,7 +1951,11 @@ async function startServer() {
           });
         } else if (msg?.type === 'request_init') {
           const requestedBranch = String(msg.branchId || wsBranchId || DEFAULT_BRANCH_ID);
+          if (!assertBranchAccess(clientMeta.user, requestedBranch)) {
+            return;
+          }
           wsBranchId = requestedBranch;
+          clientMeta.branchId = requestedBranch;
           buildLiveSnapshotFromPostgres(requestedBranch, {
             clientId: 'postgres-ws-request-init',
             sqlOperation: 'SELECT',
@@ -1290,12 +1964,18 @@ async function startServer() {
             .then(({ snapshot }) => {
               if (socket.readyState === WebSocket.OPEN) {
                 socket.send(
-                  JSON.stringify({
-                    type: 'init',
-                    timestamp: snapshot.timestamp,
-                    snapshot,
-                    alertsState: cachedAlertsState,
-                  })
+                  JSON.stringify(
+                    sanitizeBroadcastPayload(
+                      {
+                        type: 'init',
+                        branchId: requestedBranch,
+                        timestamp: snapshot.timestamp,
+                        snapshot,
+                        alertsState: cachedAlertsState,
+                      },
+                      clientMeta
+                    )
+                  )
                 );
               }
             })
@@ -1337,7 +2017,6 @@ async function startServer() {
     }
   };
 
-  // Clean up any accidentally autofilled invalid config files or service_role keys on startup
   for (const cfgFile of [SUPABASE_CONFIG_PATH, SUPABASE_CONFIG_TMP]) {
     if (fs.existsSync(cfgFile)) {
       try {
@@ -1351,10 +2030,15 @@ async function startServer() {
     }
   }
 
-  app.get('/api/supabase/config', (_req, res) => {
+  app.get('/api/supabase/config', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(401).json({ success: false, error: 'يتطلب عرض إعدادات الاتصال مصادقة صالحة.' });
+        return;
+      }
       const envKey = process.env.VITE_SUPABASE_ANON_KEY || '';
-      let cfg = {
+      const cfg = {
         url: isValidSupabaseUrl(process.env.VITE_SUPABASE_URL || '') ? (process.env.VITE_SUPABASE_URL || '') : '',
         anonKey: !isServiceRoleJwt(envKey) ? envKey : '',
       };
@@ -1376,14 +2060,32 @@ async function startServer() {
     }
   });
 
-  app.post('/api/supabase/config', (req, res) => {
+  app.post('/api/supabase/config', async (req, res) => {
     try {
-      const { url, anonKey } = req.body || {};
-      const cleanUrl = String(url || '').trim();
-      const cleanKey = String(anonKey || '').trim();
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'system',
+          'SUPABASE_CONFIG_UPDATE',
+          'تعديل إعدادات الاتصال بقاعدة البيانات مقتصر حصرياً على مدير النظام (Super Admin) فقط.'
+        );
+        return;
+      }
+
+      const parsedBody = supabaseConfigSchema.safeParse(req.body || {});
+      if (!parsedBody.success) {
+        res.status(400).json({ success: false, error: 'صيغة بيانات الاتصال غير صالحة.' });
+        return;
+      }
+      const cleanUrl = parsedBody.data.url;
+      const cleanKey = parsedBody.data.anonKey;
       if (isServiceRoleJwt(cleanKey)) {
         recordSecurityAudit({
-          ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'),
+          ip: getClientIp(req),
           method: 'POST',
           path: '/api/supabase/config',
           threatType: 'SERVICE_ROLE_KEY_EXPOSURE_ATTEMPT',
@@ -1396,16 +2098,25 @@ async function startServer() {
         });
         return;
       }
-      if (isValidSupabaseUrl(cleanUrl) && cleanKey) {
-        const data = JSON.stringify({ url: cleanUrl, anonKey: cleanKey });
-        writeProtectedDatabaseFile(SUPABASE_CONFIG_PATH, data);
-        writeProtectedDatabaseFile(SUPABASE_CONFIG_TMP, data);
-        broadcastWs({ type: 'config_updated', url: cleanUrl, anonKey: cleanKey, timestamp: new Date().toISOString() });
-      } else if (!cleanUrl && !cleanKey) {
+      if (!cleanUrl && !cleanKey) {
         if (fs.existsSync(SUPABASE_CONFIG_PATH)) { try { fs.unlinkSync(SUPABASE_CONFIG_PATH); } catch {} }
         if (fs.existsSync(SUPABASE_CONFIG_TMP)) { try { fs.unlinkSync(SUPABASE_CONFIG_TMP); } catch {} }
         broadcastWs({ type: 'config_updated', url: '', anonKey: '', timestamp: new Date().toISOString() });
+        res.json({ success: true });
+        return;
       }
+      if (!isValidSupabaseUrl(cleanUrl) || !cleanKey) {
+        res.status(400).json({
+          success: false,
+          error: 'يرجى إدخال رابط Supabase (.supabase.co) ومفتاح anon صالحين.',
+        });
+        return;
+      }
+
+      const data = JSON.stringify({ url: cleanUrl, anonKey: cleanKey });
+      writeProtectedDatabaseFile(SUPABASE_CONFIG_PATH, data);
+      writeProtectedDatabaseFile(SUPABASE_CONFIG_TMP, data);
+      broadcastWs({ type: 'config_updated', url: cleanUrl, anonKey: cleanKey, timestamp: new Date().toISOString() });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1413,7 +2124,16 @@ async function startServer() {
   });
 
   // Lightweight metadata probe (<200 bytes)
-  app.get('/api/supabase/live-meta', (_req, res) => {
+  app.get('/api/supabase/live-meta', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user) {
+      res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+        success: false,
+        requiresAuth: true,
+        error: 'الوصول لبيانات المزامنة الوصفية يتطلب مصادقة صالحة.',
+      });
+      return;
+    }
     if (!cachedLiveSnapshot) {
       res.json({
         success: true,
@@ -1439,17 +2159,40 @@ async function startServer() {
   });
 
   // Event-Driven Server-Sent Events (SSE) Real-Time Stream (no polling!)
-  app.get('/api/supabase/realtime-stream', (req, res) => {
+  app.get('/api/supabase/realtime-stream', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user) {
+      res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+        success: false,
+        requiresAuth: true,
+        error: 'البث اللحظي يتطلب جلسة دخول صالحة.',
+      });
+      return;
+    }
+    const sseBranchId = String(req.query?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+    if (!assertBranchAccess(actor.user, sseBranchId)) {
+      res.status(403).json({
+        success: false,
+        code: 'BRANCH_FORBIDDEN_403',
+        error: 'غير مصرح بالاشتراك في بث فرع آخر.',
+      });
+      return;
+    }
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
 
+    const meta: RealtimeClientMeta = {
+      user: actor.user,
+      branchId: sseBranchId,
+      isSuperAdmin: isUserSuperAdmin(actor.user),
+    };
     sseClients.add(res);
-    const sseBranchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
+    sseClientMeta.set(res, meta);
 
-    // Push fresh PostgreSQL state immediately upon SSE stream subscription
     buildLiveSnapshotFromPostgres(sseBranchId, {
       clientId: 'postgres-sse-init',
       sqlOperation: 'SELECT',
@@ -1458,12 +2201,18 @@ async function startServer() {
       .then(({ snapshot }) => {
         if (!res.writableEnded) {
           res.write(
-            `data: ${JSON.stringify({
-              type: 'init',
-              timestamp: snapshot.timestamp,
-              snapshot,
-              alertsState: cachedAlertsState,
-            })}\n\n`
+            `data: ${JSON.stringify(
+              sanitizeBroadcastPayload(
+                {
+                  type: 'init',
+                  branchId: sseBranchId,
+                  timestamp: snapshot.timestamp,
+                  snapshot,
+                  alertsState: cachedAlertsState,
+                },
+                meta
+              )
+            )}\n\n`
           );
         }
       })
@@ -1475,26 +2224,43 @@ async function startServer() {
       } catch {
         clearInterval(keepAliveTimer);
         sseClients.delete(res);
+        sseClientMeta.delete(res);
       }
     }, 20000);
 
     req.on('close', () => {
       clearInterval(keepAliveTimer);
       sseClients.delete(res);
+      sseClientMeta.delete(res);
     });
   });
 
   // Diagnostic real-time broadcast pulse endpoint
-  app.post('/api/supabase/diagnostic-ping', (req, res) => {
+  app.post('/api/supabase/diagnostic-ping', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user) {
+      res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+        success: false,
+        requiresAuth: true,
+        error: 'يتطلب فحص البث التشخيصي جلسة دخول صالحة.',
+      });
+      return;
+    }
     const body = req.body || {};
+    const targetBranch = String(body.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+    if (!assertBranchAccess(actor.user, targetBranch)) {
+      res.status(403).json({ success: false, error: 'غير مصرح ببث اختبار على فرع آخر.' });
+      return;
+    }
     const payload = {
       type: 'diagnostic_pong',
-      pingId: body.pingId || `ping-${Date.now()}`,
-      clientId: body.clientId || '',
-      sentAt: body.sentAt || Date.now(),
-      sqlOperation: body.sqlOperation || undefined,
-      affectedTable: body.affectedTable || undefined,
-      note: body.note || 'نبضة اختبار تشخيصية عبر Realtime',
+      branchId: targetBranch,
+      pingId: String(body.pingId || `ping-${Date.now()}`),
+      clientId: String(body.clientId || ''),
+      sentAt: Number(body.sentAt) || Date.now(),
+      sqlOperation: body.sqlOperation ? String(body.sqlOperation) : undefined,
+      affectedTable: body.affectedTable ? String(body.affectedTable) : undefined,
+      note: String(body.note || 'نبضة اختبار تشخيصية عبر Realtime'),
       wsClients: wss.clients.size,
       sseClients: sseClients.size,
       wsClientsCount: wss.clients.size,
@@ -1517,18 +2283,11 @@ async function startServer() {
         new Promise((resolve) => setTimeout(resolve, 2500)),
       ]);
       const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
-      const boot = await getBootstrapFromPostgres(branchId);
       const actor = await resolveAuthenticatedActor(req);
 
       if (!actor.authenticated || !actor.user) {
-        const publicConfig = boot.systemConfig
-          ? {
-              ...boot.systemConfig,
-              vaultUsername: '',
-              vaultPasscode: '',
-              branchVaultCredentials: undefined,
-            }
-          : null;
+        const boot = await getBootstrapFromPostgres(branchId);
+        const publicConfig = sanitizeSystemConfigForClient(boot.systemConfig) || null;
         res.json({
           success: true,
           requiresAuth: true,
@@ -1553,6 +2312,20 @@ async function startServer() {
       }
 
       const actorUser = actor.user;
+      if (!assertBranchAccess(actorUser, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actorUser,
+          403,
+          'branches',
+          'BOOTSTRAP_CROSS_BRANCH',
+          `تم رفض محاولة قراءة بيانات فرع (${branchId}) خارج صلاحية المستخدم (${actorUser.username}).`
+        );
+        return;
+      }
+
+      const boot = await getBootstrapFromPostgres(branchId);
       const isSuper = isUserSuperAdmin(actorUser);
       const canSeeBakeries =
         isSuper ||
@@ -1570,6 +2343,7 @@ async function startServer() {
         revision: liveRevision,
         timestamp: new Date().toISOString(),
         ...boot,
+        systemConfig: sanitizeSystemConfigForClient(boot.systemConfig),
         bakeries: canSeeBakeries ? boot.bakeries : [],
         debts: canSeeDebts ? boot.debts : [],
         highDebtAlerts: canSeeDebts ? boot.highDebtAlerts : [],
@@ -1598,6 +2372,18 @@ async function startServer() {
 
       const body = req.body || {};
       const branchId = String(body.branchId || body.data?.activeBranchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'BATCH_SYNC_CROSS_BRANCH',
+          `تم رفض المزامنة الجماعية للفرع (${branchId}) خارج نطاق صلاحية المستخدم (${actor.user.username}).`
+        );
+        return;
+      }
       const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
       const pruneRemoved = Boolean(body.pruneRemoved);
       const rawStateData = body.data || body;
@@ -1710,10 +2496,22 @@ async function startServer() {
 
   app.post('/api/db/silent-backup', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+          success: false,
+          error: 'النسخ الاحتياطي التلقائي يتطلب مصادقة صالحة.',
+        });
+        return;
+      }
       const body = req.body || {};
-      const branchId = String(body.branchId || DEFAULT_BRANCH_ID);
-      const oauthToken = String(req.headers['x-google-oauth-token'] || body.oauthToken || '');
-      const snapshotToSave = cachedLiveSnapshot || body.snapshot || {};
+      const branchId = String(body.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, branchId)) {
+        res.status(403).json({ success: false, error: 'غير مصرح بالنسخ الاحتياطي لفرع آخر.' });
+        return;
+      }
+      const oauthToken = String(req.headers['x-google-oauth-token'] || '');
+      const snapshotToSave = cachedLiveSnapshot || (await buildLiveSnapshotFromPostgres(branchId)).snapshot;
       scheduleSilentRealtimeServerBackup(snapshotToSave, {
         branchId,
         sqlOperation: String(body.operation || 'UPSERT'),
@@ -1725,7 +2523,7 @@ async function startServer() {
         timestamp: new Date().toISOString(),
       });
     } catch {
-      res.json({ success: true });
+      res.status(500).json({ success: false, error: 'فشل جدولة النسخة الاحتياطية.' });
     }
   });
 
@@ -1742,6 +2540,13 @@ async function startServer() {
           'RESET_NON_MAHALLA_BRANCHES',
           'محاولة غير مصرح بها لإعادة تعيين الإدارات غير الرئيسية (مقصور على Super Admin فقط).'
         );
+        return;
+      }
+      if (req.body?.confirmReset !== true) {
+        res.status(400).json({
+          success: false,
+          error: 'يلزم إرسال confirmReset: true لتأكيد إعادة تعيين الإدارات غير الرئيسية.',
+        });
         return;
       }
       const result = await resetNonMahallaBranchesInPostgres(actor.user.username);
@@ -1771,6 +2576,326 @@ async function startServer() {
     }
   });
 
+  app.put('/api/branches/:id/departments', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      const canManageDepts = Boolean(
+        actor.authenticated &&
+          actor.user &&
+          (isUserSuperAdmin(actor.user) || hasPermission(actor.user, 'MANAGE_DEPARTMENTS'))
+      );
+      if (!actor.authenticated || !actor.user || !canManageDepts) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'branches',
+          'UPDATE_BRANCH_DEPARTMENTS',
+          'إدارة الأقسام داخل الفرع مقصورة على مدير عام النظام أو المخوّل بصلاحية إدارة الأقسام فقط.'
+        );
+        return;
+      }
+      const branchId = String(req.params.id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'UPDATE_BRANCH_DEPARTMENTS_CROSS_BRANCH',
+          `غير مصرح بتعديل أقسام فرع آخر (${branchId}).`
+        );
+        return;
+      }
+      const departments = req.body?.departments;
+      if (!Array.isArray(departments)) {
+        res.status(400).json({ success: false, error: 'قائمة الأقسام (departments) غير صالحة.' });
+        return;
+      }
+      const updated = await updateBranchDepartmentsInPostgres(branchId, departments, actor.user.username);
+      liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(branchId, {
+        clientId: actor.user.username,
+        sqlOperation: 'UPDATE_BRANCH_DEPARTMENTS',
+        affectedTable: 'system_config',
+      });
+      broadcastWs({
+        type: 'branch_departments_updated',
+        branchId,
+        departments: updated,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({
+        success: true,
+        branchId,
+        departments: updated,
+        revision: liveRevision,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل تحديث أقسام الفرع.' });
+    }
+  });
+
+  app.post('/api/branches/:id/reset-section', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      const canResetSection = Boolean(
+        actor.authenticated &&
+          actor.user &&
+          (isUserSuperAdmin(actor.user) || hasPermission(actor.user, 'FACTORY_RESET_SECTION'))
+      );
+      if (!actor.authenticated || !actor.user || !canResetSection) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'branches',
+          'SECTION_FACTORY_RESET',
+          'استعادة ضبط المصنع لبيانات القسم أو القرية مقصورة على مدير عام النظام أو المخوّل بصلاحية إعادة الضبط فقط.'
+        );
+        return;
+      }
+      if (req.body?.confirmReset !== true) {
+        res.status(400).json({
+          success: false,
+          error: 'يلزم تأكيد عملية استعادة ضبط المصنع (confirmReset: true).',
+        });
+        return;
+      }
+      const branchId = String(req.params.id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'SECTION_FACTORY_RESET_CROSS_BRANCH',
+          `غير مصرح بإعادة ضبط قسم داخل فرع آخر (${branchId}).`
+        );
+        return;
+      }
+      const sectionKey = String(req.body?.sectionKey || '') as ResettableSectionKey;
+      const allowedSections = new Set<ResettableSectionKey>([
+        'bakeries',
+        'debts',
+        'commodities',
+        'internal_trade',
+        'grain_maintenance',
+        'hr',
+        'village',
+      ]);
+      if (!allowedSections.has(sectionKey)) {
+        res.status(400).json({ success: false, error: 'اسم القسم المطلوب غير صالح.' });
+        return;
+      }
+      const villageName = req.body?.villageName ? String(req.body.villageName).trim() : undefined;
+      if (sectionKey === 'village' && !villageName) {
+        res.status(400).json({ success: false, error: 'يرجى تحديد اسم القرية المطلوب تصفير بياناتها.' });
+        return;
+      }
+
+      const result = await resetBranchSectionInPostgres({
+        branchId,
+        sectionKey,
+        villageName,
+        actorUsername: actor.user.username,
+      });
+      cachedBranchModules.delete(`${branchId}::all_modules`);
+      liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(branchId, {
+        clientId: actor.user.username,
+        sqlOperation: 'SECTION_FACTORY_RESET',
+        affectedTable: sectionKey,
+      });
+      broadcastWs({
+        type: 'branch_section_reset',
+        branchId,
+        sectionKey,
+        villageName,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({
+        ...result,
+        branchId,
+        sectionKey,
+        villageName,
+        revision: liveRevision,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل تنفيذ استعادة ضبط المصنع للقسم.' });
+    }
+  });
+
+  // تصفير جميع بيانات الفرع التشغيلية بتأكيد مزدوج مع الإبقاء التام على الأقسام والمستخدمين والإعدادات
+  app.post('/api/branches/:id/reset-branch', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      const canResetBranch = Boolean(
+        actor.authenticated &&
+          actor.user &&
+          (isUserSuperAdmin(actor.user) || hasPermission(actor.user, 'FACTORY_RESET_BRANCH'))
+      );
+      if (!actor.authenticated || !actor.user || !canResetBranch) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'branches',
+          'BRANCH_FACTORY_RESET',
+          'تصفير جميع بيانات الفرع مقصور على مدير عام النظام أو المخوّل بصلاحية تصفير الفرع فقط.'
+        );
+        return;
+      }
+      if (req.body?.confirmReset !== true || req.body?.confirmDouble !== true) {
+        res.status(400).json({
+          success: false,
+          error: 'يلزم إرسال التأكيد المزدوج (confirmReset: true و confirmDouble: true) لتصفير جميع بيانات الفرع.',
+        });
+        return;
+      }
+      const branchId = String(req.params.id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'BRANCH_FACTORY_RESET_CROSS_BRANCH',
+          `غير مصرح بتصفير بيانات فرع آخر (${branchId}).`
+        );
+        return;
+      }
+
+      // تصفير جميع الأقسام التشغيلية داخل الفرع مع الإبقاء التام على هيكل الأقسام والمستخدمين والإعدادات
+      const sectionsToReset: ResettableSectionKey[] = [
+        'bakeries',
+        'debts',
+        'commodities',
+        'internal_trade',
+        'grain_maintenance',
+        'hr',
+      ];
+      const aggregatedDeleted: Record<string, number> = { bakeries: 0, debts: 0 };
+      for (const sec of sectionsToReset) {
+        const secRes = await resetBranchSectionInPostgres({
+          branchId,
+          sectionKey: sec,
+          actorUsername: actor.user.username,
+        });
+        if (secRes?.deletedCounts) {
+          aggregatedDeleted.bakeries += Number(secRes.deletedCounts.bakeries || 0);
+          aggregatedDeleted.debts += Number(secRes.deletedCounts.debts || 0);
+        }
+      }
+      cachedBranchModules.delete(`${branchId}::all_modules`);
+      await recordAuditLog(
+        actor.user.username,
+        'BRANCH_FACTORY_RESET',
+        `تصفير جميع البيانات التشغيلية للفرع (${branchId}) بتأكيد مزدوج مع الإبقاء التام على الأقسام والمستخدمين والإعدادات.`,
+        getClientIp(req),
+        branchId,
+        {
+          username: actor.user.username,
+          department: 'branches',
+          operation: 'BRANCH_FACTORY_RESET',
+          recordId: branchId,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+
+      liveRevision += 1;
+      await refreshCachedSnapshotFromPostgres(branchId, {
+        clientId: actor.user.username,
+        sqlOperation: 'BRANCH_FACTORY_RESET',
+        affectedTable: 'branches',
+      });
+      broadcastWs({
+        type: 'branch_factory_reset',
+        branchId,
+        deletedCounts: aggregatedDeleted,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+      res.json({
+        success: true,
+        branchId,
+        deletedCounts: aggregatedDeleted,
+        revision: liveRevision,
+        message: 'تم تصفير جميع البيانات التشغيلية للفرع بنجاح مع الإبقاء التام على الأقسام والمستخدمين والإعدادات.',
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'فشل تصفير بيانات الفرع.' });
+    }
+  });
+
+  // استعلامات COUNT المحسّنة لشارات الأقسام في القائمة الجانبية (مستقلة لكل فرع وتستبعد المحذوف وغير النشط مع فترة شهر/سنة)
+  app.get('/api/db/counts', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(401).json({ success: false, error: 'المصادقة مطلوبة لجلب عدادات الأقسام.' });
+        return;
+      }
+      const branchId = String(req.query?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        res.status(403).json({ success: false, error: 'غير مصرح بالوصول لعدادات هذا الفرع.' });
+        return;
+      }
+      const rawMonth = String(req.query?.month || 'ALL').trim();
+      const rawYear = String(req.query?.year || 'ALL').trim();
+      const periodMonth: number | 'ALL' =
+        rawMonth !== 'ALL' && Number.isFinite(Number(rawMonth)) && Number(rawMonth) >= 1 && Number(rawMonth) <= 12
+          ? Number(rawMonth)
+          : 'ALL';
+      const periodYear: number | 'ALL' =
+        rawYear !== 'ALL' && Number.isFinite(Number(rawYear)) && Number(rawYear) >= 2000 && Number(rawYear) <= 2100
+          ? Number(rawYear)
+          : 'ALL';
+
+      const [pgBoot, modState] = await Promise.all([
+        getBootstrapFromPostgres(branchId),
+        getBranchModuleStateFromPostgres(branchId, 'all_modules').catch(() => ({ exists: false, payload: null })),
+      ]);
+
+      const uname = actor.user.username || 'admin';
+      const unreadInboxCount = (pgBoot.inboxMessages || []).filter(
+        (m: any) => !m.readBy || !m.readBy.includes(uname)
+      ).length;
+      const pendingTasksCount = (pgBoot.dailyTasks || []).filter((t: any) => t.status !== 'completed').length;
+      const largeDebtsCount = (pgBoot.debts || []).filter((d: any) => (Number(d.netRemainingDebt) || 0) > 20000).length;
+
+      const counts = computeBranchSidebarCounts({
+        bakeries: pgBoot.bakeries || [],
+        debts: pgBoot.debts || [],
+        alertsCount: (pgBoot.highDebtAlerts || []).filter((a: any) => !a.isRead).length,
+        largeDebtsCount,
+        unreadInboxCount,
+        pendingTasksCount,
+        modulesBundle: modState.exists ? (modState.payload as any) : null,
+        periodMonth,
+        periodYear,
+      });
+
+      res.json({
+        success: true,
+        branchId,
+        counts,
+        revision: liveRevision,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'تعذر حساب عدادات الأقسام.' });
+    }
+  });
+
   app.post('/api/db/purge', async (req, res) => {
     try {
       const actor = await resolveAuthenticatedActor(req);
@@ -1784,6 +2909,13 @@ async function startServer() {
           'PURGE_ALL',
           'محاولة مسح شامل مرفوضة: يتطلب صلاحية Super Admin.'
         );
+        return;
+      }
+      if (req.body?.confirmPurge !== true) {
+        res.status(400).json({
+          success: false,
+          error: 'يلزم إرسال confirmPurge: true لتنفيذ المسح الشامل.',
+        });
         return;
       }
       const clientId = String(req.headers['x-tamween-client-id'] || req.body?.clientId || '');
@@ -1813,15 +2945,41 @@ async function startServer() {
     }
   });
 
-  app.get('/api/db/legacy-migration-status', (_req, res) => {
+  app.get('/api/db/legacy-migration-status', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.authenticated ? 403 : 401,
+        'system',
+        'LEGACY_MIGRATION_STATUS',
+        'الاطلاع على حالة ترحيل الملفات مقتصر على مدير النظام فقط.'
+      );
+      return;
+    }
     res.json({
       success: true,
       report: lastLegacyMigrationReport,
     });
   });
 
-  app.post('/api/db/migrate-verify-legacy', async (_req, res) => {
+  app.post('/api/db/migrate-verify-legacy', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'system',
+          'LEGACY_MIGRATION_TRIGGER',
+          'تشغيل ترحيل الملفات مقتصر على مدير النظام فقط.'
+        );
+        return;
+      }
       const report = await migrateAndVerifyLegacyJsonFilesToPostgres();
       await refreshCachedSnapshotFromPostgres(DEFAULT_BRANCH_ID, {
         clientId: 'legacy-migrator',
@@ -2035,8 +3193,23 @@ async function startServer() {
         );
         return;
       }
+      const targetBranchId = String(
+        req.query?.branchId || (table === 'audit_logs' ? 'ALL' : actor.user.branchId || DEFAULT_BRANCH_ID)
+      );
+      if (targetBranchId !== 'ALL' && !assertBranchAccess(actor.user, targetBranchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          table,
+          'VIEW_CROSS_BRANCH',
+          `محاولة عرض جدول (${table}) لفرع غير مصرح به (${targetBranchId}).`
+        );
+        return;
+      }
       const result = await queryTablePaginated(table, {
-        branchId: String(req.query?.branchId || (table === 'audit_logs' ? 'ALL' : DEFAULT_BRANCH_ID)),
+        branchId: targetBranchId,
         search: req.query?.search ? String(req.query.search) : undefined,
         village: req.query?.village ? String(req.query.village) : undefined,
         localUnit: req.query?.localUnit ? String(req.query.localUnit) : undefined,
@@ -2050,7 +3223,12 @@ async function startServer() {
       res.json({
         success: true,
         ...result,
-        rows: table === 'app_users' ? sanitizeUsersForClient(result.rows) : result.rows,
+        rows:
+          table === 'app_users'
+            ? sanitizeUsersForClient(result.rows)
+            : table === 'system_config'
+            ? result.rows.map((r: any) => sanitizeSystemConfigForClient(r))
+            : result.rows,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message });
@@ -2100,7 +3278,48 @@ async function startServer() {
         );
         return;
       }
-      const branchId = String(body.branchId || rowPayload?.branchId || DEFAULT_BRANCH_ID);
+      const branchId = String(body.branchId || rowPayload?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          table,
+          'WRITE_CROSS_BRANCH',
+          `محاولة تعديل (${table}) لفرع غير مصرح به (${branchId}).`
+        );
+        return;
+      }
+      if (table === 'app_users') {
+        const targetIsSuper =
+          String(rowPayload?.role || '') === 'super_admin' ||
+          rowPayload?.isSuperAdmin === true ||
+          rowPayload?.is_super_admin === true;
+        if (targetIsSuper && !isUserSuperAdmin(actor.user)) {
+          await denyUnauthorizedAndAudit(
+            req,
+            res,
+            actor.user,
+            403,
+            'app_users',
+            'GRANT_SUPER_ADMIN_DENIED',
+            `محاولة إنشاء حساب بصلاحية مدير عام النظام (Super Admin) بدون تفويض بواسطة (${actor.user.username}).`
+          );
+          return;
+        }
+        if (
+          typeof rowPayload?.password === 'string' &&
+          rowPayload.password.trim() &&
+          rowPayload.password.trim() !== '••••••••'
+        ) {
+          const complexity = validatePasswordComplexity(rowPayload.password);
+          if (!complexity.valid) {
+            res.status(400).json({ success: false, error: complexity.error });
+            return;
+          }
+        }
+      }
       const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
       const expectedVersion =
         typeof body.expectedVersion === 'number'
@@ -2123,6 +3342,18 @@ async function startServer() {
       if (!result.success) {
         res.status(400).json({ success: false, error: result.error });
         return;
+      }
+
+      if (table === 'app_users' && result.row?.id) {
+        if (
+          rowPayload?.isActive === false ||
+          (typeof rowPayload?.password === 'string' &&
+            rowPayload.password.trim() &&
+            rowPayload.password.trim() !== '••••••••') ||
+          typeof rowPayload?.role === 'string'
+        ) {
+          revokeAllUserTokens(String(result.row.id));
+        }
       }
 
       await recordAuditLog(
@@ -2180,6 +3411,14 @@ async function startServer() {
         res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
         return;
       }
+      if (table === 'audit_logs') {
+        res.status(403).json({
+          success: false,
+          blocked: true,
+          error: 'يُحظر تعديل سجلات التدقيق.',
+        });
+        return;
+      }
       const actor = await resolveAuthenticatedActor(req);
       if (!actor.authenticated || !actor.user) {
         await denyUnauthorizedAndAudit(
@@ -2207,7 +3446,44 @@ async function startServer() {
       }
       const body = req.body || {};
       const rowPayload = { ...(body.row || body), id: req.params.id };
-      const branchId = String(body.branchId || rowPayload?.branchId || DEFAULT_BRANCH_ID);
+      const branchId = String(body.branchId || rowPayload?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          table,
+          'UPDATE_CROSS_BRANCH',
+          `محاولة تعديل (${table}/${req.params.id}) لفرع غير مصرح به (${branchId}).`
+        );
+        return;
+      }
+      if (table === 'app_users') {
+        if ((rowPayload?.role === 'super_admin' || rowPayload?.isSuperAdmin === true) && !isUserSuperAdmin(actor.user)) {
+          await denyUnauthorizedAndAudit(
+            req,
+            res,
+            actor.user,
+            403,
+            'users',
+            'GRANT_SUPER_ADMIN',
+            'لا يُسمح بمنح صلاحية Super Admin إلا بواسطة مدير عام النظام المخوّل فقط.'
+          );
+          return;
+        }
+        if (
+          typeof rowPayload?.password === 'string' &&
+          rowPayload.password.trim() &&
+          rowPayload.password.trim() !== '••••••••'
+        ) {
+          const complexity = validatePasswordComplexity(rowPayload.password);
+          if (!complexity.valid) {
+            res.status(400).json({ success: false, error: complexity.error });
+            return;
+          }
+        }
+      }
       const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
       const expectedVersion =
         typeof body.expectedVersion === 'number'
@@ -2230,6 +3506,18 @@ async function startServer() {
       if (!result.success) {
         res.status(400).json({ success: false, error: result.error });
         return;
+      }
+
+      if (table === 'app_users') {
+        if (
+          rowPayload?.isActive === false ||
+          (typeof rowPayload?.password === 'string' &&
+            rowPayload.password.trim() &&
+            rowPayload.password.trim() !== '••••••••') ||
+          typeof rowPayload?.role === 'string'
+        ) {
+          revokeAllUserTokens(String(req.params.id));
+        }
       }
 
       await recordAuditLog(
@@ -2287,6 +3575,14 @@ async function startServer() {
         res.status(400).json({ success: false, error: 'اسم الجدول غير صالح.' });
         return;
       }
+      if (table === 'audit_logs') {
+        res.status(403).json({
+          success: false,
+          blocked: true,
+          error: 'سجل المراجعة محمي بشكل صارم ضد التعديل والحذف (Immutable Audit Log).',
+        });
+        return;
+      }
       const actor = await resolveAuthenticatedActor(req);
       if (!actor.authenticated || !actor.user) {
         await denyUnauthorizedAndAudit(
@@ -2312,12 +3608,28 @@ async function startServer() {
         );
         return;
       }
-      const branchId = req.query?.branchId ? String(req.query.branchId) : undefined;
+      const branchId = req.query?.branchId ? String(req.query.branchId) : actor.user.branchId || DEFAULT_BRANCH_ID;
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          table,
+          'DELETE_CROSS_BRANCH',
+          `محاولة حذف (${table}/${req.params.id}) لفرع غير مصرح به (${branchId}).`
+        );
+        return;
+      }
       const clientId = String(req.query?.clientId || req.headers['x-tamween-client-id'] || '');
       const delRes = await deleteRowInPostgres(table, req.params.id, branchId);
       if (!delRes.success) {
         res.status(400).json({ success: false, error: delRes.error });
         return;
+      }
+
+      if (table === 'app_users') {
+        revokeAllUserTokens(String(req.params.id));
       }
 
       const effectiveBranchId =
@@ -2384,7 +3696,19 @@ async function startServer() {
         });
         return;
       }
-      const requestedBranchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
+      const requestedBranchId = String(req.query?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, requestedBranchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'LIVE_DB_CROSS_BRANCH',
+          `محاولة الوصول لفرع (${requestedBranchId}) خارج نطاق صلاحية المستخدم.`
+        );
+        return;
+      }
       const { pgBoot, snapshot } = await buildLiveSnapshotFromPostgres(requestedBranchId, {
         clientId: 'postgres-live',
         sqlOperation: 'SELECT',
@@ -2395,6 +3719,7 @@ async function startServer() {
         ...snapshot,
         data: {
           ...snapshot.data,
+          systemConfig: sanitizeSystemConfigForClient(snapshot.data.systemConfig),
           bakeries:
             isSuper ||
             hasDepartmentPermission(actor.user, 'bakeries', 'view') ||
@@ -2454,22 +3779,44 @@ async function startServer() {
       }
       const body = req.body || {};
       const incomingStateData = { ...(body.data || body) };
+      const targetBranchId = String(incomingStateData?.activeBranchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, targetBranchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'branches',
+          'LIVE_DB_SYNC_CROSS_BRANCH',
+          `محاولة مزامنة فرع غير مصرح به (${targetBranchId}).`
+        );
+        return;
+      }
       const isSuper = isUserSuperAdmin(actor.user);
       if (!isSuper) {
         delete incomingStateData.users;
         delete incomingStateData.branches;
         delete incomingStateData.systemConfig;
+        if (
+          !hasDepartmentPermission(actor.user, 'bakeries', 'update') &&
+          !hasDepartmentPermission(actor.user, 'bakeries', 'insert')
+        ) {
+          delete incomingStateData.bakeries;
+        }
+        if (
+          !hasDepartmentPermission(actor.user, 'debts', 'update') &&
+          !hasDepartmentPermission(actor.user, 'debts', 'insert')
+        ) {
+          delete incomingStateData.debts;
+        }
       }
-      const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'http');
-      const hasSecurityToken =
-        req.headers['x-tamween-security-token'] === API_SECURITY_SHIELD_TOKEN;
+      const clientIp = getClientIp(req);
       const { safeData, wipePrevented } = guardDatabaseAgainstWipe(
         cachedLiveSnapshot?.data,
         incomingStateData,
         clientIp,
-        hasSecurityToken
+        isSuper
       );
-      const targetBranchId = String(safeData?.activeBranchId || DEFAULT_BRANCH_ID);
       if (isSuper && safeData?.branchPartitions && typeof safeData.branchPartitions === 'object') {
         for (const [partBranchId, partData] of Object.entries(safeData.branchPartitions)) {
           if (partBranchId === targetBranchId) continue;
@@ -2487,7 +3834,7 @@ async function startServer() {
         }
       }
       await syncFullBranchStateToPostgres(targetBranchId, safeData, {
-        pruneRemoved: isSuper && hasSecurityToken,
+        pruneRemoved: isSuper && Boolean(body.pruneRemoved),
       });
 
       const timestamp = body.timestamp || new Date().toISOString();
@@ -2499,6 +3846,9 @@ async function startServer() {
       const safeForSnapshot = {
         ...safeData,
         users: sanitizeUsersForClient(safeData?.users),
+        ...(safeData?.systemConfig
+          ? { systemConfig: sanitizeSystemConfigForClient(safeData.systemConfig) }
+          : {}),
       };
       const integrityHash = computeDatabaseIntegrityHash(safeForSnapshot);
       const snapshot = {
@@ -2518,6 +3868,7 @@ async function startServer() {
       cachedLiveSnapshot = snapshot;
       broadcastWs({
         type: 'state_update',
+        branchId: targetBranchId,
         clientId,
         timestamp,
         revision: liveRevision,
@@ -2554,14 +3905,69 @@ async function startServer() {
         );
         return;
       }
-      const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'http');
+      if (req.body?.confirmPurge !== true && req.query?.confirmPurge !== 'true') {
+        res.status(400).json({
+          success: false,
+          error: 'يلزم تأكيد صريح (confirmPurge: true) لمسح قاعدة البيانات بالكامل.',
+        });
+        return;
+      }
+      const clientIp = getClientIp(req);
       const clientId = String(req.headers['x-tamween-client-id'] || req.query?.clientId || '');
+      const targetBranchId = String(req.query?.branchId || req.body?.branchId || '').trim();
       const timestamp = new Date().toISOString();
       liveRevision += 1;
 
+      if (targetBranchId) {
+        // Branch-scoped factory reset: purge ONLY the active branch's records without touching any other branch!
+        const existingSnap = cachedLiveSnapshot as Record<string, any> | null;
+        if (existingSnap && typeof existingSnap === 'object') {
+          if (existingSnap.branchPartitions && typeof existingSnap.branchPartitions === 'object') {
+            delete existingSnap.branchPartitions[targetBranchId];
+          }
+          if (existingSnap.activeBranchId === targetBranchId || targetBranchId === DEFAULT_BRANCH_ID) {
+            existingSnap.bakeries = [];
+            existingSnap.debts = [];
+            existingSnap.dailyTasks = [];
+            existingSnap.inboxMessages = [];
+          }
+          existingSnap.updatedAt = timestamp;
+        }
+        cachedBranchModules.delete(`${targetBranchId}::all_modules`);
+
+        recordSecurityAudit({
+          ip: clientIp,
+          method: 'DELETE',
+          path: '/api/supabase/live-db',
+          threatType: 'AUTHORIZED_BRANCH_FACTORY_RESET',
+          actionTaken: 'VERIFIED',
+          detail: `تم تنفيذ إعادة ضبط المصنع للفرع (${targetBranchId}) فقط دون المساس بباقي الفروع`,
+        });
+
+        broadcastWs({
+          type: 'branch_state_cleared',
+          branchId: targetBranchId,
+          clientId,
+          timestamp,
+          revision: liveRevision,
+          sqlOperation: 'DELETE',
+          affectedTable: 'bakeries',
+          cleared: true,
+        });
+
+        res.json({
+          success: true,
+          cleared: true,
+          branchId: targetBranchId,
+          revision: liveRevision,
+          timestamp,
+          message: `تم مسح بيانات الفرع (${targetBranchId}) وإعادة ضبط المصنع بنجاح دون المساس بباقي الفروع.`,
+        });
+        return;
+      }
+
       await purgeAllPostgresData().catch(() => {});
 
-      // Perform a complete purge of all server-side database files and in-memory snapshots
       cachedLiveSnapshot = null;
       cachedAlertsState = {
         alerts: [],
@@ -2624,7 +4030,27 @@ async function startServer() {
   // High-Debt Alerts Supabase Realtime Sync endpoints
   app.get('/api/supabase/alerts', async (req, res) => {
     try {
-      const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(actor.reason === 'USER_SUSPENDED' ? 403 : 401).json({
+          success: false,
+          error: 'يتطلب عرض تنبيهات المديونيات مصادقة صالحة.',
+        });
+        return;
+      }
+      if (
+        !isUserSuperAdmin(actor.user) &&
+        !hasDepartmentPermission(actor.user, 'debts', 'view') &&
+        !hasDepartmentPermission(actor.user, 'reports', 'view')
+      ) {
+        res.status(403).json({ success: false, error: 'لا تملك صلاحية عرض تنبيهات المديونيات.' });
+        return;
+      }
+      const branchId = String(req.query?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, branchId)) {
+        res.status(403).json({ success: false, error: 'غير مصرح بالوصول لتنبيهات فرع آخر.' });
+        return;
+      }
       const pgBoot = await getBootstrapFromPostgres(branchId);
       res.json({
         success: true,
@@ -2635,22 +4061,52 @@ async function startServer() {
         clientId: cachedAlertsState.clientId,
       });
     } catch {
-      res.json({
-        success: true,
-        ...cachedAlertsState,
-      });
+      res.status(500).json({ success: false, error: 'تعذر تحميل تنبيهات المديونيات.' });
     }
   });
 
   app.post('/api/supabase/alerts', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          'debts',
+          'ALERTS_UPDATE',
+          'تحديث تنبيهات المديونيات يتطلب مصادقة صالحة.'
+        );
+        return;
+      }
+      if (
+        !isUserSuperAdmin(actor.user) &&
+        !hasDepartmentPermission(actor.user, 'debts', 'update') &&
+        !hasDepartmentPermission(actor.user, 'debts', 'insert')
+      ) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'debts',
+          'ALERTS_UPDATE',
+          'لا تملك صلاحية تعديل تنبيهات المديونيات.'
+        );
+        return;
+      }
       const body = req.body || {};
+      const branchId = String(body.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, branchId)) {
+        res.status(403).json({ success: false, error: 'غير مصرح بتحديث تنبيهات فرع آخر.' });
+        return;
+      }
       const alerts = Array.isArray(body.alerts) ? body.alerts : cachedAlertsState.alerts;
       const debtAlertThreshold =
         typeof body.debtAlertThreshold === 'number' && body.debtAlertThreshold > 0
           ? body.debtAlertThreshold
           : cachedAlertsState.debtAlertThreshold;
-      const branchId = String(body.branchId || DEFAULT_BRANCH_ID);
       await syncHighDebtAlertsToPostgres(branchId, alerts, debtAlertThreshold);
 
       const timestamp = body.timestamp || new Date().toISOString();
@@ -2664,6 +4120,7 @@ async function startServer() {
       };
       broadcastWs({
         type: 'alerts_update',
+        branchId,
         clientId,
         timestamp,
         alerts,
@@ -2678,6 +4135,19 @@ async function startServer() {
 
   app.delete('/api/supabase/alerts', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'debts',
+          'ALERTS_DELETE',
+          'مسح تنبيهات المديونيات مقتصر على مدير النظام فقط.'
+        );
+        return;
+      }
       const clientId = String(req.query?.clientId || '');
       const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
       const threshold = Number(req.query?.threshold) || cachedAlertsState.debtAlertThreshold || 50000;
@@ -2693,6 +4163,7 @@ async function startServer() {
       };
       broadcastWs({
         type: 'alerts_update',
+        branchId,
         clientId,
         timestamp,
         alerts: [],
@@ -2710,9 +4181,38 @@ async function startServer() {
   // =========================================================================
   app.get('/api/storage/files', async (req, res) => {
     try {
-      const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
-      const fileName = req.query?.fileName ? String(req.query.fileName) : '';
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          'storage',
+          'VIEW',
+          'الوصول إلى ملفات التخزين السحابي يتطلب مصادقة صالحة.'
+        );
+        return;
+      }
+      const branchId = String(req.query?.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'storage',
+          'VIEW_CROSS_BRANCH',
+          `محاولة الوصول لملفات فرع غير مصرح به (${branchId}).`
+        );
+        return;
+      }
+      const fileName = req.query?.fileName ? String(req.query.fileName).trim() : '';
       if (fileName) {
+        if (fileName.includes('..') || !SAFE_STORAGE_FILENAME_REGEX.test(fileName)) {
+          res.status(400).json({ success: false, error: 'اسم الملف غير صالح.' });
+          return;
+        }
         const file = await getStorageFileFromPostgres(fileName, branchId);
         if (!file) {
           res.status(404).json({ success: false, error: 'الملف غير موجود في التخزين السحابي.' });
@@ -2730,18 +4230,53 @@ async function startServer() {
 
   app.post('/api/storage/files', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.reason === 'USER_SUSPENDED' ? 403 : 401,
+          'storage',
+          'UPLOAD',
+          'رفع الملفات للتخزين السحابي يتطلب مصادقة صالحة.'
+        );
+        return;
+      }
       const body = req.body || {};
+      const branchId = String(body.branchId || actor.user.branchId || DEFAULT_BRANCH_ID);
+      if (!assertBranchAccess(actor.user, branchId)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          403,
+          'storage',
+          'UPLOAD_CROSS_BRANCH',
+          `محاولة رفع ملف لفرع غير مصرح به (${branchId}).`
+        );
+        return;
+      }
       const fileName = String(body.fileName || '').trim();
+      const contentType = String(body.contentType || 'application/json').trim().toLowerCase();
       const content = typeof body.content === 'string' ? body.content : JSON.stringify(body.content ?? '');
-      if (!fileName) {
-        res.status(400).json({ success: false, error: 'يرجى تحديد اسم الملف (fileName).' });
+      if (!fileName || fileName.includes('..') || !SAFE_STORAGE_FILENAME_REGEX.test(fileName)) {
+        res.status(400).json({ success: false, error: 'اسم الملف غير صالح أو يحتوي على رموز محظورة.' });
+        return;
+      }
+      if (!ALLOWED_STORAGE_MIME_TYPES.has(contentType)) {
+        res.status(400).json({ success: false, error: 'نوع الملف (MIME Type) غير مسموح به.' });
+        return;
+      }
+      if (Buffer.byteLength(content, 'utf8') > MAX_STORAGE_FILE_BYTES) {
+        res.status(413).json({ success: false, error: 'حجم الملف يتجاوز الحد الأقصى المسموح (5MB).' });
         return;
       }
       const saved = await upsertStorageFileInPostgres({
-        branchId: String(body.branchId || DEFAULT_BRANCH_ID),
+        branchId,
         fileName,
         content,
-        contentType: String(body.contentType || 'application/json'),
+        contentType,
         clientId: String(body.clientId || req.headers['x-tamween-client-id'] || ''),
       });
       res.json({ success: true, file: saved });
@@ -2752,10 +4287,23 @@ async function startServer() {
 
   app.delete('/api/storage/files', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'storage',
+          'DELETE',
+          'حذف ملفات التخزين السحابي مقتصر على مدير النظام فقط.'
+        );
+        return;
+      }
       const branchId = String(req.query?.branchId || DEFAULT_BRANCH_ID);
       const fileName = String(req.query?.fileName || '').trim();
-      if (!fileName) {
-        res.status(400).json({ success: false, error: 'يرجى تحديد اسم الملف للحذف.' });
+      if (!fileName || fileName.includes('..') || !SAFE_STORAGE_FILENAME_REGEX.test(fileName)) {
+        res.status(400).json({ success: false, error: 'اسم الملف غير صالح للحذف.' });
         return;
       }
       const deleted = await deleteStorageFileInPostgres(fileName, branchId);
@@ -2838,7 +4386,19 @@ async function startServer() {
       });
       return;
     }
-    const branchId = String(req.params.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    const branchId = String(req.params.branchId || actor.user.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    if (!assertBranchAccess(actor.user, branchId)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        403,
+        'modules',
+        'VIEW_CROSS_BRANCH',
+        `تم حظر عرض بيانات الأقسام للفرع (${branchId}) خارج صلاحية المستخدم.`
+      );
+      return;
+    }
     const moduleKey = String(req.query?.moduleKey || 'all_modules').trim() || 'all_modules';
     const requestedDept = MODULE_SLICE_TO_DEPT[moduleKey];
     if (requestedDept && !hasDepartmentPermission(actor.user, requestedDept, 'view')) {
@@ -2963,7 +4523,6 @@ async function startServer() {
     const targetIds =
       Array.isArray(body.ids) && body.ids.length > 0 ? new Set(body.ids.map(String)) : null;
 
-    // Delete ONLY from auditLogs; NEVER touch operational data arrays
     const nextLogs = targetIds
       ? prevLogs.filter((entry: any) => !targetIds.has(String(entry?.id || '')))
       : [];
@@ -3034,7 +4593,19 @@ async function startServer() {
       );
       return;
     }
-    const branchId = String(req.params.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    const branchId = String(req.params.branchId || actor.user.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    if (!assertBranchAccess(actor.user, branchId)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        403,
+        'modules',
+        'UPDATE_CROSS_BRANCH',
+        `تم حظر تعديل الأقسام للفرع (${branchId}) خارج صلاحية المستخدم.`
+      );
+      return;
+    }
     const body = req.body || {};
     const moduleKey = String(body.moduleKey || 'all_modules').trim() || 'all_modules';
     const rawPayload = body.payload || body;
@@ -3059,6 +4630,7 @@ async function startServer() {
         prevPayload && typeof prevPayload === 'object' ? { ...prevPayload } : {};
       const targetSlice =
         typeof body.department === 'string' && body.department ? body.department : null;
+      let anyAuthorizedSliceUpdated = false;
 
       for (const [sliceKey, deptKey] of Object.entries(MODULE_SLICE_TO_DEPT)) {
         if (!(sliceKey in (rawPayload || {}))) continue;
@@ -3070,8 +4642,12 @@ async function startServer() {
         if (sliceChanged || targetSlice === deptKey) {
           const canMutate =
             hasDepartmentPermission(actor.user, deptKey, 'insert') ||
-            hasDepartmentPermission(actor.user, deptKey, 'update');
+            hasDepartmentPermission(actor.user, deptKey, 'update') ||
+            hasDepartmentPermission(actor.user, deptKey, 'delete');
           if (!canMutate) {
+            if (prevSlice === undefined && targetSlice !== deptKey) {
+              continue;
+            }
             await denyUnauthorizedAndAudit(
               req,
               res,
@@ -3084,7 +4660,7 @@ async function startServer() {
             return;
           }
           const shrinkCheck = inspectModuleSliceShrinkage(prevSlice, incomingSlice);
-          if (shrinkCheck.operationalDeleted || shrinkCheck.auditLogsDeletedCount > 0) {
+          if (shrinkCheck.auditLogsDeletedCount > 0) {
             await denyUnauthorizedAndAudit(
               req,
               res,
@@ -3092,12 +4668,37 @@ async function startServer() {
               403,
               deptKey,
               'DELETE',
-              `تم حظر حذف السجلات أو سجل التدقيق في قسم (${deptKey}) لأن الحذف مقتصر على مدير النظام فقط.`,
-              'NON_ADMIN_DELETE_BLOCKED'
+              `تم حظر حذف سجل التدقيق في قسم (${deptKey}) لأن حذف سجل التدقيق مقتصر على مدير النظام فقط.`,
+              'NON_ADMIN_AUDIT_DELETE_BLOCKED'
+            );
+            return;
+          }
+          if (shrinkCheck.operationalDeleted && !hasDepartmentPermission(actor.user, deptKey, 'delete')) {
+            await denyUnauthorizedAndAudit(
+              req,
+              res,
+              actor.user,
+              403,
+              deptKey,
+              'DELETE',
+              `تم حظر حذف السجلات في قسم (${deptKey}) لعدم توفر صلاحية الحذف لهذا الحساب.`,
+              'DELETE_PERMISSION_REQUIRED'
             );
             return;
           }
           mergedAuthorized[sliceKey] = incomingSlice;
+          anyAuthorizedSliceUpdated = true;
+        }
+      }
+      if (anyAuthorizedSliceUpdated || rawPayload?.seedMeta || rawPayload?.updatedAt) {
+        if (rawPayload?.seedMeta && typeof rawPayload.seedMeta === 'object') {
+          mergedAuthorized.seedMeta = {
+            ...(prevPayload?.seedMeta || {}),
+            ...rawPayload.seedMeta,
+          };
+        }
+        if (typeof rawPayload?.updatedAt === 'string' && rawPayload.updatedAt) {
+          mergedAuthorized.updatedAt = rawPayload.updatedAt;
         }
       }
       payload = mergedAuthorized;
@@ -3139,37 +4740,102 @@ async function startServer() {
         affectedTable: moduleKey,
       });
       res.json({ success: true, branchId, version: saved.version, updatedAt: saved.updatedAt });
-    } catch {
-      const prev = cachedBranchModules.get(cacheKey);
-      const nextVersion = (prev?.version || 0) + 1;
-      const nowIso = new Date().toISOString();
-      cachedBranchModules.set(cacheKey, {
-        payload,
-        version: nextVersion,
-        updatedAt: nowIso,
+    } catch (err: any) {
+      res.status(503).json({
+        success: false,
+        code: 'DB_PERSISTENCE_UNAVAILABLE',
+        error: err?.message || 'تعذر حفظ بيانات الأقسام في قاعدة البيانات الدائمة.',
       });
-      broadcastWs({
-        type: 'module_state_update',
-        branchId,
-        moduleKey,
-        payload,
-        version: nextVersion,
-        updatedAt: nowIso,
-        clientId,
-      });
-      scheduleSilentRealtimeServerBackup(cachedLiveSnapshot || payload, {
-        branchId,
-        sqlOperation: 'MODULE_CRUD',
-        affectedTable: moduleKey,
-      });
-      res.json({ success: true, branchId, version: nextVersion, updatedAt: nowIso, memoryFallback: true });
     }
   });
 
-  // Dedicated Publish and Cloud Sync verification endpoint
-  const PUBLISHED_RELEASE_PATH = '/tmp/tamween_published_release.json';
-  app.post('/api/publish', (req, res) => {
+  // Branch-scoped Factory Reset for module states (clears ONLY target branchId, never other branches)
+  app.delete('/api/modules/:branchId', async (req, res) => {
+    const actor = await resolveAuthenticatedActor(req);
+    if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+      await denyUnauthorizedAndAudit(
+        req,
+        res,
+        actor.user,
+        actor.authenticated ? 403 : 401,
+        'modules',
+        'FACTORY_RESET_BRANCH',
+        'إعادة ضبط المصنع لبيانات الأقسام داخل الفرع مقتصرة على مدير النظام فقط.'
+      );
+      return;
+    }
+    const branchId = String(req.params.branchId || actor.user.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    const body = req.body || {};
+    const moduleKey = String(body.moduleKey || req.query.moduleKey || 'all_modules').trim() || 'all_modules';
+    const emptyPayload = body.payload || null;
+    const clientId = String(body.clientId || req.headers['x-tamween-client-id'] || '');
+    const cacheKey = `${branchId}::${moduleKey}`;
     try {
+      let version = 1;
+      let updatedAt = new Date().toISOString();
+      if (emptyPayload) {
+        const saved = await upsertBranchModuleStateInPostgres(branchId, emptyPayload, actor.user.username, moduleKey);
+        version = saved.version;
+        updatedAt = saved.updatedAt;
+        cachedBranchModules.set(cacheKey, {
+          payload: emptyPayload,
+          version,
+          updatedAt,
+        });
+      } else {
+        cachedBranchModules.delete(cacheKey);
+      }
+      await recordAuditLog(
+        actor.user.username,
+        'BRANCH_MODULES_FACTORY_RESET',
+        `إعادة ضبط المصنع لبيانات الأقسام داخل الفرع (${branchId}) فقط دون المساس ببقية الفروع`,
+        getClientIp(req),
+        branchId,
+        {
+          username: actor.user.username,
+          department: 'modules',
+          operation: 'DELETE',
+          recordId: `${branchId}:${moduleKey}`,
+          result: 'SUCCESS',
+        }
+      ).catch(() => {});
+      if (emptyPayload) {
+        broadcastWs({
+          type: 'module_state_update',
+          branchId,
+          moduleKey,
+          payload: emptyPayload,
+          version,
+          updatedAt,
+          clientId,
+        });
+      }
+      res.json({ success: true, branchId, version, updatedAt });
+    } catch (err: any) {
+      res.status(503).json({
+        success: false,
+        error: err?.message || 'تعذر تصفير بيانات الأقسام للفرع المحدد.',
+      });
+    }
+  });
+
+  // Dedicated Publish and Cloud Sync verification endpoint (Super Admin only)
+  const PUBLISHED_RELEASE_PATH = '/tmp/tamween_published_release.json';
+  app.post('/api/publish', async (req, res) => {
+    try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user || !isUserSuperAdmin(actor.user)) {
+        await denyUnauthorizedAndAudit(
+          req,
+          res,
+          actor.user,
+          actor.authenticated ? 403 : 401,
+          'publish',
+          'PUBLISH',
+          'إصدار ونشر النسخة مقتصر حصرياً على مدير النظام فقط.'
+        );
+        return;
+      }
       const payload = req.body || {};
       const publishTimestamp = new Date().toISOString();
       const bakeriesCount = Array.isArray(payload?.bakeries) ? payload.bakeries.length : 0;
@@ -3191,15 +4857,12 @@ async function startServer() {
       };
 
       writeProtectedDatabaseFile(PUBLISHED_RELEASE_PATH, JSON.stringify(releaseData, null, 2));
-      
-      // Also sync to dist if present
+
       const distVersionPath = path.resolve(__dirname, 'dist', 'published-version.json');
       if (fs.existsSync(path.resolve(__dirname, 'dist'))) {
         try {
           fs.writeFileSync(distVersionPath, JSON.stringify(releaseData, null, 2), 'utf-8');
-        } catch {
-          // non-critical
-        }
+        } catch {}
       }
 
       res.json({
@@ -3222,8 +4885,13 @@ async function startServer() {
     }
   });
 
-  app.get('/api/publish', (_req, res) => {
+  app.get('/api/publish', async (req, res) => {
     try {
+      const actor = await resolveAuthenticatedActor(req);
+      if (!actor.authenticated || !actor.user) {
+        res.status(401).json({ success: false, error: 'يتطلب عرض حالة النشر مصادقة صالحة.' });
+        return;
+      }
       if (!fs.existsSync(PUBLISHED_RELEASE_PATH)) {
         res.json({
           success: true,
@@ -3333,5 +5001,8 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Fatal server startup error:', err);
+  process.exit(1);
+});
 

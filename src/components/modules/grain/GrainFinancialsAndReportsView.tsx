@@ -18,7 +18,20 @@ import {
   computeRefrigeratorAssetValuation,
   computeShunaBookBalanceAndValuation,
 } from '../../../utils/grainMaintenanceMath';
-import { exportRowsToArabicCsv, printModuleReportA4 } from '../../../services/modulesStorage';
+import {
+  exportRowsToArabicCsv,
+  printModuleReportA4,
+  MINISTRY_LOGO_URL,
+  computeReportSubtotalsByLocalUnitAndVillage,
+} from '../../../services/modulesStorage';
+import {
+  ModuleRowActions,
+  ModuleRecordProfileModal,
+  ModuleDeleteConfirmModal,
+  VillageGrandTotalRow,
+  SmartTableSearchBar,
+} from '../ModuleCrudShared';
+import { matchesSmartSearch } from '../../../utils/tableSmartHelpers';
 
 interface GrainFinancialsAndReportsViewProps {
   state: GrainMaintenanceState;
@@ -74,6 +87,22 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
   const today = new Date().toISOString().split('T')[0];
 
   const [showAddFinModal, setShowAddFinModal] = useState(false);
+  const [editingFin, setEditingFin] = useState<GrainDepartmentFinancialEntry | null>(null);
+  const [finSearch, setFinSearch] = useState('');
+  const [profileModal, setProfileModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    subtitle?: string;
+    entityType: string;
+    onEdit?: () => void;
+    fields: { label: string; value: React.ReactNode; mono?: boolean }[];
+  } | null>(null);
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    entityId: string;
+    entityTitle: string;
+    recordSummary: { label: string; value: string | number }[];
+  } | null>(null);
   const [newFin, setNewFin] = useState({
     documentNumber: `GFIN-2026-00${ledger.length + 1}`,
     date: today,
@@ -553,61 +582,150 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
                 </button>
               )}
             </div>
+            <div className="p-3 border-b border-slate-100">
+              <SmartTableSearchBar
+                query={finSearch}
+                onQueryChange={setFinSearch}
+                totalMatches={ledger.filter((e) =>
+                  matchesSmartSearch(finSearch, [e.documentNumber, e.facilityName, e.facilityCategory, e.transactionType, e.description])
+                ).length}
+                totalAll={ledger.length}
+                placeholder="بحث برقم المستند أو المنشأة أو نوع الحركة أو البيان..."
+                testId="grain-fin-ledger-search"
+              />
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
-                <thead className="bg-[#0f2342] text-white font-black">
-                  <tr>
-                    <th className="p-3">رقم المستند والتاريخ</th>
-                    <th className="p-3">الفئة والمنشأة</th>
-                    <th className="p-3">نوع الحركة المالية</th>
-                    <th className="p-3 text-center">تقييم الأصول الثابتة</th>
-                    <th className="p-3 text-center">تقييم المخزون السلعي</th>
-                    <th className="p-3 text-center">الإيرادات الفعلية</th>
-                    <th className="p-3 text-center">المصروفات والتكاليف</th>
-                    <th className="p-3">البيان التفصيلي</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 font-bold">
-                  {ledger.map((e) => (
-                    <tr key={e.id} className="hover:bg-slate-50">
-                      <td className="p-3">
-                        <div className="font-mono font-black text-indigo-900">
-                          {e.documentNumber}
-                        </div>
-                        <div className="text-[10px] text-slate-500">{e.date}</div>
-                      </td>
-                      <td className="p-3">
-                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 text-[10px] font-black ml-1">
-                          {e.facilityCategory}
-                        </span>
-                        <span className="font-black text-slate-900">{e.facilityName}</span>
-                      </td>
-                      <td className="p-3 font-black text-amber-800">{e.transactionType}</td>
-                      <td className="p-3 text-center">
-                        {e.fixedAssetsValuationAmount > 0
-                          ? `${e.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م`
-                          : '-'}
-                      </td>
-                      <td className="p-3 text-center text-emerald-800">
-                        {e.inventoryValuationAmount > 0
-                          ? `${e.inventoryValuationAmount.toLocaleString('ar-EG')} ج.م`
-                          : '-'}
-                      </td>
-                      <td className="p-3 text-center text-sky-800">
-                        {e.revenuesAmount > 0
-                          ? `${e.revenuesAmount.toLocaleString('ar-EG')} ج.م`
-                          : '-'}
-                      </td>
-                      <td className="p-3 text-center text-rose-700">
-                        {e.expensesAmount > 0
-                          ? `${e.expensesAmount.toLocaleString('ar-EG')} ج.م`
-                          : '-'}
-                      </td>
-                      <td className="p-3 text-slate-600">{e.description}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {(() => {
+                const filteredLedger = ledger.filter((e) =>
+                  matchesSmartSearch(finSearch, [e.documentNumber, e.facilityName, e.facilityCategory, e.transactionType, e.description])
+                );
+                const sumFixed = filteredLedger.reduce((s, e) => s + (e.fixedAssetsValuationAmount || 0), 0);
+                const sumInv = filteredLedger.reduce((s, e) => s + (e.inventoryValuationAmount || 0), 0);
+                const sumRev = filteredLedger.reduce((s, e) => s + (e.revenuesAmount || 0), 0);
+                const sumExp = filteredLedger.reduce((s, e) => s + (e.expensesAmount || 0), 0);
+                return (
+                  <table className="w-full text-xs text-right compact-erp-table">
+                    <thead className="bg-[#0f2342] text-white font-black">
+                      <tr>
+                        <th className="p-3">رقم المستند والتاريخ</th>
+                        <th className="p-3">الفئة والمنشأة</th>
+                        <th className="p-3">نوع الحركة المالية</th>
+                        <th className="p-3 text-center">تقييم الأصول الثابتة</th>
+                        <th className="p-3 text-center">تقييم المخزون السلعي</th>
+                        <th className="p-3 text-center">الإيرادات الفعلية</th>
+                        <th className="p-3 text-center">المصروفات والتكاليف</th>
+                        <th className="p-3">البيان التفصيلي</th>
+                        <th className="p-3 text-center">إدارة السجل</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 font-bold">
+                      {filteredLedger.map((e) => {
+                        const openEditFin = () => setEditingFin({ ...e });
+                        return (
+                          <tr key={e.id} className="hover:bg-slate-50">
+                            <td className="p-3">
+                              <div className="font-mono font-black text-indigo-900">
+                                {e.documentNumber}
+                              </div>
+                              <div className="text-[10px] text-slate-500">{e.date}</div>
+                            </td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 text-[10px] font-black ml-1">
+                                {e.facilityCategory}
+                              </span>
+                              <span className="font-black text-slate-900">{e.facilityName}</span>
+                            </td>
+                            <td className="p-3 font-black text-amber-800">{e.transactionType}</td>
+                            <td className="p-3 text-center">
+                              {e.fixedAssetsValuationAmount > 0
+                                ? `${e.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م`
+                                : '-'}
+                            </td>
+                            <td className="p-3 text-center text-emerald-800">
+                              {e.inventoryValuationAmount > 0
+                                ? `${e.inventoryValuationAmount.toLocaleString('ar-EG')} ج.م`
+                                : '-'}
+                            </td>
+                            <td className="p-3 text-center text-sky-800">
+                              {e.revenuesAmount > 0
+                                ? `${e.revenuesAmount.toLocaleString('ar-EG')} ج.م`
+                                : '-'}
+                            </td>
+                            <td className="p-3 text-center text-rose-700">
+                              {e.expensesAmount > 0
+                                ? `${e.expensesAmount.toLocaleString('ar-EG')} ج.م`
+                                : '-'}
+                            </td>
+                            <td className="p-3 text-slate-600">{e.description}</td>
+                            <td className="p-3 text-center">
+                              <ModuleRowActions
+                                entityLabel={e.documentNumber}
+                                updatedAt={(e as unknown as { updatedAt?: string }).updatedAt}
+                                permissions={{
+                                  canView: true,
+                                  canAdd: Boolean(canAdd),
+                                  canEdit: !isViewer,
+                                  canDelete: !isViewer,
+                                  canPrint: Boolean(canPrint),
+                                  canExport: Boolean(canExport),
+                                  isReadOnly: isViewer,
+                                }}
+                                testIdPrefix={`grain-fin-row-${e.id}`}
+                                onView={() =>
+                                  setProfileModal({
+                                    isOpen: true,
+                                    title: `قيد مالي مركزي رقم: ${e.documentNumber}`,
+                                    subtitle: `${e.facilityCategory} — ${e.facilityName}`,
+                                    entityType: 'قيد مالي بدفتر حسابات صيانة الحبوب',
+                                    onEdit: openEditFin,
+                                    fields: [
+                                      { label: 'رقم المستند', value: e.documentNumber, mono: true },
+                                      { label: 'التاريخ', value: e.date },
+                                      { label: 'فئة المنشأة', value: e.facilityCategory },
+                                      { label: 'اسم المنشأة', value: e.facilityName },
+                                      { label: 'نوع الحركة المالية', value: e.transactionType },
+                                      { label: 'تقييم الأصول الثابتة', value: `${e.fixedAssetsValuationAmount.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                      { label: 'تقييم المخزون السلعي', value: `${e.inventoryValuationAmount.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                      { label: 'الإيرادات الفعلية', value: `${e.revenuesAmount.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                      { label: 'المصروفات والتكاليف', value: `${e.expensesAmount.toLocaleString('ar-EG')} ج.م`, mono: true },
+                                      { label: 'البيان التفصيلي', value: e.description },
+                                    ],
+                                  })
+                                }
+                                onEdit={openEditFin}
+                                onDelete={() =>
+                                  setDeleteModal({
+                                    isOpen: true,
+                                    entityId: e.id,
+                                    entityTitle: e.documentNumber,
+                                    recordSummary: [
+                                      { label: 'رقم المستند', value: e.documentNumber },
+                                      { label: 'المنشأة', value: e.facilityName },
+                                      { label: 'البيان', value: e.description },
+                                    ],
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <VillageGrandTotalRow
+                        totalCount={filteredLedger.length}
+                        labelColSpan={3}
+                        title="الإجمالي العام لدفتر الحسابات المركزي TOTAL"
+                        metricCells={[
+                          { content: `${sumFixed.toLocaleString('ar-EG')} ج.م`, mono: true },
+                          { content: `${sumInv.toLocaleString('ar-EG')} ج.م`, mono: true },
+                          { content: `${sumRev.toLocaleString('ar-EG')} ج.م`, mono: true },
+                          { content: `${sumExp.toLocaleString('ar-EG')} ج.م`, mono: true },
+                          { content: '—', colSpan: 2 },
+                        ]}
+                      />
+                    </tbody>
+                  </table>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -725,14 +843,39 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
             </div>
           </div>
 
-          {/* معاينة جدول التقرير */}
+          {/* معاينة جدول التقرير بشعار الوزارة المثبت وتجميع الوحدة المحلية والقرية */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 bg-slate-50">
-              <h4 className="text-sm font-black text-slate-900">{currentReportData.title}</h4>
-              <p className="text-xs font-bold text-slate-500">{currentReportData.subtitle}</p>
+            <div className="p-4 border-b-2 border-[#0A1931] bg-slate-50 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <img
+                  src={MINISTRY_LOGO_URL}
+                  alt="شعار وزارة التموين والتجارة الداخلية"
+                  className="w-16 h-16 object-contain rounded-xl border border-slate-300 bg-white p-1 shadow-xs shrink-0"
+                />
+                <div>
+                  <div className="text-[11px] font-black text-slate-600">
+                    جمهورية مصر العربية — وزارة التموين والتجارة الداخلية
+                  </div>
+                  <div className="text-xs font-black text-[#0A1931]">
+                    محافظة الغربية — مديرية التموين والتجارة الداخلية بالغربية
+                  </div>
+                  <div className="text-xs font-black text-teal-700">
+                    {branchName} • قسم صيانة الحبوب والمطاحن والشون
+                  </div>
+                </div>
+              </div>
+              <div className="text-center">
+                <h4 className="text-sm sm:text-base font-black text-[#0A1931]">{currentReportData.title}</h4>
+                <p className="text-xs font-bold text-slate-600 mt-0.5">{currentReportData.subtitle}</p>
+              </div>
+              <div className="text-left text-[11px] font-bold text-slate-700 space-y-0.5">
+                <div>تاريخ التقرير: {new Date().toLocaleDateString('ar-EG')}</div>
+                <div>إجمالي السجلات: {visibleRows.length} سجل</div>
+                <div>إعداد: {currentUserFullName}</div>
+              </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right">
+              <table className="w-full text-xs text-right compact-erp-table">
                 <thead className="bg-[#0f2342] text-white font-black">
                   <tr>
                     {visibleHeaders.map((h, i) => (
@@ -753,6 +896,55 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
                     </tr>
                   ))}
                 </tbody>
+                {visibleHeaders.length > 0 && visibleRows.length > 0 && (() => {
+                  const grouped = computeReportSubtotalsByLocalUnitAndVillage(visibleHeaders, visibleRows);
+                  return (
+                    <tfoot className="font-black text-xs">
+                      {grouped.localUnitColIdx >= 0 &&
+                        grouped.localUnitTotals.map((lu) => (
+                          <tr key={`lu-${lu.localUnit}`} className="bg-sky-100/90 text-sky-950 border-t-2 border-sky-300">
+                            {visibleHeaders.map((_, idx) => {
+                              let val: string | number = '—';
+                              if (idx === 0) val = `إجمالي الوحدة المحلية: ${lu.localUnit}`;
+                              else if (idx === grouped.localUnitColIdx) val = lu.localUnit;
+                              else if (idx === 1 && lu.columnSums[1] === null) val = `${lu.count} سجل`;
+                              else if (lu.columnSums[idx] !== null) val = lu.columnSums[idx]!.toLocaleString('ar-EG');
+                              return (
+                                <td key={idx} className="p-2.5 border border-sky-200 text-center">
+                                  {val}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      {grouped.villageColIdx >= 0 &&
+                        grouped.villageTotals.map((v) => (
+                          <tr key={`vil-${v.localUnit}-${v.village}`} className="bg-amber-50/90 text-amber-950 border-t border-amber-300">
+                            {visibleHeaders.map((_, idx) => {
+                              let val: string | number = '—';
+                              if (idx === 0) val = `إجمالي القرية: ${v.village}`;
+                              else if (idx === grouped.localUnitColIdx) val = v.localUnit;
+                              else if (idx === grouped.villageColIdx) val = v.village;
+                              else if (idx === 1 && v.columnSums[1] === null) val = `${v.count} سجل`;
+                              else if (v.columnSums[idx] !== null) val = v.columnSums[idx]!.toLocaleString('ar-EG');
+                              return (
+                                <td key={idx} className="p-2.5 border border-amber-200 text-center">
+                                  {val}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      <tr className="bg-[#0A1931] text-white border-t-2 border-[#D4AF37]">
+                        {grouped.grandTotalRow.map((cell, idx) => (
+                          <td key={idx} className="p-2.5 border border-slate-700 text-center">
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
               </table>
             </div>
           </div>
@@ -761,7 +953,7 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
 
       {/* نافذة تسجيل قيد مالي مركزي جديد */}
       {showAddFinModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
             <h3 className="text-lg font-black text-slate-900 mb-3">
               تسجيل قيد مالي جديد بدفتر الحسابات المركزي لقسم صيانة الحبوب
@@ -872,6 +1064,134 @@ export const GrainFinancialsAndReportsView: React.FC<GrainFinancialsAndReportsVi
             </form>
           </div>
         </div>
+      )}
+
+      {/* نافذة تعديل قيد مالي */}
+      {editingFin && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl p-6">
+            <h3 className="text-lg font-black text-slate-900 mb-3">
+              تعديل القيد المالي: {editingFin.documentNumber}
+            </h3>
+            <form
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                onUpdateState(
+                  (prev) => ({
+                    ...prev,
+                    centralFinancialLedger: (prev.centralFinancialLedger || []).map((item) =>
+                      item.id === editingFin.id ? { ...editingFin, updatedAt: new Date().toISOString() } : item
+                    ),
+                  }),
+                  `تعديل قيد مالي: ${editingFin.documentNumber}`
+                );
+                setEditingFin(null);
+                onNotify('ok', `تم تعديل القيد المالي «${editingFin.documentNumber}» بنجاح.`);
+              }}
+              className="space-y-4 text-xs font-bold"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block mb-1 text-slate-700">رقم المستند</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingFin.documentNumber}
+                    onChange={(e) => setEditingFin({ ...editingFin, documentNumber: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">اسم المنشأة</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingFin.facilityName}
+                    onChange={(e) => setEditingFin({ ...editingFin, facilityName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">الإيرادات (ج.م)</label>
+                  <input
+                    type="number"
+                    value={editingFin.revenuesAmount}
+                    onChange={(e) => setEditingFin({ ...editingFin, revenuesAmount: Number(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-slate-700">المصروفات (ج.م)</label>
+                  <input
+                    type="number"
+                    value={editingFin.expensesAmount}
+                    onChange={(e) => setEditingFin({ ...editingFin, expensesAmount: Number(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block mb-1 text-slate-700">البيان التفصيلي</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingFin.description}
+                    onChange={(e) => setEditingFin({ ...editingFin, description: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditingFin(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-[#0f2342] text-white font-black"
+                >
+                  حفظ التعديلات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {profileModal && (
+        <ModuleRecordProfileModal
+          isOpen={profileModal.isOpen}
+          title={profileModal.title}
+          subtitle={profileModal.subtitle}
+          entityType={profileModal.entityType}
+          fields={profileModal.fields}
+          canEdit={!isViewer}
+          onEdit={profileModal.onEdit}
+          onClose={() => setProfileModal(null)}
+        />
+      )}
+
+      {deleteModal && (
+        <ModuleDeleteConfirmModal
+          isOpen={deleteModal.isOpen}
+          entityTitle={deleteModal.entityTitle}
+          recordSummary={deleteModal.recordSummary}
+          canDelete={!isViewer}
+          onClose={() => setDeleteModal(null)}
+          onConfirmDelete={() => {
+            onUpdateState(
+              (prev) => ({
+                ...prev,
+                centralFinancialLedger: (prev.centralFinancialLedger || []).filter((item) => item.id !== deleteModal.entityId),
+              }),
+              `حذف قيد مالي: ${deleteModal.entityTitle}`
+            );
+            setDeleteModal(null);
+            onNotify('ok', `تم حذف القيد المالي «${deleteModal.entityTitle}» بنجاح.`);
+          }}
+        />
       )}
     </div>
   );

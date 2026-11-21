@@ -45,7 +45,8 @@ import {
   SESSION_CLIENT_ID,
   CLEAN_START_RESET_EPOCH,
   clearPermanentSafetyVault,
-} from './lib/supabase';
+} from './lib/supabase.ts';
+import { cloneDefaultBranchDepartmentsStructure } from './utils/branchOperations';
 import {
   BranchAuthVaultRecord,
   loadBranchAuthVault,
@@ -360,12 +361,14 @@ export function addSupplyBranch(
 
   // Initialize isolated empty storage for the new branch so no data ever leaks from other branches
   const scopedKeys = getScopedKeysForBranch(newBranch.id);
+  const mahallaDepts = readBranchPartitionFromLocal(DEFAULT_BRANCH_ID)?.systemConfig?.branchDepartments;
   const initialConfig: SystemConfig = {
     ...DEFAULT_SYSTEM_CONFIG,
     governorateTitle: newBranch.governorateTitle,
     directorateTitle: newBranch.directorateTitle,
     administrationTitle: newBranch.name,
     logoBase64: DEFAULT_OFFICIAL_LOGO,
+    branchDepartments: cloneDefaultBranchDepartmentsStructure(mahallaDepts),
   };
   try {
     if (typeof localStorage !== 'undefined') {
@@ -1435,7 +1438,11 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
               }
             }
 
-            // Also rescue preSyncLocalPartition if PostgreSQL had 0 bakeries/debts while local browser had unmigrated data
+            // Only rescue unmigrated pre-init local data on the default branch BEFORE first initialization;
+            // NEVER resurrect records that were intentionally deleted on Postgres!
+            const alreadyInitialized =
+              typeof localStorage !== 'undefined' &&
+              localStorage.getItem(scopedKeys.INITIALIZED) === 'true';
             const pgEmptyBakeries = !Array.isArray(bootJson.bakeries) || bootJson.bakeries.length === 0;
             const localHasBakeries =
               Array.isArray(preSyncLocalPartition.bakeries) && preSyncLocalPartition.bakeries.length > 0;
@@ -1443,7 +1450,12 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
             const localHasDebts =
               Array.isArray(preSyncLocalPartition.debts) && preSyncLocalPartition.debts.length > 0;
 
-            if ((pgEmptyBakeries && localHasBakeries) || (pgEmptyDebts && localHasDebts)) {
+            if (
+              !alreadyInitialized &&
+              isDefaultBranch &&
+              !bootJson.hasAnyRows &&
+              ((pgEmptyBakeries && localHasBakeries) || (pgEmptyDebts && localHasDebts))
+            ) {
               const rescueResp = await fetch(
                 `${window.location.protocol}//${window.location.host}/api/db/batch`,
                 {
@@ -1548,7 +1560,7 @@ export async function loadInitialState(requestedBranchId?: string): Promise<AppS
       pgAuthoritativeData?.dropdownLists?.paymentMethods ?? localPartition.paymentMethods;
     let dailyTasks = pgAuthoritativeData ? pgAuthoritativeData.dailyTasks : localPartition.dailyTasks;
     let inboxMessages =
-      pgAuthoritativeData && Array.isArray(pgAuthoritativeData.inboxMessages) && pgAuthoritativeData.inboxMessages.length > 0
+      pgAuthoritativeData && Array.isArray(pgAuthoritativeData.inboxMessages)
         ? pgAuthoritativeData.inboxMessages
         : localPartition.inboxMessages;
     let columnTitles =
@@ -2257,23 +2269,96 @@ export async function saveBackupToPartition(data: object): Promise<{ success: bo
   }
 }
 
-// Reset everything to factory defaults (0 bakeries, 0 debts, ready for fresh registration)
-export async function factoryReset(): Promise<void> {
+/**
+ * إعادة ضبط المصنع على مستوى الفرع النشط فقط (مسح بيانات الفرع الحالي فقط دون المساس ببقية الفروع)
+ */
+export async function factoryResetBranch(branchId?: string): Promise<void> {
+  const targetBranchId = (branchId || getActiveBranchId() || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const scopedKeys = getScopedKeysForBranch(targetBranchId);
+  const preserveKeys = new Set<string>([
+    BASE_KEYS.SESSION,
+    BRANCH_META_KEYS.BRANCHES_LIST,
+    BRANCH_META_KEYS.ACTIVE_BRANCH_ID,
+    BRANCH_META_KEYS.GLOBAL_ROLE_CONFIG,
+    BRANCH_META_KEYS.USERS_UPDATED_AT,
+  ]);
+
   try {
-    const savedSession = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(BASE_KEYS.SESSION) : null;
-    localStorage.clear();
-    clearPermanentSafetyVault();
-    localStorage.setItem(CLEAN_START_EPOCH_KEY, CLEAN_START_RESET_EPOCH);
-    if (savedSession && typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem(BASE_KEYS.SESSION, savedSession);
+    if (typeof localStorage !== 'undefined') {
+      // 1. Remove only scoped data keys belonging to this specific branch
+      Object.entries(scopedKeys).forEach(([kName, storageKey]) => {
+        if (kName === 'SESSION' || kName === 'USERS' || kName === 'CONFIG') return;
+        if (preserveKeys.has(storageKey)) return;
+        try {
+          localStorage.removeItem(storageKey);
+        } catch {}
+      });
+
+      // 2. Write explicit empty arrays for this branch so initial seed data does NOT resurrect
+      localStorage.setItem(scopedKeys.BAKERIES, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.DEBTS, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.DAILY_TASKS, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.INBOX_MESSAGES, JSON.stringify([]));
+      localStorage.setItem(scopedKeys.INITIALIZED, 'true');
+      localStorage.setItem(`${CLEAN_START_EPOCH_KEY}__${targetBranchId}`, new Date().toISOString());
+
+      // 3. Remove branch-specific module bundles & caches ONLY for this branch
+      const modulePrefixKeys = [
+        `tamween_branch_modules_v1::${targetBranchId}`,
+        `TAMWEEN_MODULES_${targetBranchId}`,
+      ];
+      modulePrefixKeys.forEach((mk) => {
+        try {
+          localStorage.removeItem(mk);
+        } catch {}
+      });
+
+      // Remove any extra keys explicitly tagged with this branchId (never touching other branches!)
+      const extraToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || preserveKeys.has(k)) continue;
+        if (
+          k.startsWith(`tamween_branch_modules_v1::${targetBranchId}`) ||
+          (targetBranchId !== DEFAULT_BRANCH_ID &&
+            (k.endsWith(`__${targetBranchId}`) || k.includes(`__${targetBranchId}__`)) &&
+            k !== scopedKeys.USERS &&
+            k !== scopedKeys.CONFIG &&
+            k !== scopedKeys.BAKERIES &&
+            k !== scopedKeys.DEBTS &&
+            k !== scopedKeys.DAILY_TASKS &&
+            k !== scopedKeys.INBOX_MESSAGES &&
+            k !== scopedKeys.INITIALIZED)
+        ) {
+          extraToRemove.push(k);
+        }
+      }
+      extraToRemove.forEach((k) => {
+        try {
+          localStorage.removeItem(k);
+        } catch {}
+      });
     }
   } catch {}
+
+  // 4. Delete ONLY this branch's IndexedDB record (preserve all other branches in IndexedDB!)
   try {
     const db = await openIndexedDB();
     const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).clear();
-    await new Promise((res) => { tx.oncomplete = res; });
+    const store = tx.objectStore(STORE_NAME);
+    const branchDbKey = targetBranchId === DEFAULT_BRANCH_ID ? 'current_state' : `current_state__${targetBranchId}`;
+    store.delete(branchDbKey);
+    store.delete(`state_${targetBranchId}`);
+    await new Promise((res) => {
+      tx.oncomplete = res;
+      tx.onerror = res;
+    });
   } catch {}
+}
+
+// Branch-scoped Factory Reset (defaults to active branch; never wipes other branches)
+export async function factoryReset(branchId?: string): Promise<void> {
+  await factoryResetBranch(branchId);
 }
 
 /**

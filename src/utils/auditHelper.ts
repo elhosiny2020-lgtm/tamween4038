@@ -1326,6 +1326,10 @@ export interface BakeriesColumnTotals {
   beneficiaries2023: number;
   beneficiaries2024: number;
   beneficiaries2025: number;
+  isUnifiedPopulation?: boolean;
+  isUnifiedBeneficiaries2023?: boolean;
+  isUnifiedBeneficiaries2024?: boolean;
+  isUnifiedBeneficiaries2025?: boolean;
   perCapitaAverage: string;
   avg2023: string;
   avg2024: string;
@@ -1403,21 +1407,38 @@ export function calculateBakeriesColumnTotals(
   let validLeaseCount = 0;
   let validTaxCardCount = 0;
 
-  unitGroups.forEach((unitBakeries) => {
-    // Shared unit demographics counted ONCE per local unit
-    const unitPop =
-      unitBakeries.find((b) => (Number(b.villagePopulation) || 0) > 0)?.villagePopulation ?? 0;
-    const unitBen23 =
-      unitBakeries.find((b) => (Number(b.beneficiaries2023) || 0) > 0)?.beneficiaries2023 ?? 0;
-    const unitBen24 =
-      unitBakeries.find((b) => (Number(b.beneficiaries2024) || 0) > 0)?.beneficiaries2024 ?? 0;
-    const unitBen25 =
-      unitBakeries.find((b) => (Number(b.beneficiaries2025) || 0) > 0)?.beneficiaries2025 ?? 0;
+  let allUnitsUnifiedPop = unitGroups.size > 0;
+  let allUnitsUnifiedBen23 = unitGroups.size > 0;
+  let allUnitsUnifiedBen24 = unitGroups.size > 0;
+  let allUnitsUnifiedBen25 = unitGroups.size > 0;
 
-    villagePopulation += Number(unitPop) || 0;
-    beneficiaries2023 += Number(unitBen23) || 0;
-    beneficiaries2024 += Number(unitBen24) || 0;
-    beneficiaries2025 += Number(unitBen25) || 0;
+  unitGroups.forEach((unitBakeries) => {
+    // Never sum population or beneficiaries across rows within the same local unit
+    const resolveUnitDemographic = (getter: (b: Bakery) => number) => {
+      const nonZeroVals: number[] = [];
+      for (const b of unitBakeries) {
+        const v = Number(getter(b)) || 0;
+        if (v > 0) nonZeroVals.push(v);
+      }
+      const uniqueVals = Array.from(new Set(nonZeroVals));
+      const effectiveValue = uniqueVals.length === 0 ? 0 : Math.max(...uniqueVals);
+      return { isUnified: true, effectiveValue };
+    };
+
+    const popRes = resolveUnitDemographic((b) => b.villagePopulation);
+    const ben23Res = resolveUnitDemographic((b) => b.beneficiaries2023);
+    const ben24Res = resolveUnitDemographic((b) => b.beneficiaries2024);
+    const ben25Res = resolveUnitDemographic((b) => b.beneficiaries2025);
+
+    if (!popRes.isUnified) allUnitsUnifiedPop = false;
+    if (!ben23Res.isUnified) allUnitsUnifiedBen23 = false;
+    if (!ben24Res.isUnified) allUnitsUnifiedBen24 = false;
+    if (!ben25Res.isUnified) allUnitsUnifiedBen25 = false;
+
+    villagePopulation += popRes.effectiveValue;
+    beneficiaries2023 += ben23Res.effectiveValue;
+    beneficiaries2024 += ben24Res.effectiveValue;
+    beneficiaries2025 += ben25Res.effectiveValue;
 
     let uDebt = 0;
     let uInsValue = 0;
@@ -1495,6 +1516,10 @@ export function calculateBakeriesColumnTotals(
     beneficiaries2023: Math.round(beneficiaries2023),
     beneficiaries2024: Math.round(beneficiaries2024),
     beneficiaries2025: Math.round(beneficiaries2025),
+    isUnifiedPopulation: unitGroups.size === 1 ? allUnitsUnifiedPop : false,
+    isUnifiedBeneficiaries2023: unitGroups.size === 1 ? allUnitsUnifiedBen23 : false,
+    isUnifiedBeneficiaries2024: unitGroups.size === 1 ? allUnitsUnifiedBen24 : false,
+    isUnifiedBeneficiaries2025: unitGroups.size === 1 ? allUnitsUnifiedBen25 : false,
     perCapitaAverage: finalPerCapita.toFixed(2),
     avg2023: finalAvg2023.toFixed(2),
     avg2024: finalAvg2024.toFixed(2),

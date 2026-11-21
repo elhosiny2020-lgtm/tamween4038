@@ -1,6 +1,6 @@
 import { AppState } from '../types';
 import { generateStandaloneHtml } from '../utils/htmlExporter';
-import { autoSyncToSupabase, migrateDatabaseToSupabase } from '../lib/supabase';
+import { autoSyncToSupabase, migrateDatabaseToSupabase } from '../lib/supabase.ts';
 
 export type PublishStage = 'IDLE' | 'STARTING' | 'PREPARING' | 'UPLOADING' | 'VERIFYING' | 'SUCCESS' | 'ERROR';
 

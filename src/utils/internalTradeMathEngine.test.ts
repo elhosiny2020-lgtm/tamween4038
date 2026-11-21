@@ -8,6 +8,9 @@ import {
   calculatePetroleumVillageMetrics,
   aggregateVillageFuelBreakdown,
   compareMerchantArchiveSnapshots,
+  computeMovementLedgerBalances,
+  detectDuplicateMovement,
+  computeInternalTradeExecutiveDashboardStats,
 } from './internalTradeMathEngine';
 import { buildMay2026RationMerchantsList } from '../data/may2026RationMerchants';
 
@@ -185,5 +188,87 @@ describe('Internal Trade, LPG & Petroleum, and May 2026 Ration Merchants Math En
       assert.equal(diff.posOrCodeChanged[0].curr.traderCode, '1001-MOD');
     });
   });
+
+  describe('5. Movement Running Balance Ledger & Anti-Duplication Guard', () => {
+    it('computes sequential chronological running balances across inbound and outbound movements', () => {
+      const result = computeMovementLedgerBalances(1000, [
+        { id: 'm2', entityCode: 'ST-1', date: '2026-05-03', movementType: 'صرف ومبيعات', quantity: 400, invoiceOrDocNumber: 'INV-2' },
+        { id: 'm1', entityCode: 'ST-1', date: '2026-05-01', movementType: 'استلام وارد', quantity: 500, invoiceOrDocNumber: 'INV-1' },
+      ]);
+      assert.equal(result.totalInbound, 500);
+      assert.equal(result.totalOutbound, 400);
+      assert.equal(result.closingBalance, 1100);
+      // Display sorted newest-first
+      assert.equal(result.rows[0].movement.id, 'm2');
+      assert.equal(result.rows[0].balanceBefore, 1500);
+      assert.equal(result.rows[0].balanceAfter, 1100);
+    });
+
+    it('detects duplicate movement document/invoice numbers or identical same-day entries', () => {
+      const existing = [
+        { id: 'm1', entityCode: 'ST-1', date: '2026-05-01', movementType: 'استلام وارد', quantity: 5000, invoiceOrDocNumber: 'DOC-900' },
+      ];
+      const dupDoc = detectDuplicateMovement(existing, {
+        id: 'm2',
+        entityCode: 'ST-1',
+        date: '2026-05-02',
+        movementType: 'استلام وارد',
+        quantity: 3000,
+        invoiceOrDocNumber: 'DOC-900',
+      });
+      assert.equal(dupDoc.isDuplicate, true);
+
+      const validEntry = detectDuplicateMovement(existing, {
+        id: 'm3',
+        entityCode: 'ST-1',
+        date: '2026-05-02',
+        movementType: 'استلام وارد',
+        quantity: 3000,
+        invoiceOrDocNumber: 'DOC-901',
+      });
+      assert.equal(validEntry.isDuplicate, false);
+    });
+  });
+
+  describe('6. Internal Trade 14-Metric Executive Dashboard KPIs', () => {
+    it('computes all 14 KPI counts accurately from underlying arrays', () => {
+      const kpis = computeInternalTradeExecutiveDashboardStats({
+        establishments: [
+          { establishmentCode: 'E1', establishmentName: 'مستودع 1', establishmentType: 'مستودع بوتاجاز', village: 'بشبيش', activityStatus: 'نشط' },
+          { establishmentCode: 'E2', establishmentName: 'محطة 2', establishmentType: 'محطة وقود', village: 'دمرو', activityStatus: 'نشط' },
+          { establishmentCode: 'E3', establishmentName: 'محل 3', establishmentType: 'محل تجاري', village: 'بلقينا', activityStatus: 'مغلق' },
+        ],
+        campaigns: [
+          { id: 'c1', finalReportSubmitted: true, inspectedCount: 2, visitedEstablishmentCodes: ['E1', 'E2'] },
+          { id: 'c2', finalReportSubmitted: false, inspectedCount: 1, visitedEstablishmentCodes: [] },
+        ],
+        violations: [
+          { establishmentCode: 'E1', establishmentName: 'مستودع 1', village: 'بشبيش', violationType: 'عدم إعلان أسعار أسطوانات بوتاجاز', status: 'جديد', reconciliationAmount: 0 },
+          { establishmentCode: 'E1', establishmentName: 'مستودع 1', village: 'بشبيش', violationType: 'تلاعب في حصة بوتاجاز', status: 'تم التصالح', reconciliationAmount: 3000 },
+          { establishmentCode: 'E2', establishmentName: 'محطة 2', village: 'دمرو', violationType: 'تصرف في كميات سولار', status: 'محال للنيابة', reconciliationAmount: 0 },
+        ],
+        seizures: [{ totalValue: 12500 }],
+        complaints: [{ status: 'جديدة' }, { status: 'تم الفحص والحل' }],
+        lpgVillageCirculation: [{ population: 10000, familiesCount: 2000, actualDisbursedQty: 4000 }],
+      });
+
+      assert.equal(kpis.totalEstablishments, 3);
+      assert.equal(kpis.completedCampaigns, 1);
+      assert.equal(kpis.activeCampaigns, 1);
+      assert.equal(kpis.totalViolations, 3);
+      assert.equal(kpis.reconciledViolations, 1);
+      assert.equal(kpis.followUpViolations, 2);
+      assert.equal(kpis.totalComplaints, 2);
+      assert.equal(kpis.openComplaints, 1);
+      assert.equal(kpis.resolvedComplaints, 1);
+      assert.equal(kpis.lpgViolationsCount, 2);
+      assert.equal(kpis.petroleumViolationsCount, 1);
+      assert.equal(kpis.violatingEstablishmentsCount, 2);
+      assert.equal(kpis.repeatOffenderEstablishmentsCount, 1);
+      assert.equal(kpis.topRepeatOffenders[0].establishmentCode, 'E1');
+      assert.equal(kpis.topRepeatOffenders[0].count, 2);
+    });
+  });
 });
+
 

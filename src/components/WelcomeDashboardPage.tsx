@@ -135,39 +135,35 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
   });
 
   return (
-    <div dir="rtl" data-testid="welcome-dashboard-page" className="space-y-5 animate-fade-in">
-      {/* Hero Executive Welcome Banner */}
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-l from-[#0A1628] via-[#0F2342] to-[#0D9488] text-white p-6 sm:p-8 shadow-xl border border-[#D4AF37]/40">
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-3 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#D4AF37]/20 border border-[#D4AF37]/50 text-[#FDE68A] text-xs font-black">
-              <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
-              <span>مرحباً بعودتك إلى المنظومة التموينية المتكاملة</span>
+    <div dir="rtl" data-testid="welcome-dashboard-page" className="space-y-3 animate-fade-in">
+      {/* Compact Hero Executive Welcome Banner */}
+      <section className="relative overflow-hidden rounded-xl bg-gradient-to-l from-[#0A1628] via-[#0F2342] to-[#0D9488] text-white px-3 py-2.5 shadow-sm border border-[#D4AF37]/40">
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+          <div className="space-y-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+              <span className="inline-flex items-center gap-1 text-[11px] font-black text-[#FDE68A]">
+                <Sparkles className="w-3 h-3 text-[#D4AF37] shrink-0" />
+                <span>أهلاً ومرحباً بعودتك إلى المنظومة</span>
+              </span>
+              <span className="text-slate-400 text-[10px]">·</span>
+              <h1 className="text-sm font-black tracking-tight text-white">
+                {currentUser.fullName}
+              </h1>
+              <span className="text-[11px] text-slate-200 font-semibold truncate">
+                ({branchName} · {todayArabic})
+              </span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white leading-snug">
-              أهلاً بك، {currentUser.fullName}
-            </h1>
-
-            <p className="text-sm text-slate-200 font-semibold leading-relaxed">
-              تعمل الآن على واجهة{' '}
-              <span className="text-[#FDE68A] font-black">{branchName}</span>{' '}
-              <span className="text-slate-300 text-xs">
-                ({governorateTitle} · {directorateTitle})
-              </span>{' '}
-              — {todayArabic}.
-            </p>
-
-            {/* Primary CTA Buttons */}
-            <div className="flex flex-wrap items-center gap-2.5 pt-2">
+            {/* Compact Primary CTA Buttons */}
+            <div className="flex flex-wrap items-center gap-1.5">
               {canInsertBakery && (
                 <button
                   type="button"
                   data-testid="welcome-register-bakery-btn"
                   onClick={onRegisterNewBakery}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-l from-[#D4AF37] to-amber-400 hover:from-amber-300 hover:to-amber-400 text-[#0A1628] font-black text-xs sm:text-sm shadow-lg transition transform hover:-translate-y-0.5 cursor-pointer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-l from-[#D4AF37] to-amber-400 hover:from-amber-300 hover:to-amber-400 text-[#0A1628] font-black text-[11px] shadow-xs transition cursor-pointer whitespace-nowrap"
                 >
-                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                  <Plus className="w-3 h-3 stroke-[2.5]" />
                   <span>تسجيل مخبز جديد</span>
                 </button>
               )}
@@ -176,10 +172,10 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
                 type="button"
                 data-testid="welcome-view-alerts-btn"
                 onClick={onOpenAlerts}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-rose-600/90 hover:bg-rose-500 text-white font-black text-xs sm:text-sm border border-rose-400/50 shadow-md transition cursor-pointer"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-600/90 hover:bg-rose-500 text-white font-black text-[11px] border border-rose-400/50 transition cursor-pointer whitespace-nowrap"
               >
-                <Bell className="w-4 h-4" />
-                <span>عرض التنبيهات ({totalAlertsCount})</span>
+                <Bell className="w-3 h-3" />
+                <span>التنبيهات ({totalAlertsCount})</span>
               </button>
 
               {canAccessReports && onOpenDailyPerformanceSummary && (
@@ -187,10 +183,10 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
                   type="button"
                   data-testid="welcome-open-daily-performance-btn"
                   onClick={onOpenDailyPerformanceSummary}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600/90 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm border border-emerald-400/50 shadow-md transition cursor-pointer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white font-black text-[11px] border border-emerald-400/50 transition cursor-pointer whitespace-nowrap"
                 >
-                  <FileText className="w-4 h-4 text-amber-200" />
-                  <span>التقرير الإحصائي اليومي للمدير العام (PDF)</span>
+                  <FileText className="w-3 h-3 text-amber-200" />
+                  <span>التقرير اليومي (PDF)</span>
                 </button>
               )}
 
@@ -199,83 +195,75 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
                   type="button"
                   data-testid="welcome-daily-briefing-btn"
                   onClick={onOpenDailyBriefing}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-black text-xs sm:text-sm border border-white/20 transition cursor-pointer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-black text-[11px] border border-white/20 transition cursor-pointer whitespace-nowrap"
                 >
-                  <TrendingUp className="w-4 h-4 text-[#5EEAD4]" />
-                  <span>التقرير اليومي للمديونيات والتراخيص</span>
+                  <TrendingUp className="w-3 h-3 text-[#5EEAD4]" />
+                  <span>تقرير المديونيات والتراخيص</span>
                 </button>
               )}
             </div>
           </div>
 
-          {/* Right Quick Status Capsule */}
-          <div className="bg-slate-950/60 backdrop-blur-sm border border-[#D4AF37]/30 rounded-2xl p-4 sm:p-5 min-w-[260px] space-y-3 shrink-0">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-[#D4AF37]" />
-                <span className="text-xs font-black text-[#FDE68A]">ملخص الجاهزية اليومي</span>
-              </div>
-              <span className="text-[11px] font-mono font-black text-emerald-300 bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 rounded-lg">
-                موعد التنبيه {alertTime}
+          {/* Right Quick Status Capsule (Ultra-Compact) */}
+          <div className="bg-slate-950/55 border border-[#D4AF37]/30 rounded-lg px-2.5 py-1.5 flex flex-wrap lg:flex-nowrap items-center gap-2.5 shrink-0 text-[11px]">
+            <div className="flex items-center gap-1.5">
+              <Building2 className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <span className="font-mono font-black text-emerald-300">{alertTime}</span>
+            </div>
+            <div className="flex items-center gap-1 text-slate-200 font-bold">
+              {isAudioMuted ? (
+                <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span className={isAudioMuted ? 'text-rose-300 font-black' : 'text-emerald-300 font-black'}>
+                {isAudioMuted ? 'مكتوم' : 'صوت مفعّل'}
               </span>
             </div>
-
-            <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
-                {isAudioMuted ? (
-                  <VolumeX className="w-4 h-4 text-rose-400" />
-                ) : (
-                  <Volume2 className="w-4 h-4 text-emerald-400" />
-                )}
-                <span>الإشعارات الصوتية:</span>
-                <span className={isAudioMuted ? 'text-rose-300 font-black' : 'text-emerald-300 font-black'}>
-                  {isAudioMuted ? 'مكتومة' : 'مفعّلة'}
-                </span>
-              </div>
+            <div className="flex items-center gap-1">
               <button
                 type="button"
                 data-testid="welcome-toggle-mute-btn"
                 onClick={onToggleAudioMute}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition cursor-pointer border ${
+                className={`px-2 py-0.5 rounded-md text-[10px] font-black transition cursor-pointer border ${
                   isAudioMuted
                     ? 'bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-200 border-emerald-400/40'
                     : 'bg-rose-600/20 hover:bg-rose-600/40 text-rose-200 border-rose-400/40'
                 }`}
               >
-                {isAudioMuted ? 'تفعيل الصوت' : 'كتم الصوت'}
+                {isAudioMuted ? 'تفعيل' : 'كتم'}
+              </button>
+              <button
+                type="button"
+                onClick={onOpenAlertSettings}
+                className="px-2 py-0.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-amber-200 text-[10px] font-black flex items-center gap-1 transition cursor-pointer"
+              >
+                <Clock className="w-3 h-3" />
+                <span>المواعيد</span>
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={onOpenAlertSettings}
-              className="w-full py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-amber-200 text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer"
-            >
-              <Clock className="w-3.5 h-3.5" />
-              <span>ضبط المواعيد وإعدادات الصوت</span>
-            </button>
           </div>
         </div>
       </section>
 
-      {/* 4 Core Executive KPI Summary Cards */}
-      <section aria-label="ملخص المخابز والمديونيات الحالي" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* 4 Core Executive KPI Summary Cards (Compact) */}
+      <section aria-label="ملخص المخابز والمديونيات الحالي" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {canAccessBakeries && (
           <button
             type="button"
             onClick={onNavigateBakeries}
-            className="text-right bg-white rounded-2xl p-5 border border-slate-200 hover:border-[#0D9488] shadow-xs hover:shadow-md transition group cursor-pointer"
+            className="text-right bg-white rounded-xl p-3.5 border border-slate-200 hover:border-[#0D9488] shadow-xs hover:shadow-md transition group cursor-pointer"
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-slate-600">إجمالي المخابز المسجلة</span>
-              <span className="w-10 h-10 rounded-xl bg-[#0D9488]/10 text-[#0D9488] flex items-center justify-center group-hover:bg-[#0D9488] group-hover:text-white transition">
-                <Store className="w-5 h-5" />
+              <span className="w-8 h-8 rounded-lg bg-[#0D9488]/10 text-[#0D9488] flex items-center justify-center group-hover:bg-[#0D9488] group-hover:text-white transition">
+                <Store className="w-4 h-4" />
               </span>
             </div>
-            <p className="text-3xl font-black font-mono tabular-nums text-[#0A1628] mt-3">
+            <p className="text-2xl font-black font-mono tabular-nums text-[#0A1628] mt-1.5">
               {bakeries.length.toLocaleString('en-US')}
             </p>
-            <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-[#0D9488]">
+            <div className="mt-1 flex items-center justify-between text-[11px] font-bold text-[#0D9488]">
               <span>عرض قاعدة بيانات المخابز</span>
               <ArrowLeft className="w-3.5 h-3.5" />
             </div>
@@ -286,19 +274,19 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
           <button
             type="button"
             onClick={onNavigateDebts}
-            className="text-right bg-white rounded-2xl p-5 border border-slate-200 hover:border-rose-500 shadow-xs hover:shadow-md transition group cursor-pointer"
+            className="text-right bg-white rounded-xl p-3.5 border border-slate-200 hover:border-rose-500 shadow-xs hover:shadow-md transition group cursor-pointer"
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-slate-600">إجمالي المديونيات الحالية</span>
-              <span className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center group-hover:bg-rose-600 group-hover:text-white transition">
-                <Scale className="w-5 h-5" />
+              <span className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center group-hover:bg-rose-600 group-hover:text-white transition">
+                <Scale className="w-4 h-4" />
               </span>
             </div>
-            <p className="text-2xl sm:text-3xl font-black font-mono tabular-nums text-rose-700 mt-3">
+            <p className="text-xl sm:text-2xl font-black font-mono tabular-nums text-rose-700 mt-1.5">
               {debtSummary.totalRemaining.toLocaleString('en-US')}{' '}
               <span className="text-xs font-bold text-slate-500">ج.م</span>
             </p>
-            <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-rose-700">
+            <div className="mt-1 flex items-center justify-between text-[11px] font-bold text-rose-700">
               <span>{debtSummary.debtorBakeriesCount} مخبز عليه رصيد متبقي</span>
               <ArrowLeft className="w-3.5 h-3.5" />
             </div>
@@ -308,18 +296,18 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
         <button
           type="button"
           onClick={onOpenAlerts}
-          className="text-right bg-white rounded-2xl p-5 border border-slate-200 hover:border-amber-500 shadow-xs hover:shadow-md transition group cursor-pointer"
+          className="text-right bg-white rounded-xl p-3.5 border border-slate-200 hover:border-amber-500 shadow-xs hover:shadow-md transition group cursor-pointer"
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-black text-slate-600">تنبيهات التراخيص والمديونيات</span>
-            <span className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition">
-              <AlertTriangle className="w-5 h-5" />
+            <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition">
+              <AlertTriangle className="w-4 h-4" />
             </span>
           </div>
-          <p className="text-3xl font-black font-mono tabular-nums text-amber-700 mt-3">
+          <p className="text-2xl font-black font-mono tabular-nums text-amber-700 mt-1.5">
             {totalAlertsCount.toLocaleString('en-US')}
           </p>
-          <div className="mt-2 flex items-center justify-between text-[11px] font-bold text-amber-800">
+          <div className="mt-1 flex items-center justify-between text-[11px] font-bold text-amber-800">
             <span>
               {expiredDocsCount} منتهي · {expiringSoonCount} قريب الانتهاء
             </span>
@@ -327,28 +315,28 @@ export const WelcomeDashboardPage: React.FC<WelcomeDashboardPageProps> = ({
           </div>
         </button>
 
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
+        <div className="bg-white rounded-xl p-3.5 border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-black text-slate-600">المهام اليومية والوارد</span>
-            <span className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
-              <CheckSquare className="w-5 h-5" />
+            <span className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center">
+              <CheckSquare className="w-4 h-4" />
             </span>
           </div>
-          <div className="mt-3 flex items-baseline gap-4">
+          <div className="mt-1.5 flex items-baseline gap-4">
             <div>
-              <span className="text-2xl font-black font-mono tabular-nums text-[#0A1628]">
+              <span className="text-xl font-black font-mono tabular-nums text-[#0A1628]">
                 {pendingTasksCount}
               </span>
               <span className="text-[11px] font-bold text-slate-500 mr-1">مهمة مفتوحة</span>
             </div>
             <div>
-              <span className="text-2xl font-black font-mono tabular-nums text-indigo-700">
+              <span className="text-xl font-black font-mono tabular-nums text-indigo-700">
                 {unreadInboxCount}
               </span>
               <span className="text-[11px] font-bold text-slate-500 mr-1">رسالة جديدة</span>
             </div>
           </div>
-          <div className="mt-2 flex items-center gap-3 text-[11px] font-black">
+          <div className="mt-1 flex items-center gap-3 text-[11px] font-black">
             <button
               type="button"
               onClick={onOpenDailyTasks}

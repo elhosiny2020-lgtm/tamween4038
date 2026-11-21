@@ -28,7 +28,8 @@ import {
   Landmark,
   FileBarChart2,
 } from 'lucide-react';
-import type { AppUser, Bakery, VillageHierarchy } from '../../types';
+import type { AppUser, Bakery, SystemConfig, VillageHierarchy } from '../../types';
+import { resolveCustomTableTitle } from '../../utils/branchOperations';
 import type {
   GrainMaintenanceState,
   GrainAsset,
@@ -53,13 +54,25 @@ import {
   resolveModuleCrudPermissions,
   checkGrainDeleteIntegrity,
 } from '../../utils/moduleCrudHelpers';
+import { isSuperAdmin } from '../../utils/departmentRbac';
 import {
   ModuleTableToolbar,
   ModuleRowActions,
   ModuleFormModal,
   ModuleDeleteConfirmModal,
+  ModuleRecordProfileModal,
+  VillageGrandTotalRow,
+  SmartTableSearchBar,
+  TablePaginationBar,
+  AuditLogAdminToolbar,
+  ReportToolbar,
+  ErrorBoundary,
+  SectionFactoryResetButton,
   type CrudFieldDefinition,
+  type ProfileFieldItem,
 } from './ModuleCrudShared';
+import { matchesSmartSearch } from '../../utils/tableSmartHelpers';
+import { Trash2 } from 'lucide-react';
 import { ShunasAndWheatReceiptsView } from './grain/ShunasAndWheatReceiptsView';
 import { RefrigeratorsDatabaseView } from './grain/RefrigeratorsDatabaseView';
 import { MillsDatabaseView } from './grain/MillsDatabaseView';
@@ -91,7 +104,9 @@ interface GrainMaintenanceSuiteProps {
   bakeries?: Bakery[];
   villages?: VillageHierarchy[];
   initialSubView?: GrainSubView;
+  systemConfig?: SystemConfig;
   onChangeState: (next: GrainMaintenanceState, actionSummary?: string) => void;
+  onFactoryResetSection?: () => Promise<void> | void;
 }
 
 const ORDER_STATUSES: MaintenanceOrderStatus[] = [
@@ -112,7 +127,9 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
   bakeries = [],
   villages = [],
   initialSubView = 'dashboard',
+  systemConfig,
   onChangeState,
+  onFactoryResetSection,
 }) => {
   const [subView, setSubView] = useState<GrainSubView>(initialSubView);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -169,6 +186,19 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
     entityId: string;
     recordSummary: { label: string; value: string | number }[];
   } | null>(null);
+
+  const [profileModalState, setProfileModalState] = useState<{
+    isOpen: boolean;
+    title: string;
+    subtitle?: string;
+    entityType: string;
+    fields: ProfileFieldItem[];
+    onEdit?: () => void;
+  } | null>(null);
+
+  const [tableSearch, setTableSearch] = useState('');
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState<number>(25);
 
   const notify = (type: 'ok' | 'err', text: string) => {
     setFeedback({ type, text });
@@ -1052,22 +1082,40 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
     notify('ok', `تم تسجيل حركة الحبوب (${rec.documentNumber}) بالوزن المصحح (${previewCorrectedWeight} طن).`);
   };
 
-  const navItems: { id: GrainSubView; label: string; icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'لوحة التحكم الشاملة', icon: <Wrench className="w-3.5 h-3.5" /> },
-    { id: 'shunas', label: `الشون وتقييم الأصول (${(state.shunas || []).length})`, icon: <Warehouse className="w-3.5 h-3.5" /> },
-    { id: 'wheat_receipts_book', label: `دفتر استلام القمح اليومي (${(state.wheatReceipts || []).length})`, icon: <FileText className="w-3.5 h-3.5" /> },
-    { id: 'refrigerators', label: `قاعدة بيانات الثلاجات (${(state.refrigerators || []).length})`, icon: <ThermometerSnowflake className="w-3.5 h-3.5" /> },
-    { id: 'mills', label: `قاعدة بيانات المطاحن (${(state.mills || []).length})`, icon: <Factory className="w-3.5 h-3.5" /> },
-    { id: 'flour_quotas', label: `حصص الدقيق والمخابز (${(state.flourQuotaMaster || []).length})`, icon: <Wheat className="w-3.5 h-3.5" /> },
-    { id: 'assets', label: 'الصوامع والمعدات OEE', icon: <Warehouse className="w-3.5 h-3.5" /> },
-    { id: 'orders', label: 'أوامر الصيانة المركزية', icon: <Cog className="w-3.5 h-3.5" /> },
-    { id: 'parts', label: 'قطع الغيار والفنيون', icon: <Cog className="w-3.5 h-3.5" /> },
-    { id: 'grain_moisture', label: 'معادلة تصحيح الرطوبة', icon: <Droplets className="w-3.5 h-3.5" /> },
-    { id: 'financials', label: 'الحسابات والتقييم المالي', icon: <Landmark className="w-3.5 h-3.5" /> },
-    { id: 'reports', label: 'مركز التقارير والطباعة', icon: <FileBarChart2 className="w-3.5 h-3.5" /> },
-    { id: 'alerts', label: `التنبيهات الذكية (${smartAlerts.length})`, icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-    { id: 'settings', label: 'الإعدادات', icon: <Settings className="w-3.5 h-3.5" /> },
-    { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" /> },
+  const navGroups: Array<{
+    groupTitle: string;
+    items: Array<{ id: GrainSubView; label: string; icon: React.ReactNode; count?: number }>;
+  }> = [
+    {
+      groupTitle: '1. الشون والقمح والمطاحن وحصص الدقيق',
+      items: [
+        { id: 'dashboard', label: 'لوحة التحكم الشاملة', icon: <Wrench className="w-3.5 h-3.5" /> },
+        { id: 'shunas', label: 'الشون وتقييم الأصول', icon: <Warehouse className="w-3.5 h-3.5" />, count: (state.shunas || []).length },
+        { id: 'wheat_receipts_book', label: 'دفتر استلام القمح اليومي', icon: <FileText className="w-3.5 h-3.5" />, count: (state.wheatReceipts || []).length },
+        { id: 'mills', label: 'قاعدة بيانات المطاحن', icon: <Factory className="w-3.5 h-3.5" />, count: (state.mills || []).length },
+        { id: 'flour_quotas', label: 'حصص الدقيق والمخابز', icon: <Wheat className="w-3.5 h-3.5" />, count: (state.flourQuotaMaster || []).length },
+      ],
+    },
+    {
+      groupTitle: '2. الثلاجات والصوامع وأوامر الصيانة',
+      items: [
+        { id: 'refrigerators', label: 'قاعدة بيانات الثلاجات', icon: <ThermometerSnowflake className="w-3.5 h-3.5" />, count: (state.refrigerators || []).length },
+        { id: 'assets', label: 'الصوامع والمعدات OEE', icon: <Warehouse className="w-3.5 h-3.5" />, count: (state.assets || []).length },
+        { id: 'orders', label: 'أوامر الصيانة المركزية', icon: <Cog className="w-3.5 h-3.5" />, count: (state.orders || []).length },
+        { id: 'parts', label: 'قطع الغيار والفنيون', icon: <Cog className="w-3.5 h-3.5" />, count: (state.spareParts || []).length },
+        { id: 'grain_moisture', label: 'معادلة تصحيح الرطوبة', icon: <Droplets className="w-3.5 h-3.5" />, count: (state.grainMovements || []).length },
+      ],
+    },
+    {
+      groupTitle: '3. الحسابات والتقارير والتنبيهات',
+      items: [
+        { id: 'financials', label: 'الحسابات والتقييم المالي', icon: <Landmark className="w-3.5 h-3.5" />, count: (state.centralFinancialLedger || []).length },
+        { id: 'reports', label: 'مركز التقارير الرسمية', icon: <FileBarChart2 className="w-3.5 h-3.5" />, count: 7 },
+        { id: 'alerts', label: 'التنبيهات الذكية', icon: <AlertTriangle className="w-3.5 h-3.5" />, count: smartAlerts.length },
+        { id: 'settings', label: 'الإعدادات', icon: <Settings className="w-3.5 h-3.5" /> },
+        { id: 'audit', label: 'سجل التدقيق', icon: <History className="w-3.5 h-3.5" />, count: (state.auditLogs || []).length },
+      ],
+    },
   ];
 
   const activeDeleteCheck = useMemo(() => {
@@ -1077,39 +1125,156 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
 
   return (
     <div className="space-y-4" dir="rtl" data-testid="grain-maintenance-suite">
-      {/* Banner */}
-      <div className="bg-gradient-to-l from-[#0A1628] via-[#13294B] to-[#0D9488] text-white rounded-2xl p-5 shadow-lg border border-[#D4AF37]/40 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-3 rounded-2xl bg-[#D4AF37] text-[#0A1628] shadow-md">
-            <Wrench className="w-7 h-7" />
+      {/* Executive Header & Categorized Sub-Navigation matching InternalTradeSuite */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#0A1931] text-white flex items-center justify-center shadow-xs shrink-0">
+              <Wrench className="w-6 h-6 text-[#D4AF37]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-600">
+                  مديرية التموين والتجارة الداخلية بالغربية · إدارة تموين مركز المحلة الكبرى
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[#0A1931] text-[10px] font-black border border-slate-200">
+                  قطاع صيانة الحبوب والمطاحن
+                </span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-black text-[#0A1931]">
+                {resolveCustomTableTitle(
+                  systemConfig,
+                  'grain_shunas_mills',
+                  'منظومة قسم صيانة الحبوب المتكاملة (الشون • استلام القمح • الثلاجات • المطاحن • حصص الدقيق)'
+                )}
+              </h2>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-black">
-              منظومة قسم صيانة الحبوب المتكاملة (الشون • دفتر استلام القمح • الثلاجات • المطاحن • حصص الدقيق)
-            </h2>
-            <p className="text-xs text-[#5EEAD4] font-bold mt-0.5">
-              مديرية التموين والتجارة الداخلية بالغربية • {branchName} • قاعدة بيانات مترابطة ومحمية محاسبياً ورقابياً
-            </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSubView('wheat_receipts_book')}
+              className="px-3 py-2 bg-[#0A1931] hover:bg-[#13294B] text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+            >
+              <FileText className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <span>دفتر استلام القمح اليومي</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubView('mills')}
+              className="px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+            >
+              <Factory className="w-3.5 h-3.5" />
+              <span>قاعدة بيانات المطاحن</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubView('reports')}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>مركز التقارير الرسمية A4 و Excel</span>
+            </button>
+
+            <SectionFactoryResetButton
+              currentUser={currentUser}
+              sectionLabel="صيانة الحبوب والشون والمطاحن"
+              branchName={branchName}
+              onConfirm={onFactoryResetSection}
+              testId="grain-factory-reset-btn"
+            />
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSubView('wheat_receipts_book')}
-            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow"
-          >
-            <FileText className="w-4 h-4" />
-            <span>دفتر استلام القمح اليومي</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubView('reports')}
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
-          >
-            <Printer className="w-4 h-4" />
-            <span>مركز التقارير A4 و Excel</span>
-          </button>
+        {/* Unified Top Responsive KPI Cards Grid matching InternalTradeSuite */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" dir="rtl">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">الشون التموينية ومحاضر القمح</div>
+            <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">
+              {(state.shunas || []).length.toLocaleString('en-US')} شونة
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5 font-mono tabular-nums">
+              {(state.wheatReceipts || []).length.toLocaleString('en-US')} محضر استلام قمح
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">المطاحن والثلاجات التموينية</div>
+            <div className="text-lg font-black text-[#0A1931] font-mono tabular-nums mt-0.5">
+              {(state.mills || []).length.toLocaleString('en-US')} مطحن
+            </div>
+            <div className="text-[10px] font-bold text-slate-600 mt-0.5 font-mono tabular-nums">
+              {(state.refrigerators || []).length.toLocaleString('en-US')} ثلاجة ومخزن تبريد
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">حصص الدقيق للمخابز</div>
+            <div className="text-lg font-black text-teal-800 font-mono tabular-nums mt-0.5">
+              {(state.flourQuotaMaster || []).length.toLocaleString('en-US')} مخبز
+            </div>
+            <div className="text-[10px] font-bold text-teal-700 mt-0.5">
+              ربط حي بالحصص والاستخراج
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-start">
+            <div className="text-[11px] font-bold text-slate-600">أوامر الصيانة والتنبيهات</div>
+            <div className="text-lg font-black text-amber-800 font-mono tabular-nums mt-0.5">
+              {(state.orders || []).length.toLocaleString('en-US')} أمر صيانة
+            </div>
+            <div className="text-[10px] font-bold text-rose-700 mt-0.5 font-mono tabular-nums">
+              {smartAlerts.length.toLocaleString('en-US')} تنبيه هندسي ورقابي نشط
+            </div>
+          </div>
+        </div>
+
+        {/* Categorized Sub-Navigation Tabs */}
+        <div className="pt-2 border-t border-slate-200 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          {navGroups.map((grp) => (
+            <div
+              key={grp.groupTitle}
+              className="bg-slate-50/90 border border-slate-200 rounded-xl p-2 space-y-1.5"
+            >
+              <div className="text-[11px] font-black text-[#0A1931] px-2 py-0.5 rounded-md bg-slate-200/70 inline-block">
+                {grp.groupTitle}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {grp.items.map((item) => {
+                  const isActive = subView === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setSubView(item.id);
+                        setTableSearch('');
+                        setTablePage(1);
+                      }}
+                      data-testid={`grain-nav-${item.id}`}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer ${
+                        isActive
+                          ? 'bg-[#0A1931] text-white shadow-xs'
+                          : 'bg-white hover:bg-slate-100 text-[#0A1931] border border-slate-300'
+                      }`}
+                    >
+                      {item.icon}
+                      <span>{item.label}</span>
+                      {typeof item.count === 'number' && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                            isActive
+                              ? 'bg-[#D4AF37] text-[#0A1931] font-black'
+                              : 'bg-slate-200 text-[#0A1931] font-bold'
+                          }`}
+                        >
+                          {item.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -1127,29 +1292,90 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
         </div>
       )}
 
-      {/* Nav */}
-      <div className="bg-white rounded-2xl p-2 border border-slate-200 shadow-sm flex flex-wrap gap-1.5">
-        {navItems.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setSubView(tab.id)}
-            data-testid={`grain-nav-${tab.id}`}
-            className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer ${
-              subView === tab.id ? 'bg-[#0A1628] text-[#D4AF37]' : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
-            }`}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
+      {/* Unified ReportToolbar above active Grain Maintenance tables */}
+      <ReportToolbar
+        title="قسم صيانة الحبوب — الجداول التشغيلية والتقارير الرسمية"
+        subtitle={`الشون • القمح • الثلاجات • المطاحن • حصص الدقيق (${branchName})`}
+        count={
+          (state.shunas || []).length +
+          (state.mills || []).length +
+          (state.refrigerators || []).length +
+          (state.flourQuotaMaster || []).length
+        }
+        countLabel="سجل"
+        testIdPrefix={`grain-${subView}`}
+        onExportExcel={
+          permissions.canExport
+            ? () =>
+                exportRowsToArabicCsv(
+                  `صيانة_الحبوب_${branchName}`,
+                  ['الكود', 'اسم الشونة', 'الوحدة المحلية', 'القرية', 'السعة (طن)', 'الرصيد الدفتري (طن)'],
+                  (state.shunas || []).map((sh) => {
+                    const bal = computeShunaBookBalanceAndValuation({
+                      shuna: sh,
+                      wheatReceipts: state.wheatReceipts || [],
+                      wheatIssues: state.wheatIssues || [],
+                    });
+                    return [
+                      sh.shunaCode || sh.id,
+                      sh.shunaName,
+                      sh.localUnit || 'غير محدد',
+                      sh.village || 'غير محدد',
+                      sh.storageCapacityTons || 0,
+                      bal.currentBookBalanceTons || 0,
+                    ];
+                  })
+                )
+            : undefined
+        }
+        onPrint={
+          permissions.canPrint
+            ? () =>
+                printModuleReportA4({
+                  title: `التقرير الرسمي الموحد لقسم صيانة الحبوب (${branchName})`,
+                  subtitle: 'الشون التموينية والمطاحن والثلاجات وحصص الدقيق',
+                  branchName,
+                  headers: ['الكود', 'اسم الشونة', 'الوحدة المحلية', 'القرية', 'السعة التخزينية (طن)', 'الرصيد الدفتري (طن)'],
+                  rows: (state.shunas || []).map((sh) => {
+                    const bal = computeShunaBookBalanceAndValuation({
+                      shuna: sh,
+                      wheatReceipts: state.wheatReceipts || [],
+                      wheatIssues: state.wheatIssues || [],
+                    });
+                    return [
+                      sh.shunaCode || sh.id,
+                      sh.shunaName,
+                      sh.localUnit || 'غير محدد',
+                      sh.village || 'غير محدد',
+                      sh.storageCapacityTons || 0,
+                      bal.currentBookBalanceTons || 0,
+                    ];
+                  }),
+                  summaryItems: [
+                    { label: 'عدد الشون التموينية', value: String((state.shunas || []).length) },
+                    { label: 'محاضر استلام القمح', value: String((state.wheatReceipts || []).length) },
+                    { label: 'المطاحن التموينية', value: String((state.mills || []).length) },
+                    { label: 'حصص الدقيق للمخابز', value: String((state.flourQuotaMaster || []).length) },
+                  ],
+                  preparedBy: currentUser?.fullName,
+                })
+            : undefined
+        }
+        onExportPdf={
+          permissions.canPrint
+            ? () => setSubView('reports')
+            : undefined
+        }
+      />
 
+      <ErrorBoundary key={subView} fallbackTitle="تعذر عرض جدول قسم صيانة الحبوب مؤقتاً دون تأثر باقي المنظومة">
       {subView === 'shunas' && (
         <ShunasAndWheatReceiptsView
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canEdit={permissions.canEdit}
@@ -1167,6 +1393,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canEdit={permissions.canEdit}
@@ -1184,6 +1412,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canPrint={permissions.canPrint}
@@ -1199,6 +1429,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canPrint={permissions.canPrint}
@@ -1214,6 +1446,8 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
           state={state}
           branchName={branchName}
           currentUserFullName={currentUser?.fullName || 'مستخدم المنظومة'}
+          currentUser={currentUser}
+          permissions={permissions}
           isViewer={isViewer}
           canAdd={permissions.canAdd}
           canPrint={permissions.canPrint}
@@ -1394,72 +1628,145 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             </form>
           )}
 
+          <SmartTableSearchBar
+            query={tableSearch}
+            onQueryChange={(q) => {
+              setTableSearch(q);
+              setTablePage(1);
+            }}
+            totalMatches={state.assets.filter((a) =>
+              matchesSmartSearch(tableSearch, [a.assetCode, a.name, a.assetType, a.locationSite, a.operationalStatus])
+            ).length}
+            totalAll={state.assets.length}
+            placeholder="بحث ذكي بالكود أو اسم الصومعة/المعدة أو الموقع أو الحالة..."
+            testId="grain-assets-search"
+          />
+
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
-              <thead className="bg-[#0A1628] text-white font-black">
-                <tr>
-                  <th className="py-2 px-2 border border-slate-700">الكود</th>
-                  <th className="py-2 px-2 border border-slate-700 text-right">المعدة / الصومعة</th>
-                  <th className="py-2 px-2 border border-slate-700">النوع والموقع</th>
-                  <th className="py-2 px-2 border border-slate-700">الإتاحة %</th>
-                  <th className="py-2 px-2 border border-slate-700">OEE %</th>
-                  <th className="py-2 px-2 border border-slate-700">MTBF / MTTR</th>
-                  <th className="py-2 px-2 border border-slate-700">الحالة التشغيلية</th>
-                  <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 font-bold">
-                {state.assets.map((a) => {
-                  const kpi = computeEquipmentKpis(a, state.orders);
-                  return (
-                    <tr key={a.id} className="hover:bg-slate-50">
-                      <td className="py-2 px-2 font-mono">{a.assetCode}</td>
-                      <td className="py-2 px-2 text-right font-black text-[#0A1628]">{a.name}</td>
-                      <td className="py-2 px-2 text-slate-600">{a.assetType} — {a.locationSite}</td>
-                      <td className="py-2 px-2 font-mono text-[#1E40AF]">{kpi.availabilityPct ?? '—'}%</td>
-                      <td className="py-2 px-2 font-mono text-[#0D9488] font-black">{kpi.oeePct ?? '—'}%</td>
-                      <td className="py-2 px-2 font-mono">
-                        {kpi.mtbfHours ?? '—'} س / {kpi.mttrHours ?? '—'} س
-                      </td>
-                      <td className="py-2 px-2">{a.operationalStatus}</td>
-                      <td className="py-2 px-2">
-                        <ModuleRowActions
-                          entityLabel={a.name}
-                          updatedAt={a.updatedAt}
-                          permissions={permissions}
-                          testIdPrefix={`grain-asset-${a.id}`}
-                          onEdit={() =>
-                            setFormModalState({
-                              isOpen: true,
-                              mode: 'edit',
-                              entityKey: 'asset',
-                              targetId: a.id,
-                              title: `تعديل بيانات الأصل: ${a.name}`,
-                              fields: getAssetFields(),
-                              initialValues: { ...a },
-                            })
-                          }
-                          onDelete={() =>
-                            setDeleteModalState({
-                              isOpen: true,
-                              entityType: 'asset',
-                              entityTitle: a.name,
-                              entityId: a.id,
-                              recordSummary: [
-                                { label: 'كود الأصل', value: a.assetCode },
-                                { label: 'الاسم', value: a.name },
-                                { label: 'النوع', value: a.assetType },
-                                { label: 'الحالة التشغيلية', value: a.operationalStatus },
-                              ],
-                            })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            {(() => {
+              const filteredAssets = state.assets.filter((a) =>
+                matchesSmartSearch(tableSearch, [a.assetCode, a.name, a.assetType, a.locationSite, a.operationalStatus])
+              );
+              const pagedAssets = tablePageSize >= 999999
+                ? filteredAssets
+                : filteredAssets.slice((tablePage - 1) * tablePageSize, tablePage * tablePageSize);
+              const avgAvail = filteredAssets.length
+                ? Number((filteredAssets.reduce((s, a) => s + (computeEquipmentKpis(a, state.orders).availabilityPct || 0), 0) / filteredAssets.length).toFixed(1))
+                : 0;
+              const avgOee = filteredAssets.length
+                ? Number((filteredAssets.reduce((s, a) => s + (computeEquipmentKpis(a, state.orders).oeePct || 0), 0) / filteredAssets.length).toFixed(1))
+                : 0;
+              return (
+                <>
+                  <table className="w-full text-xs text-center border-collapse compact-erp-table">
+                    <thead className="bg-[#0A1628] text-white font-black">
+                      <tr>
+                        <th className="py-2 px-2 border border-slate-700">الكود</th>
+                        <th className="py-2 px-2 border border-slate-700 text-right">المعدة / الصومعة</th>
+                        <th className="py-2 px-2 border border-slate-700">النوع والموقع</th>
+                        <th className="py-2 px-2 border border-slate-700">الإتاحة %</th>
+                        <th className="py-2 px-2 border border-slate-700">OEE %</th>
+                        <th className="py-2 px-2 border border-slate-700">MTBF / MTTR</th>
+                        <th className="py-2 px-2 border border-slate-700">الحالة التشغيلية</th>
+                        <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 font-bold">
+                      {pagedAssets.map((a) => {
+                        const kpi = computeEquipmentKpis(a, state.orders);
+                        const openEdit = () =>
+                          setFormModalState({
+                            isOpen: true,
+                            mode: 'edit',
+                            entityKey: 'asset',
+                            targetId: a.id,
+                            title: `تعديل بيانات الأصل: ${a.name}`,
+                            fields: getAssetFields(),
+                            initialValues: { ...a },
+                          });
+                        return (
+                          <tr key={a.id} className="hover:bg-slate-50">
+                            <td className="py-2 px-2 font-mono">{a.assetCode}</td>
+                            <td className="py-2 px-2 text-right font-black text-[#0A1628]">{a.name}</td>
+                            <td className="py-2 px-2 text-slate-600">{a.assetType} — {a.locationSite}</td>
+                            <td className="py-2 px-2 font-mono text-[#1E40AF]">{kpi.availabilityPct ?? '—'}%</td>
+                            <td className="py-2 px-2 font-mono text-[#0D9488] font-black">{kpi.oeePct ?? '—'}%</td>
+                            <td className="py-2 px-2 font-mono">
+                              {kpi.mtbfHours ?? '—'} س / {kpi.mttrHours ?? '—'} س
+                            </td>
+                            <td className="py-2 px-2">{a.operationalStatus}</td>
+                            <td className="py-2 px-2">
+                              <ModuleRowActions
+                                entityLabel={a.name}
+                                updatedAt={a.updatedAt}
+                                permissions={permissions}
+                                testIdPrefix={`grain-asset-${a.id}`}
+                                onView={() =>
+                                  setProfileModalState({
+                                    isOpen: true,
+                                    title: a.name,
+                                    subtitle: `${a.assetCode} — ${a.assetType} (${a.locationSite})`,
+                                    entityType: 'أصل هندسي / صومعة',
+                                    onEdit: openEdit,
+                                    fields: [
+                                      { label: 'كود الأصل', value: a.assetCode },
+                                      { label: 'الاسم', value: a.name },
+                                      { label: 'النوع', value: a.assetType },
+                                      { label: 'الموقع الهندسي', value: a.locationSite },
+                                      { label: 'الحالة التشغيلية', value: a.operationalStatus },
+                                      { label: 'القدرة التصميمية (طن/ساعة)', value: `${a.ratedCapacityTonPerHour} طن/ساعة` },
+                                      { label: 'القيمة الدفترية', value: `${a.purchaseValue.toLocaleString('ar-EG')} ج.م` },
+                                      { label: 'نسبة الإتاحة', value: `${kpi.availabilityPct ?? 0}%` },
+                                      { label: 'كفاءة المعدات OEE', value: `${kpi.oeePct ?? 0}%` },
+                                      { label: 'تاريخ الصيانة القادمة', value: a.nextMaintenanceDate },
+                                    ],
+                                  })
+                                }
+                                onEdit={openEdit}
+                                onDelete={() =>
+                                  setDeleteModalState({
+                                    isOpen: true,
+                                    entityType: 'asset',
+                                    entityTitle: a.name,
+                                    entityId: a.id,
+                                    recordSummary: [
+                                      { label: 'كود الأصل', value: a.assetCode },
+                                      { label: 'الاسم', value: a.name },
+                                      { label: 'النوع', value: a.assetType },
+                                      { label: 'الحالة التشغيلية', value: a.operationalStatus },
+                                    ],
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <VillageGrandTotalRow
+                        totalCount={filteredAssets.length}
+                        labelColSpan={3}
+                        title="الإجمالي والمتوسط العام للصوامع والمعدات TOTAL"
+                        metricCells={[
+                          { content: `متوسط الإتاحة: ${avgAvail}%`, mono: true },
+                          { content: `متوسط OEE: ${avgOee}%`, mono: true },
+                          { content: `إجمالي القدرة: ${filteredAssets.reduce((s, a) => s + (a.ratedCapacityTonPerHour || 0), 0)} طن/س`, colSpan: 3, mono: true },
+                        ]}
+                      />
+                    </tbody>
+                  </table>
+                  <TablePaginationBar
+                    currentPage={tablePage}
+                    pageSize={tablePageSize}
+                    totalItems={filteredAssets.length}
+                    onPageChange={setTablePage}
+                    onPageSizeChange={(sz) => {
+                      setTablePageSize(sz);
+                      setTablePage(1);
+                    }}
+                  />
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1522,84 +1829,158 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             </form>
           )}
 
+          <SmartTableSearchBar
+            query={tableSearch}
+            onQueryChange={(q) => {
+              setTableSearch(q);
+              setTablePage(1);
+            }}
+            totalMatches={state.orders.filter((o) => {
+              const asset = state.assets.find((a) => a.id === o.assetId);
+              return matchesSmartSearch(tableSearch, [o.orderNumber, asset?.name, o.faultDescription, o.maintenanceType, o.status, o.technicianNames]);
+            }).length}
+            totalAll={state.orders.length}
+            placeholder="بحث برقم الأمر أو المعدة أو العطل أو الحالة أو الفني..."
+            testId="grain-orders-search"
+          />
+
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
-              <thead className="bg-[#0A1628] text-white font-black">
-                <tr>
-                  <th className="py-2 px-2 border border-slate-700">رقم الأمر</th>
-                  <th className="py-2 px-2 border border-slate-700 text-right">المعدة والوصف</th>
-                  <th className="py-2 px-2 border border-slate-700">العمالة + قطع الغيار</th>
-                  <th className="py-2 px-2 border border-slate-700">المباشرة / غير المباشرة</th>
-                  <th className="py-2 px-2 border border-slate-700">الإجمالي النهائي</th>
-                  <th className="py-2 px-2 border border-slate-700">الحالة</th>
-                  <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 font-bold">
-                {state.orders.map((o) => {
-                  const asset = state.assets.find((a) => a.id === o.assetId);
-                  return (
-                    <tr key={o.id} className="hover:bg-slate-50">
-                      <td className="py-2 px-2 font-mono">{o.orderNumber}</td>
-                      <td className="py-2 px-2 text-right">
-                        <div className="font-black text-[#0A1628]">{asset?.name || o.assetId}</div>
-                        <div className="text-[11px] text-slate-500">{o.faultDescription}</div>
-                      </td>
-                      <td className="py-2 px-2 font-mono">{o.laborCost} + {o.partsCost} ج.م</td>
-                      <td className="py-2 px-2 font-mono">{o.directCost} / {o.indirectCost} ج.م</td>
-                      <td className="py-2 px-2 font-mono font-black text-rose-700">{o.totalRepairCost.toLocaleString()} ج.م</td>
-                      <td className="py-2 px-2">
-                        <select
-                          disabled={!permissions.canEdit}
-                          value={o.status}
-                          onChange={(e) => handleAdvanceOrderStatus(o.id, e.target.value as MaintenanceOrderStatus)}
-                          className="px-2 py-1 bg-slate-50 border border-slate-300 rounded-lg text-[11px] font-black cursor-pointer"
-                        >
-                          {ORDER_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
-                        </select>
-                      </td>
-                      <td className="py-2 px-2">
-                        <ModuleRowActions
-                          entityLabel={o.orderNumber}
-                          updatedAt={o.updatedAt}
-                          permissions={permissions}
-                          testIdPrefix={`grain-order-${o.id}`}
-                          onEdit={() =>
-                            setFormModalState({
-                              isOpen: true,
-                              mode: 'edit',
-                              entityKey: 'order',
-                              targetId: o.id,
-                              title: `تعديل أمر الصيانة: ${o.orderNumber}`,
-                              fields: getOrderFields(),
-                              initialValues: {
-                                ...o,
-                                partId: o.partsUsed[0]?.partId || '',
-                                partQty: o.partsUsed[0]?.quantity || 0,
-                              },
-                            })
-                          }
-                          onDelete={() =>
-                            setDeleteModalState({
-                              isOpen: true,
-                              entityType: 'order',
-                              entityTitle: o.orderNumber,
-                              entityId: o.id,
-                              recordSummary: [
-                                { label: 'رقم الأمر', value: o.orderNumber },
-                                { label: 'المعدة', value: asset?.name || o.assetId },
-                                { label: 'التكلفة الكلية', value: `${o.totalRepairCost} ج.م` },
-                                { label: 'الحالة', value: o.status },
-                              ],
-                            })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            {(() => {
+              const filteredOrders = state.orders.filter((o) => {
+                const asset = state.assets.find((a) => a.id === o.assetId);
+                return matchesSmartSearch(tableSearch, [o.orderNumber, asset?.name, o.faultDescription, o.maintenanceType, o.status, o.technicianNames]);
+              });
+              const pagedOrders = tablePageSize >= 999999
+                ? filteredOrders
+                : filteredOrders.slice((tablePage - 1) * tablePageSize, tablePage * tablePageSize);
+              const totalLaborAndParts = filteredOrders.reduce((s, o) => s + (o.laborCost || 0) + (o.partsCost || 0), 0);
+              const totalDirect = filteredOrders.reduce((s, o) => s + (o.directCost || 0), 0);
+              const totalFinal = filteredOrders.reduce((s, o) => s + (o.totalRepairCost || 0), 0);
+              return (
+                <>
+                  <table className="w-full text-xs text-center border-collapse compact-erp-table">
+                    <thead className="bg-[#0A1628] text-white font-black">
+                      <tr>
+                        <th className="py-2 px-2 border border-slate-700">رقم الأمر</th>
+                        <th className="py-2 px-2 border border-slate-700 text-right">المعدة والوصف</th>
+                        <th className="py-2 px-2 border border-slate-700">العمالة + قطع الغيار</th>
+                        <th className="py-2 px-2 border border-slate-700">المباشرة / غير المباشرة</th>
+                        <th className="py-2 px-2 border border-slate-700">الإجمالي النهائي</th>
+                        <th className="py-2 px-2 border border-slate-700">الحالة</th>
+                        <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 font-bold">
+                      {pagedOrders.map((o) => {
+                        const asset = state.assets.find((a) => a.id === o.assetId);
+                        const openEdit = () =>
+                          setFormModalState({
+                            isOpen: true,
+                            mode: 'edit',
+                            entityKey: 'order',
+                            targetId: o.id,
+                            title: `تعديل أمر الصيانة: ${o.orderNumber}`,
+                            fields: getOrderFields(),
+                            initialValues: {
+                              ...o,
+                              partId: o.partsUsed[0]?.partId || '',
+                              partQty: o.partsUsed[0]?.quantity || 0,
+                            },
+                          });
+                        return (
+                          <tr key={o.id} className="hover:bg-slate-50">
+                            <td className="py-2 px-2 font-mono">{o.orderNumber}</td>
+                            <td className="py-2 px-2 text-right">
+                              <div className="font-black text-[#0A1628]">{asset?.name || o.assetId}</div>
+                              <div className="text-[11px] text-slate-500">{o.faultDescription}</div>
+                            </td>
+                            <td className="py-2 px-2 font-mono">{o.laborCost} + {o.partsCost} ج.م</td>
+                            <td className="py-2 px-2 font-mono">{o.directCost} / {o.indirectCost} ج.م</td>
+                            <td className="py-2 px-2 font-mono font-black text-rose-700">{o.totalRepairCost.toLocaleString()} ج.م</td>
+                            <td className="py-2 px-2">
+                              <select
+                                disabled={!permissions.canEdit}
+                                value={o.status}
+                                onChange={(e) => handleAdvanceOrderStatus(o.id, e.target.value as MaintenanceOrderStatus)}
+                                className="px-2 py-1 bg-slate-50 border border-slate-300 rounded-lg text-[11px] font-black cursor-pointer"
+                              >
+                                {ORDER_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+                              </select>
+                            </td>
+                            <td className="py-2 px-2">
+                              <ModuleRowActions
+                                entityLabel={o.orderNumber}
+                                updatedAt={o.updatedAt}
+                                permissions={permissions}
+                                testIdPrefix={`grain-order-${o.id}`}
+                                onView={() =>
+                                  setProfileModalState({
+                                    isOpen: true,
+                                    title: `أمر صيانة رقم ${o.orderNumber}`,
+                                    subtitle: `${asset?.name || o.assetId} — ${o.maintenanceType}`,
+                                    entityType: 'أمر صيانة هندسي',
+                                    onEdit: openEdit,
+                                    fields: [
+                                      { label: 'رقم الأمر', value: o.orderNumber },
+                                      { label: 'تاريخ الطلب', value: o.requestDate },
+                                      { label: 'المعدة / الصومعة', value: asset?.name || o.assetId },
+                                      { label: 'نوع الصيانة', value: o.maintenanceType },
+                                      { label: 'درجة الخطورة', value: o.severity },
+                                      { label: 'الحالة', value: o.status },
+                                      { label: 'الفنيون المكلفون', value: o.technicianNames },
+                                      { label: 'تكلفة العمالة', value: `${o.laborCost} ج.م` },
+                                      { label: 'تكلفة قطع الغيار', value: `${o.partsCost} ج.م` },
+                                      { label: 'التكلفة الكلية للإصلاح', value: `${o.totalRepairCost.toLocaleString('ar-EG')} ج.م` },
+                                      { label: 'وصف العطل', value: o.faultDescription },
+                                    ],
+                                  })
+                                }
+                                onEdit={openEdit}
+                                onDelete={() =>
+                                  setDeleteModalState({
+                                    isOpen: true,
+                                    entityType: 'order',
+                                    entityTitle: o.orderNumber,
+                                    entityId: o.id,
+                                    recordSummary: [
+                                      { label: 'رقم الأمر', value: o.orderNumber },
+                                      { label: 'المعدة', value: asset?.name || o.assetId },
+                                      { label: 'التكلفة الكلية', value: `${o.totalRepairCost} ج.م` },
+                                      { label: 'الحالة', value: o.status },
+                                    ],
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <VillageGrandTotalRow
+                        totalCount={filteredOrders.length}
+                        labelColSpan={2}
+                        title="الإجمالي العام لأوامر الصيانة والتكاليف TOTAL"
+                        metricCells={[
+                          { content: `${totalLaborAndParts.toLocaleString('ar-EG')} ج.م`, mono: true },
+                          { content: `${totalDirect.toLocaleString('ar-EG')} ج.م`, mono: true },
+                          { content: `${totalFinal.toLocaleString('ar-EG')} ج.م`, mono: true },
+                          { content: '—', colSpan: 2 },
+                        ]}
+                      />
+                    </tbody>
+                  </table>
+                  <TablePaginationBar
+                    currentPage={tablePage}
+                    pageSize={tablePageSize}
+                    totalItems={filteredOrders.length}
+                    onPageChange={setTablePage}
+                    onPageSizeChange={(sz) => {
+                      setTablePageSize(sz);
+                      setTablePage(1);
+                    }}
+                  />
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1640,79 +2021,131 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
               }
             />
 
+            <SmartTableSearchBar
+              query={tableSearch}
+              onQueryChange={(q) => {
+                setTableSearch(q);
+                setTablePage(1);
+              }}
+              totalMatches={state.spareParts.filter((sp) =>
+                matchesSmartSearch(tableSearch, [sp.partCode, sp.partName, sp.unit])
+              ).length}
+              totalAll={state.spareParts.length}
+              placeholder="بحث بكود أو اسم قطعة الغيار أو اسم الفني..."
+              testId="grain-parts-search"
+            />
+
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
-                <thead className="bg-[#0A1628] text-white font-black">
-                  <tr>
-                    <th className="py-2 px-2 border border-slate-700">الكود</th>
-                    <th className="py-2 px-2 border border-slate-700 text-right">اسم قطعة الغيار</th>
-                    <th className="py-2 px-2 border border-slate-700">سعر الوحدة</th>
-                    <th className="py-2 px-2 border border-slate-700">الرصيد المتاح</th>
-                    <th className="py-2 px-2 border border-slate-700">حد إعادة الطلب</th>
-                    <th className="py-2 px-2 border border-slate-700">الكمية المطلوب شراؤها</th>
-                    <th className="py-2 px-2 border border-slate-700">حالة التنبيه</th>
-                    <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 font-bold">
-                  {state.spareParts.map((sp) => {
-                    const st = computeSparePartStatus(sp);
-                    return (
-                      <tr key={sp.id} className="hover:bg-slate-50">
-                        <td className="py-2 px-2 font-mono">{sp.partCode}</td>
-                        <td className="py-2 px-2 text-right font-black text-[#0A1628]">{sp.partName}</td>
-                        <td className="py-2 px-2 font-mono">{sp.unitCost} ج.م</td>
-                        <td className="py-2 px-2 font-mono font-black text-[#0D9488]">{st.availableBalance}</td>
-                        <td className="py-2 px-2 font-mono">{st.reorderPoint}</td>
-                        <td className="py-2 px-2 font-mono">{st.neededQty}</td>
-                        <td className="py-2 px-2">
-                          {st.needsReorder ? (
-                            <span className="px-2 py-0.5 bg-rose-100 text-rose-900 rounded-full text-[11px] font-black">
-                              يلزم إعادة طلب
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-900 rounded-full text-[11px] font-black">
-                              متوافر
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-2 px-2">
-                          <ModuleRowActions
-                            entityLabel={sp.partName}
-                            updatedAt={sp.updatedAt}
-                            permissions={permissions}
-                            testIdPrefix={`grain-part-${sp.id}`}
-                            onEdit={() =>
-                              setFormModalState({
-                                isOpen: true,
-                                mode: 'edit',
-                                entityKey: 'part',
-                                targetId: sp.id,
-                                title: `تعديل قطعة الغيار: ${sp.partName}`,
-                                fields: getPartFields(),
-                                initialValues: { ...sp },
-                              })
-                            }
-                            onDelete={() =>
-                              setDeleteModalState({
-                                isOpen: true,
-                                entityType: 'part',
-                                entityTitle: sp.partName,
-                                entityId: sp.id,
-                                recordSummary: [
-                                  { label: 'الكود', value: sp.partCode },
-                                  { label: 'الاسم', value: sp.partName },
-                                  { label: 'الرصيد المتاح', value: st.availableBalance },
-                                ],
-                              })
-                            }
-                          />
-                        </td>
+              {(() => {
+                const filteredParts = state.spareParts.filter((sp) =>
+                  matchesSmartSearch(tableSearch, [sp.partCode, sp.partName, sp.unit])
+                );
+                const totalBalance = filteredParts.reduce((s, sp) => s + computeSparePartStatus(sp).availableBalance, 0);
+                const totalNeeded = filteredParts.reduce((s, sp) => s + computeSparePartStatus(sp).neededQty, 0);
+                return (
+                  <table className="w-full text-xs text-center border-collapse compact-erp-table">
+                    <thead className="bg-[#0A1628] text-white font-black">
+                      <tr>
+                        <th className="py-2 px-2 border border-slate-700">الكود</th>
+                        <th className="py-2 px-2 border border-slate-700 text-right">اسم قطعة الغيار</th>
+                        <th className="py-2 px-2 border border-slate-700">سعر الوحدة</th>
+                        <th className="py-2 px-2 border border-slate-700">الرصيد المتاح</th>
+                        <th className="py-2 px-2 border border-slate-700">حد إعادة الطلب</th>
+                        <th className="py-2 px-2 border border-slate-700">الكمية المطلوب شراؤها</th>
+                        <th className="py-2 px-2 border border-slate-700">حالة التنبيه</th>
+                        <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 font-bold">
+                      {filteredParts.map((sp) => {
+                        const st = computeSparePartStatus(sp);
+                        const openEdit = () =>
+                          setFormModalState({
+                            isOpen: true,
+                            mode: 'edit',
+                            entityKey: 'part',
+                            targetId: sp.id,
+                            title: `تعديل قطعة الغيار: ${sp.partName}`,
+                            fields: getPartFields(),
+                            initialValues: { ...sp },
+                          });
+                        return (
+                          <tr key={sp.id} className="hover:bg-slate-50">
+                            <td className="py-2 px-2 font-mono">{sp.partCode}</td>
+                            <td className="py-2 px-2 text-right font-black text-[#0A1628]">{sp.partName}</td>
+                            <td className="py-2 px-2 font-mono">{sp.unitCost} ج.م</td>
+                            <td className="py-2 px-2 font-mono font-black text-[#0D9488]">{st.availableBalance}</td>
+                            <td className="py-2 px-2 font-mono">{st.reorderPoint}</td>
+                            <td className="py-2 px-2 font-mono">{st.neededQty}</td>
+                            <td className="py-2 px-2">
+                              {st.needsReorder ? (
+                                <span className="px-2 py-0.5 bg-rose-100 text-rose-900 rounded-md text-[11px] font-black">
+                                  يلزم إعادة طلب
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-900 rounded-md text-[11px] font-black">
+                                  متوافر
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 px-2">
+                              <ModuleRowActions
+                                entityLabel={sp.partName}
+                                updatedAt={sp.updatedAt}
+                                permissions={permissions}
+                                testIdPrefix={`grain-part-${sp.id}`}
+                                onView={() =>
+                                  setProfileModalState({
+                                    isOpen: true,
+                                    title: sp.partName,
+                                    subtitle: `كود قطعة الغيار: ${sp.partCode}`,
+                                    entityType: 'قطعة غيار هندسية',
+                                    onEdit: openEdit,
+                                    fields: [
+                                      { label: 'كود القطعة', value: sp.partCode },
+                                      { label: 'اسم قطعة الغيار', value: sp.partName },
+                                      { label: 'وحدة القياس', value: sp.unit },
+                                      { label: 'سعر الوحدة', value: `${sp.unitCost} ج.م` },
+                                      { label: 'الرصيد المتاح', value: st.availableBalance },
+                                      { label: 'حد إعادة الطلب', value: st.reorderPoint },
+                                      { label: 'الكمية المطلوب شراؤها', value: st.neededQty },
+                                    ],
+                                  })
+                                }
+                                onEdit={openEdit}
+                                onDelete={() =>
+                                  setDeleteModalState({
+                                    isOpen: true,
+                                    entityType: 'part',
+                                    entityTitle: sp.partName,
+                                    entityId: sp.id,
+                                    recordSummary: [
+                                      { label: 'الكود', value: sp.partCode },
+                                      { label: 'الاسم', value: sp.partName },
+                                      { label: 'الرصيد المتاح', value: st.availableBalance },
+                                    ],
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <VillageGrandTotalRow
+                        totalCount={filteredParts.length}
+                        labelColSpan={3}
+                        title="الإجمالي العام لقطع الغيار TOTAL"
+                        metricCells={[
+                          { content: `${totalBalance} قطعة`, mono: true },
+                          { content: '—' },
+                          { content: `${totalNeeded} مطلوب`, mono: true },
+                          { content: '—', colSpan: 2 },
+                        ]}
+                      />
+                    </tbody>
+                  </table>
+                );
+              })()}
             </div>
           </div>
 
@@ -1744,7 +2177,7 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             />
 
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-              <table className="w-full text-xs text-center border-collapse">
+              <table className="w-full text-xs text-center border-collapse compact-erp-table">
                 <thead className="bg-[#0A1628] text-white font-black">
                   <tr>
                     <th className="py-2 px-2 border border-slate-700 text-right">اسم المهندس / الفني</th>
@@ -1756,47 +2189,76 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-bold">
-                  {state.technicians.map((tech) => (
-                    <tr key={tech.id} className="hover:bg-slate-50">
-                      <td className="py-2 px-2 text-right font-black text-[#0A1628]">{tech.name}</td>
-                      <td className="py-2 px-2">{tech.specialty}</td>
-                      <td className="py-2 px-2 font-mono text-[#0D9488]">{tech.hourlyWage} ج.م</td>
-                      <td className="py-2 px-2 font-mono">{tech.phone}</td>
-                      <td className="py-2 px-2">{tech.isActive ? 'نشط' : 'غير نشط'}</td>
-                      <td className="py-2 px-2">
-                        <ModuleRowActions
-                          entityLabel={tech.name}
-                          updatedAt={tech.updatedAt}
-                          permissions={permissions}
-                          testIdPrefix={`grain-tech-${tech.id}`}
-                          onEdit={() =>
-                            setFormModalState({
-                              isOpen: true,
-                              mode: 'edit',
-                              entityKey: 'technician',
-                              targetId: tech.id,
-                              title: `تعديل بيانات الفني: ${tech.name}`,
-                              fields: getTechnicianFields(),
-                              initialValues: { ...tech },
-                            })
-                          }
-                          onDelete={() =>
-                            setDeleteModalState({
-                              isOpen: true,
-                              entityType: 'technician',
-                              entityTitle: tech.name,
-                              entityId: tech.id,
-                              recordSummary: [
-                                { label: 'الاسم', value: tech.name },
-                                { label: 'التخصص', value: tech.specialty },
-                                { label: 'أجر الساعة', value: `${tech.hourlyWage} ج.م` },
-                              ],
-                            })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                  {state.technicians
+                    .filter((tech) => matchesSmartSearch(tableSearch, [tech.name, tech.specialty, tech.phone]))
+                    .map((tech) => {
+                      const openEdit = () =>
+                        setFormModalState({
+                          isOpen: true,
+                          mode: 'edit',
+                          entityKey: 'technician',
+                          targetId: tech.id,
+                          title: `تعديل بيانات الفني: ${tech.name}`,
+                          fields: getTechnicianFields(),
+                          initialValues: { ...tech },
+                        });
+                      return (
+                        <tr key={tech.id} className="hover:bg-slate-50">
+                          <td className="py-2 px-2 text-right font-black text-[#0A1628]">{tech.name}</td>
+                          <td className="py-2 px-2">{tech.specialty}</td>
+                          <td className="py-2 px-2 font-mono text-[#0D9488]">{tech.hourlyWage} ج.م</td>
+                          <td className="py-2 px-2 font-mono">{tech.phone}</td>
+                          <td className="py-2 px-2">{tech.isActive ? 'نشط' : 'غير نشط'}</td>
+                          <td className="py-2 px-2">
+                            <ModuleRowActions
+                              entityLabel={tech.name}
+                              updatedAt={tech.updatedAt}
+                              permissions={permissions}
+                              testIdPrefix={`grain-tech-${tech.id}`}
+                              onView={() =>
+                                setProfileModalState({
+                                  isOpen: true,
+                                  title: tech.name,
+                                  subtitle: tech.specialty,
+                                  entityType: 'مهندس / فني صيانة',
+                                  onEdit: openEdit,
+                                  fields: [
+                                    { label: 'الاسم', value: tech.name },
+                                    { label: 'التخصص', value: tech.specialty },
+                                    { label: 'أجر الساعة', value: `${tech.hourlyWage} ج.م` },
+                                    { label: 'رقم الهاتف', value: tech.phone },
+                                    { label: 'الحالة', value: tech.isActive ? 'نشط' : 'غير نشط' },
+                                  ],
+                                })
+                              }
+                              onEdit={openEdit}
+                              onDelete={() =>
+                                setDeleteModalState({
+                                  isOpen: true,
+                                  entityType: 'technician',
+                                  entityTitle: tech.name,
+                                  entityId: tech.id,
+                                  recordSummary: [
+                                    { label: 'الاسم', value: tech.name },
+                                    { label: 'التخصص', value: tech.specialty },
+                                    { label: 'أجر الساعة', value: `${tech.hourlyWage} ج.م` },
+                                  ],
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  <VillageGrandTotalRow
+                    totalCount={state.technicians.length}
+                    labelColSpan={2}
+                    title="الإجمالي العام للمهندسين والفنيين TOTAL"
+                    metricCells={[
+                      { content: `${state.technicians.reduce((s, t) => s + (t.hourlyWage || 0), 0)} ج.م/س`, mono: true },
+                      { content: `نشط: ${state.technicians.filter((t) => t.isActive).length}`, colSpan: 3, mono: true },
+                    ]}
+                  />
                 </tbody>
               </table>
             </div>
@@ -1860,70 +2322,126 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
             </form>
           )}
 
+          <SmartTableSearchBar
+            query={tableSearch}
+            onQueryChange={(q) => {
+              setTableSearch(q);
+              setTablePage(1);
+            }}
+            totalMatches={state.grainMovements.filter((g) =>
+              matchesSmartSearch(tableSearch, [g.documentNumber, g.date, g.siloName, g.movementType, g.grainType])
+            ).length}
+            totalAll={state.grainMovements.length}
+            placeholder="بحث برقم المستند أو الصومعة أو نوع الحركة..."
+            testId="grain-moisture-search"
+          />
+
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-            <table className="w-full text-xs text-center border-collapse">
-              <thead className="bg-[#0A1628] text-white font-black">
-                <tr>
-                  <th className="py-2 px-2 border border-slate-700">رقم المستند</th>
-                  <th className="py-2 px-2 border border-slate-700">التاريخ</th>
-                  <th className="py-2 px-2 border border-slate-700">الصومعة / الشونة</th>
-                  <th className="py-2 px-2 border border-slate-700">الحركة</th>
-                  <th className="py-2 px-2 border border-slate-700">الوزن الأصلي</th>
-                  <th className="py-2 px-2 border border-slate-700">الرطوبة الفعلية / المرجعية</th>
-                  <th className="py-2 px-2 border border-slate-700">الوزن المصحح (طن)</th>
-                  <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 font-bold">
-                {state.grainMovements.map((g) => (
-                  <tr key={g.id} className="hover:bg-slate-50">
-                    <td className="py-2 px-2 font-mono">{g.documentNumber}</td>
-                    <td className="py-2 px-2 font-mono">{g.date}</td>
-                    <td className="py-2 px-2">{g.siloName}</td>
-                    <td className="py-2 px-2">{g.movementType}</td>
-                    <td className="py-2 px-2 font-mono">{g.originalWeightTons} طن</td>
-                    <td className="py-2 px-2 font-mono">{g.actualMoisturePct}% / {g.referenceMoisturePct}%</td>
-                    <td className="py-2 px-2 font-mono font-black text-[#0D9488]">{g.correctedWeightTons} طن</td>
-                    <td className="py-2 px-2">
-                      <ModuleRowActions
-                        entityLabel={g.documentNumber}
-                        updatedAt={g.updatedAt}
-                        permissions={permissions}
-                        testIdPrefix={`grain-mov-${g.id}`}
-                        onEdit={() =>
-                          setFormModalState({
-                            isOpen: true,
-                            mode: 'edit',
-                            entityKey: 'grain_movement',
-                            targetId: g.id,
-                            title: `تعديل حركة الحبوب: ${g.documentNumber}`,
-                            fields: getGrainMovementFields(),
-                            initialValues: {
-                              ...g,
-                              actualPhysicalCountTons: g.actualPhysicalCountTons ?? 0,
-                            },
-                          })
-                        }
-                        onDelete={() =>
-                          setDeleteModalState({
-                            isOpen: true,
-                            entityType: 'grain_movement',
-                            entityTitle: g.documentNumber,
-                            entityId: g.id,
-                            recordSummary: [
-                              { label: 'رقم المستند', value: g.documentNumber },
-                              { label: 'الصومعة', value: g.siloName },
-                              { label: 'نوع الحركة', value: g.movementType },
-                              { label: 'الوزن المصحح', value: `${g.correctedWeightTons} طن` },
-                            ],
-                          })
-                        }
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {(() => {
+              const filteredMovements = state.grainMovements.filter((g) =>
+                matchesSmartSearch(tableSearch, [g.documentNumber, g.date, g.siloName, g.movementType, g.grainType])
+              );
+              const totalOriginal = Number(filteredMovements.reduce((s, g) => s + (g.originalWeightTons || 0), 0).toFixed(3));
+              const totalCorrected = Number(filteredMovements.reduce((s, g) => s + (g.correctedWeightTons || 0), 0).toFixed(3));
+              return (
+                <table className="w-full text-xs text-center border-collapse compact-erp-table">
+                  <thead className="bg-[#0A1628] text-white font-black">
+                    <tr>
+                      <th className="py-2 px-2 border border-slate-700">رقم المستند</th>
+                      <th className="py-2 px-2 border border-slate-700">التاريخ</th>
+                      <th className="py-2 px-2 border border-slate-700">الصومعة / الشونة</th>
+                      <th className="py-2 px-2 border border-slate-700">الحركة</th>
+                      <th className="py-2 px-2 border border-slate-700">الوزن الأصلي</th>
+                      <th className="py-2 px-2 border border-slate-700">الرطوبة الفعلية / المرجعية</th>
+                      <th className="py-2 px-2 border border-slate-700">الوزن المصحح (طن)</th>
+                      <th className="py-2 px-2 border border-slate-700">إدارة السجل</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 font-bold">
+                    {filteredMovements.map((g) => {
+                      const openEdit = () =>
+                        setFormModalState({
+                          isOpen: true,
+                          mode: 'edit',
+                          entityKey: 'grain_movement',
+                          targetId: g.id,
+                          title: `تعديل حركة الحبوب: ${g.documentNumber}`,
+                          fields: getGrainMovementFields(),
+                          initialValues: {
+                            ...g,
+                            actualPhysicalCountTons: g.actualPhysicalCountTons ?? 0,
+                          },
+                        });
+                      return (
+                        <tr key={g.id} className="hover:bg-slate-50">
+                          <td className="py-2 px-2 font-mono">{g.documentNumber}</td>
+                          <td className="py-2 px-2 font-mono">{g.date}</td>
+                          <td className="py-2 px-2">{g.siloName}</td>
+                          <td className="py-2 px-2">{g.movementType}</td>
+                          <td className="py-2 px-2 font-mono">{g.originalWeightTons} طن</td>
+                          <td className="py-2 px-2 font-mono">{g.actualMoisturePct}% / {g.referenceMoisturePct}%</td>
+                          <td className="py-2 px-2 font-mono font-black text-[#0D9488]">{g.correctedWeightTons} طن</td>
+                          <td className="py-2 px-2">
+                            <ModuleRowActions
+                              entityLabel={g.documentNumber}
+                              updatedAt={g.updatedAt}
+                              permissions={permissions}
+                              testIdPrefix={`grain-mov-${g.id}`}
+                              onView={() =>
+                                setProfileModalState({
+                                  isOpen: true,
+                                  title: `مستند حركة حبوب رقم ${g.documentNumber}`,
+                                  subtitle: `${g.siloName} — ${g.movementType}`,
+                                  entityType: 'حركة حبوب وتصحيح رطوبة',
+                                  onEdit: openEdit,
+                                  fields: [
+                                    { label: 'رقم المستند', value: g.documentNumber },
+                                    { label: 'التاريخ', value: g.date },
+                                    { label: 'الصومعة / الشونة', value: g.siloName },
+                                    { label: 'نوع الحركة', value: g.movementType },
+                                    { label: 'الوزن الأصلي القائم', value: `${g.originalWeightTons} طن` },
+                                    { label: 'نسبة الرطوبة الفعلية', value: `${g.actualMoisturePct}%` },
+                                    { label: 'نسبة الرطوبة المرجعية', value: `${g.referenceMoisturePct}%` },
+                                    { label: 'الوزن المصحح النهائي', value: `${g.correctedWeightTons} طن` },
+                                    { label: 'ملاحظات', value: g.notes || '—' },
+                                  ],
+                                })
+                              }
+                              onEdit={openEdit}
+                              onDelete={() =>
+                                setDeleteModalState({
+                                  isOpen: true,
+                                  entityType: 'grain_movement',
+                                  entityTitle: g.documentNumber,
+                                  entityId: g.id,
+                                  recordSummary: [
+                                    { label: 'رقم المستند', value: g.documentNumber },
+                                    { label: 'الصومعة', value: g.siloName },
+                                    { label: 'نوع الحركة', value: g.movementType },
+                                    { label: 'الوزن المصحح', value: `${g.correctedWeightTons} طن` },
+                                  ],
+                                })
+                              }
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <VillageGrandTotalRow
+                      totalCount={filteredMovements.length}
+                      labelColSpan={4}
+                      title="الإجمالي العام لحركات الحبوب والوزن المصحح TOTAL"
+                      metricCells={[
+                        { content: `${totalOriginal} طن`, mono: true },
+                        { content: '—' },
+                        { content: `${totalCorrected} طن`, mono: true },
+                        { content: '—' },
+                      ]}
+                    />
+                  </tbody>
+                </table>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1989,30 +2507,93 @@ export const GrainMaintenanceSuite: React.FC<GrainMaintenanceSuiteProps> = ({
       )}
 
       {subView === 'audit' && (
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table className="w-full text-xs text-center border-collapse">
-            <thead className="bg-[#0A1628] text-white font-black">
-              <tr>
-                <th className="py-2 px-2 border border-slate-700">الوقت</th>
-                <th className="py-2 px-2 border border-slate-700">المستخدم</th>
-                <th className="py-2 px-2 border border-slate-700">الإجراء</th>
-                <th className="py-2 px-2 border border-slate-700">الجدول</th>
-                <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 font-bold">
-              {state.auditLogs.map((a) => (
-                <tr key={a.id}>
-                  <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
-                  <td className="py-2 px-2">{a.userFullName}</td>
-                  <td className="py-2 px-2 text-[#0D9488]">{a.actionType}</td>
-                  <td className="py-2 px-2">{a.entityName}</td>
-                  <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+        <div className="space-y-4">
+          <AuditLogAdminToolbar
+            sliceKey="grainMaintenance"
+            branchId={branchId}
+            currentUser={currentUser}
+            isSuperAdmin={isSuperAdmin(currentUser) || permissions.canDelete}
+            totalLogsCount={(state.auditLogs || []).length}
+            onAuditLogsCleared={() => {
+              onChangeState(
+                { ...state, auditLogs: [] },
+                'تم إفراغ سجل التدقيق لقسم صيانة الحبوب بواسطة المشرف العام بعد التحقق الأمني المزدوج'
+              );
+            }}
+          />
+
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+            <table className="w-full text-xs text-center border-collapse compact-erp-table">
+              <thead className="bg-[#0A1628] text-white font-black">
+                <tr>
+                  <th className="py-2 px-2 border border-slate-700">الوقت</th>
+                  <th className="py-2 px-2 border border-slate-700">المستخدم</th>
+                  <th className="py-2 px-2 border border-slate-700">الإجراء</th>
+                  <th className="py-2 px-2 border border-slate-700">الجدول</th>
+                  <th className="py-2 px-2 border border-slate-700 text-right">التفاصيل</th>
+                  {(isSuperAdmin(currentUser) || permissions.canDelete) && (
+                    <th className="py-2 px-2 border border-slate-700">إجراءات الحذف</th>
+                  )}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-200 font-bold">
+                {state.auditLogs.map((a) => (
+                  <tr key={a.id} className="hover:bg-slate-50">
+                    <td className="py-2 px-2 font-mono">{new Date(a.timestamp).toLocaleString('ar-EG')}</td>
+                    <td className="py-2 px-2">{a.userFullName}</td>
+                    <td className="py-2 px-2 text-[#0D9488]">{a.actionType}</td>
+                    <td className="py-2 px-2">{a.entityName}</td>
+                    <td className="py-2 px-2 text-right">{a.afterSummary}</td>
+                    {(isSuperAdmin(currentUser) || permissions.canDelete) && (
+                      <td className="py-2 px-2">
+                        <button
+                          type="button"
+                          data-testid={`grain-audit-delete-btn-${a.id}`}
+                          onClick={() => {
+                            onChangeState(
+                              { ...state, auditLogs: state.auditLogs.filter((x) => x.id !== a.id) },
+                              `حذف قيد تدقيق فردي (${a.entityName})`
+                            );
+                            notify('ok', 'تم حذف قيد التدقيق الفردي من سجل صيانة الحبوب بنجاح.');
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-[11px] font-black cursor-pointer transition-colors"
+                          title="حذف قيد التدقيق"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>حذف</span>
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                <VillageGrandTotalRow
+                  totalCount={state.auditLogs.length}
+                  labelColSpan={4}
+                  title="إجمالي قيود سجل التدقيق والرقابة TOTAL"
+                  metricCells={[
+                    { content: `${state.auditLogs.length} قيد مسجل`, colSpan: isSuperAdmin(currentUser) || permissions.canDelete ? 2 : 1, mono: true },
+                  ]}
+                />
+              </tbody>
+            </table>
+          </div>
         </div>
+      )}
+
+      {/* Magic Eye View Profile Modal */}
+      </ErrorBoundary>
+
+      {profileModalState && (
+        <ModuleRecordProfileModal
+          isOpen={profileModalState.isOpen}
+          title={profileModalState.title}
+          subtitle={profileModalState.subtitle}
+          entityType={profileModalState.entityType}
+          fields={profileModalState.fields}
+          canEdit={permissions.canEdit}
+          onEdit={profileModalState.onEdit}
+          onClose={() => setProfileModalState(null)}
+        />
       )}
 
       {/* Unified Add/Edit Modal */}
